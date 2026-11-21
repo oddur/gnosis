@@ -26,7 +26,9 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
-import { proposalKey, type Verdict } from '../lib/conflict-verify';
+import type { Verdict } from '../lib/conflict-verify';
+import { verdictKey } from '../lib/conflict-verdict-key';
+import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
@@ -79,9 +81,12 @@ interface Deps {
   dependents?: (url: string) => string[];
   /**
    * Checks one file's proposals (src/conflict-checks.ts). The verdict is saved with the file, so its buckets are known
-   * before any dialog opens. Without it, the renderer checks them.
+   * before any dialog opens. Without it, the renderer checks them. Undefined: the check could not run, so nothing is
+   * saved and the next open checks again.
    */
-  verify?: (file: ConflictFile) => Promise<Verdict>;
+  verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
+  /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
+  disabledLanguages?: () => SyntaxLanguage[];
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -607,6 +612,7 @@ export function createConflictResolutionService(deps: Deps) {
   async function check(files: ConflictFile[], signal: AbortSignal, report: (text: string) => void = () => {}) {
     if (!deps.verify) return false;
     let changed = false;
+    const disabled = deps.disabledLanguages?.() ?? [];
     const due: { file: ConflictFile; key: string }[] = [];
     for (const file of files) {
       if (file.unsupported || (!file.proposals && !file.wholeFile)) {
@@ -615,13 +621,15 @@ export function createConflictResolutionService(deps: Deps) {
         continue;
       }
       // A copy: proposalKey remembers its answer per object, and these files change in place.
-      const key = proposalKey({ ...file });
+      const key = verdictKey({ ...file }, disabled);
       if (file.verdict?.key !== key) due.push({ file, key });
     }
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
       signal.throwIfAborted();
-      file.verdict = { key, verdict: await deps.verify(file) };
+      const verdict = await deps.verify(file, disabled);
+      if (verdict) file.verdict = { key, verdict };
+      else delete file.verdict;
       changed = true;
     }
     return changed;
@@ -1563,7 +1571,13 @@ export function createConflictResolutionService(deps: Deps) {
           session.commitSha = sha;
         }
         if (session.status !== 'published') {
-          await check(session.files, signal, report);
+          // Only Suggest changes proposals here: it drops them, so its verdict goes too. A save never changes them.
+          if (request.kind === 'resolve')
+            await check(
+              session.files.filter((f) => !request.path || f.path === request.path),
+              signal,
+              report
+            );
           signal.throwIfAborted();
           assertAccount(ctx);
         }

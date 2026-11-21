@@ -78,6 +78,8 @@ import {
   type ConflictBucket,
   type Verdict,
 } from '../lib/conflict-verify';
+import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
@@ -434,7 +436,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict && f.verdict.key === proposalKey(f)) return f.verdict.verdict;
+    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence()))) return f.verdict.verdict;
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === proposalKey(f) ? entry.verdict : undefined;
   };
@@ -442,7 +444,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     for (const f of session?.files ?? []) {
       if (!f.proposals && !f.wholeFile) continue;
       const key = proposalKey(f);
-      if (f.verdict?.key === key || checking.current.get(f.path) === key) continue;
+      if (verdictOf(f) || checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
       void (
         f.wholeFile

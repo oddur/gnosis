@@ -30,6 +30,8 @@ export default defineConfig({
     ],
   },
   build: {
+    // The main process reads the tree-sitter wasm files from the package (src/main.ts): never inline them.
+    assetsInlineLimit: (file) => (file.endsWith('.wasm') ? false : undefined),
     rollupOptions: {
       output: {
         // The tree-sitter runtime and grammars keep their names, so the main process's conflict checks find them in the

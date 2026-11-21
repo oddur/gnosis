@@ -9,7 +9,7 @@ import javaWasm from '../src/assets/tree-sitter/java.wasm?url';
 import csharpWasm from '../src/assets/tree-sitter/csharp.wasm?url';
 import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
-import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
+import { SYNTAX_MAX_CHARACTERS, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 import { blocksSignature, changeBlocks, NOISE_MAX_CHARACTERS, type NoiseBlock } from './semantic-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
@@ -36,8 +36,7 @@ const GRAMMARS: Record<SyntaxLanguage, string> = {
   json: jsonWasm,
   yaml: yamlWasm,
 };
-/** Files larger than this are not parsed: their scopes are not worth the worker's time and memory. */
-export const SYNTAX_MAX_CHARACTERS = 1_000_000;
+export { SYNTAX_MAX_CHARACTERS };
 /** The prefetch limit and a few recent PRs' files (#393). A definition list is a few KB. */
 const MEMO_ENTRIES = 512;
 

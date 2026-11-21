@@ -613,6 +613,9 @@ export function definitionReveal(definition: SyntaxDefinition, cap = WHOLE_DEFIN
 
 // ── Engine ──────────────────────────────────────────────────────────────────
 
+/** Files larger than this are not parsed: their scopes are not worth a worker's time and memory. */
+export const SYNTAX_MAX_CHARACTERS = 1_000_000;
+
 export interface SyntaxEngineFiles {
   /** The runtime's own `web-tree-sitter.wasm`. */
   runtime: () => Promise<Uint8Array>;

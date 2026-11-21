@@ -169,8 +169,8 @@ import { createMenubarPanel } from './menubar-window';
 import { createStateSignature } from './tray-signature';
 import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
 import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
-import { codeIntelligenceSettings, languageEnabled } from '../lib/code-intelligence';
-import { SYNTAX_LANGUAGES } from '../lib/syntax-scope';
+import { codeIntelligenceSettings } from '../lib/code-intelligence';
+import { disabledLanguages } from '../lib/conflict-verdict-key';
 import { createConflictCheckWorker } from './conflict-checks';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
@@ -4088,10 +4088,8 @@ const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-
 app.on('will-quit', () => conflictChecks.dispose());
 const conflicts = createConflictResolutionService({
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
-  verify: file => {
-    const settings = codeIntelligenceSettings(loadPreferences());
-    return conflictChecks.check(file, SYNTAX_LANGUAGES.filter(language => !languageEnabled(settings, language)));
-  },
+  verify: (file, disabled) => conflictChecks.check(file, disabled),
+  disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
     if (!subject) return [];

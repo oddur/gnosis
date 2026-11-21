@@ -3,13 +3,7 @@ import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage, type Sy
 import type { NoiseBlock } from './semantic-noise';
 import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
 import { createFollowers, createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
-import javascriptTags from '../src/assets/tree-sitter/javascript-tags.scm?raw';
-import typescriptTags from '../src/assets/tree-sitter/typescript-tags.scm?raw';
-import rustTags from '../src/assets/tree-sitter/rust-tags.scm?raw';
-import goTags from '../src/assets/tree-sitter/go-tags.scm?raw';
-import pythonTags from '../src/assets/tree-sitter/python-tags.scm?raw';
-import javaTags from '../src/assets/tree-sitter/java-tags.scm?raw';
-import csharpTags from '../src/assets/tree-sitter/csharp-tags.scm?raw';
+import { TAGS } from './syntax-tags';
 
 /**
  * The tree-sitter worker (#393): parses files and answers their definitions, so no parse runs on the renderer's main
@@ -124,15 +118,6 @@ export type SyntaxResponse =
   | { id: number; error: string }
   | { id: number; taken: boolean };
 
-const TAGS: Record<string, string> = {
-  javascript: javascriptTags,
-  typescript: typescriptTags,
-  rust: rustTags,
-  go: goTags,
-  python: pythonTags,
-  java: javaTags,
-  csharp: csharpTags,
-};
 /** Files whose definitions this worker keeps. A definition list is a few KB; trees are not kept. */
 const CACHE_ENTRIES = 512;
 

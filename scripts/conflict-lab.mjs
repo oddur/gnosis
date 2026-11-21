@@ -19,7 +19,8 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
-import { blockBuckets, proposalKey } from '../lib/conflict-verify.ts';
+import { blockBuckets } from '../lib/conflict-verify.ts';
+import { verdictKey } from '../lib/conflict-verdict-key.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
@@ -192,7 +193,8 @@ export async function runCase(c, { keep = false } = {}) {
       mergiraf: () => binary,
       suggest: () => Promise.reject(new Error('No AI in the conflict lab.')),
       // The service checks proposals as the app's main process does (src/conflict-checks.ts), with the case's settings.
-      verify: conflictChecker(engine, meta.languagesOff ?? []),
+      verify: (file, disabled) => conflictChecker(engine, disabled)(file),
+      disabledLanguages: () => meta.languagesOff ?? [],
     });
     const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
     const run = (request) => service.run(request, new AbortController().signal);
@@ -202,7 +204,8 @@ export async function runCase(c, { keep = false } = {}) {
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
         // The verdict the service saved with the draft, for these proposals: as the conflict dialog reads it.
-        if ((f.proposals || f.wholeFile) && f.verdict?.key !== proposalKey(f))
+        // A check that failed saves nothing: the case fails, as a failed check did before.
+        if ((f.proposals || f.wholeFile) && f.verdict?.key !== verdictKey(f, meta.languagesOff ?? []))
           throw new Error(`${f.path} has proposals the service did not check.`);
         const verdict = f.verdict?.verdict;
         const buckets = blockBuckets(f, f.result, verdict);
