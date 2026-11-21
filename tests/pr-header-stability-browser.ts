@@ -296,6 +296,8 @@ void app.whenReady().then(async () => {
         "[...document.querySelectorAll('.changes-file-header button')].find(b=>b.getAttribute('aria-label')==='Ask about this').click()"
       );
       await must("!!document.querySelector('.changes-chat')");
+      // The composer loads with the chat (components/chat-lazy.tsx).
+      await must("!!document.querySelector('.changes-chat textarea')");
       await pause(300);
       compare('pr-1280x800-light Changes with chat', reference, await frame());
       await capture('pr-1280x800-light-changes-chat');

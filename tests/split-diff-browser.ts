@@ -97,8 +97,16 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js(`window.contextLines().filter(l=>l.dataset.lineType!=='context').length`), 4);
     assert.equal(await js(`window.contextLines().some(l=>l.textContent.includes('const context0 '))`), false);
-    assert.equal(await js(`document.querySelectorAll('[data-case=context] .changes-diff .diff-gap[data-gap]').length`), 3);
-    assert.equal(await js(`document.querySelectorAll('[data-case=context] .diff-context-gap, [data-case=context] .review-context-hunk').length`), 0);
+    assert.equal(
+      await js(`document.querySelectorAll('[data-case=context] .changes-diff .diff-gap[data-gap]').length`),
+      3
+    );
+    assert.equal(
+      await js(
+        `document.querySelectorAll('[data-case=context] .diff-context-gap, [data-case=context] .review-context-hunk').length`
+      ),
+      0
+    );
     await js(`document.querySelector('[data-case=context]').scrollIntoView({block:'start'})`);
     if (process.platform === 'darwin') app.show();
     window.show();
@@ -227,6 +235,11 @@ void app.whenReady().then(async () => {
       `Array.from(document.querySelectorAll('.review-selection-actions button')).find(b=>b.textContent.includes('Ask about this')).click()`
     );
     assert.equal(await js(`document.querySelector('#selected-code').textContent`), 'export const ready = true;');
+    assert.match(
+      await js<string>(`document.querySelector('#selected-location').textContent`),
+      /^After line \d+ of \S+:$/,
+      'Ask about this names the file and line it quotes'
+    );
 
     await wait("!document.querySelector('.review-selection-actions')");
     // Keyboard-driven selection changes preserve partial lines without gutter numbers.
@@ -260,6 +273,11 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.review-selection-actions')?.style.visibility === 'visible'");
     await js("document.querySelector('.review-selection-actions button:first-child').click()");
     assert.equal(await js("document.querySelector('#selected-code').textContent"), 'export const ready = true;');
+    assert.match(
+      await js<string>("document.querySelector('#selected-location').textContent"),
+      /^Before line 1 of \S+:$/,
+      'Removed code is quoted from the old side'
+    );
     await js(`(() => {
       const line = window.diffRoot('metadata-deleted').querySelector('[data-base-line="2"]');
       const range = document.createRange(); range.selectNodeContents(line);

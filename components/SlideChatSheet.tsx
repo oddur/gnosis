@@ -1,10 +1,11 @@
 import { useSessionDraft } from '../lib/session-drafts';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { ChatPanel } from './ChatPanel';
-import { ChatConversation } from './ChatConversation';
 import { chatSuggestions } from '../lib/chat-context';
-import { ChatComposer } from './ChatComposer';
+import { ChatComposerFallback, ChatConversationFallback, LazyChatComposer, LazyChatConversation } from './chat-lazy';
+import type { ChatModelChoice } from '@/lib/chat-preferences';
+import type { ChatCitationSource } from './ChatCitation';
 import type { ChatMessage } from '@/lib/use-slide-chat';
 import type { ChatTraceStep } from '@/lib/chat-trace';
 
@@ -26,7 +27,14 @@ interface Props {
   onRetry?: (assistantId: string) => void;
   onStop?: () => void;
   onOpenTraceStep?: (step: ChatTraceStep) => void;
-  modelLabel?: string;
+  /** The PR's files, for citations in answers. */
+  citations?: ChatCitationSource;
+  /** The model the next question goes to, chosen in the prompt input. */
+  model?: ChatModelChoice;
+  onModelChange?: (choice: ChatModelChoice) => void;
+  /** Tokens of PR context each question carries. */
+  contextBudget?: number;
+  onContextBudgetChange?: (tokens: number) => void;
   // When the user selects code in the diff and clicks "Ask about
   // this", the selected code is passed here as a fenced code block.
   // The chat sheet renders it as a quoted block above the input and
@@ -34,6 +42,8 @@ interface Props {
   // first send via onQuotedCodeConsumed.
   quotedCode?: string | null;
   onQuotedCodeConsumed?: () => void;
+  /** Code selected in an answer's diff: it becomes the quoted code. */
+  onQuoteSelection?: (code: string) => void;
 }
 
 // Suggested questions remain compact, readable actions.
@@ -86,9 +96,14 @@ export function SlideChatSheet({
   onRetry,
   onStop,
   onOpenTraceStep,
-  modelLabel,
+  model,
+  onModelChange,
+  contextBudget,
+  onContextBudgetChange,
+  citations,
   quotedCode,
   onQuotedCodeConsumed,
+  onQuoteSelection,
 }: Props) {
   const [input, setInput] = useSessionDraft(`chat-input:${slideId ?? slideTitle}`, '');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -96,19 +111,25 @@ export function SlideChatSheet({
   const dragging = useRef<{ id: number; target: HTMLButtonElement; cursor: string; select: string } | null>(null);
   const didDrag = useRef(false);
 
+  // A focus request waits for the composer when it is still loading (components/chat-lazy.tsx).
+  const focusPending = useRef(false);
+  const focusComposer = useCallback(() => {
+    const target = textareaRef.current;
+    if (!target) return;
+    focusPending.current = false;
+    const topDialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
+      .filter((dialog) => dialog.checkVisibility())
+      .at(-1);
+    // A palette opened during the sheet animation owns keyboard focus now.
+    if (!topDialog || topDialog.contains(target)) target.focus();
+  }, []);
   useEffect(() => {
     if (open) {
-      const timer = setTimeout(() => {
-        const target = textareaRef.current;
-        const topDialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
-          .filter((dialog) => dialog.checkVisibility())
-          .at(-1);
-        // A palette opened during the sheet animation owns keyboard focus now.
-        if (target && (!topDialog || topDialog.contains(target))) target.focus();
-      }, 300);
+      focusPending.current = true;
+      const timer = setTimeout(focusComposer, 300);
       return () => clearTimeout(timer);
     }
-  }, [open, focusRequest]);
+  }, [open, focusRequest, focusComposer]);
 
   const finishResize = useCallback(() => {
     const drag = dragging.current;
@@ -188,39 +209,58 @@ export function SlideChatSheet({
     <ChatPanel
       className={embedded ? 'chat-sheet' : ''}
       contained={!embedded}
+      surface="topic"
       label="Ask about this topic"
       context={slideTitle}
       contextTitle={slideTitle}
       onClose={() => onOpenChange(false)}
     >
-      <ChatConversation
-        conversationId={slideId ?? slideTitle}
-        messages={messages}
-        busy={isStreaming}
-        onRetry={onRetry}
-        onOpenTraceStep={onOpenTraceStep}
-        empty={
-          <SuggestedQuestions
-            slideTitle={slideTitle}
-            selection={!!quotedCode}
-            reviewFocus={reviewFocus}
-            onSelect={handleSend}
-            disabled={isStreaming}
-          />
-        }
-      />
-      <ChatComposer
-        value={input}
-        onChange={setInput}
-        onSend={() => handleSend()}
-        busy={isStreaming}
-        onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
-        modelLabel={modelLabel}
-        label="Question about this topic"
-        quote={quotedCode}
-        onRemoveQuote={onQuotedCodeConsumed}
-        textareaRef={textareaRef}
-      />
+      <Suspense fallback={<ChatConversationFallback />}>
+        <LazyChatConversation
+          conversationId={slideId ?? slideTitle}
+          messages={messages}
+          busy={isStreaming}
+          onRetry={onRetry}
+          onOpenTraceStep={onOpenTraceStep}
+          citations={citations}
+          onAskAboutSelection={
+            onQuoteSelection &&
+            ((code) => {
+              onQuoteSelection(code);
+              focusComposer();
+            })
+          }
+          empty={
+            <SuggestedQuestions
+              slideTitle={slideTitle}
+              selection={!!quotedCode}
+              reviewFocus={reviewFocus}
+              onSelect={handleSend}
+              disabled={isStreaming}
+            />
+          }
+        />
+      </Suspense>
+      <Suspense fallback={<ChatComposerFallback />}>
+        <LazyChatComposer
+          value={input}
+          onChange={setInput}
+          onSend={() => handleSend()}
+          busy={isStreaming}
+          onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
+          model={model}
+          onModelChange={onModelChange}
+          contextBudget={contextBudget}
+          onContextBudgetChange={onContextBudgetChange}
+          label="Question about this topic"
+          quote={quotedCode}
+          onRemoveQuote={onQuotedCodeConsumed}
+          textareaRef={textareaRef}
+          onReady={() => {
+            if (focusPending.current) focusComposer();
+          }}
+        />
+      </Suspense>
     </ChatPanel>
   );
   if (embedded) return open ? panel : null;

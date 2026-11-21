@@ -228,6 +228,64 @@ if (parityScenario) {
     level: 'conservative',
     leftOut: [{ filePath: path, ...changedRange(hunks[2]), reason: 'import only', source: 'rules' }],
   };
+  // The second topic's reading order goes scope.ts, imports.ts, then back to scope.ts: two blocks of scope.ts.
+  const importsPath = prefix + 'src/imports.ts';
+  const imports = (syntaxScopeFiles.find((file) => file.path === 'src/imports.ts')?.patch ?? '').split(/\n(?=@@)/).map((hunk) => {
+    const [header, ...body] = hunk.split('\n');
+    return { filePath: importsPath, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+  });
+  review.changedFiles.push({ filename: importsPath, status: 'modified', additions: 1, deletions: 1 });
+  review.slides[1] = {
+    ...review.slides[1],
+    title: 'Read the flush, then its import, then the paths',
+    narrative: 'The flush step comes first, then the import it relies on, then the path helpers in the same file.',
+    affectedFiles: [path, importsPath],
+    fileSummaries: [{ filePath: path, summary: 'Doubles one flush step and trims names.' }],
+    inlineExplanations: [],
+    diffHunks: [hunks[2], imports[0], hunks[0], hunks[3]],
+    // A jump into the second scope.ts block: the added line of its last hunk.
+    reviewChecks: [{ text: 'Does the last change keep the total?', filePath: path, startLine: addedLine(hunks[3]) }],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
+  (window as unknown as { parityJumpLine: number }).parityJumpLine = addedLine(hunks[3]);
+  // The third topic lists two overlapping windows of scope.ts's first hunk around imports.ts: one block of scope.ts.
+  review.slides[2] = {
+    ...review.slides[2],
+    title: 'Read the path change twice over',
+    narrative: 'The same path change, listed in two overlapping parts.',
+    affectedFiles: [path, importsPath],
+    fileSummaries: [],
+    inlineExplanations: [],
+    diffHunks: [hunks[0], imports[0], withoutTopContext(hunks[0], 2)],
+    reviewChecks: [],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
+}
+/** The new line number of a saved hunk's first added line. */
+function addedLine(hunk: { hunkHeader: string; content: string }) {
+  let line = Number(/\+(\d+)/.exec(hunk.hunkHeader)?.[1] ?? 0);
+  for (const row of hunk.content.split('\n')) {
+    if (row.startsWith('+')) return line;
+    if (!row.startsWith('-')) line++;
+  }
+  return line;
+}
+/** A saved hunk without its first `n` lines, which are context: it overlaps the hunk it came from. */
+function withoutTopContext<T extends { hunkHeader: string; content: string }>(hunk: T, n: number): T {
+  const rows = hunk.content.split('\n');
+  if (rows.slice(0, n).some((row) => !row.startsWith(' '))) throw Error('Not context');
+  const [, a, b, c, d, rest] = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@(.*)$/.exec(hunk.hunkHeader) ?? [];
+  return {
+    ...hunk,
+    hunkHeader: `@@ -${Number(a) + n},${Number(b) - n} +${Number(c) + n},${Number(d) - n} @@${rest}`,
+    content: rows.slice(n).join('\n'),
+  };
 }
 // Quiet changes in a slide (#396, tests/noise-filter-browser.ts): the first topic shows every hunk of the noise
 // fixture's src/noise/mixed.ts, which Changes shows with `?noise-filter`.
@@ -907,6 +965,11 @@ const mocks = {
     return () => { predictionListeners.delete(callback); };
   },
   storageSizes: () => Promise.resolve({ savedWorkBytes: 68 * 1024 * 1024, githubCacheBytes: 580 * 1024 * 1024 }),
+  // Main's narrow write for chat's panel widths and model choices: no settings side effects.
+  saveChatPreferences: (patch: Partial<Pick<Preferences, 'chatPanelWidths' | 'chatModels' | 'chatContextTokens'>>) => {
+    prefs = { ...prefs, ...structuredClone(patch) };
+    return Promise.resolve();
+  },
   savePreferences: (next: Preferences) => {
     prefs = next;
     sessionStorage.setItem('fixture-checks-view', next.checksView ?? 'list');

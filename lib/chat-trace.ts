@@ -14,6 +14,8 @@
  * Tool Chips components of Beautiful UI (https://www.beautifului.dev/, MIT).
  */
 import type { DiffHunk, SendSlideChatRequest } from './types';
+import { parseChatSelection } from './chat-selection';
+import { chatContextItemDetail, type ChatContextKind, type ChatContextResult } from './chat-pr-context';
 
 export type ChatTraceKind =
   | 'diff'
@@ -26,7 +28,9 @@ export type ChatTraceKind =
   | 'command'
   | 'edit'
   | 'web'
-  | 'tool';
+  | 'tool'
+  /** Changed files the context budget left out. */
+  | 'omitted';
 
 export interface ChatTraceStep {
   /** Stable within a trace: context steps derive it from their content, agent steps from the tool call id. */
@@ -42,6 +46,31 @@ export interface ChatTraceStep {
   startLine?: number;
   endLine?: number;
   side?: 'before' | 'after';
+  /** An agent step's arguments as the CLI reported them, one `key: value` per line. */
+  input?: string;
+  /** What the tool returned, clipped. Only agent steps have one, and only once the CLI reports it. */
+  output?: string;
+  /** Agent steps run until their result arrives; `error` when the CLI marked the result as failed. */
+  status?: 'running' | 'done' | 'error';
+  /** Milliseconds after the question was sent that this step was reported, measured in the renderer. */
+  at?: number;
+  /** Milliseconds from the call to its result. */
+  duration?: number;
+}
+
+/** When an answer's milestones happened, in epoch milliseconds, measured in the renderer. */
+export interface ChatTiming {
+  sentAt: number;
+  /** The first words of the answer. */
+  firstTextAt?: number;
+  doneAt?: number;
+}
+
+/** A tool's result as the provider stream reports it, matched to its call by id. */
+export interface AgentToolResult {
+  id: string;
+  output: string;
+  isError?: boolean;
 }
 
 export interface ChatTrace {
@@ -57,6 +86,8 @@ export interface AgentToolCall {
 
 const MAX_STEPS = 60;
 const MAX_TEXT = 300;
+/** Tool input and output: enough to see what a call did, never a whole file. */
+const MAX_IO = 1200;
 const clip = (text: string, max = MAX_TEXT) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 export const baseName = (filePath: string) => filePath.split('/').filter(Boolean).at(-1) ?? filePath;
 
@@ -80,22 +111,20 @@ export function hunkLineRange(
   return undefined;
 }
 
-/** Selections from the Changes view begin with `After lines 40–52:`; topic selections carry no location. */
-export function selectionStep(selection: string | undefined, path?: string): ChatTraceStep | undefined {
+/** Selections carry their file and lines when the diff they came from knew them (lib/chat-selection.ts). */
+export function selectionStep(selection: string | undefined, fallbackPath?: string): ChatTraceStep | undefined {
   if (!selection?.trim()) return undefined;
-  const located = /^(Before|After) lines (\d+)[–-](\d+):/.exec(selection);
-  const lines = selection.split('\n').length - (located ? 1 : 0);
-  const start = located ? Math.min(Number(located[2]), Number(located[3])) : undefined;
-  const end = located ? Math.max(Number(located[2]), Number(located[3])) : undefined;
+  const parsed = parseChatSelection(selection);
+  const path = parsed.path ?? fallbackPath;
+  const lines = parsed.code.split('\n').length;
+  const located = !!(path && parsed.startLine);
   return {
     id: 'context:selection',
     source: 'context',
     kind: 'selection',
-    label: path && located ? baseName(path) : 'Selected code',
+    label: located ? baseName(path) : 'Selected code',
     detail: `${lines} ${lines === 1 ? 'line' : 'lines'} you selected`,
-    ...(path && located
-      ? { path, startLine: start, endLine: end, side: located[1] === 'Before' ? 'before' : 'after' }
-      : {}),
+    ...(located ? { path, startLine: parsed.startLine, endLine: parsed.endLine, side: parsed.side } : {}),
   } as ChatTraceStep;
 }
 
@@ -145,6 +174,47 @@ export function slideChatTrace(
   return { steps };
 }
 
+/**
+ * The PR-wide context a chat sent (lib/chat-pr-context.ts), as trace steps: each included item with its reason and
+ * size, and one step listing the changed files the budget left out. `skip` leaves out kinds the renderer already
+ * traced (a topic chat traces its own hunks and selection).
+ */
+export function chatContextTrace(
+  context: Pick<ChatContextResult, 'items' | 'leftOut' | 'budget'>,
+  historyCount: number,
+  skip: readonly ChatContextKind[] = []
+): ChatTrace {
+  const steps: ChatTraceStep[] = [];
+  for (const [index, item] of context.items.entries()) {
+    if (skip.includes(item.kind)) continue;
+    const detail = clip(chatContextItemDetail(item));
+    if (item.kind === 'pr')
+      steps.push({ id: 'context:pr', source: 'context', kind: 'pr', label: 'PR description', detail });
+    else if (item.kind === 'selection')
+      steps.push({ id: 'context:selection', source: 'context', kind: 'selection', label: 'Selected code', detail });
+    else if (item.path)
+      steps.push({
+        id: `context:${item.kind}:${index}:${item.path}`,
+        source: 'context',
+        kind: item.kind === 'source' ? 'file' : 'diff',
+        label: baseName(item.path),
+        detail: `${item.path}: ${detail}`,
+        path: item.path,
+      });
+  }
+  if (context.leftOut.length)
+    steps.push({
+      id: 'context:omitted',
+      source: 'context',
+      kind: 'omitted',
+      label: `${context.leftOut.length} changed ${context.leftOut.length === 1 ? 'file' : 'files'}`,
+      detail: clip(`Over the ${Math.round(context.budget / 1000)}k-token context: ${context.leftOut.join(', ')}`),
+    });
+  const history = historyStep(historyCount);
+  if (history) steps.push(history);
+  return { steps };
+}
+
 /** Context a file chat sends, as assembled in the main process. */
 export function fileChatTrace(input: {
   path: string;
@@ -188,8 +258,39 @@ const count = (value: unknown) =>
 const repoPath = (value: string | undefined) =>
   value && !value.startsWith('/') && !/^[a-z]:\\/i.test(value) ? value.replace(/^\.\//, '') : undefined;
 
+/** A tool's arguments as `key: value` lines: strings as they are, anything else as compact JSON. */
+export function formatToolInput(input: Record<string, unknown> | undefined): string | undefined {
+  const entries = Object.entries(input ?? {}).filter(([, value]) => value !== undefined && value !== '');
+  if (!entries.length) return undefined;
+  const lines = entries.map(([key, value]) => {
+    let shown: string;
+    try {
+      shown = typeof value === 'string' ? value : JSON.stringify(value);
+    } catch {
+      shown = String(value);
+    }
+    return `${key}: ${shown}`;
+  });
+  return clip(lines.join('\n'), MAX_IO);
+}
+
+/** A result as a step update: it joins the call's step by id, adding the output and how the call ended. */
+export function toolResultStep(result: AgentToolResult): Pick<ChatTraceStep, 'id' | 'output' | 'status'> {
+  return {
+    id: `agent:${result.id}`,
+    output: clip(result.output.replace(/\s+$/, ''), MAX_IO),
+    status: result.isError ? 'error' : 'done',
+  };
+}
+
 /** Turn a reported tool call into a step. Unknown tools keep their name; nothing is guessed. */
 export function toolCallStep(call: AgentToolCall, index = 0): ChatTraceStep {
+  const step = describeToolCall(call, index);
+  const input = formatToolInput(call.input);
+  return { ...step, ...(input ? { input } : {}), status: 'running' };
+}
+
+function describeToolCall(call: AgentToolCall, index: number): ChatTraceStep {
   const input = call.input ?? {};
   const id = `agent:${call.id ?? `${index}:${call.name}`}`;
   const base = { id, source: 'agent' as const };
@@ -282,16 +383,81 @@ export function codexItemToolCall(item: Record<string, unknown>): AgentToolCall 
   return undefined;
 }
 
-export function appendTraceSteps(trace: ChatTrace | undefined, steps: ChatTraceStep[]): ChatTrace {
+/**
+ * Add reported steps to a trace. A step whose id is already there is an update (a tool result): its output and status
+ * join the step, and `elapsed` measures the call's duration. A repeated report changes nothing. New steps record
+ * `elapsed`, the milliseconds since the question was sent, unless they carry their own.
+ */
+export function appendTraceSteps(
+  trace: ChatTrace | undefined,
+  steps: Partial<ChatTraceStep>[],
+  elapsed?: number
+): ChatTrace {
   const existing = trace?.steps ?? [];
-  const ids = new Set(existing.map((s) => s.id));
-  const added = steps.filter((s) => {
-    if (ids.has(s.id)) return false;
-    ids.add(s.id);
-    return true;
-  });
-  if (!added.length && trace) return trace;
-  return { steps: [...existing, ...added].slice(0, MAX_STEPS) };
+  const index = new Map(existing.map((s, i) => [s.id, i]));
+  let next = existing;
+  const added: ChatTraceStep[] = [];
+  for (const update of steps) {
+    if (!update.id) continue;
+    const at = index.get(update.id);
+    if (at !== undefined) {
+      const step = next[at];
+      if (
+        (update.output === undefined || update.output === step.output) &&
+        (update.status === undefined || update.status === step.status)
+      )
+        continue;
+      if (next === existing) next = [...existing];
+      next[at] = {
+        ...step,
+        ...(update.output !== undefined ? { output: update.output } : {}),
+        ...(update.status ? { status: update.status } : {}),
+        ...(elapsed !== undefined && step.at !== undefined && update.status && update.status !== 'running'
+          ? { duration: Math.max(0, elapsed - step.at) }
+          : {}),
+      };
+      continue;
+    }
+    // Only a whole step can be added: an update for a call never reported is dropped, not guessed into a step.
+    if (!update.source || !update.kind || typeof update.label !== 'string') continue;
+    index.set(update.id, existing.length + added.length);
+    added.push({
+      ...(update as ChatTraceStep),
+      ...(update.at === undefined && elapsed !== undefined ? { at: elapsed } : {}),
+    });
+  }
+  if (next === existing && !added.length && trace) return trace;
+  return { steps: [...next, ...added].slice(0, MAX_STEPS) };
+}
+
+/** Running agent steps end when the answer does: completed, or stopped with the answer. */
+export function settleTrace(trace: ChatTrace | undefined, status: 'done' | 'error' = 'done'): ChatTrace | undefined {
+  if (!trace?.steps.some((s) => s.status === 'running')) return trace;
+  return { steps: trace.steps.map((s) => (s.status === 'running' ? { ...s, status } : s)) };
+}
+
+/** Seconds for a trace line: `0.4s`, `12s`, `2m 4s`. */
+export function durationText(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 10000) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** Validate timing read back from storage. */
+export function parseChatTiming(value: unknown): ChatTiming | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const t = value as Record<string, unknown>;
+  const time = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
+  const sentAt = time(t.sentAt);
+  if (!sentAt) return undefined;
+  const firstTextAt = time(t.firstTextAt);
+  const doneAt = time(t.doneAt);
+  return {
+    sentAt,
+    ...(firstTextAt && firstTextAt >= sentAt ? { firstTextAt } : {}),
+    ...(doneAt && doneAt >= sentAt ? { doneAt } : {}),
+  };
 }
 
 export function traceLabel(trace: ChatTrace): string {
@@ -301,10 +467,13 @@ export function traceLabel(trace: ChatTrace): string {
 /** One-line count, in the spirit of "4 tool calls, 2 messages". */
 export function traceCountText(trace: ChatTrace): string {
   const agent = trace.steps.filter((s) => s.source === 'agent').length;
-  const context = trace.steps.length - agent;
+  const omitted = trace.steps.find((s) => s.kind === 'omitted');
+  const context = trace.steps.length - agent - (omitted ? 1 : 0);
+  const left = omitted ? Number(/^\d+/.exec(omitted.label)?.[0] ?? 0) : 0;
   return [
     agent && `${agent} tool ${agent === 1 ? 'call' : 'calls'}`,
     context && `${context} ${context === 1 ? 'source' : 'sources'}`,
+    left && `${left} left out`,
   ]
     .filter(Boolean)
     .join(', ');
@@ -322,6 +491,7 @@ const KINDS = new Set<ChatTraceKind>([
   'edit',
   'web',
   'tool',
+  'omitted',
 ]);
 const line = (value: unknown) =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
@@ -346,6 +516,14 @@ export function parseChatTrace(value: unknown): ChatTrace | undefined {
       if (line(s.startLine)) step.startLine = line(s.startLine);
       if (line(s.endLine)) step.endLine = line(s.endLine);
       if (s.side === 'before' || s.side === 'after') step.side = s.side;
+      if (typeof s.input === 'string') step.input = clip(s.input, MAX_IO);
+      if (typeof s.output === 'string') step.output = clip(s.output, MAX_IO);
+      // A step still running when it was saved ended with its answer.
+      if (s.status === 'done' || s.status === 'error') step.status = s.status;
+      else if (s.status === 'running') step.status = 'done';
+      const ms = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+      if (ms(s.at) !== undefined) step.at = ms(s.at);
+      if (ms(s.duration) !== undefined) step.duration = ms(s.duration);
       return [step];
     })
     .slice(0, MAX_STEPS);

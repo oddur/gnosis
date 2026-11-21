@@ -11,6 +11,7 @@ export const CHAPTER_GROUPING_DIRECTIVE = `CHAPTERS: Each topic answers one usef
 - For a refactor, explain the responsibility or structure that changed and the behavior intended to remain stable. Do not invent a behavior change, or assume a move/rename is harmless.
 
 READING ORDER: Start with the smallest amount of context needed to understand the main change. Order later topics by genuine prerequisites. Do not force a types → implementation → consumers → tests → docs sequence. Put supporting evidence beside the behavior it explains.
+- List each topic's hunk IDs in the order a reader should read them to build an understanding of the change. Lead with the core change, or with the definition the rest depends on, then its callers and consumers, then the supporting tests and configuration. Move between files when that is the clearer path. Within one file, keep line order unless reading it differently is clearly better.
 - dependsOn contains the exact titles of earlier topics needed to understand this one. Leave it empty when there is no prerequisite; sequence alone does not imply dependency.
 - Give each changed hunk one primary topic. Refer briefly to a prerequisite instead of explaining its code again. Do not duplicate hunks to force a story or drop difficult code because its purpose is uncertain.
 - Ground the grouping in supplied code. A path, hunk heading, or PR description is a clue, not proof of a dependency or behavior. When evidence is incomplete, keep the plan tentative and tell the writer what needs verification.`;

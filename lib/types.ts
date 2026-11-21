@@ -441,6 +441,12 @@ export interface Preferences {
   /** Settings › Appearance › Code intelligence. See lib/code-intelligence.ts. */
   codeIntelligence?: import('./code-intelligence').CodeIntelligencePreferences;
   showInlineExplanations?: boolean;
+  /** Width of each chat surface's side panel, in pixels. See lib/chat-preferences.ts. */
+  chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
+  /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */
+  chatModels?: import('./chat-preferences').ChatModels;
+  /** "Chat context size": the tokens of PR context each chat question carries, for both chats. lib/chat-pr-context.ts. */
+  chatContextTokens?: number;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;
@@ -485,6 +491,16 @@ export interface SendSlideChatRequest {
   provider: Provider;
   model: ModelId;
   effort?: import('./effort').Effort;
+  /** The PR, for PR-wide context (lib/chat-pr-context.ts). A local review has none and keeps the topic's diff. */
+  prUrl?: string;
+  /** The topic's files: the anchor of its PR-wide context. */
+  anchorFiles?: string[];
+  /** The topic's own hunks, by path and new start line: they go first when a file does not fit whole. */
+  anchorHunks?: Record<string, number[]>;
+  /** The revision the explanation was written at: the context is read there when it still can be. */
+  revision?: { baseSha?: string; headSha?: string };
+  /** Tokens of PR context to send. */
+  contextTokens?: number;
 }
 
 export interface GenerateReviewRequest {

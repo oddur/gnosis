@@ -3,9 +3,13 @@ import { createPortal } from 'react-dom';
 import { PopoverManager, setPopoverPositionStyles } from '@pierre/diffs/edit';
 import { Bot, Copy } from 'lucide-react';
 import { reviewCodeSelection } from './ReviewDiff';
+import { diffSelectionRange, formatChatSelection, type SelectedDiffLine } from '../lib/chat-selection';
 
 interface CodeSelection {
   text: string;
+  /** Where it sits: the file and the selected rows' lines, for the chip and the question. */
+  path?: string;
+  lines: SelectedDiffLine[];
   range: Range;
   backward: boolean;
   root: Node;
@@ -18,6 +22,27 @@ function codeLine(node: Node): HTMLElement | null {
       '[data-code] [data-line], [data-file-path][data-line-number], [data-file-path][data-base-line]'
     ) ?? null
   );
+}
+
+/** A diff row's own line number and kind. Rows in a split diff's old column, and deleted rows, are old lines. */
+function lineOf(element: HTMLElement): SelectedDiffLine | undefined {
+  const type = element.dataset.lineType ?? '';
+  const old =
+    type === 'change-deletion' || (!type.startsWith('change-addition') && !!element.closest('[data-deletions]'));
+  const own = Number(element.dataset.line ?? (old ? element.dataset.baseLine : element.dataset.lineNumber));
+  if (!Number.isInteger(own) || own < 1) return undefined;
+  return { line: own, type: old ? 'deletion' : type === 'change-addition' ? 'addition' : 'context' };
+}
+
+/** The file a diff row belongs to: tagged on the row, or on a group around the diff's shadow host. */
+function filePathOf(node: Node): string | undefined {
+  let current: Node | null = node;
+  while (current) {
+    if (current instanceof HTMLElement && current.dataset.filePath) return current.dataset.filePath;
+    const parent: Node | null = current.parentNode;
+    current = parent instanceof ShadowRoot ? parent.host : parent;
+  }
+  return undefined;
 }
 
 /** Read code only, preserving partial lines and indentation but excluding gutter/annotation text. */
@@ -33,8 +58,11 @@ function selectedCode(container: HTMLElement): CodeSelection | null {
   const column = start.closest('[data-code]') ?? start.parentElement;
   if (!column || !column.contains(end)) return null;
   const parts: string[] = [];
+  const lines: SelectedDiffLine[] = [];
   for (const line of column.querySelectorAll<HTMLElement>('[data-line], [data-line-number], [data-base-line]')) {
     if (!range.intersectsNode(line)) continue;
+    const row = lineOf(line);
+    if (row) lines.push(row);
     const part = document.createRange();
     part.selectNodeContents(line);
     if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0)
@@ -46,6 +74,8 @@ function selectedCode(container: HTMLElement): CodeSelection | null {
   if (!text.trim()) return null;
   return {
     text,
+    path: filePathOf(start),
+    lines,
     range: range.cloneRange(),
     backward: selection.anchorNode === range.endContainer && selection.anchorOffset === range.endOffset,
     root,
@@ -57,10 +87,14 @@ export function ReviewSelectionActions({
   containerRef,
   onAsk,
   resetKey,
+  path,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
+  /** The selection as lib/chat-selection.ts formats it: its file and lines first, then the code. */
   onAsk: (text: string) => void;
   resetKey: string;
+  /** The file, when the diff does not tag its rows or groups with one. */
+  path?: string;
 }) {
   const [selection, setSelection] = useState<CodeSelection | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
@@ -234,7 +268,13 @@ export function ReviewSelectionActions({
       <button
         className="review-selection-ask"
         onClick={() => {
-          onAsk(selection.text);
+          onAsk(
+            formatChatSelection({
+              code: selection.text,
+              path: selection.path ?? path,
+              ...diffSelectionRange(selection.lines),
+            })
+          );
           dismissed.current = true;
           setSelection(null);
         }}

@@ -4,6 +4,11 @@
 // exceed the display so layouts depend only on the sizes the tests ask for.
 import * as electron from 'electron';
 import fs from 'node:fs';
+import { FIXTURE_CLOCK_OFFSET, shiftClock } from './fixture-clock';
+
+// The fixture PRs carry fixed dates, so the suites run at a fixed moment (tests/fixture-clock.ts). The runner passes
+// the offset; fixture pages get the same one, so main and renderer agree on "now".
+if (process.env[FIXTURE_CLOCK_OFFSET]) shiftClock(Number(process.env[FIXTURE_CLOCK_OFFSET]));
 
 // A suite may preserve storage across reloads, but must not restore another suite's tabs.
 if (process.env.GNOSIS_BROWSER_TEST_PROFILE) {
