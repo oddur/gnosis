@@ -105,7 +105,7 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   assert.equal(f.session.files.length, 1);
   assert.equal(f.session.files[0].unsupported, undefined);
   assert.match(f.session.files[0].original, /<<<<<<< /);
-  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version }))
+  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: f.session.files[0].path }))
     .session;
   assert.equal(session.files[0].resolved, false, 'Automatic suggestions always need review');
   await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
@@ -568,7 +568,7 @@ void test('Mergiraf executable returns a saved proposal without auto-approving i
     return;
   }
   const f = await fixture(t);
-  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' });
+  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path });
   assert.equal(result.session.files[0].source, 'mergiraf');
   assert.equal(result.session.files[0].resolved, false);
   assert.ok(hasConflictMarkers(result.session.files[0].result), 'Incompatible changes remain visible for a human');
@@ -622,7 +622,7 @@ void test('rejects malformed IPC, leftover markers and cancelled operations with
   controller.abort();
   await assert.rejects(
     f.service.run(
-      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent' },
+      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent', path: f.session.files[0].path },
       controller.signal
     ),
     /abort/i
@@ -819,7 +819,7 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   });
   assert.equal(f.session.files.length, 1);
   assert.ok(hasConflictMarkers(f.session.files[0].original), 'Native Git must first report a real text conflict');
-  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' }))
+  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path }))
     .session;
   const proposal = session.files[0];
   assert.equal(hasConflictMarkers(proposal.result), false);

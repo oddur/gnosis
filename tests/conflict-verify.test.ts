@@ -16,7 +16,8 @@ import {
   fileStatusLine,
   fileStatusParts,
   keepsLayout,
-  mergedOnly,
+  allMerged,
+  waitsForReview,
   proposalKey,
   proposalReady,
   SAME_LINES,
@@ -736,7 +737,9 @@ void test('the summary says what is left: review, a local merge tool, or nothing
   const ok = { merged: true, passed: true, note: '' };
   const buckets = blockBuckets(f, f.result, ok);
   const status = fileStatus(f, f.result, conflictFileStage(f), buckets);
-  assert.ok(mergedOnly(status));
+  assert.ok(allMerged(buckets));
+  assert.ok(waitsForReview(status, buckets, true));
+  assert.equal(waitsForReview(status, buckets, false), false, 'Reviewed for you with the setting off');
   // "Show me every merged conflict" on: the Merged file waits for Mark reviewed, and the summary says so.
   assert.equal(
     summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: false, review: true }])),
@@ -759,4 +762,29 @@ void test('the summary says what is left: review, a local merge tool, or nothing
   const unsupported = fileStatus({ ...f, unsupported: 'rename' }, '', 'conflicted', ['decide']);
   assert.deepEqual(fileStatusParts(unsupported), [{ tone: 'unsupported', text: 'Needs a local merge tool' }]);
   assert.match(fileStatusLine(unsupported) ?? '', /on your computer/);
+});
+
+void test('a choice or an edit beside a Merged conflict is never all-Merged: it is shown before Mark reviewed', () => {
+  const f = file([merged(imports), merged(three + four)]);
+  const ok = { merged: true, passed: true, note: '' };
+  // Keep PR change on the second conflict, beside the first one Merged.
+  const kept = f.result.replace(three + four, three);
+  const buckets = blockBuckets(f, kept, ok);
+  assert.deepEqual(buckets, ['merged', 'decided']);
+  assert.equal(allMerged(buckets), false);
+  const status = fileStatus(f, kept, conflictFileStage(f, kept), buckets);
+  // On or off, the file waits for your review, and the summary says so instead of "Nothing needs you.".
+  for (const showMerged of [true, false]) {
+    const review = waitsForReview(status, buckets, showMerged);
+    assert.equal(review, true);
+    assert.equal(
+      summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: false, review }])),
+      '1 file has conflicts. 1 of 2 conflicts are merged and checked. 1 file is ready for review.'
+    );
+  }
+  // A Keep pick equal to the proposal counts as yours too.
+  const picked = blockBuckets(f, f.result, ok, [undefined, undefined]);
+  assert.ok(allMerged(picked));
+  assert.equal(allMerged(blockBuckets(f, f.result, ok, ['both'])), false);
+  assert.equal(allMerged([]), false);
 });

@@ -19,7 +19,7 @@ import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS } from './ShortcutOverlay';
+import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { ToastHost } from './ui/toast';
 import { BranchBadge, CommitBadge, PrBadge, RepositoryBadge } from './EntityBadge';
@@ -38,6 +38,7 @@ import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './C
 import { conflictLabels, type BlockPicks } from '../lib/conflict-blocks';
 import {
   conflictFileAction,
+  localMergeCommands,
   describeBaseMove,
   describeConflictError,
   type ConflictErrorCopy,
@@ -67,11 +68,13 @@ import {
   fileStatus,
   fileStatusLine,
   fileStatusParts,
-  mergedOnly,
+  allMerged,
+  waitsForReview,
   summarySentence,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
+  type ConflictBucket,
   type Verdict,
 } from '../lib/conflict-verify';
 import { withProposals } from '../lib/conflict-carry';
@@ -175,39 +178,47 @@ function KeyboardHelp() {
  * happens on your computer: say why, and give the commands that start it.
  */
 function LocalMerge({ session, reason }: { session: ConflictSession; reason: string }) {
-  // A fork's clone has no remote for the base repository: fetch the base branch by URL.
-  const base =
-    session.headRepo === session.baseRepo
-      ? `git fetch origin ${session.baseBranch}\ngit merge origin/${session.baseBranch}`
-      : `git fetch https://github.com/${session.baseRepo}.git ${session.baseBranch}\ngit merge FETCH_HEAD`;
-  const commands = `git switch ${session.headBranch}\ngit pull\n${base}`;
+  // Names come from the PR's author: quoted, and no commands at all for a name a shell could read as code.
+  const commands = localMergeCommands(session);
   const [copied, setCopied] = useState(false);
   return (
     <div className="conflict-local" data-conflict-local="">
       <h2>Merge this PR on your computer</h2>
-      <p>
-        {reason} Gnosis pushes only a merge it can resolve completely, so this PR needs a local merge. In a clone of{' '}
-        {session.headRepo}, run:
-      </p>
-      <pre className="selectable">{commands}</pre>
+      {commands ? (
+        <>
+          <p>
+            {reason} Gnosis pushes only a merge it can resolve completely, so this PR needs a local merge. In a clone of{' '}
+            {session.headRepo}, run:
+          </p>
+          <pre className="selectable">{commands}</pre>
+        </>
+      ) : (
+        <p data-conflict-local-unsafe="">
+          {reason} Gnosis pushes only a merge it can resolve completely, so this PR needs a local merge. A branch or
+          repository name here has characters a shell could run as code, so Gnosis shows no commands to copy. Merge{' '}
+          {session.baseBranch} into {session.headBranch} in your clone by hand.
+        </p>
+      )}
       <p>
         Resolve the conflicts in your editor or merge tool, commit, and push. GitHub then shows whether conflicts
         remain.
       </p>
       <div className="conflict-state-actions">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            void navigator.clipboard.writeText(commands).then(
-              () => setCopied(true),
-              () => setCopied(false)
-            )
-          }
-        >
-          <Copy aria-hidden="true" />
-          {copied ? 'Copied' : 'Copy commands'}
-        </Button>
+        {commands && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              void navigator.clipboard.writeText(commands).then(
+                () => setCopied(true),
+                () => setCopied(false)
+              )
+            }
+          >
+            <Copy aria-hidden="true" />
+            {copied ? 'Copied' : 'Copy commands'}
+          </Button>
+        )}
         <Button size="sm" variant="ghost" asChild>
           <a href={session.url} target="_blank" rel="noreferrer">
             Open PR on GitHub
@@ -394,7 +405,19 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [baseNote, setBaseNote] = useState('');
   const [hint, setHint] = useState('');
   // Your Keep choices per file, so a choice that equals the proposal reads as yours. Reset and reopening clear them.
-  const [picks, setPicks] = useState<Record<string, BlockPicks>>({});
+  const [picks, setPicks] = useState<Partial<Record<string, { original: string; picks: BlockPicks }>>>({});
+  // A file whose conflict changed (main moved, or a fresh merge) starts without your earlier choices.
+  const picksOf = (f: ConflictFile) => {
+    const entry = picks[f.path];
+    return entry?.original === f.original ? entry.picks : undefined;
+  };
+  // Each saved draft's buckets, per file: a Keep press or a check result recomputes only the file it changed.
+  const bucketCache = useRef(
+    new WeakMap<
+      ConflictFile,
+      { verdict: Verdict | undefined; picks: BlockPicks | undefined; buckets: ConflictBucket[] }
+    >()
+  );
   // The draft each file had when its result was last shown next to the PR. Mark reviewed needs it.
   const [shown, setShown] = useState<Record<string, string>>({});
   const view = useRef<ConflictViewHandle>(null);
@@ -438,7 +461,18 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const file = session?.files.find((f) => f.path === selected);
   // Saved drafts' buckets change only with the session or a check result; the open draft's follow each keystroke.
   const savedBuckets = useMemo(
-    () => new Map(session?.files.map((f) => [f.path, blockBuckets(f, f.result, verdictOf(f), picks[f.path])])),
+    () =>
+      new Map(
+        session?.files.map((f) => {
+          const verdict = verdictOf(f);
+          const own = picksOf(f);
+          const cached = bucketCache.current.get(f);
+          if (cached && cached.verdict === verdict && cached.picks === own) return [f.path, cached.buckets];
+          const buckets = blockBuckets(f, f.result, verdict, own);
+          bucketCache.current.set(f, { verdict, picks: own, buckets });
+          return [f.path, buckets];
+        })
+      ),
     [session?.files, verdicts, picks]
   );
   const fileStates = useMemo(
@@ -447,7 +481,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         const text = f.path === selected ? contents : f.result;
         const stage = conflictFileStage(f, text);
         const buckets =
-          text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f), picks[f.path]);
+          text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f), picksOf(f));
         return {
           file: f,
           stage,
@@ -467,8 +501,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
       whole: !!s.file.wholeFile,
       marker: s.status.kind === 'marker',
       unsupported: s.status.kind === 'unsupported',
-      // With "Show me every merged conflict" off, a Merged file is reviewed for you and waits for nobody.
-      review: s.status.kind === 'resolved' || (showMerged && mergedOnly(s.status)),
+      review: waitsForReview(s.status, s.buckets, showMerged),
     }))
   );
   const reviewedCount = fileStates.filter((s) => s.stage === 'reviewed').length;
@@ -495,7 +528,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     resultShown,
     otherFilesPending: !!nextPending(selected),
     unsupported: !!file?.unsupported,
-    merged: !!selectedState && mergedOnly(selectedState.status),
+    merged: !!selectedState && allMerged(selectedState.buckets),
   });
   const labels = useMemo(
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
@@ -646,6 +679,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
 
   /** New base commits brought new conflicts: back to the files, on the first one that needs work. */
   function showNewConflicts(reply: ConflictReply) {
+    setPicks({});
     setPreview(undefined);
     setConfirming(false);
     setShown({});
@@ -674,7 +708,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   function markReviewed() {
     if (!file || markersRemain || file.unsupported) return;
     // A Merged conflict's result is on screen already; anything you chose or edited is shown next to the PR first.
-    if (!resultShown && !(selectedState && mergedOnly(selectedState.status))) {
+    if (!resultShown && !(selectedState && allMerged(selectedState.buckets))) {
       showResult();
       setHint('Check the result next to the PR, then mark the file reviewed.');
       return;
@@ -698,13 +732,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // With "Show me every merged conflict" off, a file whose every conflict is Merged needs no review from you.
   useEffect(() => {
     if (showMerged || busy || error || confirming || !session || session.stale || session.status !== 'editing') return;
-    const ready = fileStates.find(
-      (s) =>
-        !s.file.resolved &&
-        s.contents === s.file.result &&
-        s.buckets.length > 0 &&
-        s.buckets.every((bucket) => bucket === 'merged')
-    );
+    const ready = fileStates.find((s) => !s.file.resolved && s.contents === s.file.result && allMerged(s.buckets));
     if (!ready) return;
     const { path, result } = ready.file;
     void run(
@@ -713,11 +741,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
   const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
-  const pickFor = (path: string, index: number, choice: BlockPicks[number]) =>
+  const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
-      const next = [...(previous[path] ?? [])];
+      const entry = previous[f.path];
+      const next = [...(entry?.original === f.original ? entry.picks : [])];
       next[index] = choice;
-      return { ...previous, [path]: next };
+      return { ...previous, [f.path]: { original: f.original, picks: next } };
     });
   const dropPicks = (path: string) =>
     setPicks((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== path)));
@@ -1412,6 +1441,22 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                             model={model}
                             onAsk={(instructions) => suggest('agent', instructions)}
                           />
+                          {/* Structural merge ran during preparation; run it again, with the full budget, where it timed
+                              out or could not combine the sides, or where an earlier resolution stands in for it. */}
+                          {!file.wholeFile &&
+                            (file.structuralNote ||
+                              file.source === 'rerere' ||
+                              file.proposals?.some((p) => p?.source === 'rerere')) && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={!canEdit}
+                                data-conflict-structural=""
+                                onClick={() => suggest('mergiraf')}
+                              >
+                                Try structural merge again
+                              </Button>
+                            )}
                           {/* Reset returns to what preparation proposed; Git's conflict is a separate step back. */}
                           {file.proposals && contents !== file.original && (
                             <Button
@@ -1471,8 +1516,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
-                                picks={picks[file.path]}
-                                onPick={(index, choice) => pickFor(file.path, index, choice)}
+                                picks={picksOf(file)}
+                                onPick={(index, choice) => pickFor(file, index, choice)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {

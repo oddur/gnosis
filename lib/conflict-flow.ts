@@ -23,6 +23,34 @@ export function conflictFileAction(state: {
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }
 
+/** A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`. */
+const SAFE_REF = /^[A-Za-z0-9._/-]+$/;
+/** One shell word: single quotes, with an embedded `'` closed, escaped and reopened. */
+export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+/**
+ * The commands that start a local merge of the base branch into the PR branch, for a conflict Gnosis can't write as
+ * text. Branch and repository names come from the PR's author, so every one is quoted, and a name with any character
+ * outside letters, digits, `.`, `_`, `/` and `-` gets no commands at all (undefined): pasting it must never run code.
+ */
+export function localMergeCommands(session: {
+  headRepo: string;
+  baseRepo: string;
+  headBranch: string;
+  baseBranch: string;
+}): string | undefined {
+  const { headRepo, baseRepo, headBranch, baseBranch } = session;
+  if (![headRepo, baseRepo, headBranch, baseBranch].every((name) => SAFE_REF.test(name))) return undefined;
+  // A fork's clone has no remote for the base repository: fetch the base branch by URL.
+  const base =
+    headRepo === baseRepo
+      ? [`git fetch origin ${shellQuote(baseBranch)}`, `git merge ${shellQuote(`origin/${baseBranch}`)}`]
+      : [
+          `git fetch ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
+          'git merge FETCH_HEAD',
+        ];
+  return [`git switch ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
+}
+
 export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
 export interface ConflictErrorCopy {
   /** One plain sentence: what happened. */

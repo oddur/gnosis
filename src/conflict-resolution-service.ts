@@ -1374,9 +1374,7 @@ export function createConflictResolutionService(deps: Deps) {
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
-          const files = session.files.filter(
-            (f) => !f.unsupported && (request.path ? f.path === request.path : !f.resolved)
-          );
+          const files = session.files.filter((f) => !f.unsupported && f.path === request.path);
           if (!files.length) throw new Error('Select an unresolved text file.');
           for (const file of files) {
             report(`Proposing a resolution for ${file.path}.`);
@@ -1394,7 +1392,15 @@ export function createConflictResolutionService(deps: Deps) {
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result.
               file.result =
                 file.wholeFile?.text ??
-                (await mergiraf(ctx, id, { head: session.headBranch, base: session.baseBranch }, file, signal));
+                // Run again on request: the full budget, not the first try's.
+                (await mergiraf(
+                  ctx,
+                  id,
+                  { head: session.headBranch, base: session.baseBranch },
+                  file,
+                  signal,
+                  Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1))
+                ));
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';

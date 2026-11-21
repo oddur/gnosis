@@ -403,15 +403,15 @@ export function ConflictView({
     if (target) revealElement(target);
     else onAllResolved?.();
   }, [model]);
-  // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to what needs you, or to
-  // the next action, so J and the primary button start from there.
+  // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
+  // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
+  // then goes to the next action.
   useEffect(() => {
     const active = document.activeElement?.closest<HTMLElement>('.conflict-block');
     if (!active || !root.current?.contains(active) || active.matches(pendingSelector)) return;
     if (active.dataset.state !== 'proposal') return;
-    const target = openBlocks().at(0);
+    const target = openBlocks().find((block) => indexOf(block) > indexOf(active)) ?? openBlocks().at(0);
     if (target) revealElement(target);
-    else onAllResolved?.();
   }, [verdict]);
   useImperativeHandle(
     handle,

@@ -584,8 +584,21 @@ export function fileStatus(
   if (counts.decide || counts.check || counts.merged) return { kind: 'buckets', ...counts };
   return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
 }
-/** Every conflict in the file is Merged: nothing to decide or check, only Mark reviewed is left. */
-export const mergedOnly = (status: FileStatus) => status.kind === 'buckets' && !status.decide && !status.check;
+/**
+ * Every conflict in the file is Merged, with nothing you chose or edited beside it. Only then are its results all on
+ * screen already: Mark reviewed needs no Review result first, and with "Show me every merged conflict" off the file is
+ * reviewed for you. The primary action, Mark reviewed, the summary and the automatic review all use it.
+ */
+export const allMerged = (buckets: readonly ConflictBucket[]) =>
+  buckets.length > 0 && buckets.every((bucket) => bucket === 'merged');
+/**
+ * The file needs nothing but Mark reviewed: no conflict left to decide or check, and not reviewed for you. With "Show me
+ * every merged conflict" off, an all-Merged file is reviewed for you, so it waits for nobody.
+ */
+export function waitsForReview(status: FileStatus, buckets: readonly ConflictBucket[], showMerged: boolean) {
+  const settled = status.kind === 'resolved' || (status.kind === 'buckets' && !status.decide && !status.check);
+  return settled && (showMerged || !allMerged(buckets));
+}
 /** The parts a status shows, each with its tone (the icon): "1 to decide", "2 to check", "Resolved · needs review". */
 export function fileStatusParts(status: FileStatus): {
   tone: 'decide' | 'check' | 'merged' | 'proposal' | 'conflicted' | 'resolved' | 'reviewed' | 'unsupported';

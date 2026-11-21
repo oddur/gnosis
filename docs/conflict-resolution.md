@@ -25,7 +25,7 @@ Each file has one main action in the footer: **Next conflict**, **Review result*
 | --- | --- |
 | J / K | Next / previous conflict |
 | 1 / 2 / 3 | Keep PR change / base change / both, for the focused conflict |
-| M | Show the result, then mark the file reviewed and open the next file |
+| M | Mark the file reviewed and open the next file. A file with a choice or an edit of yours shows its result first |
 | N / P | Next / previous file |
 
 Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, the result editor and the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
