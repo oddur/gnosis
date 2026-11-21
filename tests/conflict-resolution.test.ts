@@ -105,7 +105,7 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   assert.equal(f.session.files.length, 1);
   assert.equal(f.session.files[0].unsupported, undefined);
   assert.match(f.session.files[0].original, /<<<<<<< /);
-  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version }))
+  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: f.session.files[0].path }))
     .session;
   assert.equal(session.files[0].resolved, false, 'Automatic suggestions always need review');
   await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
@@ -568,7 +568,7 @@ void test('Mergiraf executable returns a saved proposal without auto-approving i
     return;
   }
   const f = await fixture(t);
-  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' });
+  const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path });
   assert.equal(result.session.files[0].source, 'mergiraf');
   assert.equal(result.session.files[0].resolved, false);
   assert.ok(hasConflictMarkers(result.session.files[0].result), 'Incompatible changes remain visible for a human');
@@ -622,7 +622,7 @@ void test('rejects malformed IPC, leftover markers and cancelled operations with
   controller.abort();
   await assert.rejects(
     f.service.run(
-      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent' },
+      { kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'agent', path: f.session.files[0].path },
       controller.signal
     ),
     /abort/i
@@ -819,7 +819,7 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   });
   assert.equal(f.session.files.length, 1);
   assert.ok(hasConflictMarkers(f.session.files[0].original), 'Native Git must first report a real text conflict');
-  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf' }))
+  let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path }))
     .session;
   const proposal = session.files[0];
   assert.equal(hasConflictMarkers(proposal.result), false);
@@ -1287,7 +1287,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
     structural++;
     return nativeMergiraf;
   };
-  // Using it is the Suggest step: the result becomes the draft, unreviewed, with no per-conflict proposals.
+  // Using it is the Suggest step: the result becomes the draft, unreviewed. The proposal stays for Reset file.
   let session = (
     await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path })
   ).session;
@@ -1296,7 +1296,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
   assert.equal(used.result, expected);
   assert.equal(used.source, 'mergiraf');
   assert.equal(used.resolved, false);
-  assert.equal(used.wholeFile, undefined);
+  assert.equal(used.wholeFile?.text, expected, 'Reset file can return to the proposal');
   assert.ok(blockBuckets(used, used.result, undefined).every((bucket) => bucket === 'decided'));
 
   // Start over, then resolve conflict by conflict instead: the proposal stays beside the draft.
@@ -1537,6 +1537,34 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   assert.deepEqual(await stub.budgets(), ['100', '10000']);
   assert.equal(file.wholeFile, undefined);
   assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 });
+});
+
+void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample);
+  // Always past the budget, then Git's line-merge fallback: no markers, and not Mergiraf's merge.
+  const stub = await stubMergiraf(t, `sleep 0.4\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 300, 300] });
+  const session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(session.files[0].structuralNote, 'Structural merge timed out.');
+  const before = session.files[0];
+  const file = (
+    await f.run({
+      kind: 'resolve',
+      id: session.id,
+      version: session.version,
+      engine: 'mergiraf',
+      path: before.path,
+    })
+  ).session.files[0];
+  assert.equal(file.result, before.result, 'The draft stays as it was');
+  assert.equal(file.source, before.source);
+  assert.equal(file.structuralNote, 'Structural merge timed out again.');
+  assert.ok((await stub.budgets()).includes('300'), 'The full budget');
 });
 
 void test('a file structural merge proposed nothing for says why, and a base move that changes it runs it again', async (t) => {

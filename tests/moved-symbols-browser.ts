@@ -218,13 +218,13 @@ void app.whenReady().then(async () => {
     const placed = async (path: string, note: string, type: string, line: string) => {
       const read = () =>
         js<string>(
-          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({gap:Math.round(r.top-b.bottom),top:Math.round(b.top),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
+          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({gap:Math.round(r.top-b.bottom),bottom:Math.round(b.bottom),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
         );
       let last = '';
       for (let i = 0; i < 300; i++) {
         const now = await read();
         if (now && now === last)
-          return JSON.parse(now) as { gap: number; top: number; left: number; right: number; row: number };
+          return JSON.parse(now) as { gap: number; bottom: number; left: number; right: number; row: number };
         last = now;
         await sleep(40);
       }
@@ -289,7 +289,7 @@ void app.whenReady().then(async () => {
       }
       // Split: the hunk's two lead notes share one row, each over its own column.
       if (key === 's') {
-        assert.equal(normalize.top, totalWidth.top, 'Split: both notes heading the hunk are on one row');
+        assert.equal(normalize.bottom, totalWidth.bottom, 'Split: both notes heading the hunk end on one row');
         assert.ok(
           normalize.right <= normalize.row && totalWidth.left >= totalWidth.row,
           'Split: each note is in its column'
@@ -304,6 +304,23 @@ void app.whenReady().then(async () => {
         await capture(`first-row-note-${key}-${file}`, row(path));
       }
     }
+    // Split, narrower: the old side's lead note wraps to two lines (as on the Windows runner, whose 1024px screen clamps
+    // the 1280px window), and the new side's still sits right above its first row, not at the top of the taller row.
+    const wide = await js<number>('innerWidth');
+    win.setContentSize(1000, 900);
+    await wait('innerWidth===1000', 200);
+    const wrapped = {
+      totalWidth: await placed(MOVE_FILES.lines, 'Moved up from line 18', 'change-addition', 'export function totalWidth('),
+      normalize: await placed(MOVE_FILES.lines, 'render.ts:7', 'change-deletion', 'export function normalizeLines('),
+    };
+    for (const [label, at] of Object.entries(wrapped)) {
+      console.log(`s ${label} at 1000px: note ${at.gap}px above its symbol`);
+      assert.ok(at.gap >= 0 && at.gap <= 10, `Split at 1000px, ${label}: the note is right above its symbol (${at.gap}px)`);
+    }
+    assert.equal(wrapped.normalize.bottom, wrapped.totalWidth.bottom, 'Split at 1000px: both lead notes end on one row');
+    // Back to the width it had: 1280, or what a smaller screen clamped that to.
+    win.setContentSize(wide, 900);
+    await wait(`innerWidth===${wide}`, 200);
     await layout('u');
 
     // ── The tie: two removed copies of closeAll, one added: no note anywhere ──
@@ -368,12 +385,11 @@ void app.whenReady().then(async () => {
       !topicNotes.some((note) => /from line 3|readHeader/.test(note)),
       'Hunks the topic leaves out have no notes'
     );
-    assert.ok(
-      await js<boolean>(
-        `window.deepAll('[data-line][data-moved-line]',document.querySelector(${JSON.stringify(topic)})).length>=8`
-      ),
-      'The topic dims the lines a move carried over, as Changes does'
-    );
+    // The dimming lands once the topic's diff has the move's lines, which can be after its notes show.
+    const dimmed = `window.deepAll('[data-line][data-moved-line]',document.querySelector(${JSON.stringify(topic)})).length`;
+    await wait(`${dimmed}>=8`, 300).catch(async () => {
+      assert.fail(`The topic dims the lines a move carried over, as Changes does: ${await js<number>(dimmed)} lines dimmed`);
+    });
     await capture('explanation-moved-from', `${topic} .review-file-group`);
 
     // ── Summary alone reads nothing for moves: no file list, no contents, nothing tracked ──

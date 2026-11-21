@@ -90,12 +90,15 @@ void app.whenReady().then(async () => {
     );
     await capture('summary-light');
     const branch = '.pr-branches .entity-badge-branch';
-    // Beside the timeline the details column is narrow: the long branch name keeps its start and end.
+    // Beside the timeline the details column is narrow: the long branch name keeps its start and end. A window the
+    // screen clamps below 1100px (the 1024px Windows runner) shows the details as a strip above the timeline instead,
+    // where the badge may show whole (checked at 960px below). Either way it never overflows.
+    const fit = await js<{ beside: boolean; truncated: boolean; right: number; aside: number; inner: number }>(
+      "(()=>{const b=document.querySelector('.pr-branches .entity-badge-branch'),start=b.querySelector('.entity-badge-start'),side=document.querySelector('.conversation-sidebar').getBoundingClientRect(),main=document.querySelector('.conversation-main').getBoundingClientRect();return {beside:side.left>=main.right-1,truncated:start.scrollWidth>start.clientWidth,right:b.getBoundingClientRect().right,aside:b.closest('aside').getBoundingClientRect().right,inner:innerWidth}})()"
+    );
     assert.ok(
-      await js(
-        "(()=>{const b=document.querySelector('.pr-branches .entity-badge-branch'),start=b.querySelector('.entity-badge-start');return start.scrollWidth>start.clientWidth && b.getBoundingClientRect().right<=b.closest('aside').getBoundingClientRect().right+1})()"
-      ),
-      'Long names truncate in the middle without overflowing'
+      (fit.truncated || !fit.beside) && fit.right <= fit.aside + 1,
+      `Long names truncate in the middle without overflowing: ${JSON.stringify(fit)}`
     );
     await js(`window.copyFails=true;document.querySelector('${branch}').click()`);
     await wait(`document.querySelector('${branch}').dataset.copyState==='failed'`);
