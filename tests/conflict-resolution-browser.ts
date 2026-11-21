@@ -996,13 +996,15 @@ void app.whenReady().then(async () => {
       proposals: [null, { source: 'mergiraf', text: three }],
       source: 'mergiraf',
     };
+    // Each side adds an import at its own place, after and before a: both sides inserting at one place would be Check
+    // since #476.
     const imports = {
       path: 'src/imports.ts',
       base: `import { a } from './a';\n\n${two}`,
       ours: `import { a } from './a';\nimport { b } from './b';\n\n${two}`,
-      theirs: `import { a } from './a';\nimport { c } from './c';\n\n${two}`,
-      original: `import { a } from './a';\n<<<<<<< feature/retry\nimport { b } from './b';\n||||||| ancestor\n=======\nimport { c } from './c';\n>>>>>>> main\n\n${two}`,
-      proposals: [{ source: 'mergiraf', text: "import { b } from './b';\nimport { c } from './c';\n" }],
+      theirs: `import { c } from './c';\nimport { a } from './a';\n\n${two}`,
+      original: `<<<<<<< feature/retry\nimport { a } from './a';\nimport { b } from './b';\n||||||| ancestor\nimport { a } from './a';\n=======\nimport { c } from './c';\nimport { a } from './a';\n>>>>>>> main\n\n${two}`,
+      proposals: [{ source: 'mergiraf', text: "import { c } from './c';\nimport { a } from './a';\nimport { b } from './b';\n" }],
       source: 'mergiraf',
     };
     const notes = {
@@ -1358,11 +1360,11 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='kept'`);
     assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Kept PR change/);
     await shot('p1-keep-ours');
-    // Each conflict has its own check result: the imports stay Merged beside the conflict that lost four().
-    assert.equal(await js(`${block(0)}.dataset.bucket`), 'merged');
-    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /Every line of both sides is accounted for\./);
-    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
-    await wait(`${block(0)}?.dataset.state==='open'`);
+    // Each conflict has its own check result: both sides added an import at one place, which is Check since #476, with
+    // its own reason beside the conflict that lost four().
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check');
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`), /Both sides changed the same lines\./);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'proposal');
     // Keep both on one whose proposal is both sides: Kept both, never back to the proposal.
     await pick(0, 'both');
     await wait(`${block(0)}?.dataset.state==='kept'`);
@@ -1448,13 +1450,14 @@ void app.whenReady().then(async () => {
     await click('Close');
     // A choice of yours beside a Merged conflict: never all-Merged. The result is shown before Mark reviewed, and the
     // summary says the file waits for review with the setting on or off.
+    // Each side inserts at its own place in both conflicts (before and after a line both kept), so both are Merged.
     const twoMerged = {
       path: 'src/two.ts',
       base: `import { a } from './a';\n\n${two}`,
       ours: `import { a } from './a';\nimport { b } from './b';\n\n${three}${two}`,
-      theirs: `import { a } from './a';\nimport { c } from './c';\n\n${four}${two}`,
-      original: `import { a } from './a';\n<<<<<<< feature/retry\nimport { b } from './b';\n||||||| ancestor\n=======\nimport { c } from './c';\n>>>>>>> main\n\n<<<<<<< feature/retry\n${three}||||||| ancestor\n=======\n${four}>>>>>>> main\n${two}`,
-      proposals: [imports.proposals[0], { source: 'mergiraf', text: three + four }],
+      theirs: `import { c } from './c';\nimport { a } from './a';\n\n${two}\n${four}`,
+      original: `${imports.original.replace(`\n${two}`, '')}\n<<<<<<< feature/retry\n${three}${two}||||||| ancestor\n${two}=======\n${two}\n${four}>>>>>>> main\n`,
+      proposals: [imports.proposals[0], { source: 'mergiraf', text: `${three}${two}\n${four}` }],
       source: 'mergiraf',
     };
     await js(`(()=>{

@@ -14,7 +14,7 @@ void test(
   { skip: !fs.existsSync(mergiraf) && 'Run npm run prepare:mergiraf first.' },
   async () => {
     const cases = await Promise.all(
-      ['cs-add-usings-and-methods', 'toml-add-dependencies', 'ts-same-constant-different-values'].map(fixture)
+      ['order-anchor-insert-around-changed', 'toml-add-dependencies', 'ts-same-constant-different-values'].map(fixture)
     );
     const results = await Promise.all(cases.map((c: unknown) => runCase(c)));
     for (const r of results) assert.equal(r.error, undefined, r.error);
@@ -28,8 +28,8 @@ void test(
     assert.deepEqual(
       rows.map((r) => [r.case, r.actual]),
       [
-        ['cs-add-usings-and-methods', 'merged'],
-        ['cs-add-usings-and-methods', 'merged'],
+        // Each side changed its own place around go(1): Merged. (Both sides adding at one place is Check since #476.)
+        ['order-anchor-insert-around-changed', 'merged'],
         // Mergiraf merges TOML, but Gnosis has no TOML grammar to check the result.
         ['toml-add-dependencies', 'check'],
         // Both sides changed the same constant: no safe proposal.

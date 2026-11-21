@@ -14,7 +14,7 @@ import {
   type ConflictFileStage,
   type ConflictProposal,
 } from './conflict-resolution';
-import { layoutTokens, unionNote, unionOf } from './conflict-union';
+import { commaUnion, layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,
@@ -98,17 +98,21 @@ function fill(
   let text = '';
   let line = 1;
   const regions = new Map<number, [number, number]>();
+  /** Where every conflict landed, as `regions` holds the proposals'. */
+  const spans = new Map<number, [number, number]>();
   for (const s of segments) {
     const proposal = s.kind === 'conflict' && !except.has(s.index) ? proposals[s.index] : undefined;
     const part = s.kind === 'text' ? s.text : proposal ? proposal.text : s.block[side];
-    if (s.kind === 'conflict' && proposal) {
+    if (s.kind === 'conflict') {
       const lines = newlines(part) + (part && !part.endsWith('\n') ? 1 : 0);
-      regions.set(s.index, lines ? [line, line + lines - 1] : [line - 1, line]);
+      const span: [number, number] = lines ? [line, line + lines - 1] : [line - 1, line];
+      spans.set(s.index, span);
+      if (proposal) regions.set(s.index, span);
     }
     text += part;
     line += newlines(part);
   }
-  return { text, regions };
+  return { text, regions, spans };
 }
 /** The proposals whose lines reach any of `lines`; undefined when one of the ranges reaches none of them. */
 function reaching(regions: ReadonlyMap<number, [number, number]>, lines: readonly (readonly [number, number])[]) {
@@ -207,28 +211,143 @@ export async function verifyProposals(
         fail(s.index, 'Gnosis can’t parse this file type, so it couldn’t check the result.');
     return verdict(() => 'Same as you resolved before. Gnosis can’t parse this file type.');
   }
-  // Each union's two insertions, as lines of the probe, to read as whole syntax nodes.
+  // Each union's two insertions, as lines of the probe, to read as whole syntax nodes. A structural merge whose result
+  // is both sides' insertions at one place, each side's lines together (either side first), is read the same way: the
+  // nodes may show its order doesn't matter (#476).
   const unions = proposed.flatMap((s) => {
-    const union = proposals[s.index]?.source === 'union' ? unionOf(s.block) : undefined;
-    return union ? [{ index: s.index, union }] : [];
+    const proposal = proposals[s.index];
+    const union =
+      proposal?.source === 'union'
+        ? unionOf(s.block)
+        : proposal?.source === 'mergiraf'
+          ? (unionOf(s.block) ?? commaUnion(s.block))
+          : undefined;
+    if (!union || !proposal) return [];
+    const { before, ours: o, theirs: t } = union;
+    if (proposal.source === 'union')
+      return [
+        {
+          index: s.index,
+          own: true,
+          first: 'ours' as const,
+          spans: [
+            [before, before + o - 1],
+            [before + o, before + o + t - 1],
+          ] as [number, number][],
+        },
+      ];
+    // The result is the ancestor's lines before, one side's lines, the other's, the ancestor's lines after, each exactly
+    // as written, blank lines inside them included. Only where two of those parts meet may blank lines differ: there they
+    // stand between whole nodes. And only the last line of the side placed first may gain a trailing comma, as a JSON
+    // object or an enum needs before the other side's lines; not in Python or YAML, where a comma can mean something.
+    const lines = union.text.split(/(?<=\n)/);
+    const [lead, mine, theirs, rest] = [
+      lines.slice(0, before),
+      lines.slice(before, before + o),
+      lines.slice(before + o, before + o + t),
+      lines.slice(before + o + t),
+    ];
+    const blank = (line: string) => line.trim() === '';
+    const trim = (part: string[]) => {
+      let [from, to] = [0, part.length];
+      while (from < to && blank(part[from])) from++;
+      while (to > from && blank(part[to - 1])) to--;
+      return part.slice(from, to);
+    };
+    const written = proposal.text.split(/(?<=\n)/);
+    const commas = language !== 'python' && language !== 'yaml';
+    /** Where each of the two sides' parts landed, or undefined when the result is not these parts. */
+    const place = (one: string[], two: string[]) => {
+      const parts = [trim(lead), trim(one), trim(two), trim(rest)];
+      const spans: [number, number][] = [];
+      let at = 0;
+      for (const [k, part] of parts.entries()) {
+        if (k > 0) while (at < written.length && blank(written[at])) at++;
+        const start = at;
+        for (const [i, want] of part.entries()) {
+          const have = written[at++] as string | undefined;
+          const slack = commas && k === 1 && i === part.length - 1;
+          if (have !== want && !(slack && have === want.replace(/(\s*)$/, (end) => `,${end}`))) return undefined;
+        }
+        if (k === 1 || k === 2) spans.push([start, at - 1]);
+      }
+      while (at < written.length && blank(written[at])) at++;
+      return at === written.length && spans.every(([a, z]) => z >= a) ? spans : undefined;
+    };
+    const asOurs = place(mine, theirs);
+    const asTheirs = asOurs ? undefined : place(theirs, mine);
+    const first = asOurs ? ('ours' as const) : asTheirs ? ('theirs' as const) : undefined;
+    const spans = asOurs ?? asTheirs;
+    if (!first || spans?.length !== 2) return [];
+    const [one, two] = spans;
+    return [{ index: s.index, own: false, first, spans: first === 'ours' ? [one, two] : [two, one] }];
   });
+  /** Each entry's insertions as lines of the probe: the PR's, then main's, wherever each landed. */
   const unionRanges = (regions: ReadonlyMap<number, [number, number]>) =>
     unions.length
-      ? unions.flatMap(({ index, union }) => {
-          const start = (regions.get(index)?.[0] ?? 0) + union.before;
-          return [
-            [start, start + union.ours - 1],
-            [start + union.ours, start + union.ours + union.theirs - 1],
-          ] as [number, number][];
+      ? unions.flatMap(({ index, spans }) => {
+          const start = regions.get(index)?.[0] ?? 0;
+          return spans.map(([a, z]) => [start + a, start + z] as [number, number]);
         })
       : undefined;
   let parsed: ParsedText[];
+  /** Which side doesn't parse: then the parser can't clear the result, and the checks compare errors instead. */
+  let sideBroken: 'The PR' | 'Main' | 'Neither side' | undefined;
+  /** The proposal is one side's lines exactly: whatever that side's lines do to the parse, the side did too. */
+  const doesnt = () =>
+    sideBroken === 'Neither side' ? 'Neither side parses' : `${sideBroken ?? 'A side'} doesn’t parse`;
+  const exactSide = (c: Conflict) => {
+    const text = proposals[c.index]?.text;
+    return text === c.block.ours || text === c.block.theirs;
+  };
   try {
     parsed = await Promise.all([
       ...[file.base, file.ours, file.theirs].map((text) => analyse(language, text)),
       analyse(language, probe.text, unionRanges(probe.regions)),
     ]);
     const [, ours, theirs, result] = parsed;
+    sideBroken = ours.errors ? (theirs.errors ? 'Neither side' : 'The PR') : theirs.errors ? 'Main' : undefined;
+    /** Every entry of `part` is in `whole`, as often. */
+    const within = (part: readonly string[], whole: readonly string[]) => {
+      const pool = [...whole];
+      return part.every((entry) => {
+        const at = pool.indexOf(entry);
+        if (at >= 0) pool.splice(at, 1);
+        return at >= 0;
+      });
+    };
+    /** The file with every proposal replaced by each side's lines, parsed once, both sides at once. */
+    let filledSides:
+      | Promise<{ side: 'ours' | 'theirs'; filled: ReturnType<typeof fill>; read: ParsedText }[]>
+      | undefined;
+    const sideFills = () =>
+      (filledSides ??= Promise.all(
+        (['ours', 'theirs'] as const).map(async (side) => {
+          const filled = fill(segments, proposals, side, new Set(proposed.map((c) => c.index)));
+          return { side, filled, read: await analyse(language, filled.text) };
+        })
+      ));
+    /**
+     * The file's errors as the text around the conflicts they cover, one entry per error range, so two fillings of the
+     * conflicts compare. Undefined when the parser can't say where they are.
+     */
+    const errorSet = async (filled: ReturnType<typeof fill>, parsedAlready?: ParsedText) => {
+      const read = parsedAlready ?? (await analyse(language, filled.text));
+      if (!read.errors) return [];
+      if (!read.errorLines?.length) return undefined;
+      const lines = filled.text.split('\n');
+      const spans = [...filled.spans.values()];
+      const inConflict = (line: number) => spans.some(([a, z]) => a <= line && line <= z);
+      return read.errorLines
+        .map(([start, end]) =>
+          lines
+            .slice(start - 1, end)
+            .filter((_, i) => !inConflict(start + i))
+            .map((line) => line.trim())
+            .join('\n')
+        )
+        .sort();
+    };
     // The probe fills undecided conflicts with the PR's lines; with main's lines it may parse. Only a result that fails
     // both ways is the proposals' fault. With every conflict proposed, it is the fault of the ones its errors reach, when
     // the file parses with those taken out. With one undecided, the whole file's: a proposal can't be cleared against one
@@ -257,10 +376,31 @@ export async function verifyProposals(
     } else if (result.errors && (ours.errors || theirs.errors)) {
       // A side that doesn't parse can't clear the result. An error that reaches a proposal is the proposal's when the
       // proposal wrote lines neither side had, or when the file has fewer errors with either side's lines in its place;
-      // otherwise the error is the side's own. Your own earlier
-      // resolutions are not held to the line accounting, so this is the only check that sees them break the file.
+      // otherwise the error is the side's own. Your own earlier resolutions are not held to the line accounting, so this
+      // is the only check that sees them break the file. Errors the sides' own lines don't give, that no proposal
+      // accounts for, fail every proposal in the file.
       const ranges = result.errorLines;
       if (!ranges?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      const sides = await sideFills();
+      /** Error ranges in a parse; errors the parser can't place count as too many. */
+      const errorCount = (read: ParsedText) => (read.errors ? read.errorLines?.length || Infinity : 0);
+      /**
+       * The errors left with `blamed` replaced by a side's lines are ones that side's own lines give, around the
+       * conflicts, with every proposal replaced. Checked against either side.
+       */
+      const explained = async (blamed: ReadonlySet<number>) => {
+        for (const { side, filled, read } of sides) {
+          // With nothing blamed, the PR's filling is the result as parsed above.
+          const [left, own] = await Promise.all([
+            !blamed.size && side === 'ours'
+              ? errorSet(probe, parsed[3])
+              : errorSet(fill(segments, proposals, side, blamed)),
+            errorSet(filled, read),
+          ]);
+          if (left && own && within(left, own)) return true;
+        }
+        return false;
+      };
       const suspects = [...probe.regions]
         .filter(([, [a, z]]) => ranges.some(([start, end]) => a <= end && z >= start))
         .map(([index]) => index);
@@ -280,14 +420,39 @@ export async function verifyProposals(
           fail(index, 'This result doesn’t parse.');
           continue;
         }
-        for (const side of ['ours', 'theirs'] as const) {
-          const read = await analyse(language, fill(segments, proposals, side, new Set([index])).text);
-          // Errors the parser can't place can't be compared: the proposal is blamed.
-          const count = read.errors ? read.errorLines?.length || Infinity : 0;
-          if (count < ranges.length || count === Infinity) {
-            fail(index, 'This result doesn’t parse.');
-            break;
-          }
+        const counts = await Promise.all(
+          (['ours', 'theirs'] as const).map(async (side) =>
+            errorCount(await analyse(language, fill(segments, proposals, side, new Set([index])).text))
+          )
+        );
+        // Errors the parser can't place can't be compared: the proposal is blamed.
+        if (counts.some((count) => count < ranges.length || count === Infinity))
+          fail(index, 'This result doesn’t parse.');
+      }
+      // An error no proposal accounts for, that the sides' own lines don't give: every proposal in the file is suspect.
+      if (!(await explained(new Set(suspects.filter((index) => failed.has(index))))))
+        return { merged: false, note: 'The result doesn’t parse.' };
+    }
+    if (ours.errors || theirs.errors) {
+      // A side that doesn't parse, with an error over a proposal: the parser can't vouch for that proposal, whether the
+      // result parses or not, unless the proposal is one side's lines exactly.
+      const filledBoth = await sideFills();
+      // Only the fillings that have errors say what the broken side's lines do: with one side broken, that side's.
+      const broken = filledBoth.filter(({ side }) => (side === 'ours' ? ours : theirs).errors);
+      // The result lost or changed an error the broken side's own lines give: a proposal changed how the file around it
+      // parses (a brace that closes the side's open block, say). Nothing the parser said can be trusted for the proposals.
+      const resultErrors = await errorSet(probe, parsed[3]);
+      const sideErrors = await Promise.all(broken.map(({ filled, read }) => errorSet(filled, read)));
+      if (!resultErrors || !sideErrors.some((own) => own && within(own, resultErrors)))
+        for (const c of proposed)
+          if (!exactSide(c)) fail(c.index, `${doesnt()} here, and the result parses differently. Check it.`);
+      for (const { filled, read } of filledBoth) {
+        if (!read.errors) continue;
+        for (const c of proposed) {
+          if (exactSide(c)) continue;
+          const span = filled.spans.get(c.index);
+          if (!read.errorLines?.length || (span && read.errorLines.some(([a, z]) => span[0] <= z && span[1] >= a)))
+            fail(c.index, `${doesnt()} around this conflict, so Gnosis couldn’t check it.`);
         }
       }
     }
@@ -321,11 +486,32 @@ export async function verifyProposals(
       // again with spacing, such a block is two changes to the same lines: the formatting check below decides it.
       let note = whole
         ? accountWholeFile(file, proposal.text, indented)
-        : (accountLines(s.block, proposal.text, indented) ??
-          (indented ? undefined : accountLines(s.block, proposal.text, true)));
+        : (accountLines(s.block, proposal.text, indented, proposal.source === 'union') ??
+          (indented ? undefined : accountLines(s.block, proposal.text, true, proposal.source === 'union')));
       // The PR's version of a change both sides may have made (lib/conflict-union.ts) is Merged only on the syntax
       // trees' word, never on the line count, which ignores trailing commas.
       const same = proposal.source === 'same';
+      // Both sides inserted at one place, which the line checks never pass. Merged only when the syntax nodes show the
+      // order can't matter (orderFree) and the result is each side's lines together, as a union is accounted.
+      const k = unions.findIndex((u) => u.index === s.index && !u.own);
+      if (note === SAME_LINES && k >= 0 && !whole && probe.regions.has(s.index)) {
+        const units = result.units;
+        const [mine, theirs] = [units?.[2 * k], units?.[2 * k + 1]];
+        const block = unions[k].first === 'ours' ? s.block : { ...s.block, ours: s.block.theirs, theirs: s.block.ours };
+        const counted =
+          accountLines(block, proposal.text, indented, true) ??
+          (indented ? undefined : accountLines(block, proposal.text, true, true));
+        if (orderFree(language, mine, theirs, { path: file.path }) && counted === undefined) {
+          const imports = [...(mine?.units ?? []), ...(theirs?.units ?? [])].every((u) =>
+            /import|use_|using|comment/.test(u.type)
+          );
+          reformats.set(
+            s.index,
+            `Both sides added different ${imports ? 'imports' : 'members'} here, and their order doesn’t matter.`
+          );
+          continue;
+        }
+      }
       if ((note === SAME_LINES || same) && !whole) {
         const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent, same);
         if (formatted?.merged) {
@@ -337,7 +523,8 @@ export async function verifyProposals(
       if (note) fail(s.index, note);
     }
     // A union is never Merged. Its note comes from the syntax nodes each side added; an earlier failure on the block wins.
-    unions.forEach(({ index }, k) => {
+    unions.forEach(({ index, own }, k) => {
+      if (!own) return;
       // A union set aside for a parse error was not in the text these units came from.
       const units = probe.regions.has(index) ? result.units : undefined;
       fail(index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
@@ -351,9 +538,18 @@ export async function verifyProposals(
     ])
       fail(index, note);
   }
+  const accounted = proposals.some((p) => p && p.source !== 'rerere');
+  // With a side broken, a result is cleared of adding parse errors only when no proposal in the file was found adding one.
+  const parseFailed = [...failed.values()].some((note) => /parse/.test(note));
+  const parses = !sideBroken
+    ? 'The file parses.'
+    : parseFailed
+      ? `${doesnt()}, so Gnosis couldn’t check how this result parses.`
+      : `${doesnt()}; the result adds no parse errors of its own.`;
   return verdict((index) => {
     const own = reformats.get(index);
-    return own ? `${own} The file parses.` : 'The file parses. Every line of both sides is accounted for.';
+    if (own) return `${own} ${parses}`;
+    return accounted ? `${parses} Every line of both sides is accounted for.` : parses;
   });
 }
 
@@ -578,18 +774,31 @@ function lineAccount(indented: boolean) {
 export function accountLines(
   block: { base?: string; ours: string; theirs: string },
   result: string,
-  indented: boolean
+  indented: boolean,
+  /** A union (lib/conflict-union.ts): both sides' insertions at one place, the PR's first. Never Merged on its own. */
+  union = false
 ): string | undefined {
   if (block.base === undefined) return 'Gnosis couldn’t see the lines before both changes.';
   const { lines, report } = lineAccount(indented);
   const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
   const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
   const inside = (gap: number, c: LineChange) => c.start < gap && gap < c.end;
+  // An insertion right before or after the other side's change of several lines: which of those lines it belongs
+  // next to (inside a block the change opens, or after it) is not something the ancestor says.
+  const several = (c: LineChange) => c.end > c.start && (c.end - c.start > 1 || c.added.length > 1);
+  const touches = (p: LineChange, c: LineChange) =>
+    p.start === p.end && several(c) && (p.start === c.start || p.start === c.end);
   for (const a of mine)
     for (const b of other) {
       if (sameChange(a, b)) continue;
       const overlap = a.start < a.end && b.start < b.end && a.start < b.end && b.start < a.end;
-      if (overlap || (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a)))
+      if (
+        overlap ||
+        (a.start === a.end && inside(a.start, b)) ||
+        (b.start === b.end && inside(b.start, a)) ||
+        touches(a, b) ||
+        touches(b, a)
+      )
         return SAME_LINES;
     }
   const removed = new Set<number>();
@@ -603,62 +812,60 @@ export function accountLines(
   for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
   const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
   const extra = [...found].find(([line, n]) => n > (expected.get(line) ?? 0))?.[0];
-  return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other);
+  return report(missing, extra, { base, ours, theirs }) ?? outOfOrder(base, merged, mine, other, removed, union);
 }
 /**
- * The result keeps the ancestor's order: the lines both sides kept, and each side's changes in place between them.
- * Line counts alone miss two statements swapped. Where one side inserted lines at the point where the other side's
- * change starts or ends, or both inserted at one point, either side's lines may come first, but each side's stay
- * together and in order: a line moved inside the other side's lines can change what they do. Changes both sides made
- * alike count once.
+ * The result keeps the ancestor's order, anchor by anchor. Each change sits at one place in the ancestor: lines inserted
+ * in the gap before an ancestor line, or lines that replace a run of them. Walking the ancestor, the result must hold,
+ * in turn, what was inserted in each gap and then the line itself, as kept or as replaced. Where both sides inserted
+ * lines in the same gap, no order is the ancestor's: the block is Both sides changed the same lines (Check), except a
+ * union's own layout, which the union rule keeps in Check anyway. Line counts alone miss two statements swapped, or a
+ * line moved past the other side's change. Changes both sides made alike count once.
  */
-function outOfOrder(base: readonly string[], merged: readonly string[], mine: LineChange[], other: LineChange[]) {
-  const changes = [
-    ...mine.map((change) => ({ change, side: 0 })),
-    ...other.filter((c) => !mine.some((m) => sameChange(m, c))).map((change) => ({ change, side: 1 })),
-  ].sort((x, y) => x.change.start - y.change.start || x.change.end - y.change.end);
-  const removed = new Set<number>();
-  for (const { change } of changes) for (let i = change.start; i < change.end; i++) removed.add(i);
-  /** A line both sides kept, or a run of changes whose lines may interleave. */
-  type Unit = string | { sides: [string[], string[]]; end: number; point: boolean };
-  const units: Unit[] = [];
-  let next = 0;
-  for (let at = 0; at <= base.length; at++) {
-    for (; next < changes.length && changes[next].change.start === at; next++) {
-      const { change, side } = changes[next];
-      const point = change.start === change.end;
-      const last = units.at(-1);
-      // It touches the run before it through an insertion: no line both kept stands between them.
-      if (typeof last === 'object' && last.end === change.start && (point || last.point)) {
-        last.sides[side].push(...change.added);
-        last.end = change.end;
-        last.point = point;
-      } else {
-        const sides: [string[], string[]] = [[], []];
-        sides[side].push(...change.added);
-        units.push({ sides, end: change.end, point });
-      }
-    }
-    if (at < base.length && !removed.has(at)) units.push(base[at]);
-  }
+function outOfOrder(
+  base: readonly string[],
+  merged: readonly string[],
+  mine: LineChange[],
+  other: LineChange[],
+  /** The ancestor lines either side changed. */
+  removed: ReadonlySet<number>,
+  /** Lines both sides inserted at one place are checked as a union lays them out, the PR's first. */
+  union: boolean
+) {
+  /** Each side's insertions and replacements, by the ancestor place they start at. */
+  const byStart = (changes: LineChange[]) => {
+    const inserted = new Map<number, string[]>();
+    const replaced = new Map<number, LineChange>();
+    for (const c of changes)
+      if (c.start === c.end) inserted.set(c.start, c.added);
+      else replaced.set(c.start, c);
+    return { inserted, replaced };
+  };
+  const [a, b] = [byStart(mine), byStart(other.filter((c) => !mine.some((m) => sameChange(m, c))))];
   let r = 0;
-  for (const unit of units) {
-    if (typeof unit === 'string') {
-      if (merged[r++] !== unit) return ORDER;
-      continue;
-    }
-    // Each side's lines stay together and in order: the PR's then main's, or main's then the PR's.
-    const [a, b] = unit.sides;
-    const part = merged.slice(r, r + a.length + b.length).join('\n');
-    r += a.length + b.length;
-    if (part !== [...a, ...b].join('\n') && part !== [...b, ...a].join('\n')) return ORDER;
+  /** The next lines of the result are exactly `lines`. */
+  const take = (lines: readonly string[]) => {
+    for (const line of lines) if (merged[r++] !== line) return false;
+    return true;
+  };
+  for (let at = 0; at <= base.length; at++) {
+    const [x, y] = [a.inserted.get(at) ?? [], b.inserted.get(at) ?? []];
+    // Both sides inserted lines at this place. Neither order is the ancestor's, and every order checked so far has
+    // let something wrong through: such a block is a choice to check, never Merged on the line checks.
+    if (x.length && y.length && !union) return SAME_LINES;
+    if (!take([...x, ...y])) return ORDER;
+    if (at === base.length) break;
+    const change = a.replaced.get(at) ?? b.replaced.get(at);
+    if (change) {
+      if (!take(change.added)) return ORDER;
+    } else if (!removed.has(at) && !take([base[at]])) return ORDER;
   }
   if (r !== merged.length) return ORDER;
 }
 const ORDER = 'The result changes the order of lines from the PR or main.';
 
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
-interface LineChange {
+export interface LineChange {
   start: number;
   end: number;
   added: string[];
@@ -666,11 +873,11 @@ interface LineChange {
 /** Both sides made this change alike. */
 const sameChange = (a: LineChange, b: LineChange) =>
   a.start === b.start && a.end === b.end && a.added.join('\n') === b.added.join('\n');
-function changesOf(base: string[], side: string[]): LineChange[] {
+export function changesOf(base: readonly string[], side: readonly string[]): LineChange[] {
   const changes: LineChange[] = [];
   let at = 0;
   let open: LineChange | undefined;
-  for (const part of diffArrays(base, side)) {
+  for (const part of diffArrays([...base], [...side])) {
     if (!part.added && !part.removed) {
       if (open) changes.push(open);
       open = undefined;
@@ -774,7 +981,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 3;
+export const CHECKS_VERSION = 10;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

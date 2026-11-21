@@ -1,0 +1,8 @@
+{
+  "description": "Follow-up to #476: both sides add a field at the end of a Go struct. Field order is the struct's layout and what positional literals fill, so neither order is safe to merge for you.",
+  "language": "go",
+  "category": "review-probe",
+  "expected": {
+    "lab/options.go": "any-but-merged"
+  }
+}

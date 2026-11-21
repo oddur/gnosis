@@ -96,28 +96,40 @@ void test('a resolver’s output becomes per-conflict proposals only where the t
 });
 
 void test('a result that parses and keeps every definition is Merged', async () => {
-  const verdict = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
-  assert.deepEqual(verdict, { merged: true, note: 'The file parses. Every line of both sides is accounted for.' });
+  // main didn't add a function: the PR's three() goes where it wrote it, and nothing else was inserted there.
+  const alone = original.replace(`=======\n${four}>>>>>>> main`, '=======\n>>>>>>> main');
+  const verdict = await verifyProposals(
+    file([merged(imports), merged(three)], { theirs: theirs.replace(four, ''), original: alone }),
+    analyse
+  );
+  assert.deepEqual(verdict.blocks?.[1], {
+    merged: true,
+    note: 'The file parses. Every line of both sides is accounted for.',
+  });
+  // Both sides inserted at one place (the imports, the functions): no order is the ancestor's, so they are Check.
+  const both = await verifyProposals(file([merged(imports), merged(three + four)]), analyse);
+  assert.deepEqual(both, { merged: false, note: SAME_LINES });
 });
 
-const passed = { merged: true, note: 'The file parses. Every line of both sides is accounted for.' };
+/** Both sides added imports at one place: Check, whatever the line counts say. */
+const passed = { merged: false, note: SAME_LINES };
 void test('a lost definition, a duplicate, a parse error, markers or mixed line endings keep the proposal in Check', async () => {
   // Each failure belongs to the conflict that caused it: the imports conflict stays Merged, with its own reason.
   const lost = await verifyProposals(file([merged(imports), merged(three)]), analyse);
   const missing = { merged: false, note: 'export function four() { from main is missing from the result.' };
-  assert.deepEqual(lost, { ...missing, blocks: [passed, missing] });
+  assert.deepEqual(lost.blocks, [passed, missing]);
   const twice = await verifyProposals(file([merged(imports), merged(three + three + four)]), analyse);
   const duplicate = { merged: false, note: 'three is defined twice in the result.' };
-  assert.deepEqual(twice, { ...duplicate, blocks: [passed, duplicate] });
+  assert.deepEqual(twice.blocks, [passed, duplicate]);
   const broken = await verifyProposals(
     file([merged(imports), merged(`${three}${four.replace('}\n', '\n')}`)]),
     analyse
   );
   const unparsed = { merged: false, note: 'This result doesn’t parse.' };
-  assert.deepEqual(broken, { ...unparsed, blocks: [passed, unparsed] });
+  assert.deepEqual(broken.blocks, [passed, unparsed]);
   assert.deepEqual(
     blockBuckets(file([merged(imports), merged(three)]), withProposals(original, [merged(imports), merged(three)]), lost),
-    ['merged', 'check']
+    ['check', 'check']
   );
   const markers = await verifyProposals(file([merged('<<<<<<< x\n'), null]), analyse);
   assert.equal(markers.merged, false);
@@ -126,15 +138,16 @@ void test('a lost definition, a duplicate, a parse error, markers or mixed line 
 });
 
 void test('a definition that only main’s side of an undecided conflict holds is not expected yet', async () => {
+  // Not missing: the imports are Check only because both sides inserted them at one place.
   const verdict = await verifyProposals(file([merged(imports), null]), analyse);
-  assert.equal(verdict.merged, true, verdict.note);
+  assert.equal(verdict.note, SAME_LINES);
 });
 
 void test('a side that deleted a definition is respected, and a failed parse never counts as checked', async () => {
   // main removed two(); the PR kept it. Keeping it or dropping it is the conflict, so neither is a lost definition.
   const withoutTwo = theirs.replace(/export function two[\s\S]*$/, '');
   const verdict = await verifyProposals(file([merged(imports), merged(three + four)], { theirs: withoutTwo }), analyse);
-  assert.equal(verdict.merged, true, verdict.note);
+  assert.equal(verdict.note, SAME_LINES, 'Check only because both sides inserted at one place');
   const failing = await verifyProposals(file([merged(imports), null]), () => Promise.reject(Error('off in Settings')));
   assert.equal(failing.merged, false);
 });
@@ -253,7 +266,7 @@ void test('review probe: a lost line that is no definition keeps the proposal in
   // The imports conflict kept only the PR's import: every definition survives, main's import does not.
   const verdict = await verifyProposals(file([merged("import { b } from './b';\n"), merged(three + four)]), analyse);
   const missing = { merged: false, note: "import { c } from './c'; from main is missing from the result." };
-  assert.deepEqual(verdict, { ...missing, blocks: [missing, passed] });
+  assert.deepEqual(verdict, { ...missing, blocks: [missing, { merged: false, note: SAME_LINES }] });
   const config = await verifyProposals(
     {
       path: 'config.json',
@@ -375,19 +388,18 @@ void test('resolver audit: a result that swaps lines either side put in order is
     theirs: 'function gamma() {\n  total = 3;\n  scaled = total * 2;\n}\n',
   };
   const kept = functions.ours + functions.theirs;
-  assert.equal(accountLines(functions, kept, false), undefined);
+  const swapped = kept.replace('  total = 2;\n  scaled = total * 2;\n', '  scaled = total * 2;\n  total = 2;\n');
+  // Both sides inserted at one place: Check in either order. Read as a union (the PR's lines first), the swap shows.
+  assert.equal(accountLines(functions, kept, false), SAME_LINES);
+  assert.equal(accountLines(functions, functions.theirs + functions.ours, false), SAME_LINES);
+  assert.equal(accountLines(functions, swapped, false), SAME_LINES);
+  assert.equal(accountLines(functions, kept, false, true), undefined);
   assert.equal(
-    accountLines(
-      functions,
-      kept.replace('  total = 2;\n  scaled = total * 2;\n', '  scaled = total * 2;\n  total = 2;\n'),
-      false
-    ),
+    accountLines(functions, swapped, false, true),
     'The result changes the order of lines from the PR or main.'
   );
-  // Both sides inserted at one place: either side first is a merge.
-  assert.equal(accountLines(functions, functions.theirs + functions.ours, false), undefined);
   const members = { base: 'RED = 1,\n', ours: 'RED = 1,\nBLUE = 3,\n', theirs: 'RED = 1,\nYELLOW = 4,\n' };
-  assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), undefined);
+  assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), SAME_LINES);
   assert.equal(
     accountLines(members, 'BLUE = 3,\nRED = 1,\nYELLOW = 4,\n', false),
     'The result changes the order of lines from the PR or main.'
@@ -401,30 +413,23 @@ void test('resolver audit round 2: one side’s line moved inside the other side
     ours: 'start();\nif (ready) {\n    go();\n  }\nfinish();\n',
     theirs: 'start();\nstop();\nfinish();\n',
   };
-  assert.equal(
-    accountLines(inserted, 'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n', false),
-    undefined
-  );
-  assert.equal(
-    accountLines(inserted, 'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n', false),
-    undefined
-  );
-  assert.equal(
-    accountLines(inserted, 'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n', false),
-    'The result changes the order of lines from the PR or main.'
-  );
+  // Since #476: no order of two insertions at one place passes the line checks.
+  for (const result of [
+    'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n',
+    'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n',
+    'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n',
+  ])
+    assert.equal(accountLines(inserted, result, false), SAME_LINES, result);
   // Next to a change: the PR wrapped `go();` in an if, main appended `stop();` after it. Counted with indentation, the
-  // PR's change is one block; `stop();` inside the if is not a merge.
+  // PR's change is one block of several lines, and main's insertion touches it: whether `stop();` belongs inside the if
+  // or after it is not something the ancestor says, so neither layout is Merged.
   const wrapped = {
     base: 'start();\ngo();\n',
     ours: 'start();\nif (ready) {\n  go();\n}\n',
     theirs: 'start();\ngo();\nstop();\n',
   };
-  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), undefined);
-  assert.equal(
-    accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true),
-    'The result changes the order of lines from the PR or main.'
-  );
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), SAME_LINES);
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true), SAME_LINES);
 });
 
 void test('resolver audit: with a side that does not parse, a result whose error reaches a proposal is not Merged', async () => {
@@ -461,8 +466,402 @@ void test('resolver audit round 2: an error that is the side’s own does not de
   for (const text of ['  const limit = 60 45;\n', '  const limit = 60;\n)]}\n']) {
     const broken = await remembered(text);
     assert.equal(broken.merged, false, text);
-    assert.equal(broken.note, 'This result doesn’t parse.');
+    assert.match(broken.note, /doesn’t parse/);
   }
+});
+
+void test('order per ancestor place: insertions stay on their side of a changed line', () => {
+  const ORDER = 'The result changes the order of lines from the PR or main.';
+  // The PR logs before and after go(1); main changes it to go(2).
+  const around = { base: '  go(1);\n', ours: "  log('before');\n  go(1);\n  log('after');\n", theirs: '  go(2);\n' };
+  assert.equal(accountLines(around, "  log('before');\n  go(2);\n  log('after');\n", false), undefined);
+  assert.equal(accountLines(around, "  log('before');\n  log('after');\n  go(2);\n", false), ORDER);
+  assert.equal(accountLines(around, "  go(2);\n  log('before');\n  log('after');\n", false), ORDER);
+  // The mirror: main adds around the line the PR changed.
+  const mirror = { base: around.base, ours: around.theirs, theirs: around.ours };
+  assert.equal(accountLines(mirror, "  log('before');\n  go(2);\n  log('after');\n", false), undefined);
+  // X changed on one side, Y inserted after X on the other: Y comes after X′, never before it.
+  const after = { base: 'x();\nz();\n', ours: 'x2();\nz();\n', theirs: 'x();\ny();\nz();\n' };
+  assert.equal(accountLines(after, 'x2();\ny();\nz();\n', false), undefined);
+  assert.equal(accountLines(after, 'y();\nx2();\nz();\n', false), ORDER);
+});
+
+void test('with a side that does not parse, an error no proposal accounts for fails the file', async () => {
+  const block = (cond: string, n: number) => `  if (${cond}) {\n    go(${n});\n  }\n`;
+  const wrap = (head: string, body: string) => `${head}export function run(a: boolean) {\n${body}}\n`;
+  // main has `const z = ;`; the remembered resolution drops `if (...) {` and keeps its brace.
+  const dropped = {
+    path: 'src/run.ts',
+    base: wrap('const z = 1;\n', block('a', 1)),
+    ours: wrap('const z = 1;\n', block('a || b', 2)),
+    theirs: wrap('const z = ;\n', block('a && b', 3)),
+    original: wrap(
+      'const z = ;\n',
+      `<<<<<<< feature\n${block('a || b', 2)}||||||| ancestor\n${block('a', 1)}=======\n${block('a && b', 3)}>>>>>>> main\n`
+    ),
+  };
+  const remember = (file: typeof dropped, text: string) =>
+    verifyProposals({ ...file, proposals: [{ source: 'rerere', text }] }, analyse);
+  assert.equal((await remember(dropped, block('a || b', 2))).merged, true);
+  assert.deepEqual(await remember(dropped, '    go(2);\n  }\n'), { merged: false, note: 'The result doesn’t parse.' });
+  // main left `if (debug) {` unclosed; two extra closing braces move the error outside the conflict.
+  const debug = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  const limit = 30;\n  return limit;\n}\n',
+    ours: 'export function run() {\n  const limit = 60;\n  return limit;\n}\n',
+    theirs: 'export function run() {\n  if (debug) {\n  const limit = 45;\n  return limit;\n}\n',
+    original:
+      'export function run() {\n  if (debug) {\n<<<<<<< feature\n  const limit = 60;\n||||||| ancestor\n  const limit = 30;\n=======\n  const limit = 45;\n>>>>>>> main\n  return limit;\n}\n',
+  };
+  assert.equal((await remember(debug, '  const limit = 60;\n')).merged, true);
+  assert.equal((await remember(debug, '  const limit = 60;\n}\n}\n')).merged, false);
+});
+
+void test('a side’s parse error over a proposal leaves it unchecked, unless it is that side’s lines', async () => {
+  // main's `foo(` at the top doesn't parse, and its error covers the whole file: the parser can't vouch for anything.
+  const sides = {
+    path: 'src/limits.ts',
+    base: 'export const LIMITS = {\n  timeout: 30_000,\n  retries: 3,\n};\n',
+    ours: 'export const LIMITS = {\n  timeout: 60_000,\n  retries: 3,\n};\n',
+    theirs: 'foo(\nexport const LIMITS = {\n  timeout: 45_000,\n  retries: 3,\n};\n',
+    original:
+      'foo(\nexport const LIMITS = {\n<<<<<<< feature\n  timeout: 60_000,\n||||||| ancestor\n  timeout: 30_000,\n=======\n  timeout: 45_000,\n>>>>>>> main\n  retries: 3,\n};\n',
+  };
+  const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
+  const own = await remembered('  timeout: 60_000,\n');
+  assert.equal(own.merged, true, own.note);
+  assert.equal(own.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  for (const text of ['  timeout: 60_000 45_000,\n', '  timeout: 50_000,\n', '  timeout: 60_000\n'])
+    assert.equal((await remembered(text)).merged, false, text);
+  // main closes the function early with a stray `}`; a resolution that leaves `if (...) {` open makes the file parse
+  // again. It changed how the file parses, so it is not Merged.
+  const wrap = (pre: string, body: string) =>
+    `export function run(a: boolean) {\n${pre}  const limit = 30;\n${body}  return limit;\n}\n`;
+  const b = '  if (a) {\n    go(1);\n  }\n';
+  const o = '  if (a || b) {\n    go(1);\n  }\n';
+  const t = '  if (a) {\n    go(3);\n  }\n';
+  const stray = {
+    path: 'src/run.ts',
+    base: wrap('', b),
+    ours: wrap('', o),
+    theirs: wrap('  }\n', t),
+    original: wrap('  }\n', `<<<<<<< feature\n${o}||||||| ancestor\n${b}=======\n${t}>>>>>>> main\n`),
+  };
+  const reopened = await verifyProposals(
+    { ...stray, proposals: [{ source: 'rerere', text: '  if (a || b) {\n' }] },
+    analyse
+  );
+  assert.equal(reopened.merged, false, reopened.note);
+});
+
+void test('an insertion next to the other side’s change of several lines is Check, either way round', () => {
+  const block = {
+    base: '    one();\n',
+    ours: '    one(1);\n  }\n  if (b) {\n    two();\n',
+    theirs: '    one();\n    x();\n',
+  };
+  assert.equal(accountLines(block, '    one(1);\n  }\n  if (b) {\n    two();\n    x();\n', false), SAME_LINES);
+  assert.equal(accountLines(block, '    one(1);\n    x();\n  }\n  if (b) {\n    two();\n', false), SAME_LINES);
+});
+
+void test('since #476: both sides inserting at one place is never Merged on the line checks', () => {
+  // After run() inside `if (ok)`, the PR adds log() and main adds an else branch. In main-first order, log() lands in
+  // the else; in PR-first order the merge is right. Neither passes the line checks alone.
+  const block = {
+    base: '    run();\n',
+    ours: '    run();\n    log();\n',
+    theirs: '    run();\n  } else {\n    skip();\n',
+  };
+  for (const result of [
+    '    run();\n  } else {\n    skip();\n    log();\n',
+    '    run();\n    log();\n  } else {\n    skip();\n',
+  ])
+    assert.equal(accountLines(block, result, false), SAME_LINES, result);
+});
+
+void test('with one side broken, a result that loses that side’s error fails every proposal that isn’t a side’s lines', async () => {
+  // main leaves a stray `}`; the PR opens a block that closes there. With the PR's lines the file parses, so only main's
+  // filling says what main's error is, and the result no longer has it.
+  const sides = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  a();\n  b();\n  d();\n  c();\n}\n',
+    ours: 'export function run() {\n  {\n  a(1);\n  b();\n  }\n  d();\n  c(1);\n}\n',
+    theirs: 'export function run() {\n  a(2);\n  b();\n  }\n  d();\n  c(2);\n}\n',
+    original:
+      'export function run() {\n<<<<<<< feature\n  {\n  a(1);\n||||||| ancestor\n  a();\n=======\n  a(2);\n>>>>>>> main\n  b();\n  }\n  d();\n<<<<<<< feature\n  c(1);\n||||||| ancestor\n  c();\n=======\n  c(2);\n>>>>>>> main\n}\n',
+  };
+  const verdict = await verifyProposals(
+    {
+      ...sides,
+      proposals: [
+        { source: 'rerere', text: '  {\n  a(1);\n' },
+        { source: 'rerere', text: '  c(1, 2);\n' },
+      ],
+    },
+    analyse
+  );
+  const [first, second] = verdict.blocks ?? [];
+  assert.ok(first);
+  assert.equal(first.merged, true, 'The PR’s lines exactly');
+  assert.notEqual(first.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  assert.deepEqual(second, {
+    merged: false,
+    note: 'Main doesn’t parse here, and the result parses differently. Check it.',
+  });
+});
+
+/** One conflict where both sides inserted at one place, between `head` and `tail`, checked with a structural merge. */
+const samePlace = (path: string, head: string, tail: string, ours: string, theirs: string, text: string) =>
+  verifyProposals(
+    {
+      path,
+      base: head + tail,
+      ours: head + ours + tail,
+      theirs: head + theirs + tail,
+      original: `${head}<<<<<<< feature\n${ours}||||||| ancestor\n=======\n${theirs}>>>>>>> main\n${tail}`,
+      proposals: [{ source: 'mergiraf', text }],
+    },
+    analyse
+  );
+
+void test('#476: both sides adding order-free members or imports at one place can be Merged, on the syntax trees’ word', async () => {
+  const head = 'export class Cart {\n  total() {\n    return 0;\n  }\n';
+  const tail = '}\n';
+  const add = '  add(item: string) {\n    return item;\n  }\n';
+  const remove = '  remove(id: number) {\n    return id;\n  }\n';
+  const cart = (ours: string, theirs: string, text: string) => samePlace('src/cart.ts', head, tail, ours, theirs, text);
+  // Two methods in one class: Merged, either side first.
+  for (const text of [add + remove, remove + add]) {
+    const verdict = await cart(add, remove, text);
+    assert.equal(verdict.merged, true, verdict.note);
+    assert.match(verdict.note, /different members here, and their order doesn’t matter/);
+  }
+  // One side's method inside the other's body: Check.
+  const inside = '  add(item: string) {\n  remove(id: number) {\n    return id;\n  }\n    return item;\n  }\n';
+  assert.equal((await cart(add, remove, inside)).merged, false);
+  // A method beside a field (its initializer runs in order): Check.
+  assert.equal((await cart(add, '  count = 0;\n', add + '  count = 0;\n')).merged, false);
+  // A decorated method: Check.
+  const memo = '  @memo\n  remove(id: number) {\n    return id;\n  }\n';
+  assert.equal((await cart(add, memo, add + memo)).merged, false);
+  // The same method name on both sides: Check.
+  const again = '  add(id: number) {\n    return id;\n  }\n';
+  assert.equal((await cart(add, again, add + again)).merged, false);
+  // Statements in a function body: Check.
+  const body = (text: string) =>
+    samePlace('src/run.ts', 'export function run() {\n  start();\n', '}\n', '  log();\n', '  stop();\n', text);
+  assert.equal((await body('  log();\n  stop();\n')).merged, false);
+  // TypeScript imports run module code in order: Check.
+  const ts = await samePlace(
+    'src/index.ts',
+    "import { a } from './a';\n",
+    '\nexport const x = 1;\n',
+    "import { b } from './b';\n",
+    "import { c } from './c';\n",
+    "import { b } from './b';\nimport { c } from './c';\n"
+  );
+  assert.equal(ts.merged, false);
+  // Go imports: Merged.
+  const go = await samePlace(
+    'main.go',
+    'package main\n\nimport (\n\t"fmt"\n',
+    ')\n\nfunc main() {\n\tfmt.Println(os.Args, strings.ToUpper(""))\n}\n',
+    '\t"os"\n',
+    '\t"strings"\n',
+    '\t"os"\n\t"strings"\n'
+  );
+  assert.equal(go.merged, true, go.note);
+  assert.match(go.note, /different imports here/);
+  // Fields of any kind: Check. Layout, derived ordering, serialization and positional literals follow their order.
+  const struct = (ours: string, theirs: string) =>
+    samePlace('options.go', 'package lab\n\ntype Options struct {\n\tWidth int\n', '}\n', ours, theirs, ours + theirs);
+  assert.equal((await struct('\tDepth int\n', '\tWeight int\n')).merged, false);
+  const rust = await samePlace(
+    'options.rs',
+    '#[derive(PartialOrd)]\nstruct Options {\n    width: u32,\n',
+    '}\n',
+    '    depth: u32,\n',
+    '    weight: u32,\n',
+    '    depth: u32,\n    weight: u32,\n'
+  );
+  assert.equal(rust.merged, false);
+  const java = (ours: string, theirs: string) =>
+    samePlace('Options.java', 'class Options {\n  int width;\n', '}\n', ours, theirs, ours + theirs);
+  assert.equal((await java('  int depth;\n', '  int weight;\n')).merged, false);
+  const method = (name: string) => `  void ${name}() {\n  }\n`;
+  assert.equal((await java(method('grow'), method('shrink'))).merged, true);
+  assert.equal((await java(method('grow'), `  @Override\n${method('shrink')}`)).merged, false, 'Annotated');
+  // TypeScript interface members are types only: Merged.
+  const shape = await samePlace(
+    'src/options.ts',
+    'export interface Options {\n  width: number;\n',
+    '}\n',
+    '  depth: number;\n',
+    '  weight: number;\n',
+    '  depth: number;\n  weight: number;\n'
+  );
+  assert.equal(shape.merged, true, shape.note);
+  // A method named by a string, a number or a computed key, or a getter: Check. `'add'() {}` and `add() {}` are one name.
+  for (const spelled of [
+    "  'remove'(id: number) {\n    return id;\n  }\n",
+    '  [Symbol.iterator]() {\n    return [][Symbol.iterator]();\n  }\n',
+    '  get size() {\n    return 0;\n  }\n',
+  ])
+    assert.equal((await cart(add, spelled, add + spelled)).merged, false, spelled);
+  assert.equal(
+    (
+      await cart(
+        add,
+        "  'add'(id: number) {\n    return id;\n  }\n",
+        add + "  'add'(id: number) {\n    return id;\n  }\n"
+      )
+    ).merged,
+    false
+  );
+  // Python: default values and annotations run when `def` runs, in order; postponed annotations don't.
+  const py = (ours: string, theirs: string, head = '') =>
+    samePlace(
+      'lab/cart.py',
+      `${head}class Cart:\n    def total(self):\n        return 0\n`,
+      '',
+      ours,
+      theirs,
+      ours + theirs
+    );
+  const plain = '\n    def add(self, item):\n        return item\n';
+  const other = '\n    def remove(self, id):\n        return id\n';
+  assert.equal((await py(plain, other)).merged, true);
+  assert.equal((await py(plain, '\n    def remove(self, id=log("x")):\n        return id\n')).merged, false);
+  const typed = '\n    def remove(self, id: Id) -> Id:\n        return id\n';
+  assert.equal((await py(plain, typed)).merged, false);
+  // Postponed annotations are no exception: a `__future__` line inside a docstring postpones nothing.
+  assert.equal((await py(plain, typed, '"""Notes.\n\nfrom __future__ import annotations\n"""\n\n')).merged, false);
+  assert.equal((await py(plain, typed, 'from __future__ import annotations\n\n')).merged, false);
+  // A `__name` is mangled with its class: `__helper` in Cart is `_Cart__helper`.
+  const mangled = '\n    def __helper(self):\n        return 1\n';
+  const spelledOut = '\n    def _Cart__helper(self):\n        return 2\n';
+  assert.equal((await py(mangled, spelledOut)).merged, false);
+  assert.equal((await py(plain, spelledOut)).merged, false);
+  // A blank line inside a docstring is the docstring's text: the result must keep it.
+  const doc = '\n    def add(self, item):\n        """Add.\n\n        More."""\n        return item\n';
+  const docResult = (doc + other).replace('Add.\n\n', 'Add.\n');
+  assert.equal(
+    (await samePlace('lab/cart.py', 'class Cart:\n    def total(self):\n        return 0\n', '', doc, other, docResult))
+      .merged,
+    false
+  );
+  // A decorator or attribute just above the insertion point attaches to whichever node comes first there.
+  const above = await samePlace(
+    'src/cart.ts',
+    `${head}  @memo\n`,
+    '  later() {\n    return 1;\n  }\n}\n',
+    add,
+    remove,
+    add + remove
+  );
+  assert.equal(above.merged, false);
+  const cfg = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n    #[cfg(test)]\n',
+    '    fn later(&self) -> u32 {\n        1\n    }\n}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
+  assert.equal(cfg.merged, false);
+  const impl = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n',
+    '}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
+  assert.equal(impl.merged, true, impl.note);
+  // Go: an import beside a function is two kinds; plain functions are not order-free; methods are.
+  const goFile = (ours: string, theirs: string) =>
+    samePlace('lab/lab.go', 'package lab\n\nimport "fmt"\n', '\nvar _ = fmt.Sprint\n', ours, theirs, ours + theirs);
+  assert.equal((await goFile('import "os"\n', 'func helper() {}\n')).merged, false);
+  assert.equal((await goFile('func a() {}\n', 'func b() {}\n')).merged, false);
+  assert.equal((await goFile('func (t T) A() {}\n', 'func (t T) B() {}\n')).merged, true);
+  // C#: `global using`, `using static` and aliases change names elsewhere; plain usings are order-free.
+  const usings = (ours: string, theirs: string) =>
+    samePlace('Program.cs', 'using System;\n', '\nclass P {}\n', ours, theirs, ours + theirs);
+  assert.equal((await usings('using System.Linq;\n', 'using System.Text;\n')).merged, true);
+  for (const odd of ['global using System.Text;\n', 'using static System.Math;\n', 'using Text = System.Text;\n'])
+    assert.equal((await usings('using System.Linq;\n', odd)).merged, false, odd);
+  // The if (ok) / else case: statements, so still Check.
+  const ok = await samePlace(
+    'src/run.ts',
+    'export function run(ok: boolean) {\n  if (ok) {\n    run();\n',
+    '  }\n}\n',
+    '    log();\n',
+    '  } else {\n    skip();\n',
+    '    log();\n  } else {\n    skip();\n'
+  );
+  assert.equal(ok.merged, false);
+});
+
+void test('#476: package.json dependency lists are order-free; other JSON keys and every enum are Check', async () => {
+  const pkg = (owner: string, path = 'package.json') =>
+    samePlace(
+      path,
+      `{\n  "${owner}": {\n    "a": "1",\n`,
+      '    "z": "26"\n  }\n}\n',
+      '    "b": "2",\n',
+      '    "c": "3",\n',
+      '    "b": "2",\n    "c": "3",\n'
+    );
+  for (const owner of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const verdict = await pkg(owner);
+    assert.equal(verdict.merged, true, `${owner}: ${verdict.note}`);
+  }
+  // Scripts (run-s globs), exports, any other file's keys (jest's moduleNameMapper matches in order): Check.
+  assert.equal((await pkg('scripts')).merged, false);
+  assert.equal((await pkg('exports')).merged, false);
+  assert.equal((await pkg('moduleNameMapper', 'jest.config.json')).merged, false);
+  assert.equal((await pkg('dependencies', 'config.json')).merged, false);
+  // The same package on both sides, or one the list already has: Check.
+  const twice = await samePlace(
+    'package.json',
+    '{\n  "dependencies": {\n    "a": "1",\n',
+    '    "z": "26"\n  }\n}\n',
+    '    "b": "2",\n',
+    '    "z": "3",\n',
+    '    "b": "2",\n    "z": "3",\n'
+  );
+  assert.equal(twice.merged, false);
+  // Appended at the end: both sides add the comma to the last key, the same change.
+  const end = await verifyProposals(
+    {
+      path: 'package.json',
+      base: '{\n  "dependencies": {\n    "a": "1"\n  }\n}\n',
+      ours: '{\n  "dependencies": {\n    "a": "1",\n    "b": "2"\n  }\n}\n',
+      theirs: '{\n  "dependencies": {\n    "a": "1",\n    "c": "3"\n  }\n}\n',
+      original:
+        '{\n  "dependencies": {\n<<<<<<< feature\n    "a": "1",\n    "b": "2"\n||||||| ancestor\n    "a": "1"\n=======\n    "a": "1",\n    "c": "3"\n>>>>>>> main\n  }\n}\n',
+      proposals: [{ source: 'mergiraf', text: '    "a": "1",\n    "b": "2",\n    "c": "3"\n' }],
+    },
+    analyse
+  );
+  assert.equal(end.merged, true, end.note);
+  // YAML keys: Check.
+  const yaml = await samePlace('ci.yml', 'jobs:\n  a: 1\n', '  z: 26\n', '  b: 2\n', '  c: 3\n', '  b: 2\n  c: 3\n');
+  assert.equal(yaml.merged, false);
+  // Enums, even with explicit values, numbers or strings: Check.
+  const tsEnum = (ours: string, theirs: string) =>
+    samePlace('src/color.ts', "export enum Color {\n  Red = 'red',\n", '}\n', ours, theirs, ours + theirs);
+  assert.equal((await tsEnum("  Green = 'green',\n", "  Blue = 'blue',\n")).merged, false);
+  assert.equal((await tsEnum('  Green = 2,\n', '  Blue = 3,\n')).merged, false);
+  const cs = await samePlace(
+    'Color.cs',
+    'enum Color\n{\n    Red = 1,\n',
+    '}\n',
+    '    Green = 2,\n',
+    '    Blue = 3,\n',
+    '    Green = 2,\n    Blue = 3,\n'
+  );
+  assert.equal(cs.merged, false);
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
