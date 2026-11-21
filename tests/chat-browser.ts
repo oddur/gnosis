@@ -42,17 +42,24 @@ void app.whenReady().then(async () => {
   };
   const shots = path.resolve('.impeccable/review/chat');
   fs.mkdirSync(shots, { recursive: true });
+  // With GNOSIS_CHAT_SHOTS set, each shot also prints as a `CHATSHOT <name> <base64 PNG>` line, since Docker keeps no
+  // files, and the first answer streams in two parts so a shot shows it mid-stream, inside its code fence.
+  const printShots = !!process.env.GNOSIS_CHAT_SHOTS;
+  const save = (name: string, png: Buffer) => {
+    fs.writeFileSync(path.join(shots, name + '.png'), png);
+    if (printShots) console.log(`CHATSHOT ${name} ${png.toString('base64')}`);
+  };
   const capture = async (name: string) => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 250));
     if (!(await js("!!document.querySelector('#chat-surface')"))) {
-      fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
+      save(name, (await win.webContents.capturePage()).toPNG());
       return;
     }
     const rect = await js<{ x: number; y: number; width: number; height: number }>(
       "(()=>{const r=document.querySelector('#chat-surface').getBoundingClientRect();return{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}})()"
     );
-    fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage(rect)).toPNG());
+    save(name, (await win.webContents.capturePage(rect)).toPNG());
   };
   const emit = (text: string) => js(`window.chatFixture.chunk(${JSON.stringify(text)})`);
   const finish = (text: string) => js(`window.chatFixture.finish(${JSON.stringify(text)})`);
@@ -83,7 +90,16 @@ void app.whenReady().then(async () => {
     await fill('What happens if a worker stops?');
     const answer =
       'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```';
-    await emit(answer);
+    if (printShots) {
+      const cut = answer.indexOf('await worker');
+      await emit(answer.slice(0, cut));
+      await wait("document.querySelectorAll('.chat-message-body')[1]?.textContent.includes('queue.dispatch(command)')");
+      await capture('topic-midstream-light');
+      await js("document.documentElement.classList.add('dark')");
+      await capture('topic-midstream-dark');
+      await js("document.documentElement.classList.remove('dark')");
+      await emit(answer.slice(cut));
+    } else await emit(answer);
     // The trace shows the context Gnosis assembled, live, before the answer settles.
     await wait("!!document.querySelector('.chat-trace[data-streaming]')");
     assert.deepEqual(
