@@ -1,0 +1,8 @@
+{
+  "description": "Both sides change the same string from 'hi' to 'hey'; the PR writes double quotes, main single. TypeScript reads them as equal, so the PR's layout is Merged.",
+  "language": "typescript",
+  "category": "structure/same-change",
+  "expected": {
+    "src/greet.ts": "merged"
+  }
+}

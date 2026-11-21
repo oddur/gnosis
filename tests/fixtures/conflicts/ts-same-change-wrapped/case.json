@@ -1,0 +1,8 @@
+{
+  "description": "Both sides make the same change to a call (retries 2 to 3); the PR wraps it over several lines, main keeps one line. Same tokens, so the PR's layout is Merged.",
+  "language": "typescript",
+  "category": "structure/same-change",
+  "expected": {
+    "src/users.ts": "merged"
+  }
+}

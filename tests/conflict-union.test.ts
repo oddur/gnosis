@@ -5,8 +5,16 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { withProposals } from '../lib/conflict-carry';
-import { unionNote, unionOf, withUnions } from '../lib/conflict-union';
-import { blockBuckets, proposalKey, verifyProposals, type Analyse } from '../lib/conflict-verify';
+import { sameTokens, unionNote, unionOf, withUnions } from '../lib/conflict-union';
+import {
+  blockBuckets,
+  NOT_SAME,
+  proposalKey,
+  SAME_CHANGE,
+  verifyProposals,
+  type Analyse,
+  type Equivalent,
+} from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
 /** Both sides added different definitions at the same place (#445 item 16), and per-conflict check results (item 18). */
@@ -264,4 +272,86 @@ void test('a proposal your saved draft decided stays in Check if you pick it aga
   assert.equal(verdict.merged, false, 'No proposal was checked, so the file is not Merged');
   // Undo puts the proposal back on screen; the verdict still belongs to the saved draft.
   assert.deepEqual(blockBuckets(saved, withProposals(f.original, f.proposals ?? []), verdict), ['check']);
+});
+
+/** Both sides made the same change (#445 item 15): the PR's version, Merged only when the syntax trees match. */
+void test('the same change in another layout is a candidate; a different token, order or spacing is not', () => {
+  assert.equal(
+    sameTokens('f(a, { retries: 3 }, "json");\n', "f(\n  a,\n  { retries: 3 },\n  'json',\n);\n", false),
+    true
+  );
+  assert.equal(sameTokens('x = ["a", "b"]\n', 'x = [\n    "a",\n    "b",\n]\n', true), true);
+  // Traps: one token, a string's content, a number, the order, a space inside a string.
+  assert.equal(sameTokens('f(a, true);\n', 'f(\n  a,\n  false\n);\n', false), false);
+  assert.equal(sameTokens("f('hey');\n", "f('hey!');\n", false), false);
+  assert.equal(sameTokens('x = [30]\n', 'x = [\n    300,\n]\n', true), false);
+  assert.equal(sameTokens('f(a, b);\n', 'f(\n  b,\n  a\n);\n', false), false);
+  assert.equal(sameTokens('x = ["beta gamma"]\n', 'x = ["beta  gamma"]\n', true), false);
+  // Python: a line's indentation outside brackets is meaning, not layout.
+  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', true), false);
+  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', false), true);
+});
+
+void test('preparation proposes the PR’s version where both sides may have made the same change, with a grammar', () => {
+  const original = `a\n${marker("f('x');\n", "f('w');\n", 'f("x");\n')}b\n`;
+  assert.deepEqual(withUnions('src/x.ts', original, undefined), [{ source: 'same', text: "f('x');\n" }]);
+  // A proposal structural merge made stays; without a grammar nothing can prove the two are the same code.
+  const kept = { source: 'mergiraf' as const, text: "f('x');\n" };
+  assert.deepEqual(withUnions('src/x.ts', original, [kept]), [kept]);
+  assert.equal(withUnions('notes.txt', original, undefined), undefined);
+  // Both sides inserted the same lines in different layouts: the same change, not two additions.
+  const inserted = `a\n${marker('f(1, 2);\n', '', 'f(\n  1,\n  2,\n);\n')}`;
+  assert.deepEqual(withUnions('src/x.ts', inserted, undefined), [{ source: 'same', text: 'f(1, 2);\n' }]);
+});
+
+void test('the PR’s version of the same change is Merged only when both sides are the same program', async () => {
+  const equivalent: Equivalent = (language, before, after) => engine.equivalent(language, before, after);
+  const verify = async (name: string, parts: (string | [string, string, string])[], proposals?: ConflictProposal[]) => {
+    const f = conflict(name, parts, proposals);
+    const verdict = await verifyProposals(f, analyse, false, equivalent);
+    return { verdict, buckets: blockBuckets(f, f.result, verdict), proposals: f.proposals };
+  };
+  const merged = { merged: true, note: `${SAME_CHANGE} The file parses.` };
+  // Quotes, wrapping and a trailing comma, in TypeScript and Python.
+  const quotes = await verify('src/greet.ts', [
+    'export function hello() {\n',
+    ['  return greet("hey", 4);\n', "  return greet('hi', 4);\n", "  return greet('hey', 4);\n"],
+    '}\n',
+  ]);
+  assert.deepEqual(quotes.verdict, merged);
+  assert.deepEqual(quotes.buckets, ['merged']);
+  const list = await verify('lab/targets.py', [
+    'def targets():\n',
+    ['    names = [\n        "a",\n        "b",\n    ]\n', '    names = ["a"]\n', '    names = ["a", "b"]\n'],
+    '    return names\n',
+  ]);
+  assert.deepEqual(list.verdict, merged);
+  // Traps the candidate check lets through: the trees differ, so the PR's version stays in Check.
+  const tuple = await verify('lab/value.py', [
+    'def value():\n',
+    ['    x = (1,)\n', '    x = 0\n', '    x = (1)\n'],
+    '    return x\n',
+  ]);
+  assert.deepEqual(tuple.proposals, [{ source: 'same', text: '    x = (1,)\n' }]);
+  assert.deepEqual(tuple.verdict, { merged: false, note: NOT_SAME });
+  assert.deepEqual(tuple.buckets, ['check']);
+  const template = await verify('src/greet.ts', [
+    'export function hello() {\n',
+    ['  return `a\n  b`;\n', "  return 'a';\n", '  return `a\nb`;\n'],
+    '}\n',
+  ]);
+  assert.deepEqual(template.verdict, { merged: false, note: NOT_SAME });
+  // Without the tree comparison (the language is off), it stays in Check.
+  const call = ["  f(\n    'x',\n  );\n", "  f('w');\n", '  f("x");\n'] as [string, string, string];
+  const open = conflict('src/x.ts', ['function g() {\n', call, '}\n']);
+  assert.deepEqual(open.proposals, [{ source: 'same', text: call[0] }]);
+  assert.deepEqual(await verifyProposals(open, analyse), { merged: false, note: NOT_SAME });
+  // Structural merge's own proposal of the same change: Merged as the PR's layout, never as main's.
+  const pr = await verify('src/x.ts', ['function g() {\n', call, '}\n'], [{ source: 'mergiraf', text: call[0] }]);
+  assert.deepEqual(pr.verdict, merged);
+  const main = await verify('src/x.ts', ['function g() {\n', call, '}\n'], [{ source: 'mergiraf', text: call[2] }]);
+  assert.deepEqual(main.verdict, {
+    merged: false,
+    note: 'Both sides made the same change. The result isn’t the PR’s layout. Check it.',
+  });
 });

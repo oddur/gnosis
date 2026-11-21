@@ -1,0 +1,8 @@
+{
+  "description": "Both sides add \"gamma\" to the same list; the PR wraps the list with a trailing comma, main keeps one line. Same tokens, so the PR's layout is Merged.",
+  "language": "python",
+  "category": "structure/same-change",
+  "expected": {
+    "lab/targets.py": "merged"
+  }
+}

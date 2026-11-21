@@ -141,7 +141,10 @@ export async function verifyProposals(
   analyse: Analyse,
   /** The whole file is one conflict, its three versions, and the first proposal is the whole result. */
   whole = false,
-  /** Tells a side that only reformatted a conflict's lines; without it, such a conflict stays in Check. */
+  /**
+   * Tells a side that only reformatted a conflict's lines, or two sides that made the same change; without it, such a
+   * conflict stays in Check.
+   */
   equivalent?: Equivalent
 ): Promise<Verdict> {
   const proposals = file.proposals ?? [];
@@ -184,9 +187,7 @@ export async function verifyProposals(
     const first = blocks.find((v) => v && !v.merged) ?? blocks.find(Boolean);
     // A proposal your draft decided wasn't checked as itself: if you pick it again before the draft is saved, it
     // stays in Check rather than borrowing the file's verdict.
-    const unchecked = proposals.flatMap((p, index) =>
-      p && !proposed.some((s) => s.index === index) ? [index] : []
-    );
+    const unchecked = proposals.flatMap((p, index) => (p && !proposed.some((s) => s.index === index) ? [index] : []));
     for (const index of unchecked)
       blocks[index] = { merged: false, note: 'You changed this conflict. Gnosis checks it again when you save.' };
     const shared =
@@ -286,13 +287,16 @@ export async function verifyProposals(
         ? accountWholeFile(file, proposal.text, indented)
         : (accountLines(s.block, proposal.text, indented) ??
           (indented ? undefined : accountLines(s.block, proposal.text, true)));
-      if (note === SAME_LINES && !whole) {
+      // The PR's version of a change both sides may have made (lib/conflict-union.ts) is Merged only on the syntax
+      // trees' word, never on the line count, which ignores trailing commas.
+      const same = proposal.source === 'same';
+      if ((note === SAME_LINES || same) && !whole) {
         const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent);
         if (formatted?.merged) {
           reformats.set(s.index, formatted.note);
           continue;
         }
-        note = formatted?.note ?? note;
+        note = formatted?.note ?? (same ? NOT_SAME : note);
       }
       if (note) fail(s.index, note);
     }
@@ -342,11 +346,19 @@ export function keepsLayout(block: { base: string; edited: string; formatted: st
   );
 }
 
+/** The note of a conflict where both sides made the same change in different layouts (#445 item 15). */
+export const SAME_CHANGE = 'Both sides made the same change. Kept the PR’s layout.';
+/** The PR's version was proposed for a change both sides seemed to make, but the trees don't show the same code. */
+export const NOT_SAME =
+  'Both sides changed these lines almost the same way, but Gnosis couldn’t show it is the same change. The result is the PR’s version. Check main’s change.';
+
 /**
  * A conflict where one side only reformatted the lines the other side changed. Each version of the conflict is read
  * in the file around it (other conflicts as the PR wrote them) and compared with the ancestor's by its syntax tree,
  * formatting aside. The proposal is Merged only when it is the same program as the changing side's version and is the
- * reformatting side's text with only the changing side's tokens changed (keepsLayout). Undefined when neither side, or both, only reformatted.
+ * reformatting side's text with only the changing side's tokens changed (keepsLayout). When both sides changed the code
+ * and the two versions are the same program (the same change in different layouts), the proposal is Merged only when it
+ * is the PR's version exactly; so when both only reformatted. Undefined when both changed the code differently.
  */
 async function reformatted(
   segments: ConflictSegment[],
@@ -361,13 +373,20 @@ async function reformatted(
   const fill = (text: string) =>
     segments.map((s) => (s.kind === 'text' ? s.text : s.index === index ? text : s.block.ours)).join('');
   try {
-    // Which side only reformatted, first: when both changed the code (the common case), nothing more is parsed.
+    // Which side only reformatted, first. When both changed the code (the common case), only the two sides are compared.
     const baseText = fill(base);
     const [pr, main] = await Promise.all([
       equivalent(language, baseText, fill(ours)),
       equivalent(language, baseText, fill(theirs)),
     ]);
-    if (pr === main) return undefined;
+    // Both changed the code, or both only reformatted: when the two are the same program, laid out differently, the PR's
+    // version is the result, word for word.
+    if (pr === main)
+      return (await equivalent(language, fill(ours), fill(theirs)))
+        ? proposal === ours
+          ? { merged: true, note: SAME_CHANGE }
+          : { merged: false, note: 'Both sides made the same change. The result isn’t the PR’s layout. Check it.' }
+        : undefined;
     const [formatter, editor] = pr ? ['the PR', 'main'] : ['main', 'the PR'];
     const lead = `${pr ? 'The PR' : 'Main'} only reformatted these lines and ${editor} changed them`;
     if (!(await equivalent(language, fill(pr ? theirs : ours), fill(proposal))))
@@ -663,7 +682,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
  * The version of the checks in this file. Bump it whenever a check changes what it passes or fails: verdicts saved with
  * a draft (lib/conflict-verdict-key.ts) count only for the version that made them.
  */
-export const CHECKS_VERSION = 1;
+export const CHECKS_VERSION = 2;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A

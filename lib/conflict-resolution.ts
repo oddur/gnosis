@@ -32,11 +32,11 @@ export interface ConflictFile {
   verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
 }
 /**
- * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or as both sides'
- * additions where structural merge left it (lib/conflict-union.ts).
+ * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
+ * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same';
   text: string;
 }
 export interface ConflictSession {

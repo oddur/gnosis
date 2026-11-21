@@ -1,0 +1,8 @@
+{
+  "description": "Trap: both sides make the same edit with the same tokens, but main also indents the append into the if. In Python that changes what the code does.",
+  "language": "python",
+  "category": "structure/same-change",
+  "expected": {
+    "lab/targets.py": "check"
+  }
+}

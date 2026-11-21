@@ -30,7 +30,9 @@ const proposalWhat = (proposal: ConflictProposal) =>
     ? 'Same as you resolved before'
     : proposal.source === 'union'
       ? 'Kept both sides’ additions'
-      : 'Combined both sides’ changes';
+      : proposal.source === 'same'
+        ? 'Kept the PR’s version'
+        : 'Combined both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere' ? `Check · ${proposalWhat(proposal)}` : 'Check';
