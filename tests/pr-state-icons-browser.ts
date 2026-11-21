@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * Every PR name carries GitHub's state icon: green open, gray draft, purple merged, red closed. Checks queue rows,
+ * Every PR name carries GitHub's state icon: green open, gray draft, purple merged, red closed, and the red conflict
+ * icon for an open PR with merge conflicts. Checks queue rows,
  * stack member rows, the PR header, its workspace tab and breadcrumb, the stack list and the menu bar panel with
  * synthetic fixtures, and that a merge read while the PR is open updates the icons in place.
  * Captures go to GNOSIS_CAPTURE_DIR (or the temp directory) as gnosis-pr-state-icons-*.png.
@@ -57,7 +58,8 @@ void app.whenReady().then(async () => {
     );
   // Main leaves merged and closed PRs out of the queue, so single rows are open or draft; merged and closed
   // members show inside the stack.
-  const states = { open: 'State fixture open', draft: 'State fixture draft' } as const;
+  // GitHub reports conflicts for the draft and for "conflicting": the draft keeps its draft icon.
+  const states = { open: 'State fixture open', draft: 'State fixture draft', conflicting: 'State fixture conflicts' } as const;
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
@@ -85,6 +87,8 @@ void app.whenReady().then(async () => {
       const items=[...singles,stack];
       window.electronAPI.workbenchQueue=async()=>({...queue,revision:undefined,
         items:window.dropMerged?items.filter(i=>i.subject.members.some(m=>!window.lifecycle[m.url]||window.lifecycle[m.url].state==='open')):items});
+      const signals=window.electronAPI.getQueueSignals;
+      window.electronAPI.getQueueSignals=async(...args)=>(await signals(...args)).map(v=>/pr-states\\/pull\\/[23]$/.test(v.url)?{...v,readiness:{...v.readiness,mergeable:'CONFLICTING',mergeState:'DIRTY'}}:v);
       const status=window.electronAPI.getPrStatus;
       window.electronAPI.getPrStatus=async(url,...rest)=>{const result=await status(url,...rest);return result&&window.lifecycle[url]?{...result,lifecycle:window.lifecycle[url]}:result;};
       document.querySelector('.queue-toolbar button[aria-label]').click();
@@ -92,10 +96,19 @@ void app.whenReady().then(async () => {
 
     // Queue rows: one icon per state, with an accessible name that does not read as an action.
     await wait(`[...document.querySelectorAll('.queue-row-main')].some(b=>b.textContent.includes('State fixture draft'))`);
+    // Status arrives after the rows: an open PR with conflicts turns into the conflict icon.
+    await wait("!!document.querySelector('.queue-pr-gutter .pr-state-icon.is-conflicting')");
     for (const [state, title] of Object.entries(states)) assert.equal(await rowState(title), state, `${title} row`);
     assert.equal(
       await js("document.querySelector('.queue-pr-gutter .pr-state-icon.is-draft')?.getAttribute('aria-label')"),
       'PR state: Draft'
+    );
+    const conflicting = ".queue-pr-gutter .pr-state-icon.is-conflicting";
+    assert.equal(await js(`document.querySelector('${conflicting}')?.getAttribute('aria-label')`), 'PR state: Open, has merge conflicts');
+    assert.equal(
+      await js(`getComputedStyle(document.querySelector('${conflicting}')).color`),
+      await js("(()=>{const e=document.createElement('span');e.style.color='var(--color-danger)';document.body.append(e);const c=getComputedStyle(e).color;e.remove();return c})()"),
+      'Conflicts show in the danger color'
     );
     // Every glyph shares one slot size, so rows line up whatever the state.
     const sizes = await js<string[]>("[...document.querySelectorAll('.queue-pr-gutter .pr-state-icon')].map(i=>{const r=i.getBoundingClientRect();return r.width+'x'+r.height})");
@@ -139,6 +152,14 @@ void app.whenReady().then(async () => {
     await openRow(states.draft, 'Open PR overview');
     await wait("document.querySelector('.pr-overview-heading h1 .pr-state-icon')?.dataset.prState==='draft'");
     await wait("document.querySelector('.workspace-tab[data-active=\"true\"] .pr-state-icon')?.dataset.prState==='draft'");
+
+    // An open PR with conflicts: the header and its tab show the conflict icon too.
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await wait("!!document.querySelector('.queue-list') && !document.querySelector('.pr-overview-heading')");
+    await openRow(states.conflicting, 'Open PR overview');
+    await wait("document.querySelector('.pr-overview-heading h1 .pr-state-icon')?.dataset.prState==='conflicting'");
+    await wait("document.querySelector('.workspace-tab[data-active=\"true\"] .pr-state-icon')?.dataset.prState==='conflicting'");
+    await both('header-conflicting');
 
     // The stack list shows each member's state in its chain node.
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");

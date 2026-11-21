@@ -21,6 +21,22 @@ export function mergeConflictState(signals: QueueSignals | undefined): MergeConf
   return readiness.mergeable === 'MERGEABLE' ? 'clear' : 'computing';
 }
 
+/** "Resolve conflicts…" is offered unless GitHub says the PR merges cleanly. A PR only behind its base is clean. */
+export const offersConflictResolution = (state: MergeConflictState) => state !== 'clear';
+/**
+ * The merge state to act on, from the status value for a PR's current head: trusted whatever its age, like the
+ * readiness badges. A new head, or GitHub's own change of state, brings a new value. No value: unknown.
+ */
+export const conflictStateFor = (value: QueueSignals | undefined): MergeConflictState => mergeConflictState(value);
+/** `conflictStateFor` the freshest of the values on hand (highest `checkedAt`) for the member's head. */
+export const conflictStateFrom = (signals: readonly (QueueSignals | undefined)[]) => (member: QueueSignalRequest) => {
+  let freshest: QueueSignals | undefined;
+  for (const value of signals)
+    if (value && queueSignalKey(value) === queueSignalKey(member) && (!freshest || value.checkedAt > freshest.checkedAt))
+      freshest = value;
+  return conflictStateFor(freshest);
+};
+
 export function memberMergeState(member: QueueSignalRequest, states: MergeStates | undefined): MergeConflictState {
   return states?.get(queueSignalKey(member)) ?? 'unchecked';
 }

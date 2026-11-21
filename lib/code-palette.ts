@@ -211,7 +211,7 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
   ];
   // Only the bars, the file headers and the outlines take the properties: set on .changes-diff or the file's section, they would
   // restyle every line of the diff (#366).
-  return `[data-code-theme="${name}"] :is(.diff-gap,.changes-file-header,.diff-outline){${declarations.join(';')}}`;
+  return `[data-code-theme="${name}"] :is(.diff-gap,.diff-move-lead,.changes-file-header,.diff-outline){${declarations.join(';')}}`;
 }
 
 /**

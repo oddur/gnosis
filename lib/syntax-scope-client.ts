@@ -10,7 +10,7 @@ import csharpWasm from '../src/assets/tree-sitter/csharp.wasm?url';
 import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
 import type { SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
-import { blocksSignature, changeBlocks, type NoiseBlock } from './semantic-noise';
+import { blocksSignature, changeBlocks, NOISE_MAX_CHARACTERS, type NoiseBlock } from './semantic-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
@@ -110,6 +110,8 @@ function start(lane: Lane = 'front'): Promise<Worker | undefined> {
           symbolTimings.get(response.id)?.(response.timing);
         } else if ('moves' in response) {
           (entry.resolve as (value: MovesResult) => void)(response.moves);
+        } else if ('equivalent' in response) {
+          (entry.resolve as (value: boolean) => void)(response.equivalent);
         } else if ('check' in response) {
           (entry.resolve as (value: { definitions: SyntaxDefinition[]; errors: boolean }) => void)(response.check);
         } else {
@@ -334,11 +336,7 @@ type NoiseTiming = Extract<SyntaxResponse, { noise: unknown }>['timing'];
 const noiseTimings = new Map<number, (timing: NoiseTiming) => void>();
 /** The last comparisons, newest last, for the diagnostics export and the browser checks. */
 export const noiseClassifyTimings: (NoiseTiming & { key: string; language: SyntaxLanguage; characters: number })[] = [];
-/**
- * Files larger than this are not compared: a comparison parses both sides in the one worker, and a long one would hold
- * up the next file's breadcrumbs.
- */
-export const NOISE_MAX_CHARACTERS = 400_000;
+export { NOISE_MAX_CHARACTERS };
 type NoiseHunks = Extract<SyntaxRequest, { type: 'noise' }>['hunks'];
 let symbolsWanted: (fileKey: string) => boolean = () => false;
 /** Which files' whole comparisons fingerprint moved symbols too (lib/moved-symbols-store.ts). */
@@ -648,6 +646,35 @@ export function checkSyntax(language: SyntaxLanguage, text: string): Promise<{ d
           id,
           language,
           text,
+          runtimeUrl: absolute(runtimeWasm),
+          grammarUrl: absolute(GRAMMARS[language]),
+        } satisfies SyntaxRequest);
+      })
+  );
+}
+
+/**
+ * Whether `after` is `before` with formatting changes only, compared in the worker (lib/semantic-noise.ts). The
+ * conflict checks use it to tell a side that only reformatted the lines it shares with the other side's change.
+ */
+export function checkFormatting(language: SyntaxLanguage, before: string, after: string): Promise<boolean> {
+  if (!languageAllowed(language)) return Promise.reject(Error('This language is off in Settings'));
+  if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS) return Promise.reject(Error('This file is too large to compare'));
+  return start('front').then(
+    (instance) =>
+      new Promise<boolean>((resolve, reject) => {
+        if (!instance) {
+          reject(Error('The syntax worker is not available'));
+          return;
+        }
+        const id = ++nextId;
+        waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+        instance.postMessage({
+          type: 'equivalent',
+          id,
+          language,
+          before,
+          after,
           runtimeUrl: absolute(runtimeWasm),
           grammarUrl: absolute(GRAMMARS[language]),
         } satisfies SyntaxRequest);

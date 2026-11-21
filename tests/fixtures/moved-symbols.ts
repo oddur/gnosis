@@ -9,6 +9,9 @@ import { patchOf } from './syntax-scope';
  * - `Runtime/Bridge.cs` loses `Drain`, which `Runtime/Pump.cs`, added, has as `DrainAll`.
  * - `src/moves/close-a.ts` and `src/moves/close-b.ts` each lose the same `closeAll`, which `src/moves/base.ts` gains
  *   once: a tie, which must show no move at all.
+ * - `src/moves/lines.ts` moves `totalWidth` up into the place of `normalizeLines`, which goes to `src/moves/render.ts`:
+ *   its first hunk opens with a moved deleted and a moved added symbol. It loses `formatLine` to render.ts, added, as
+ *   `renderLine` on its first line.
  *
  * `?moved-symbols-large`: a large PR for the cost check. `LARGE_MOVE_FILES` TypeScript and C# files of 24 functions
  * each, two small edits in every file, and `LARGE_MOVES` functions moved between files (a third renamed, a third
@@ -23,6 +26,8 @@ export const MOVE_FILES = {
   closeA: 'src/moves/close-a.ts',
   closeB: 'src/moves/close-b.ts',
   base: 'src/moves/base.ts',
+  lines: 'src/moves/lines.ts',
+  render: 'src/moves/render.ts',
 } as const;
 
 const filler = (prefix: string, count: number) =>
@@ -158,6 +163,30 @@ const closerAfter = (name: string) => [
   '}',
 ];
 
+const formatLine = (name: string) => [
+  `export function ${name}(text: string, width: number): string {`,
+  '  const trimmed = text.trimEnd();',
+  '  if (trimmed.length >= width) return trimmed.slice(0, width);',
+  '  return trimmed + " ".repeat(width - trimmed.length);',
+  '}',
+];
+const totalWidth = [
+  'export function totalWidth(lines: string[]): number {',
+  '  let width = 0;',
+  '  for (const line of lines) width = Math.max(width, line.length);',
+  '  return width;',
+  '}',
+];
+const normalizeLines = [
+  'export function normalizeLines(lines: string[], tab: number): string[] {',
+  '  const spaces = " ".repeat(tab);',
+  '  const result = lines.map((line) => line.replace(/\\t/g, spaces));',
+  '  return result.filter((line, i) => line.trim() || i < result.length - 1);',
+  '}',
+];
+const linesBefore = [...normalizeLines, '', ...filler('lines', 10), '', ...totalWidth, '', ...formatLine('formatLine')];
+const linesAfter = [...totalWidth, '', ...filler('lines', 10)];
+
 const SOURCES: [string, string[] | undefined, string[] | undefined][] = [
   [MOVE_FILES.store, storeBefore, storeAfter],
   [MOVE_FILES.queue, queueBefore, queueAfter],
@@ -171,6 +200,8 @@ const SOURCES: [string, string[] | undefined, string[] | undefined][] = [
     undefined,
     ['export class Base {', '  listeners: Listener[] = [];', '  timers = new Set<number>();', ...closeAll, '}'],
   ],
+  [MOVE_FILES.lines, linesBefore, linesAfter],
+  [MOVE_FILES.render, undefined, [...formatLine('renderLine'), '', ...normalizeLines, '', ...filler('render', 2)]],
 ];
 
 const text = (lines: string[] | undefined) => (lines?.length ? `${lines.join('\n')}\n` : '');

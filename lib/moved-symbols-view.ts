@@ -1,35 +1,106 @@
-import type { GapPart } from './diff-gaps';
+import type { GapHunk, GapPart } from './diff-gaps';
 import type { MoveMark } from './moved-symbols-core';
 
+/** Where a move's note goes: under a line of the diff, or at the top of a hunk, above its first row. */
+export type MoveNoteAt = { side: MoveMark['side']; line: number } | { hunk: string };
+
 /**
- * Where a diff shows a moved symbol's note (#398, ChangesDiff): under the line right above the symbol on its side, so
- * it reads as the symbol's heading, or under the symbol's first line when the row above is another side's (a deleted
- * block right above an added symbol, in a unified diff: the note would sit over unrelated lines) or not shown. A
- * symbol whose first line is not shown has no note. Lines are on the mark's side.
+ * Where a diff shows a moved symbol's note (#398, ChangesDiff): right above the symbol, so it reads as its heading.
+ * Notes sit under a line, so the note goes under the row the diff shows right before the symbol's first line: in a
+ * unified diff, that row on either side (a deleted block right above an added symbol), and in a split diff, the row
+ * before it on its own side. With no such row in its hunk, the note heads the hunk (`{ hunk }`). A symbol whose first
+ * line is not shown has no note.
  */
-export function moveNoteLines(parts: readonly GapPart[], marks: readonly MoveMark[]): Map<MoveMark, number> {
-  // Each line's row, in the order a unified diff shows rows, on each side. Hunks are apart: a row never follows a gap.
-  const rowOf = { after: new Map<number, number>(), before: new Map<number, number>() };
-  let index = 0;
+export function moveNoteLines(
+  parts: readonly GapPart[],
+  marks: readonly MoveMark[],
+  split = false
+): Map<MoveMark, MoveNoteAt> {
+  const result = new Map<MoveMark, MoveNoteAt>();
+  for (const mark of marks)
+    for (const part of parts) {
+      const at = part.kind === 'hunk' ? noteAt(part.key, part.hunk, mark, split) : undefined;
+      if (at) {
+        result.set(mark, at);
+        break;
+      }
+    }
+  return result;
+}
+
+/** Where a mark's note goes in one hunk, if its first line is there. */
+function noteAt(key: string, hunk: GapHunk, mark: MoveMark, split: boolean): MoveNoteAt | undefined {
+  const after = mark.side === 'after';
+  let oldLine = hunk.oldStart,
+    newLine = hunk.newStart;
+  // The row before, as the diff shows it: its type and lines; and whether a row before was on the mark's side.
+  let previous: string | undefined,
+    previousOld = 0,
+    previousNew = 0,
+    ownBefore = false;
+  for (const row of hunk.rows) {
+    const own = after ? row.type !== '-' : row.type !== '+';
+    if (own && (after ? newLine : oldLine) === mark.start) {
+      // A side's lines are consecutive in a hunk: a row on the mark's side before it is its line before.
+      if (split || previous === ' ') return ownBefore ? { side: mark.side, line: mark.start - 1 } : { hunk: key };
+      if (previous === undefined) return { hunk: key };
+      return previous === '-' ? { side: 'before', line: previousOld } : { side: 'after', line: previousNew };
+    }
+    ownBefore ||= own;
+    previous = row.type;
+    previousOld = oldLine;
+    previousNew = newLine;
+    if (row.type !== '+') oldLine++;
+    if (row.type !== '-') newLine++;
+  }
+  return undefined;
+}
+
+/** Where an old line sits among the new lines: its new line if kept, else the line that took its place. */
+function newSlot(parts: readonly GapPart[], line: number): number {
+  let offset = 0;
   for (const part of parts) {
     if (part.kind !== 'hunk') continue;
-    let oldLine = part.hunk.oldStart,
-      newLine = part.hunk.newStart;
-    for (const row of part.hunk.rows) {
-      if (row.type !== '+') rowOf.before.set(oldLine++, index);
-      if (row.type !== '-') rowOf.after.set(newLine++, index);
-      index++;
+    const { oldStart, newStart, rows } = part.hunk;
+    if (line < oldStart) return line + newStart - oldStart;
+    let oldLine = oldStart,
+      newLine = newStart;
+    for (const row of rows) {
+      if (row.type !== '+' && oldLine++ === line) return newLine;
+      if (row.type !== '-') newLine++;
     }
-    index++;
+    offset = newLine - oldLine;
   }
-  const result = new Map<MoveMark, number>();
-  for (const mark of marks) {
-    const own = rowOf[mark.side];
-    const at = own.get(mark.start);
-    if (at === undefined) continue;
-    result.set(mark, own.get(mark.start - 1) === at - 1 ? mark.start - 1 : mark.start);
-  }
-  return result;
+  return line + offset;
+}
+
+/**
+ * A move's words, for its note: "Moved from src/a.ts:12" for another file's, and within the file, which way it went:
+ * "Moved up from line 22", "Moved down to line 40". The way is by order in the new file, the old line placed among
+ * the new ones through the diff's hunks, so lines added or removed above either end do not turn it around. `where`
+ * says the place for a screen reader.
+ */
+export function moveWords(
+  mark: Pick<MoveMark, 'side' | 'start' | 'sameFile' | 'other'>,
+  parts: readonly GapPart[]
+): { verb: string; place: string; where: string } {
+  const into = mark.side === 'after';
+  const { other } = mark;
+  if (!mark.sameFile)
+    return {
+      verb: into ? 'Moved from' : 'Moved to',
+      place: `${other.path}:${other.start}`,
+      where: `${other.path}, line ${other.start}`,
+    };
+  const at = (end: { side: MoveMark['side']; start: number }) =>
+    end.side === 'after' ? end.start : newSlot(parts, end.start);
+  const [from, to] = into ? [at(other), at(mark)] : [at(mark), at(other)];
+  const way = to < from ? 'up ' : to > from ? 'down ' : '';
+  return {
+    verb: `Moved ${way}${into ? 'from' : 'to'}`,
+    place: `line ${other.start}`,
+    where: `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}`,
+  };
 }
 
 /**

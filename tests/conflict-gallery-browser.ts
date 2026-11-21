@@ -18,10 +18,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const OUT = process.env.GNOSIS_GALLERY_DIR ?? '/tmp/conflict-gallery';
-/** Cases that also go through the interactions: two Merged, three Decide, two Check, and two files. */
+/** Cases that also go through the interactions: two Merged, three Decide, two Check, two files, a whole-file proposal. */
 const INTERACT = (
   process.env.GNOSIS_GALLERY_INTERACT ??
-  'cs-add-usings-and-methods,real-ts-typeorm-column-decorator,real-py-werkzeug-plain-int,real-cs-polly-cache-tryget'
+  'cs-add-usings-and-methods,real-ts-typeorm-column-decorator,real-py-werkzeug-plain-int,real-cs-polly-cache-tryget,go-move-vs-edit'
 ).split(',');
 
 /** merged, check, decide or decided; clean for a file Git merged on its own. */
@@ -46,8 +46,9 @@ interface FileRow {
   path: string;
   current: boolean;
   badges: Badge[];
-  stage: string | null;
-  stageText: string | null;
+  /** The file's status (fileStatus in lib/conflict-verify.ts): buckets, proposal, resolved, reviewed, … */
+  status: string | null;
+  statusText: string | null;
   limitation: string | null;
 }
 interface Screen {
@@ -55,7 +56,9 @@ interface Screen {
   summary: string | null;
   files: FileRow[];
   blocks: Bucket[];
-  header: { stage: string | null; text: string | null };
+  header: { status: string | null; text: string | null };
+  /** Conflicts behind a whole-file proposal that hides them: "Resolve conflict by conflict instead (N)". */
+  hidden: number;
   wholeFile: boolean;
   mergedLines: number;
   state: string | null;
@@ -101,17 +104,18 @@ const READ = `(() => {
       path: b.querySelector('span[title]')?.getAttribute('title') ?? text(b),
       current: b.getAttribute('aria-current') === 'true',
       badges: [...b.querySelectorAll('.conflict-bucket')].map((e) => ({ bucket: e.dataset.bucket, text: text(e) })),
-      stage: b.querySelector('.conflict-file-status')?.dataset.stage ?? null,
-      stageText: text(b.querySelector('.conflict-file-status')),
+      status: b.querySelector('[data-status]')?.dataset.status ?? null,
+      statusText: text(b.querySelector('[data-status]')),
       limitation: text(b.querySelector('.conflict-file-limitation')),
     })),
     blocks: [...ws.querySelectorAll('.conflict-view .conflict-block')]
       .filter((b) => Number(b.dataset.conflictIndex) >= 0)
       .map((b) => b.dataset.bucket ?? (b.dataset.state === 'open' ? 'decide' : b.dataset.state === 'kept' ? 'decided' : b.dataset.state)),
     header: {
-      stage: ws.querySelector('.conflict-file-title [data-stage]')?.dataset.stage ?? null,
-      text: text(ws.querySelector('.conflict-file-title [data-stage]')),
+      status: ws.querySelector('.conflict-file-title [data-status]')?.dataset.status ?? null,
+      text: text(ws.querySelector('.conflict-file-title [data-status]')),
     },
+    hidden: Number(/\\((\\d+)\\)/.exec(text([...ws.querySelectorAll('.conflict-context-toggle')].find((b) => b.textContent.startsWith('Resolve conflict by conflict instead'))) ?? '')?.[1] ?? 0),
     wholeFile: !!ws.querySelector('.conflict-whole-file'),
     mergedLines: (ws.querySelector('.conflict-view')?.innerText.match(/Merged ·/g) ?? []).length,
     state: text(ws.querySelector('.conflict-state')),
@@ -302,6 +306,7 @@ void app.whenReady().then(async () => {
 
         // Each file: select it, wait, and read its blocks, header and file-list badge.
         const seen = new Map<string, { blocks: Bucket[]; row: FileRow; header: Screen['header'] }>();
+        const wholeFiles = new Map<string, boolean>();
         for (const row of screen.files) {
           if (!row.current) {
             await js(
@@ -316,8 +321,13 @@ void app.whenReady().then(async () => {
           }
           const current = screen.files.find((f) => f.current) ?? row;
           // A file that needs a local merge tool has one Decide and no blocks on screen.
-          const blocks = current.limitation ? ['decide'] : screen.blocks;
+          const blocks = current.limitation
+            ? ['decide']
+            : screen.blocks.length || !screen.hidden
+              ? screen.blocks
+              : new Array<string>(screen.hidden).fill('check');
           seen.set(row.path, { blocks, row: current, header: screen.header });
+          wholeFiles.set(row.path, screen.wholeFile);
           for (const s of screen.spill) result.problems.push(`${row.path}: ${s} spills out of the dialog`);
           for (const t of screen.truncated) result.notes.push(`${row.path}: truncated ${t}`);
         }
@@ -347,21 +357,26 @@ void app.whenReady().then(async () => {
             (blocks.includes('merged') || row.badges.some((b) => b.bucket === 'merged'))
           )
             result.problems.push(`${file}: shows Merged where any-but-Merged is expected`);
-          // The file-list badge counts the blocks on screen.
-          if (!row.limitation && row.stage !== 'reviewed') {
-            for (const bucket of ['decide', 'check', 'merged']) {
-              const badge = row.badges.find((b) => b.bucket === bucket);
-              const shown = badge ? Number(/^\d+/.exec(badge.text)?.[0]) : 0;
-              if (shown !== count(blocks, bucket))
-                result.problems.push(
-                  `${file}: file list says ${badge?.text ?? `no ${bucket}`}, but ${count(blocks, bucket)} blocks are ${bucket}`
-                );
-            }
-            const want = blocks.includes('decide') ? 'conflicted' : 'resolved';
-            if (header.stage !== want)
+          // One status everywhere: the file list and the header show the same, and it counts the blocks on screen.
+          if (!row.limitation) {
+            if (row.status !== header.status || row.statusText !== header.text)
               result.problems.push(
-                `${file}: header badge says ${header.text ?? 'nothing'}, expected the ${want} stage`
+                `${file}: file list says "${row.statusText ?? 'nothing'}", header says "${header.text ?? 'nothing'}"`
               );
+            if (row.status === 'buckets')
+              for (const bucket of ['decide', 'check', 'merged']) {
+                const badge = row.badges.find((b) => b.bucket === bucket);
+                const shown = badge ? Number(/^\d+/.exec(badge.text)?.[0]) : 0;
+                if (shown !== count(blocks, bucket))
+                  result.problems.push(
+                    `${file}: file list says ${badge?.text ?? `no ${bucket}`}, but ${count(blocks, bucket)} blocks are ${bucket}`
+                  );
+              }
+            else if (row.status === 'proposal') {
+              if (!wholeFiles.get(file) || blocks.some((b) => b !== 'check'))
+                result.problems.push(`${file}: says Proposal ready, but the blocks are ${blocks.join(', ')}`);
+            } else if (row.status === 'resolved' && blocks.some((b) => b !== 'decided'))
+              result.problems.push(`${file}: says ${row.statusText ?? ''}, but the blocks are ${blocks.join(', ')}`);
           }
         }
         // The summary agrees with the blocks of every file.
@@ -370,7 +385,14 @@ void app.whenReady().then(async () => {
           const s = result.summary ?? '';
           const files = Number(/^(\d+) files? conflicts?\./.exec(s)?.[1]);
           const merged = /(\d+) of (\d+) conflicts? (?:is|are) merged and checked/.exec(s);
-          const needs = /Nothing needs you/.test(s) ? 0 : Number(/(\d+) needs? you/.exec(s)?.[1]);
+          // "2 need you: …", "Nothing needs you.", or one part alone: "1 proposal to check for 2 conflicts.", "1 to decide."
+          const needs = /Nothing needs you/.test(s)
+            ? 0
+            : Number(
+                (/(\d+) needs? you/.exec(s) ??
+                  /for (\d+) conflicts/.exec(s) ??
+                  /(\d+) (?:proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
+              );
           const want = {
             files: seen.size,
             merged: count(all, 'merged'),
@@ -379,7 +401,7 @@ void app.whenReady().then(async () => {
             needs:
               count(all, 'decide') +
               [...seen.values()]
-                .filter((f) => f.row.stage !== 'reviewed')
+                .filter((f) => f.row.status !== 'reviewed')
                 .reduce((n, f) => n + count(f.blocks, 'check'), 0),
           };
           if (!s) result.problems.push('No summary line');
@@ -449,13 +471,33 @@ void app.whenReady().then(async () => {
         if (pending >= 2 && afterK !== before) problems.push(`K after J went to ${afterK}, not back to ${before}`);
         await shot('k', `K: ${afterJ} → ${afterK}`);
 
-        if (await has('Resolve conflict by conflict instead', 'document')) {
-          await js(
-            `[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('Resolve conflict by conflict instead')).click()`
-          );
+        if (
+          await js<boolean>(
+            "[...document.querySelectorAll('button')].some((b) => b.textContent.startsWith('Resolve conflict by conflict instead'))"
+          )
+        ) {
+          await shot('whole-file-proposal', (await read()).summary ?? '');
+          // Use the whole-file result, look at it, then go back to the conflicts with Reset file.
+          await click('Use this result', "document.querySelector('.conflict-whole-file')");
+          await settle();
+          const used = await read();
+          await shot('use-this-result', `${used.header.text ?? ''} · ${used.footer ?? ''}`);
+          if (await has('Reset file')) {
+            await click('Reset file');
+            await settle();
+            await shot('reset-file', (await read()).header.text ?? '');
+          }
+          const toggle =
+            "[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('Resolve conflict by conflict instead'))";
+          if (await js<boolean>(`!!${toggle}`)) await js(`${toggle}.click()`);
+          else
+            problems.push(
+              `Reset file after Use this result does not bring the whole-file proposal back: the file shows ${(await read()).header.text ?? 'nothing'}`
+            );
           await settle();
           await shot('conflict-by-conflict');
-        } else steps.push({ label: 'conflict-by-conflict', shot: '', note: 'No whole-file proposal on this build' });
+        } else
+          steps.push({ label: 'conflict-by-conflict', shot: '', note: 'No whole-file proposal hiding the conflicts' });
 
         // Keep PR, Undo, Keep main, Undo, Keep both on the first block that offers them.
         const target = await js<string | null>(`${first(':has([data-choice=ours])')}?.dataset.conflictIndex ?? null`);

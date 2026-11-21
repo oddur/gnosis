@@ -51,6 +51,7 @@ import { countRender } from '../lib/render-count';
 import type { PrStatus } from '../lib/types';
 import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
+import { conflictStateFrom } from '../lib/merge-conflicts';
 import { stackMergeStatus } from '../lib/stack-merge-status';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
@@ -611,6 +612,7 @@ function PrSummaryContent({
         </div>
         <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
           busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute}
+          conflictState={conflictStateFrom([...signals, ...item.subject.members.map((m) => statuses[m.url]?.signals)])}
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1} title={item.subject.title}>

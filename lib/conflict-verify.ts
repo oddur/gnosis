@@ -1,7 +1,12 @@
 import { diffArrays } from 'diff';
 import { blockResolutions } from './conflict-carry';
-import { inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
-import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from './conflict-resolution';
+import { conflictCount, inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
+import {
+  hasConflictMarkers,
+  type ConflictFile,
+  type ConflictFileStage,
+  type ConflictProposal,
+} from './conflict-resolution';
 import { definitionChain, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -16,6 +21,8 @@ export interface Verdict {
   merged: boolean;
   /** What passed, or the first check that failed, in one plain sentence. */
   note: string;
+  /** A whole-file proposal passed its checks. It is still never Merged. */
+  passed?: boolean;
 }
 export interface ParsedText {
   definitions: SyntaxDefinition[];
@@ -23,17 +30,21 @@ export interface ParsedText {
   errors: boolean;
 }
 export type Analyse = (language: SyntaxLanguage, text: string) => Promise<ParsedText>;
+/** Whether `after` is `before` with formatting changes only (lib/semantic-noise.ts). Rejects when it can't tell. */
+export type Equivalent = (language: SyntaxLanguage, before: string, after: string) => Promise<boolean>;
 
 const lineEnding = (text: string) => (/\r\n/.test(text) ? (/(^|[^\r])\n/.test(text) ? 'mixed' : 'crlf') : 'lf');
-/** Each definition by its scope path and kind, such as `class RetryPolicy.method nextDelay`, with its count. */
+/** A definition by its kind and scope path, such as `class RetryPolicy.method nextDelay`. */
+const symbolKey = (definitions: readonly SyntaxDefinition[], d: SyntaxDefinition) =>
+  `${d.kind} ${definitionChain(definitions, d)
+    .map((x) => x.name)
+    .join('.')}`;
+/** The name at the end of a symbol key. */
+const symbolName = (key: string) => key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
+/** Each definition by its symbol key, with its count. */
 function symbols(definitions: readonly SyntaxDefinition[]) {
   const counts = new Map<string, number>();
-  for (const d of definitions) {
-    const key = `${d.kind} ${definitionChain(definitions, d)
-      .map((x) => x.name)
-      .join('.')}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
+  for (const key of definitions.map((d) => symbolKey(definitions, d))) counts.set(key, (counts.get(key) ?? 0) + 1);
   return counts;
 }
 
@@ -46,10 +57,22 @@ function symbols(definitions: readonly SyntaxDefinition[]) {
  */
 export async function verifyProposals(
   file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals'>,
-  analyse: Analyse
+  analyse: Analyse,
+  /** The whole file is one conflict, its three versions, and the first proposal is the whole result. */
+  whole = false,
+  /** Tells a side that only reformatted a conflict's lines; without it, such a conflict stays in Check. */
+  equivalent?: Equivalent
 ): Promise<Verdict> {
   const proposals = file.proposals ?? [];
-  const segments = parseConflicts(file.original);
+  const segments: ConflictSegment[] = whole
+    ? [
+        {
+          kind: 'conflict',
+          index: 0,
+          block: { base: file.base, ours: file.ours, theirs: file.theirs, raw: '', line: 1 },
+        },
+      ]
+    : parseConflicts(file.original);
   const open = segments.filter(
     (s): s is Extract<ConflictSegment, { kind: 'conflict' }> => s.kind === 'conflict' && !proposals[s.index]
   );
@@ -81,24 +104,236 @@ export async function verifyProposals(
   for (const key of new Set([...o.keys(), ...t.keys(), ...r.keys()])) {
     const [inBase, inOurs, inTheirs, inResult] = [b, o, t, r].map((m) => m.get(key) ?? 0);
     if (inResult > Math.max(inOurs, inTheirs, inOurs + inTheirs - inBase)) {
-      const name = key.slice(key.lastIndexOf('.') + 1).replace(/^\S+ /, '');
-      return { merged: false, note: `${name} is defined twice in the result.` };
+      return { merged: false, note: `${symbolName(key)} is defined twice in the result.` };
     }
   }
+  const moved = whole ? lostEdit([file.base, file.ours, file.theirs, probe], parsed) : undefined;
+  if (moved) return { merged: false, note: moved };
   // Your own earlier resolutions may drop a side on purpose: only structural merge is held to the line accounting.
+  let reformat: string | undefined;
   if (proposals.some((p) => p?.source === 'mergiraf')) {
     const indented = language === 'python' || language === 'yaml';
     for (const s of segments) {
       const proposal = s.kind === 'conflict' ? proposals[s.index] : undefined;
       if (s.kind !== 'conflict' || !proposal) continue;
-      const note = accountLines(s.block, proposal.text, indented);
+      // Spacing inside a line is ignored by the count, so a side whose only change was spacing looks unchanged. Counted
+      // again with spacing, such a block is two changes to the same lines: the formatting check below decides it.
+      let note = whole
+        ? accountWholeFile(file, proposal.text, indented)
+        : (accountLines(s.block, proposal.text, indented) ??
+          (indented ? undefined : accountLines(s.block, proposal.text, true)));
+      if (note === SAME_LINES && !whole) {
+        const formatted = await reformatted(segments, s.index, proposal.text, language, equivalent);
+        if (formatted?.merged) {
+          reformat ??= formatted.note;
+          continue;
+        }
+        note = formatted?.note ?? note;
+      }
       if (note) return { merged: false, note };
     }
     const named =
       danglingName(file, segments) ?? duplicateMember(segments, proposals) ?? strayLine(segments, proposals);
     if (named) return { merged: false, note: named };
   }
-  return { merged: true, note: 'The file parses. Every line of both sides is accounted for.' };
+  return {
+    merged: true,
+    note: reformat ? `${reformat} The file parses.` : 'The file parses. Every line of both sides is accounted for.',
+  };
+}
+
+/** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
+export const SAME_LINES = 'Both sides changed the same lines. Check that the result keeps both changes.';
+/** Tokens as the layout check reads them: runs of whitespace, words and numbers, and each other character. */
+const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+/** The tokens `after` drops from `before` and the ones it adds, in order. */
+function tokenChanges(before: readonly string[], after: readonly string[]) {
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const part of diffArrays([...before], [...after]))
+    if (part.removed) removed.push(...part.value);
+    else if (part.added) added.push(...part.value);
+  return `${removed.join('\u0000')}\u0001${added.join('\u0000')}`;
+}
+/**
+ * The proposal is the reformatting side's text with exactly the editing side's token changes, spaces in them
+ * included: the same whitespace, quotes and punctuation everywhere else. Any doubt (the two diffs pair tokens
+ * differently) is a difference.
+ */
+export function keepsLayout(block: { base: string; edited: string; formatted: string }, proposal: string) {
+  return (
+    tokenChanges(layoutTokens(block.base), layoutTokens(block.edited)) ===
+    tokenChanges(layoutTokens(block.formatted), layoutTokens(proposal))
+  );
+}
+
+/**
+ * A conflict where one side only reformatted the lines the other side changed. Each version of the conflict is read
+ * in the file around it (other conflicts as the PR wrote them) and compared with the ancestor's by its syntax tree,
+ * formatting aside. The proposal is Merged only when it is the same program as the changing side's version and is the
+ * reformatting side's text with only the changing side's tokens changed (keepsLayout). Undefined when neither side, or both, only reformatted.
+ */
+async function reformatted(
+  segments: ConflictSegment[],
+  index: number,
+  proposal: string,
+  language: SyntaxLanguage,
+  equivalent: Equivalent | undefined
+): Promise<{ merged: boolean; note: string } | undefined> {
+  const conflict = segments.find((s) => s.kind === 'conflict' && s.index === index);
+  if (!equivalent || conflict?.kind !== 'conflict' || conflict.block.base === undefined) return undefined;
+  const { base, ours, theirs } = conflict.block;
+  const fill = (text: string) =>
+    segments.map((s) => (s.kind === 'text' ? s.text : s.index === index ? text : s.block.ours)).join('');
+  try {
+    // Which side only reformatted, first: when both changed the code (the common case), nothing more is parsed.
+    const baseText = fill(base);
+    const [pr, main] = await Promise.all([
+      equivalent(language, baseText, fill(ours)),
+      equivalent(language, baseText, fill(theirs)),
+    ]);
+    if (pr === main) return undefined;
+    const [formatter, editor] = pr ? ['the PR', 'main'] : ['main', 'the PR'];
+    const lead = `${pr ? 'The PR' : 'Main'} only reformatted these lines and ${editor} changed them`;
+    if (!(await equivalent(language, fill(pr ? theirs : ours), fill(proposal))))
+      return { merged: false, note: `${lead}. The result doesn’t match ${editor}’s change. Check it.` };
+    if (!keepsLayout({ base, edited: pr ? theirs : ours, formatted: pr ? ours : theirs }, proposal))
+      return {
+        merged: false,
+        note: `${lead}. The result keeps ${editor}’s change, but not in ${formatter}’s layout. Check it.`,
+      };
+    return { merged: true, note: `${lead}; the result keeps ${editor}’s change in ${formatter}’s formatting.` };
+  } catch {
+    // The comparison failed (the language is off, the file too large): the conflict stays in Check.
+    return undefined;
+  }
+}
+
+/**
+ * The same checks for structural merge's whole-file result. It changes lines outside Git's conflicts, so it is never
+ * Merged: a result that passes stays in Check and says so.
+ */
+export async function verifyWholeFile(
+  file: Pick<ConflictFile, 'path' | 'base' | 'ours' | 'theirs'>,
+  proposal: ConflictProposal,
+  analyse: Analyse
+): Promise<Verdict> {
+  const verdict = await verifyProposals({ ...file, original: '', proposals: [proposal] }, analyse, true);
+  return verdict.merged
+    ? {
+        merged: false,
+        passed: true,
+        note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+      }
+    : { merged: false, note: `${verdict.note} Read it before you use it, or resolve conflict by conflict.` };
+}
+
+/**
+ * A definition only one side changed comes out as that side wrote it, wherever the other side moved it. Line counts
+ * alone miss a move between two definitions with the same body: the edit can land in the wrong one.
+ */
+function lostEdit(texts: string[], parsed: ParsedText[]) {
+  const [b, o, t, r] = parsed.map(({ definitions }, i) => {
+    const lines = texts[i].split(/\r?\n/);
+    const bodies = new Map<string, string[]>();
+    for (const d of definitions) {
+      const key = symbolKey(definitions, d);
+      const body = lines
+        .slice(d.start - 1, d.end)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join('\n');
+      bodies.set(key, [...(bodies.get(key) ?? []), body]);
+    }
+    return bodies;
+  });
+  // Definitions that hold others, such as a class: their own text changes whenever a member does.
+  const definitions = parsed[0].definitions;
+  const containers = new Set(
+    definitions
+      .filter((d) => definitions.some((x) => x !== d && x.start >= d.start && x.end <= d.end))
+      .map((d) => symbolKey(definitions, d))
+  );
+  for (const [key, [base, ...more]] of b) {
+    const [ours, theirs, result] = [o, t, r].map((m) => m.get(key));
+    if (more.length || ours?.length !== 1 || theirs?.length !== 1 || result?.length !== 1) continue;
+    const name = symbolName(key);
+    // Two edits to one definition can land in the wrong places and still keep every line.
+    if (base !== ours[0] && base !== theirs[0] && !containers.has(key))
+      return `Both sides changed ${name}. Check it yourself.`;
+    if (base === ours[0] && base !== theirs[0] && result[0] !== theirs[0])
+      return `${name} in the result doesn’t match main’s change to it.`;
+    if (base === theirs[0] && base !== ours[0] && result[0] !== ours[0])
+      return `${name} in the result doesn’t match the PR’s change to it.`;
+    if (base === ours[0] && base === theirs[0] && result[0] !== base)
+      return `${name} changed in the result, but neither side changed it.`;
+  }
+}
+
+/**
+ * Line accounting for a whole file, where one side may have moved code: each line appears as often as the two sides'
+ * changes leave it: ancestor + (PR − ancestor) + (main − ancestor). Order is not checked.
+ */
+export function accountWholeFile(
+  file: { base: string; ours: string; theirs: string },
+  result: string,
+  indented: boolean
+): string | undefined {
+  const { lines, report } = lineAccount(indented);
+  const count = (text: string) => {
+    const counts = new Map<string, number>();
+    for (const line of lines(text)) counts.set(line, (counts.get(line) ?? 0) + 1);
+    return counts;
+  };
+  const [base, ours, theirs, merged] = [file.base, file.ours, file.theirs, result].map(count);
+  const missing: string[] = [];
+  let extra: string | undefined;
+  for (const line of new Set([...base.keys(), ...ours.keys(), ...theirs.keys(), ...merged.keys()])) {
+    const [b, o, t, r] = [base, ours, theirs, merged].map((m) => m.get(line) ?? 0);
+    // Each side's change counts on its own: a `}` both sides added is there twice.
+    const expected = Math.max(0, b + (o - b) + (t - b));
+    if (r < expected) missing.push(line);
+    else if (r > expected) extra ??= line;
+  }
+  return report(missing, extra, { base, ours, theirs });
+}
+
+/**
+ * Lines as the line accounting compares them: blank lines, trailing commas and whitespace are ignored; in Python and
+ * YAML, indentation counts. `report` names the first problem: the most telling missing line, else a line too many.
+ */
+function lineAccount(indented: boolean) {
+  const spelled = new Map<string, string>();
+  const lines = (text: string) =>
+    text.split(/\r?\n/).flatMap((raw) => {
+      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
+      if (!line.trim()) return [];
+      if (!spelled.has(line)) spelled.set(line, raw.trim());
+      return [line];
+    });
+  const shown = (line: string) => {
+    const text = spelled.get(line) ?? line;
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  };
+  type Side = { includes(line: string): boolean } | { has(line: string): boolean };
+  const holds = (side: Side, line: string) => ('has' in side ? side.has(line) : side.includes(line));
+  const report = (
+    missing: string[],
+    extra: string | undefined,
+    sides: { base: Side; ours: Side; theirs: Side }
+  ): string | undefined => {
+    // Name the most telling missing line: one with a word in it, not a lone brace.
+    const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
+    if (line !== undefined) {
+      const from = holds(sides.ours, line) ? (holds(sides.theirs, line) ? 'both sides' : 'the PR') : 'main';
+      return `${shown(line)} from ${from} is missing from the result.`;
+    }
+    if (extra !== undefined)
+      return holds(sides.base, extra)
+        ? `${shown(extra)} was removed on one side but is still in the result.`
+        : `${shown(extra)} is in neither side.`;
+  };
+  return { lines, report };
 }
 
 /**
@@ -113,14 +348,7 @@ export function accountLines(
   indented: boolean
 ): string | undefined {
   if (block.base === undefined) return 'Gnosis couldn’t see the lines before both changes.';
-  const spelled = new Map<string, string>();
-  const lines = (text: string) =>
-    text.split(/\r?\n/).flatMap((raw) => {
-      const line = (indented ? raw.replace(/\s+$/, '') : raw.replace(/\s+/g, '')).replace(/,$/, '');
-      if (!line.trim()) return [];
-      if (!spelled.has(line)) spelled.set(line, raw.trim());
-      return [line];
-    });
+  const { lines, report } = lineAccount(indented);
   const [base, ours, theirs, merged] = [block.base, block.ours, block.theirs, result].map(lines);
   const [mine, other] = [changesOf(base, ours), changesOf(base, theirs)];
   const same = (a: LineChange, b: LineChange) =>
@@ -131,7 +359,7 @@ export function accountLines(
       if (same(a, b)) continue;
       const overlap = a.start < a.end && b.start < b.end && a.start < b.end && b.start < a.end;
       if (overlap || (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a)))
-        return 'Both sides changed the same lines, so the result is a choice, not a merge.';
+        return SAME_LINES;
     }
   const removed = new Set<number>();
   for (const c of [...mine, ...other]) for (let i = c.start; i < c.end; i++) removed.add(i);
@@ -142,22 +370,9 @@ export function accountLines(
   for (const c of other) if (!mine.some((m) => same(m, c))) c.added.forEach(add);
   const found = new Map<string, number>();
   for (const line of merged) found.set(line, (found.get(line) ?? 0) + 1);
-  const shown = (line: string) => {
-    const text = spelled.get(line) ?? line;
-    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
-  };
-  // Name the most telling missing line: one with a word in it, not a lone brace.
   const missing = [...expected].filter(([line, n]) => (found.get(line) ?? 0) < n).map(([line]) => line);
-  const line = missing.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? missing.at(0);
-  if (line !== undefined) {
-    const from = ours.includes(line) ? (theirs.includes(line) ? 'both sides' : 'the PR') : 'main';
-    return `${shown(line)} from ${from} is missing from the result.`;
-  }
-  for (const [line, n] of found)
-    if (n > (expected.get(line) ?? 0))
-      return base.includes(line)
-        ? `${shown(line)} was removed on one side but is still in the result.`
-        : `${shown(line)} is in neither side.`;
+  const extra = [...found].find(([line, n]) => n > (expected.get(line) ?? 0))?.[0];
+  return report(missing, extra, { base, ours, theirs });
 }
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
 interface LineChange {
@@ -265,12 +480,11 @@ const proposalKeys = new WeakMap<object, string>();
  * A cheap fingerprint of a file's conflict and proposals (FNV-1a and length), remembered per file object. A check
  * result counts only for the proposals it checked.
  */
-export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals'>) {
+export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
-    const text = [file.original, ...(file.proposals ?? []).map((p) => (p ? `${p.source}\u0001${p.text}` : ''))].join(
-      '\u0000'
-    );
+    const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
+    const text = [file.original, ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : ''))].join('\u0000');
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
     key = `${(hash >>> 0).toString(36)}:${text.length}`;
@@ -285,11 +499,15 @@ export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals'>) 
  * A draft edited by hand counts its remaining markers as Decide and the rest as Decided.
  */
 export function blockBuckets(
-  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported'>,
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
   contents: string,
   verdict: Verdict | undefined
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
+  // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
+  // failed its checks leaves them to decide.
+  if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
+    return parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? ['check' as const] : []));
   const segments = parseConflicts(file.original);
   const choices = inferChoices(segments, contents, file.proposals);
   const blocks = segments.filter((s) => s.kind === 'conflict');
@@ -314,31 +532,148 @@ export function blockBuckets(
   });
 }
 
+/**
+ * The file's conflicts all wait behind a whole-file proposal that passed its checks, or is being checked. The file
+ * list, the file header and the footer use it.
+ */
+export const proposalReady = (
+  f: Pick<ConflictFile, 'wholeFile' | 'original'>,
+  draft: string,
+  buckets: readonly ConflictBucket[]
+) => !!f.wholeFile && draft === f.original && buckets.length > 0 && buckets.every((bucket) => bucket === 'check');
+
+/**
+ * A file's state, one for the file list, the file header, the footer and the summary. While any conflict is to decide,
+ * to check or merged and the file is not reviewed, it shows those counts. "Resolved · needs review" is only for a file
+ * whose every conflict you decided, or whose proposal you used, and that waits for Mark reviewed.
+ */
+export type FileStatus =
+  | { kind: 'unsupported' }
+  /** A whole-file proposal waits to be read and used. */
+  | { kind: 'proposal' }
+  | { kind: 'buckets'; decide: number; check: number; merged: number }
+  | { kind: 'conflicted'; conflicts: number }
+  /** A line that looks like a conflict marker, outside any whole conflict: a stray `>>>>>>>` left after an edit. */
+  | { kind: 'marker' }
+  | { kind: 'resolved' }
+  | { kind: 'reviewed' };
+export function fileStatus(
+  file: Pick<ConflictFile, 'wholeFile' | 'original' | 'unsupported'>,
+  draft: string,
+  stage: ConflictFileStage,
+  buckets: readonly ConflictBucket[]
+): FileStatus {
+  if (file.unsupported) return { kind: 'unsupported' };
+  if (proposalReady(file, draft, buckets)) return { kind: 'proposal' };
+  if (stage === 'reviewed') return { kind: 'reviewed' };
+  // A marker line with no whole conflict around it blocks Mark reviewed: say so, before any bucket.
+  const conflicts = stage === 'conflicted' ? conflictCount(draft) : 0;
+  if (stage === 'conflicted' && !conflicts) return { kind: 'marker' };
+  const counts = { decide: 0, check: 0, merged: 0 };
+  for (const bucket of buckets) if (bucket !== 'decided') counts[bucket]++;
+  if (counts.decide || counts.check || counts.merged) return { kind: 'buckets', ...counts };
+  return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
+}
+/** The parts a status shows, each with its tone (the icon): "1 to decide", "2 to check", "Resolved · needs review". */
+export function fileStatusParts(
+  status: FileStatus
+): { tone: 'decide' | 'check' | 'merged' | 'proposal' | 'conflicted' | 'resolved' | 'reviewed'; text: string }[] {
+  switch (status.kind) {
+    case 'unsupported':
+      return [];
+    case 'proposal':
+      return [{ tone: 'proposal', text: 'Proposal ready' }];
+    case 'buckets':
+      return (['decide', 'check', 'merged'] as const)
+        .filter((bucket) => status[bucket])
+        .map((bucket) => ({
+          tone: bucket,
+          text: `${status[bucket]} ${bucket === 'merged' ? 'merged' : `to ${bucket}`}`,
+        }));
+    case 'conflicted':
+      return [{ tone: 'conflicted', text: `${status.conflicts} ${status.conflicts === 1 ? 'conflict' : 'conflicts'}` }];
+    case 'marker':
+      return [{ tone: 'conflicted', text: 'Conflict marker left' }];
+    case 'resolved':
+      return [{ tone: 'resolved', text: 'Resolved · needs review' }];
+    case 'reviewed':
+      return [{ tone: 'reviewed', text: 'Reviewed' }];
+  }
+}
+/** The footer's words for the open file: "1 to check in this file", or nothing once it waits for Mark reviewed. */
+export function fileStatusLine(status: FileStatus): string | undefined {
+  if (status.kind === 'proposal') return '1 proposal to check';
+  if (status.kind === 'marker') return 'A conflict marker is left in the file. Check the result';
+  if (status.kind === 'conflicted') return `${fileStatusParts(status)[0].text} left in this file`;
+  if (status.kind === 'buckets')
+    return `${fileStatusParts(status)
+      .map((part) => part.text)
+      .join(', ')} in this file`;
+}
+
 export interface BucketSummary {
   files: number;
   conflicts: number;
   merged: number;
-  /** Decide blocks, and Check blocks in files you have not marked reviewed. */
+  /** Decide and Check blocks in files you have not marked reviewed, and files with a marker left. */
   needs: number;
   /** Proposals whose checks are still running. */
   checking: number;
+  /** Of `needs`: Decide blocks, and the conflicts that whole-file proposals cover. */
+  decide: number;
+  wholeConflicts: number;
+  /** Whole-file proposals to check, one per file. */
+  wholeFiles: number;
+  /** Of `needs`: files with a conflict marker left outside any whole conflict (fileStatus `marker`). */
+  markers: number;
 }
 export function bucketSummary(
-  files: { buckets: readonly ConflictBucket[]; verdict: Verdict | undefined; reviewed: boolean }[]
+  files: {
+    buckets: readonly ConflictBucket[];
+    verdict: Verdict | undefined;
+    reviewed: boolean;
+    whole?: boolean;
+    /** The file's status is `marker`: it needs you for that alone, whatever its buckets. */
+    marker?: boolean;
+  }[]
 ): BucketSummary {
-  const summary: BucketSummary = { files: files.length, conflicts: 0, merged: 0, needs: 0, checking: 0 };
-  for (const { buckets, verdict, reviewed } of files) {
+  const summary: BucketSummary = {
+    files: files.length,
+    conflicts: 0,
+    merged: 0,
+    needs: 0,
+    checking: 0,
+    decide: 0,
+    wholeConflicts: 0,
+    wholeFiles: 0,
+    markers: 0,
+  };
+  for (const { buckets, verdict, reviewed, whole, marker } of files) {
+    if (marker && !reviewed) {
+      summary.markers++;
+      summary.needs++;
+    }
+    if (whole && !reviewed && !marker && buckets.includes('check')) summary.wholeFiles++;
     for (const bucket of buckets) {
       summary.conflicts++;
       if (bucket === 'merged') summary.merged++;
-      else if (bucket === 'decide' || (bucket === 'check' && !reviewed)) summary.needs++;
+      // A reviewed file needs nothing more, whatever its buckets: its status is Reviewed everywhere. A file with a
+      // marker left shows that alone, and counts once above.
+      if (reviewed || marker) continue;
+      if (bucket === 'decide' || bucket === 'check') summary.needs++;
+      if (bucket === 'decide') summary.decide++;
+      if (bucket === 'check' && whole) summary.wholeConflicts++;
       // Only a proposal is in Check: with no verdict yet, its checks are running.
       if (bucket === 'check' && !verdict) summary.checking++;
     }
   }
   return summary;
 }
-/** "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." */
+/**
+ * "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." Whole-file proposals are named, with the
+ * conflicts they cover: "1 proposal to check for 2 conflicts.", or "3 need you: 1 proposal to check for 2 conflicts,
+ * 1 to decide."
+ */
 export function summarySentence(s: BucketSummary) {
   const files = s.files === 1 ? '1 file conflicts.' : `${s.files} files conflict.`;
   const merged = s.merged
@@ -347,7 +682,21 @@ export function summarySentence(s: BucketSummary) {
   const needs = s.checking
     ? ` Checking ${s.checking} ${s.checking === 1 ? 'result' : 'results'}…`
     : s.needs
-      ? ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you.`
+      ? needsYou(s)
       : ' Nothing needs you.';
   return files + merged + needs;
+}
+/** What needs you, in the file list's words: "1 to check.", or "3 need you: 2 to check, 1 to decide." */
+function needsYou(s: BucketSummary) {
+  const check = s.needs - s.decide - s.wholeConflicts - s.markers;
+  const covers = s.wholeConflicts > s.wholeFiles ? ` for ${s.wholeConflicts} conflicts` : '';
+  const parts = [
+    ...(s.wholeFiles ? [`${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`] : []),
+    ...(check ? [`${check} to check`] : []),
+    ...(s.decide ? [`${s.decide} to decide`] : []),
+    ...(s.markers ? [`${s.markers} ${s.markers === 1 ? 'file' : 'files'} with a conflict marker left`] : []),
+  ];
+  return parts.length === 1
+    ? ` ${parts[0]}.`
+    : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.`;
 }
