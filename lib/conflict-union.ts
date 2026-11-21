@@ -49,28 +49,51 @@ export function unionOf(
   return { text, ...place };
 }
 
+/** Tokens as the layout checks read them: runs of whitespace, words and numbers, and each other character. */
+export const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+
 /**
  * Both sides may have made the same change in different layouts (#445 item 15): the same tokens, apart from line
- * breaks, quote marks and trailing commas. Only a candidate: the checks (lib/conflict-verify.ts) compare the two sides'
- * syntax trees, and Merge the PR's version only when they are the same program. Spacing inside a line must match, so a
- * space inside a string is a difference; so must a line's indentation outside brackets in Python and YAML.
+ * breaks, quote marks and trailing commas. Only a candidate: the checks compare the two sides' syntax trees
+ * (lib/conflict-verify.ts), and one they can't confirm is taken back (src/conflict-checks.ts). Spacing inside a line,
+ * and everything inside a string or comment, must match; so must a line's indentation outside brackets in Python and
+ * YAML.
  */
 export function sameTokens(ours: string, theirs: string, indented: boolean) {
   const read = (text: string) => {
-    const tokens: { text: string; before: string }[] = [];
+    /** `raw`: inside a string or comment, where brackets, commas and spacing are content. */
+    const tokens: { text: string; before: string; raw: boolean }[] = [];
     let space = '';
-    for (const token of text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? []) {
-      if (/^\s/.test(token)) space += token;
-      else {
-        // A trailing comma is dropped; its spacing joins the closing bracket's.
-        const last = tokens.at(-1);
-        if (last?.text === ',' && /^[)\]}]$/.test(token)) {
-          tokens.pop();
-          space = last.before + space;
-        }
-        tokens.push({ text: token === '"' ? "'" : token, before: space });
-        space = '';
+    let open: string | undefined; // the string's quote, or `//`, `#` or `/*`
+    let escaped = false;
+    for (const token of layoutTokens(text)) {
+      const raw = open !== undefined;
+      const blank = /^\s/.test(token);
+      if (blank && !raw) {
+        space += token;
+        continue;
       }
+      const last = tokens.at(-1);
+      if (!raw && last?.text === ',' && !last.raw && /^[)\]}]$/.test(token)) {
+        // A trailing comma is dropped; its spacing joins the closing bracket's.
+        tokens.pop();
+        space = last.before + space;
+      }
+      const quote = (!raw && `'"\``.includes(token)) || (raw && token === open && !escaped);
+      tokens.push({ text: quote && token === '"' ? "'" : token, before: space, raw });
+      const adjacent = !space;
+      space = '';
+      if (!raw) {
+        if (quote) open = token;
+        else if (token === '#') open = '#';
+        else if ((token === '/' || token === '*') && last?.text === '/' && !last.raw && adjacent)
+          open = token === '/' ? '//' : '/*';
+      } else if (open === '//' || open === '#') {
+        if (blank && token.includes('\n')) open = undefined;
+      } else if (open === '/*') {
+        if (token === '/' && last?.text === '*' && adjacent) open = undefined;
+      } else if (quote) open = undefined;
+      escaped = raw && token === '\\' && !escaped;
     }
     return { tokens, after: space };
   };
@@ -79,10 +102,10 @@ export function sameTokens(ours: string, theirs: string, indented: boolean) {
   let depth = 0;
   return a.tokens.every((t, i) => {
     const other = b.tokens[i];
-    // Line breaks may differ, except where they set a Python or YAML line's indentation.
-    const wrapped = /\n/.test(t.before + other.before) && !(indented && depth === 0);
-    depth += /^[([{]$/.test(t.text) ? 1 : /^[)\]}]$/.test(t.text) ? -1 : 0;
-    return t.text === other.text && (t.before === other.before || wrapped);
+    // Line breaks may differ between code tokens, except where they set a Python or YAML line's indentation.
+    const wrapped = !t.raw && /\n/.test(t.before + other.before) && !(indented && depth === 0);
+    if (!t.raw) depth += /^[([{]$/.test(t.text) ? 1 : /^[)\]}]$/.test(t.text) ? -1 : 0;
+    return t.text === other.text && t.raw === other.raw && (t.before === other.before || wrapped);
   });
 }
 

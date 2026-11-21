@@ -11,11 +11,13 @@ import {
   NOT_SAME,
   proposalKey,
   SAME_CHANGE,
+  SAME_LINES,
   verifyProposals,
   type Analyse,
   type Equivalent,
 } from '../lib/conflict-verify';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
+import { conflictChecker, withoutUnconfirmed } from '../src/conflict-checks';
 
 /** Both sides added different definitions at the same place (#445 item 16), and per-conflict check results (item 18). */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -275,6 +277,17 @@ void test('a proposal your saved draft decided stays in Check if you pick it aga
 });
 
 /** Both sides made the same change (#445 item 15): the PR's version, Merged only when the syntax trees match. */
+/** The review's reproductions (#467): the same tokens, but not the same program. */
+const TRAPS: [string, string, [string, string, string], string][] = [
+  [
+    'lab/value.py',
+    'def value():\n',
+    ['    x = (1,)\n', '    x = 0\n', '    x = (\n        1\n    )\n'],
+    '    return x\n',
+  ],
+  ['src/count.ts', 'function g() {\n', ['  x = a\n  ++b;\n', '  x = a;\n', '  x = a++\n  b;\n'], '}\n'],
+];
+
 void test('the same change in another layout is a candidate; a different token, order or spacing is not', () => {
   assert.equal(
     sameTokens('f(a, { retries: 3 }, "json");\n', "f(\n  a,\n  { retries: 3 },\n  'json',\n);\n", false),
@@ -290,6 +303,12 @@ void test('the same change in another layout is a candidate; a different token, 
   // Python: a line's indentation outside brackets is meaning, not layout.
   assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', true), false);
   assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', false), true);
+  // Inside a string or comment, brackets, commas and line breaks are content.
+  assert.equal(sameTokens("f('a,)');\n", "f('a)');\n", false), false);
+  assert.equal(sameTokens('f(`a\n  b`);\n', 'f(`a\nb`);\n', false), false);
+  assert.equal(sameTokens('f(a); // x, )\n', 'f(a); // x )\n', false), false);
+  assert.equal(sameTokens('f(a); /* (\n */\n', 'f(a); /* ( */\n', false), false);
+  assert.equal(sameTokens('x = "a, )"\n', "x = 'a )'\n", true), false);
 });
 
 void test('preparation proposes the PR’s version where both sides may have made the same change, with a grammar', () => {
@@ -326,32 +345,42 @@ void test('the PR’s version of the same change is Merged only when both sides 
     '    return names\n',
   ]);
   assert.deepEqual(list.verdict, merged);
-  // Traps the candidate check lets through: the trees differ, so the PR's version stays in Check.
-  const tuple = await verify('lab/value.py', [
-    'def value():\n',
-    ['    x = (1,)\n', '    x = 0\n', '    x = (1)\n'],
-    '    return x\n',
-  ]);
-  assert.deepEqual(tuple.proposals, [{ source: 'same', text: '    x = (1,)\n' }]);
-  assert.deepEqual(tuple.verdict, { merged: false, note: NOT_SAME });
-  assert.deepEqual(tuple.buckets, ['check']);
-  const template = await verify('src/greet.ts', [
-    'export function hello() {\n',
-    ['  return `a\n  b`;\n', "  return 'a';\n", '  return `a\nb`;\n'],
-    '}\n',
-  ]);
-  assert.deepEqual(template.verdict, { merged: false, note: NOT_SAME });
+  // The review's traps the candidate check lets through: the trees differ, so the checks don't confirm the PR's
+  // version, and src/conflict-checks.ts takes it back.
+  for (const [name, head, call, tail] of TRAPS) {
+    const trap = await verify(name, [head, call, tail]);
+    assert.deepEqual(trap.proposals, [{ source: 'same', text: call[0] }], name);
+    assert.deepEqual(trap.verdict, { merged: false, note: NOT_SAME, unconfirmed: [0] }, name);
+  }
   // Without the tree comparison (the language is off), it stays in Check.
   const call = ["  f(\n    'x',\n  );\n", "  f('w');\n", '  f("x");\n'] as [string, string, string];
   const open = conflict('src/x.ts', ['function g() {\n', call, '}\n']);
   assert.deepEqual(open.proposals, [{ source: 'same', text: call[0] }]);
-  assert.deepEqual(await verifyProposals(open, analyse), { merged: false, note: NOT_SAME });
+  assert.deepEqual(await verifyProposals(open, analyse), { merged: false, note: NOT_SAME, unconfirmed: [0] });
   // Structural merge's own proposal of the same change: Merged as the PR's layout, never as main's.
   const pr = await verify('src/x.ts', ['function g() {\n', call, '}\n'], [{ source: 'mergiraf', text: call[0] }]);
   assert.deepEqual(pr.verdict, merged);
   const main = await verify('src/x.ts', ['function g() {\n', call, '}\n'], [{ source: 'mergiraf', text: call[2] }]);
-  assert.deepEqual(main.verdict, {
-    merged: false,
-    note: 'Both sides made the same change. The result isn’t the PR’s layout. Check it.',
-  });
+  assert.deepEqual(main.verdict, { merged: false, note: SAME_LINES });
+});
+
+void test('a same-change proposal the checks don’t confirm is taken back: Decide, with Git’s markers', async () => {
+  const check = conflictChecker(engine);
+  for (const [name, head, call, tail] of TRAPS) {
+    const f = conflict(name, [head, call, tail]);
+    const verdict = await check(f);
+    assert.deepEqual(verdict?.unconfirmed, [0], name);
+    const back = withoutUnconfirmed(f, verdict);
+    assert.ok(back, name);
+    const after = { ...f, ...back };
+    assert.equal(after.proposals, undefined, name);
+    assert.equal(after.result, f.original, 'The draft holds Git’s markers again');
+    assert.equal(after.source, 'manual');
+    assert.deepEqual(blockBuckets(after, after.result, undefined), ['decide'], name);
+  }
+  // A confirmed proposal, and a proposal that isn't 'same', are never taken back.
+  const quotes = conflict('src/x.ts', ['function g() {\n', ["  f('x');\n", "  f('w');\n", '  f("x");\n'], '}\n']);
+  assert.equal(withoutUnconfirmed(quotes, await check(quotes)), undefined);
+  const union = conflict('src/math.ts', [fn('alpha'), [fn('beta'), '', fn('gamma')]]);
+  assert.equal(withoutUnconfirmed(union, { merged: false, note: '', unconfirmed: [0] }), undefined);
 });

@@ -1,0 +1,8 @@
+{
+  "description": "Trap (#467 review): the PR writes the tuple (1,), main wraps (1) over three lines. The same tokens once the trailing comma goes, but a tuple is not an int: the conflict stays open.",
+  "language": "python",
+  "category": "structure/same-change",
+  "expected": {
+    "lab/value.py": "decide"
+  }
+}

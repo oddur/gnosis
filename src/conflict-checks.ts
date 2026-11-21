@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise';
 import { verifyProposals, verifyWholeFile, type Analyse, type Equivalent, type Verdict } from '../lib/conflict-verify';
+import { withProposals } from '../lib/conflict-carry';
 import type { ConflictFile } from '../lib/conflict-resolution';
 import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 
@@ -19,6 +20,28 @@ export type CheckedFile = Pick<
 > &
   Partial<Pick<ConflictFile, 'result'>>;
 type Engine = Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'equivalent'>;
+
+/**
+ * Takes back each 'same' proposal the checks didn't confirm (#445 item 15): its conflict is yours to decide, with Git's
+ * markers in a draft still as prepared, as if preparation had proposed nothing there. The fields to change on the file,
+ * then to check it again once; undefined when there is nothing to take back.
+ */
+export function withoutUnconfirmed(
+  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'source'>,
+  verdict: Verdict | undefined
+): Pick<ConflictFile, 'proposals' | 'result' | 'source' | 'structuralNote'> | undefined {
+  const drop = verdict?.unconfirmed?.filter((index) => file.proposals?.[index]?.source === 'same');
+  if (!drop?.length || !file.proposals) return undefined;
+  const kept = file.proposals.map((p, index) => (drop.includes(index) ? null : p));
+  const prepared = file.result === withProposals(file.original, file.proposals);
+  const left = kept.some(Boolean);
+  return {
+    proposals: left ? kept : undefined,
+    result: prepared ? withProposals(file.original, kept) : file.result,
+    source: prepared && !left && file.source === 'mergiraf' ? 'manual' : file.source,
+    structuralNote: left ? undefined : 'Structural merge couldn’t combine this file.',
+  };
+}
 
 /**
  * One file's proposals checked as the conflict dialog checks them: a whole-file proposal with verifyWholeFile, else
