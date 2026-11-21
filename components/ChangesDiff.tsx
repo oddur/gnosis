@@ -547,9 +547,11 @@ function TrailingBar({
   onReveal,
   onRetry,
   plain,
+  onShowElsewhere,
 }: {
   part: GapBarPart;
   status: GapStatus;
+  onShowElsewhere?: (run: number, line?: number) => void;
   /** Feedback's excerpt: with nothing to show and no length, the bar is left out. */
   plain?: boolean;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
@@ -562,6 +564,36 @@ function TrailingBar({
   if (plain && !known && !onReveal) return null;
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines';
+  if (part.gap.elsewhere !== undefined)
+    return (
+      <div
+        className="diff-gap"
+        role="group"
+        aria-label={ELSEWHERE}
+        data-gap={part.gap.index}
+        data-trailing=""
+        data-elsewhere={part.gap.elsewhere}
+      >
+        <span className="diff-gap-trailing">
+          {onReveal && part.more?.down && (
+            <>
+              <button
+                type="button"
+                className="diff-context-button diff-gap-text"
+                title="Show the lines before the change another part shows"
+                onClick={() => onReveal(part, 'all')}
+              >
+                Show
+              </button>
+              <span className="diff-gap-dot" aria-hidden="true">
+                ·
+              </span>
+            </>
+          )}
+          {elsewhereBody(part.gap, onShowElsewhere)}
+        </span>
+      </div>
+    );
   let body: ReactNode;
   if (onReveal && blocked(status)) body = gapControls(part, status, () => () => {}, onRetry).body;
   else
@@ -598,6 +630,26 @@ function TrailingBar({
 }
 
 const OPAQUE = 'Other changes, not in this topic';
+const ELSEWHERE = 'Shown in another part of this topic';
+
+/** A topic's gap over a change another block of the file shows: it says so and offers the way there. */
+function elsewhereBody(gap: GapBarPart['gap'], onShowElsewhere?: (run: number, line?: number) => void) {
+  return (
+    <>
+      <span className="diff-gap-count">{ELSEWHERE}</span>
+      {onShowElsewhere && (
+        <>
+          <span className="diff-gap-dot" aria-hidden="true">
+            ·
+          </span>
+          <button type="button" className="diff-context-button diff-gap-text" onClick={() => gap.elsewhere !== undefined && onShowElsewhere(gap.elsewhere, gap.elsewhereLine)}>
+            Go to it
+          </button>
+        </>
+      )}
+    </>
+  );
+}
 
 function GapBar({
   part,
@@ -613,11 +665,13 @@ function GapBar({
   onShowDefinition,
   plain,
   onCollapseScope,
+  onShowElsewhere,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
+  onShowElsewhere?: (run: number, line?: number) => void;
   /** Name a gap by its hidden lines only, never as changes left out of a topic (Feedback). */
   plain?: boolean;
   scope?: HunkScope;
@@ -640,19 +694,41 @@ function GapBar({
   const reveal = (direction: GapDirection) => () => onReveal?.(part, direction);
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
   const opaque = plain && part.gap.opaque ? (known ? `${lines(hidden)} hidden` : 'Lines hidden') : OPAQUE;
-  const label = part.gap.opaque ? opaque : known ? `${lines(hidden)} hidden` : 'More lines may follow';
-  const { gutter, body } = part.gap.opaque
-    ? {
-        // Unchanged lines next to the hunks still show; the change between them belongs to another topic.
-        gutter: onReveal && gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal).gutter,
-        body: <span className="diff-gap-count">{opaque}</span>,
-      }
-    : onReveal
-      ? gapControls(part, status, reveal, onRetry)
-      : {
-          gutter: undefined,
-          body: <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span>,
-        };
+  const elsewhere = part.gap.elsewhere;
+  const label =
+    elsewhere !== undefined
+      ? ELSEWHERE
+      : part.gap.opaque
+        ? opaque
+        : known
+          ? `${lines(hidden)} hidden`
+          : 'More lines may follow';
+  // A gap over a change another block of the topic shows reveals nothing; it offers the jump there.
+  const { gutter, body } =
+    elsewhere !== undefined
+      ? {
+          // Lines between the hunks and the other block's change still reveal; the change does not.
+          gutter:
+            onReveal &&
+            gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal)
+              .gutter,
+          body: elsewhereBody(part.gap, onShowElsewhere),
+        }
+      : part.gap.opaque
+        ? {
+            // Unchanged lines next to the hunks still show; the change between them belongs to another topic.
+            gutter:
+              onReveal &&
+              gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal)
+                .gutter,
+            body: <span className="diff-gap-count">{opaque}</span>,
+          }
+        : onReveal
+          ? gapControls(part, status, reveal, onRetry)
+          : {
+              gutter: undefined,
+              body: <span className="diff-gap-count">{known ? `${lines(hidden)} hidden` : null}</span>,
+            };
   const located = !!scope || (!!fileOnly && !!fileName);
   return (
     <div
@@ -662,6 +738,7 @@ function GapBar({
       aria-busy={busy || undefined}
       data-gap={part.gap.index}
       data-hunk-header=""
+      data-elsewhere={elsewhere}
       data-message={(onReveal && blocked(status)) || undefined}
     >
       <HeaderRow
@@ -1161,6 +1238,7 @@ export function ChangesDiff<A>({
   scopeAt,
   canReveal,
   plainGaps,
+  onShowElsewhere,
   navigator,
   rails = NO_RAILS,
   onCollapseScope,
@@ -1199,6 +1277,8 @@ export function ChangesDiff<A>({
   canReveal?: (gap: GapBarPart['gap']) => boolean;
   /** Gaps name only their hidden lines: Feedback shows a comment's excerpt, not a topic's chosen hunks. */
   plainGaps?: boolean;
+  /** An Explanation topic's gap over a change another block of the file shows offers a jump to that block. */
+  onShowElsewhere?: (run: number, line?: number) => void;
   /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
   navigator?: RefObject<DiffNavigator | null>;
   /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */
@@ -1846,6 +1926,7 @@ export function ChangesDiff<A>({
           onShowDefinition={onShowDefinition}
           plain={plainGaps}
           onCollapseScope={onCollapseScope}
+          onShowElsewhere={onShowElsewhere}
         />
       ) : (
         <TrailingBar
@@ -1855,6 +1936,7 @@ export function ChangesDiff<A>({
           onReveal={!canReveal || canReveal(block.gap) ? onReveal : undefined}
           onRetry={onRetry}
           plain={plainGaps}
+          onShowElsewhere={onShowElsewhere}
         />
       );
       // A bar below the last hunk heads nothing.

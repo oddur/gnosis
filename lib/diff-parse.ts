@@ -24,7 +24,7 @@ export interface IndexedHunk extends ParsedHunk {
 
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)/;
 
-function parseHunkHeader(header: string) {
+export function parseHunkHeader(header: string) {
   const m = header.match(HUNK_HEADER_RE);
   if (!m) return null;
   return {
