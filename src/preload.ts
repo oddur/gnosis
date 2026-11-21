@@ -441,6 +441,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictResolution: (
     request: import('../lib/conflict-resolution').ConflictRequest
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
+  conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
+    ipcRenderer.invoke('conflict-header', url, headSha),
+  onConflictHeaderChanged: (callback: (url: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on('conflict-header-changed', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('conflict-header-changed', handler);
+    };
+  },
   getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> =>
     ipcRenderer.invoke('get-pr-action-state', url, force),
   getPrPeopleAccess: (url: string): Promise<import('../lib/pr-people').PrPeopleAccess> =>

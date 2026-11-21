@@ -5,13 +5,15 @@
  * a PR's set (see `lib/notification-events.ts`). Same kinds, same rank, same target, same switches.
  * Pure: no Node or Electron imports.
  *
- * Built by #307 Phase 1; #308 Phase 1 adds `explanation-ready` rows. `restack` is not derived yet (#308 Phase 2).
+ * Built by #307 Phase 1; #308 Phase 1 adds `explanation-ready` rows. `restack`: your PR's stack parent merged and the PR
+ * still has to move onto the parent's base (`mergedParent`, #445).
  */
 import { changeRequests, type QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
 import { mergeReadiness } from './merge-readiness';
 import { mergeConflictState } from './merge-conflicts';
 import { prTarget, type DeepLinkTarget, type PrTab } from './deep-link';
+import { mergedParent, mergedParentText, type MergedParent } from './stack-conflict-plan';
 
 export type AttentionKind =
   | 'review-requested'
@@ -55,7 +57,7 @@ export const ATTENTION_LABEL: Readonly<Record<AttentionKind, string>> = {
   'checks-failed': 'Checks failed',
   conflicts: 'Merge conflicts',
   replies: 'Awaiting your reply',
-  restack: 'Restack needed',
+  restack: 'Parent merged',
   'ready-to-merge': 'Ready to merge',
   'explanation-ready': 'Explanation ready',
 };
@@ -142,6 +144,8 @@ export interface AttentionItem {
   stackSize?: number;
   /** The stack's subject id, shared by every row from the same stack. */
   stackId?: string;
+  /** `restack`: "Parent #101 merged" (`mergedParentText`). */
+  detail?: string;
   /** Needs you and not opened since. */
   isNew: boolean;
   /** Age of the signals behind status kinds. */
@@ -171,11 +175,13 @@ export function memberKinds(
   member: ReviewMember,
   fresh: QueueSignals | undefined,
   login: string,
-  options: { teamRequests?: boolean } = {}
+  /** `merged`: the PR's `mergedParent`, when the caller already has it. */
+  options: { teamRequests?: boolean; merged?: MergedParent } = {}
 ): Set<AttentionKind> {
   const kinds = new Set(Object.keys(memberAttention(member, fresh, login, options)) as AttentionKind[]);
   if (updatedSinceYourReview(item, member.url) && !isOwnPr(member, login)) kinds.add('updated-since-review');
   if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
+  if (isOwnPr(member, login) && ('merged' in options ? options.merged : mergedParent(item.subject, member, fresh))) kinds.add('restack');
   // A finished, current, unread explanation. It folds into a review request on the same row.
   if (explanationFor(item, member.url)?.unread) kinds.add('explanation-ready');
   return kinds;
@@ -201,7 +207,8 @@ export function attentionItems(input: {
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url)) continue;
       const signals = input.signals(member);
       const fresh = freshSignals(signals, input.now);
-      const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests });
+      const merged = isOwnPr(member, input.login) ? mergedParent(item.subject, member, fresh) : undefined;
+      const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests, merged });
       const explanation = explanationFor(item, member.url);
       for (const kind of kinds) if (!input.enabled(kind, member.repo)) kinds.delete(kind);
       // A fix comes before merging.
@@ -224,6 +231,7 @@ export function attentionItems(input: {
         author: member.author,
         ...(member.isDraft ? { isDraft: true } : {}),
         ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length, stackId: item.subject.id } : {}),
+        ...(merged && kinds.has('restack') ? { detail: mergedParentText(member, merged, 'short') } : {}),
         isNew,
         ...(fresh && ranked.some((kind) => STATUS_KINDS.includes(kind)) ? { checkedAt: fresh.checkedAt } : {}),
         target,

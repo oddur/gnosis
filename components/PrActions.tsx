@@ -1,5 +1,7 @@
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
+import { useConflictHeader } from '../lib/use-conflict-header';
+import { conflictHeaderLine } from '../lib/conflict-header';
 import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -166,6 +168,9 @@ export function PrActions({
         ? 'Add to merge queue…'
         : 'Merge PR…';
   const updateBlocked = state ? branchUpdateBlockedReason(state) : 'Checking GitHub permissions…';
+  const conflicted = hasConflicts || (!!state && hasMergeConflicts(state));
+  // "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you.", from background preparation.
+  const conflictLine = useConflictHeader(member.url, member.headSha, conflicted && !stackMembers && !trigger);
   const rebaseBlocked = updateBlocked ?? (state ? workflowReason(state, 'update-rebase') : undefined);
   const active = state?.state === 'OPEN' && !state.archived;
   const kind = dialog?.kind;
@@ -389,10 +394,14 @@ export function PrActions({
       ) : (
         <>
           <div className="pr-action-controls">
-            {(hasConflicts || (state && hasMergeConflicts(state))) && (
-              <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+            {conflicted && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => openConflictWorkspace(member.url)}
+              >
                 <ConflictIcon size={14} aria-hidden="true" />
-                Resolve conflicts…
+                {conflictLine?.state === 'ready' && conflictLine.merged ? 'Review and push…' : 'Resolve conflicts…'}
               </Button>
             )}
             <Button
@@ -506,6 +515,14 @@ export function PrActions({
               <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             </button>
           </div>
+          {conflictLine && (
+            <p role="status" className="pr-action-note pr-conflict-line" data-conflict-header={conflictLine.state}>
+              {conflictLine.state === 'checking' && (
+                <Loader2 size={13} className="motion-safe:animate-spin" aria-hidden="true" />
+              )}
+              {conflictHeaderLine(conflictLine)}
+            </p>
+          )}
           {!compact && state && hasMergeConflicts(state) && (
             <p className="pr-action-note">{updateBlocked}</p>
           )}

@@ -53,6 +53,8 @@ void app.whenReady().then(async () => {
       const originalStatus=window.electronAPI.getPrStatus;
       window.electronAPI.getPrStatus=async(...args)=>{const result=await originalStatus(...args);const state=window.actionState(args[0]);return {...result,isDraft:state.isDraft,signals:{...result.signals,checkedAt:Date.now(),readiness:{...result.signals.readiness,isDraft:state.isDraft,mergeable:state.mergeable,mergeState:state.mergeState}}};};
       window.electronAPI.getPrActionState=async(url)=>window.actionState(url);
+      window.headerState=null;window.electronAPI.conflictHeader=async(url)=>{window.headerUrl=url;return window.headerState;};
+      window.electronAPI.onConflictHeaderChanged=cb=>{window.headerChanged=cb;return()=>{};};
       window.electronAPI.getStackMergePlan=async urls=>{const members=urls.map(window.actionState);return {target:members.at(-1),members,baseBranch:members[0].baseBranch,methods:['SQUASH','MERGE','REBASE'],mergeQueue:false,createStack:!window.nativeStack};};
       window.electronAPI.performPrAction=async request=>{window.writes.push(request);if(window.failAction)throw Error(typeof window.failAction==='string'?window.failAction:'This PR changed since confirmation. Refresh the action and inspect the new revision.');await new Promise(r=>setTimeout(r,120));const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===request.url);if(request.kind==='enable-auto')m.autoMerge={method:request.method};if(request.kind==='disable-auto')m.autoMerge=null;if(request.kind==='convert-draft')m.isDraft=true;if(request.kind==='mark-ready')m.isDraft=false;
         if(request.kind==='merge'&&request.revisions.length>1){window.actionTasks.push({id:'merge-operation',kind:'pr-action',title:'Merging 3 PRs',detail:'GitHub is processing the merge.',status:'running',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});return {status:'pending',message:'GitHub is processing the merge. Follow its progress in Activity.'};}
@@ -122,6 +124,27 @@ void app.whenReady().then(async () => {
     await wait("[...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");
     assert.match(await js<string>("document.querySelector('.pr-actions').textContent"), /Resolve conflicts/);
     await capture('conflicts-light-1280');
+    // The conflict line from background preparation (#445): checking, the summary, Review and push…, no permission.
+    const header = async (state: unknown) => {
+      await wait('!!window.headerChanged&&!!window.headerUrl');
+      await js(`window.headerState=${JSON.stringify(state)};window.headerChanged(window.headerUrl)`);
+    };
+    const line = "document.querySelector('.pr-conflict-line')?.textContent";
+    const resolveButton = (label: string) =>
+      `[...document.querySelectorAll('.pr-action-controls button')].find(b=>b.textContent===${JSON.stringify(label)})`;
+    await header({ state: 'checking', files: 3 });
+    await wait(`${line}==='Checking 3 files…'`);
+    const sentence = '3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.';
+    await header({ state: 'ready', sentence, merged: false });
+    await wait(`${line}===${JSON.stringify(sentence)}&&!!${resolveButton('Resolve conflicts…')}`);
+    await capture('conflict-header-light-1280');
+    await header({ state: 'ready', sentence: '2 files have conflicts. 4 of 4 conflicts are merged and checked. Nothing needs you.', merged: true });
+    await wait(`!!${resolveButton('Review and push…')}`);
+    await header({ state: 'no-permission' });
+    // The line says so, and the button stays usable: a permission granted later works.
+    await wait(`${line}?.startsWith('You can’t push to this branch')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
+    await header(null);
+    await wait(`!document.querySelector('.pr-conflict-line')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
     await js('window.conflicts=false');
     await click('Refresh PR actions');
     await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");

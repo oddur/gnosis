@@ -364,21 +364,19 @@ function awaitingReview(member: ReviewMember, fresh: QueueSignals | undefined) {
   return member.requestedReviewers.length > 0 || member.requestedTeams.length > 0 || decision === 'REVIEW_REQUIRED';
 }
 
-/** Every reason one open PR has, across lanes. `parentMerged`: the PR builds on a stack parent that has merged. */
+/** Every reason one open PR has, across lanes. `restack`: the PR still has to move after its stack parent merged. */
 export function memberReasons(
   item: QueueItem,
   member: ReviewMember,
   fresh: QueueSignals | undefined,
   login: string,
-  options: { teamRequests?: boolean; parentMerged?: boolean } = {}
+  options: { teamRequests?: boolean } = {}
 ): Set<OverviewReason> {
   const reasons = memberKinds(item, member, fresh, login, { teamRequests: options.teamRequests }) as Set<OverviewReason | 'explanation-ready'>;
   // An explanation is a marker on a Review row, not a lane of its own.
   reasons.delete('explanation-ready');
   const result = reasons as Set<OverviewReason>;
   const own = isOwnPr(member, login);
-  // Its parent merged, so the PR still carries the parent's commits or targets a merged branch.
-  if (own && options.parentMerged) result.add('restack');
   if ([...result].some((reason) => OWN_WORK.includes(reason))) result.delete('ready-to-merge');
   // Waiting on others: nothing for you to do on it now. A draft is not waiting on anyone.
   if (own && !member.isDraft && ![...result].some((reason) => OWN_WORK.includes(reason) || reason === 'ready-to-merge')) {
@@ -538,8 +536,6 @@ export function overviewModel(input: OverviewInput): OverviewModel {
     : undefined;
   for (const item of input.items) {
     const subject = item.subject;
-    const mergedUrls = new Set(subject.members.filter((member) => member.merged).map((member) => member.url));
-    const parentMerged = new Set(subject.edges.filter((edge) => mergedUrls.has(edge.parent)).map((edge) => edge.child));
     const perLane = new Map<OverviewLane, { entry: OverviewEntry; fresh?: QueueSignals }[]>();
     for (const member of subject.members) {
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url) || input.excluded?.has(member.url)) continue;
@@ -547,7 +543,7 @@ export function overviewModel(input: OverviewInput): OverviewModel {
       const current = signals && signals.url === member.url && signals.headSha === member.headSha ? signals : undefined;
       seen.add(member.url);
       if (isOwnPr(member, login) && !current) unchecked.add(member.url);
-      const reasons = memberReasons(item, member, current, login, { teamRequests: input.teamRequests, parentMerged: parentMerged.has(member.url) });
+      const reasons = memberReasons(item, member, current, login, { teamRequests: input.teamRequests });
       for (const lane of OVERVIEW_LANES) {
         const laneReasons = LANE_REASONS[lane].filter((reason) => reasons.has(reason)).sort(byReason);
         if (!laneReasons.length) continue;

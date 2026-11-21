@@ -51,6 +51,13 @@ import {
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
+/** Why background work stopped: a request of yours came for the same PR. */
+export const BACKGROUND_YIELDED = 'Background preparation stopped for your request.';
+/** Thrown when you can't push to the PR branch, before anything is prepared. */
+export const NO_PERMISSION = 'You need permission to update this open PR branch.';
+/** Background drafts kept, newest first, and the age after which one leaves (src/conflict-precompute.ts). */
+const BACKGROUND_DRAFTS = 8;
+const BACKGROUND_AGE = 7 * 24 * 60 * 60 * 1000;
 interface Context {
   account: string;
   token: string;
@@ -88,6 +95,8 @@ interface Deps {
   verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
   /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
   disabledLanguages?: () => SyntaxLanguage[];
+  /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
+  backgroundDrafts?: number;
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -106,6 +115,37 @@ export function createConflictResolutionService(deps: Deps) {
   const memoryScope = (session: Pick<ConflictSession, 'account' | 'headRepo'>) =>
     `${session.account.toLowerCase()}:${session.headRepo.toLowerCase()}`;
   const busy = new Set<string>();
+  /** Background work that holds a PR's lock (a run or a drop). A request of yours stops it and waits: it never fails on it. */
+  const backgroundWork = new Map<string, { controller: AbortController; done: Promise<unknown> }>();
+  /** Takes the PR's lock for background work, which yields to you (`yieldToYou`). `signal` still stops it too. */
+  function asBackground<T>(key: string, signal: AbortSignal | undefined, task: (signal: AbortSignal) => Promise<T>) {
+    const controller = new AbortController();
+    const forward = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', forward, { once: true });
+    busy.add(key);
+    const done = (async () => {
+      try {
+        return await task(controller.signal);
+      } catch (error) {
+        // Stopped for a request of yours: say so, whatever the step that stopped reported.
+        const reason: unknown = controller.signal.reason;
+        throw reason instanceof Error && reason.message === BACKGROUND_YIELDED ? reason : error;
+      } finally {
+        busy.delete(key);
+        backgroundWork.delete(key);
+        signal?.removeEventListener('abort', forward);
+      }
+    })();
+    backgroundWork.set(key, { controller, done });
+    return done;
+  }
+  /** Stops background work on the PR and waits for it to let go of the lock. */
+  async function yieldToYou(key: string) {
+    for (let work = backgroundWork.get(key); work; work = backgroundWork.get(key)) {
+      work.controller.abort(new Error(BACKGROUND_YIELDED));
+      await work.done.catch(() => {});
+    }
+  }
   const withStore = createStoreLocks();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
@@ -947,7 +987,9 @@ export function createConflictResolutionService(deps: Deps) {
     restart: boolean,
     keep: boolean,
     signal: AbortSignal,
-    report: (text: string) => void
+    report: (text: string) => void,
+    /** Prepared in the background (src/conflict-precompute.ts): hears the number of conflicted files once known. */
+    background?: (files: number) => void
   ) {
     const state = await deps.read(url);
     signal.throwIfAborted();
@@ -959,11 +1001,20 @@ export function createConflictResolutionService(deps: Deps) {
       state.archived ||
       state.state !== 'OPEN'
     )
-      throw new Error('You need permission to update this open PR branch.');
+      throw new Error(NO_PERMISSION);
     if (!oid(state.headSha) || !oid(state.baseSha))
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    // A background draft counts only for the revisions it was prepared on. Your own draft, or a push still to restack,
+    // is never replaced in the background.
+    const current = !!saved && revisionChange(saved, state) === 'none';
+    if (background && saved && (saved.background ? current : saved.status !== 'published' || !!saved.restack))
+      return saved;
+    if (background || (saved?.background && !current)) {
+      restart = true;
+      keep = false;
+    }
     // Recover a successful atomic restack push whose response or local persistence was interrupted, before anything
     // decides what to show, so the history below says truthfully whether dependent PRs were restacked.
     let recovered = false;
@@ -1074,11 +1125,13 @@ export function createConflictResolutionService(deps: Deps) {
       signal,
       report
     );
+    const found = await conflictFiles(ctx, id, prepared, signal);
+    background?.(found.length);
     let files = await mergeStructurally(
       ctx,
       id,
       { head: state.headBranch, base: state.baseBranch },
-      await remember(ctx, state.headRepo, await conflictFiles(ctx, id, prepared, signal), signal),
+      await remember(ctx, state.headRepo, found, signal),
       signal,
       report
     );
@@ -1112,6 +1165,7 @@ export function createConflictResolutionService(deps: Deps) {
       status: 'editing',
       dependents,
       preparation: await preparation(ctx, id, prepared, files, state, signal),
+      ...(background ? { background: Date.now() } : {}),
     };
     // The push a fresh preparation replaces, while it is still the PR head: its commit, undo point and restack.
     const unrestacked = saved?.status === 'published' ? leftToRestack(saved) : [];
@@ -1240,9 +1294,40 @@ export function createConflictResolutionService(deps: Deps) {
    * without refs is removed whole. Full-history caches of drafts and published PRs go too: drafts rebuild their merge
    * from the shared store when they publish, and restacks fetch history again. Paused or prepared restacks keep theirs.
    */
+  /** Background drafts beyond the newest `keep`, or older than a week, of every account: each with its account. */
+  function staleBackground(keep: number) {
+    const drafts: { name: string; account: string; id: string; at: number }[] = [];
+    for (const name of deps.storage.names?.() ?? []) {
+      const match = /^conflict-draft:(.*):([a-f0-9]{64})$/.exec(name);
+      const saved = match ? (deps.storage.read(name) as ConflictSession | null | undefined) : undefined;
+      if (match && saved?.background && !busy.has(name))
+        drafts.push({ name, account: match[1], id: match[2], at: saved.background });
+    }
+    drafts.sort((a, b) => b.at - a.at);
+    return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
+  }
+  /** Removes a draft and its cache, as Discard does. */
+  async function drop(account: string, id: string) {
+    deps.storage.write(storageKey(account, id), null);
+    await deps.storage.flush();
+    const dir = await directory(account, id);
+    await dropStoreRefs(account, id, dir);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+  /** Drops a background draft under the PR's lock, so no run or open interleaves. Skipped while the PR is busy. */
+  async function dropBackground(account: string, id: string) {
+    const key = storageKey(account, id);
+    if (busy.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
+    // A request of yours that comes meanwhile waits for the drop to finish; it is short.
+    await asBackground(key, undefined, () => drop(account, id));
+  }
   async function cleanUp(): Promise<{ removed: string[] }> {
     const removed: string[] = [];
     if (!deps.storage.names) return { removed };
+    // Their caches go below, with every other directory no saved session needs.
+    const stale = staleBackground(deps.backgroundDrafts ?? BACKGROUND_DRAFTS);
+    for (const { name } of stale) deps.storage.write(name, null);
+    if (stale.length) await deps.storage.flush();
     const root = deps.directory();
     if (!(await exists(root))) return { removed };
     const keep = new Set<string>();
@@ -1311,6 +1396,39 @@ export function createConflictResolutionService(deps: Deps) {
     return { removed };
   }
   return {
+    /**
+     * Prepares a PR's conflicts in the background: fetch, merge, earlier resolutions, structural merge and the checks,
+     * saved as a background draft. Leaves your own draft alone. Undefined while another operation runs for the PR.
+     */
+    async prepareInBackground(url: string, signal: AbortSignal, files: (count: number) => void = () => {}) {
+      const ctx = deps.context();
+      if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
+      const key = storageKey(ctx.account, hash(url));
+      // Your draft, or a push still to restack: nothing to do, before any work. open() keeps the full rule.
+      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      if (saved && !saved.background && (saved.status === 'editing' || saved.restack)) return saved;
+      if (busy.has(key)) return undefined;
+      return asBackground(key, signal, async (yielding) => {
+        await maintenance;
+        return open(ctx, url, false, false, yielding, () => {}, files);
+      });
+    },
+    /** The saved draft for this PR head, while it is being edited: a background one or yours. */
+    draft(url: string, headSha: string) {
+      const ctx = deps.context();
+      if (!ctx.account) return undefined;
+      const saved = deps.storage.read(storageKey(ctx.account, hash(url))) as ConflictSession | undefined;
+      return saved?.status === 'editing' && saved.headSha === headSha && saved.files.length ? saved : undefined;
+    },
+    /** Removes a background draft (the PR moved or merges cleanly now). Your own draft is never removed. */
+    async forgetBackground(url: string) {
+      const account = deps.context().account;
+      if (account) await dropBackground(account, hash(url));
+    },
+    /** Keeps the newest background drafts, of every account, and removes the others with their caches. */
+    async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
+      for (const { account, id } of staleBackground(keep)) await dropBackground(account, id);
+    },
     /** Run once after saved data loads. Conflict requests wait for it. */
     maintain() {
       const task = cleanUp();
@@ -1328,13 +1446,24 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
+      // Background work on this PR stops for you; only another request of yours makes this one wait.
+      await yieldToYou(key);
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
       try {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
-        if (request.kind === 'open')
-          return { session: await open(ctx, request.url, !!request.restart, !!request.keep, signal, report) };
+        if (request.kind === 'open') {
+          const session = await open(ctx, request.url, !!request.restart, !!request.keep, signal, report);
+          // A draft prepared in the background becomes yours once you open it: it is no longer replaced or evicted.
+          const stored = deps.storage.read(key) as ConflictSession | undefined;
+          if (stored?.background) {
+            delete stored.background;
+            await persist(stored);
+          }
+          delete session.background;
+          return { session };
+        }
         const session = sessionFor(ctx, id);
         if (request.version !== session.version)
           throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
@@ -1417,11 +1546,7 @@ export function createConflictResolutionService(deps: Deps) {
           throw new Error('This resolution has already been published. Refresh the PR.');
         let baseMoved: BaseMove | undefined;
         if (request.kind === 'discard') {
-          deps.storage.write(key, null);
-          await deps.storage.flush();
-          const dir = await directory(ctx.account, id);
-          await dropStoreRefs(ctx.account, id, dir);
-          await fs.rm(dir, { recursive: true, force: true });
+          await drop(ctx.account, id);
           return { session };
         }
         if (request.kind === 'save') {
