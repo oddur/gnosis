@@ -1092,15 +1092,33 @@ void app.whenReady().then(async () => {
     // Lines revealed in PR survive a round trip through main and both: the PR diff stays mounted while hidden.
     const prGaps = () =>
       js<number>("document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length");
+    // The PR diff's lines on screen, as text: the revealed ones are those shown now that weren't before.
+    const prLines = () =>
+      js<string[]>(
+        "[...document.querySelectorAll('.conflict-compare-diff[data-compare=pr] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)"
+      );
     const gapsBefore = await prGaps();
     assert.ok(gapsBefore > 0, 'the PR diff has hidden lines to reveal');
+    const linesBefore = await prLines();
     await js("document.querySelector('.conflict-compare-diff[data-compare=pr] .diff-gap-text').click()");
     await wait(`document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length<${gapsBefore}`);
     const gapsRevealed = await prGaps();
+    const revealed = (await prLines()).filter((line) => !linesBefore.includes(line));
+    assert.ok(revealed.length > 0, 'the reveal shows new lines');
     await compareWith('main');
+    assert.equal(
+      await js("document.activeElement?.closest('.conflict-compare')&&document.activeElement.dataset.compare"),
+      'main',
+      'focus moves to the active switch button, not to the body'
+    );
     await compareWith('both');
     await compareWith('pr');
     assert.equal(await prGaps(), gapsRevealed, 'revealed lines are kept across PR → main → both → PR');
+    const after = await prLines();
+    assert.ok(
+      revealed.every((line) => after.includes(line)),
+      `the revealed lines are visible again in PR: ${JSON.stringify(revealed.filter((line) => !after.includes(line)))}`
+    );
     assert.equal(await cardUnder(0, ['  return 11;']), true);
     // main: what the PR still changes after the merge. Main's lines are the old side; an open conflict shows the PR's.
     await compareWith('main');

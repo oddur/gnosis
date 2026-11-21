@@ -14,6 +14,7 @@ import {
   COMPARE_MODES,
   cardAnchors,
   compareRowContext,
+  compareRowPins,
   conflictCompareRows,
   conflictDiffText,
   isCompareWith,
@@ -98,7 +99,8 @@ export function ConflictFileDiff<A>({
       /* Shown as the pinned lines alone. */
     }
     const lines = afterLines(after);
-    const pinned = withPins(base, pins, lines);
+    // A both row with no hunks (the same as the ancestor, or a diff that didn't parse) still shows every line.
+    const pinned = withPins(base, bare ? [...pins, ...compareRowPins(base, after)] : pins, lines);
     const annotations = annotate?.(base) ?? [];
     // A card's line that no hunk or pin shows yet: pinned on its own.
     const missing = annotations
@@ -111,7 +113,7 @@ export function ConflictFileDiff<A>({
       additions: rows.filter((row) => row.type === '+').length,
       deletions: rows.filter((row) => row.type === '-').length,
     };
-  }, [name, before, after, context, pins, annotate]);
+  }, [name, before, after, context, pins, annotate, bare]);
   const contents = useMemo(
     (): PrFileContents => ({ before: { kind: 'text', content: before }, after: { kind: 'text', content: after } }),
     [before, after]
@@ -262,8 +264,11 @@ function CompareSwitch({
             aria-pressed={value === mode}
             data-compare={mode}
             title={mode === 'both' && bothDisabled ? 'No conflicts left to compare' : titles[mode]}
-            disabled={mode === 'both' && bothDisabled}
-            onClick={() => onChange(mode)}
+            // aria-disabled, not disabled: a disabled button takes no pointer events, so its tooltip could not show.
+            aria-disabled={(mode === 'both' && bothDisabled) || undefined}
+            onClick={() => {
+              if (!(mode === 'both' && bothDisabled)) onChange(mode);
+            }}
           >
             {names[mode]}
           </Button>
@@ -296,6 +301,7 @@ function CompareRow({
       <h4 className="conflict-side-label" data-side={side}>
         {label}
       </h4>
+      {text && text === base && <p className="conflict-side-note">Same as before both changes</p>}
       {base || text ? (
         <ConflictFileDiff
           bare
@@ -496,10 +502,24 @@ export function ConflictDiff({
     );
   };
   const baseName = shortBranch(labels.theirs, 16);
+  // Each mode's header has its own switch: after a switch, focus moves to the new one's active button, not to the body.
+  const focusSwitch = useRef(false);
+  const switchTo = useCallback(
+    (next: CompareWith) => {
+      focusSwitch.current = true;
+      setCompare(next);
+    },
+    [setCompare]
+  );
+  useLayoutEffect(() => {
+    if (!focusSwitch.current) return;
+    focusSwitch.current = false;
+    root.current?.querySelector<HTMLElement>(`.conflict-compare [data-compare=${mode}]`)?.focus();
+  }, [mode, root]);
   const switcher = (
     <CompareSwitch
       value={mode}
-      onChange={setCompare}
+      onChange={switchTo}
       baseName={baseName}
       baseLabel={labels.theirs}
       bothDisabled={!hasConflicts}

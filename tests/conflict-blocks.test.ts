@@ -296,3 +296,34 @@ void test('compare with both: rows show every line of a 20-line conflict, even b
   assert.equal(compareRowContext('', ''), 1);
   assert.equal(compareRowContext('a\nb', 'a\n'), 2);
 });
+
+void test('compare with both: a row equal to the ancestor still shows every line, as unchanged context', async () => {
+  const { compareRowContext, compareRowPins } = await import('../lib/conflict-diff');
+  const { afterLines, hunksFromDiff, withPins } = await import('../lib/diff-gaps');
+  const { parseDiffFromFile } = await import('@pierre/diffs');
+  const text = 'const a = 1;\nconst b = 2;\nconst c = 3;\n';
+  const hunks = hunksFromDiff(
+    parseDiffFromFile(
+      { name: 'a.ts', contents: text },
+      { name: 'a.ts', contents: text },
+      { context: compareRowContext(text, text) },
+      true
+    )
+  );
+  assert.equal(hunks.length, 0, 'the same text has no hunks');
+  const shown = withPins(hunks, compareRowPins(hunks, text), afterLines(text));
+  assert.equal(shown.length, 1);
+  assert.deepEqual(
+    shown[0].rows.map((r) => [r.type, r.text.replace(/\n$/, '')]),
+    [
+      [' ', 'const a = 1;'],
+      [' ', 'const b = 2;'],
+      [' ', 'const c = 3;'],
+    ]
+  );
+  // A diff that didn't parse has no hunks either: the same pins show its lines.
+  assert.deepEqual(compareRowPins([], 'x\ny'), [[1, 2]]);
+  // A row with hunks, or no lines, needs no pins.
+  assert.deepEqual(compareRowPins([], ''), []);
+  assert.deepEqual(compareRowPins([{ oldStart: 1, newStart: 1, rows: [], noEofOld: false, noEofNew: false }], 'x\n'), []);
+});

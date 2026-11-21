@@ -127,6 +127,14 @@ export function conflictCompareRows(model: ConflictModel, proposals?: BlockPropo
  * cannot expand, so the unchanged lines between two changes would be hidden.
  */
 export function compareRowContext(before: string, after: string): number {
-  const count = (text: string) => (text.match(/\n/g)?.length ?? 0) + (text && !text.endsWith('\n') ? 1 : 0);
-  return Math.max(count(before), count(after), 1);
+  return Math.max(lineCount(before), lineCount(after), 1);
+}
+
+/**
+ * The pins for a Compare with: both row whose diff has no hunks (#445 item 9): the version equals the ancestor, or the
+ * diff could not be parsed. Every line is pinned as unchanged context, so the row still shows its lines.
+ */
+export function compareRowPins(hunks: readonly GapHunk[], after: string): (readonly [number, number])[] {
+  const count = lineCount(after);
+  return hunks.length || !count ? [] : [[1, count]];
 }
