@@ -61,11 +61,13 @@ const splitDiff = process.argv.includes('--split-diff');
 const threads = process.argv.includes('--threads');
 const prSummary = process.argv.includes('--pr-summary');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-test-'));
-// The fixtures carry fixed PR dates (2026-10-22 in tests/fixtures/workbench.tsx), and the queue hides PRs inactive for
-// 30 days, so every suite runs at a fixed moment just after them, like the unit tests (tests/fixture-clock.ts). One
-// offset, computed here, shifts `Date` (not timers or performance.now) in the test main (tests/electron-test-shim.ts)
-// and, before any fixture script runs, in every fixture page, so reloads keep the same clock.
-const fixtureClockOffset = String(Date.parse('2026-10-27T00:00:00Z') - Date.now());
+// The fixtures carry fixed dates: queue PRs from 2026-10-22 (tests/fixtures/workbench.tsx), other fixture times up to
+// 2026-11-18, and milestones due in December. The queue hides PRs inactive for 30 days, so every suite runs at
+// 2026-11-20T12:00Z: after every fixture time (elapsed times, durations and reply order stay positive), midday (away
+// from day edges), and within 30 days of the queue PRs. The unit tests keep their own moment (tests/fixture-clock.ts).
+// One offset, computed here, shifts `Date` (not timers or performance.now) in the test main
+// (tests/electron-test-shim.ts) and, before any fixture script runs, in every fixture page, so reloads keep the clock.
+const fixtureClockOffset = String(Date.parse('2026-11-20T12:00:00Z') - Date.now());
 const fixtureClock = {
   name: 'fixture-clock',
   transformIndexHtml: () => [
