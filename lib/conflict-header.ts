@@ -11,6 +11,7 @@ import {
   type Verdict,
 } from './conflict-verify';
 import { verdictKey } from './conflict-verdict-key';
+import { conflictFileAction } from './conflict-flow';
 import type { SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -20,7 +21,10 @@ import type { SyntaxLanguage } from './syntax-scope';
 export type ConflictHeader =
   /** Background preparation runs. `files` once Git has merged. */
   | { state: 'checking'; files?: number }
-  /** "3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you." `merged`: every conflict is Merged. */
+  /**
+   * "3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you." `merged`: nothing is left to review,
+   * so the action reads Review and push….
+   */
   | { state: 'ready'; sentence: string; merged: boolean }
   /** You can't push to the PR branch, so nothing was prepared. */
   | { state: 'no-permission' };
@@ -59,18 +63,30 @@ export function conflictHeader(
   disabled: readonly SyntaxLanguage[] = [],
   showMerged = true
 ): ConflictHeader {
+  let review = false;
   const states = files.map((f) => {
     // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
     const saved = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
     const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
     const buckets = blockBuckets(f, f.result, verdict);
-    const status = fileStatus(f, f.result, conflictFileStage(f), buckets);
-    return summaryEntry(f, status, buckets, verdict, showMerged);
+    const stage = conflictFileStage(f);
+    const merged = allMerged(buckets);
+    // The dialog's own next step for the file. Only a reviewed file, or an all-Merged one that "Show me every merged
+    // conflict" off reviews for you, leaves nothing to review.
+    const action = conflictFileAction({
+      stage,
+      resultShown: false,
+      otherFilesPending: false,
+      unsupported: !!f.unsupported,
+      merged,
+    });
+    if (action !== 'confirm' && !(action === 'mark-reviewed' && merged && !showMerged)) review = true;
+    return summaryEntry(f, fileStatus(f, f.result, stage, buckets), buckets, verdict, showMerged);
   });
   return {
     state: 'ready',
     sentence: summarySentence(bucketSummary(states)),
-    merged: states.length > 0 && states.every((s) => allMerged(s.buckets)),
+    merged: states.length > 0 && !review,
   };
 }
 

@@ -51,6 +51,8 @@ import {
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
+/** Why background work stopped: a request of yours came for the same PR. */
+export const BACKGROUND_YIELDED = 'Background preparation stopped for your request.';
 /** Thrown when you can't push to the PR branch, before anything is prepared. */
 export const NO_PERMISSION = 'You need permission to update this open PR branch.';
 /** Background drafts kept, newest first, and the age after which one leaves (src/conflict-precompute.ts). */
@@ -113,6 +115,37 @@ export function createConflictResolutionService(deps: Deps) {
   const memoryScope = (session: Pick<ConflictSession, 'account' | 'headRepo'>) =>
     `${session.account.toLowerCase()}:${session.headRepo.toLowerCase()}`;
   const busy = new Set<string>();
+  /** Background work that holds a PR's lock (a run or a drop). A request of yours stops it and waits: it never fails on it. */
+  const backgroundWork = new Map<string, { controller: AbortController; done: Promise<unknown> }>();
+  /** Takes the PR's lock for background work, which yields to you (`yieldToYou`). `signal` still stops it too. */
+  function asBackground<T>(key: string, signal: AbortSignal | undefined, task: (signal: AbortSignal) => Promise<T>) {
+    const controller = new AbortController();
+    const forward = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', forward, { once: true });
+    busy.add(key);
+    const done = (async () => {
+      try {
+        return await task(controller.signal);
+      } catch (error) {
+        // Stopped for a request of yours: say so, whatever the step that stopped reported.
+        const reason: unknown = controller.signal.reason;
+        throw reason instanceof Error && reason.message === BACKGROUND_YIELDED ? reason : error;
+      } finally {
+        busy.delete(key);
+        backgroundWork.delete(key);
+        signal?.removeEventListener('abort', forward);
+      }
+    })();
+    backgroundWork.set(key, { controller, done });
+    return done;
+  }
+  /** Stops background work on the PR and waits for it to let go of the lock. */
+  async function yieldToYou(key: string) {
+    for (let work = backgroundWork.get(key); work; work = backgroundWork.get(key)) {
+      work.controller.abort(new Error(BACKGROUND_YIELDED));
+      await work.done.catch(() => {});
+    }
+  }
   const withStore = createStoreLocks();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
@@ -1285,12 +1318,8 @@ export function createConflictResolutionService(deps: Deps) {
   async function dropBackground(account: string, id: string) {
     const key = storageKey(account, id);
     if (busy.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
-    busy.add(key);
-    try {
-      await drop(account, id);
-    } finally {
-      busy.delete(key);
-    }
+    // A request of yours that comes meanwhile waits for the drop to finish; it is short.
+    await asBackground(key, undefined, () => drop(account, id));
   }
   async function cleanUp(): Promise<{ removed: string[] }> {
     const removed: string[] = [];
@@ -1375,15 +1404,14 @@ export function createConflictResolutionService(deps: Deps) {
       const ctx = deps.context();
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       const key = storageKey(ctx.account, hash(url));
-      // open() decides whether a background run may replace the saved session; the PR's lock is all that is checked here.
+      // Your draft, or a push still to restack: nothing to do, before any work. open() keeps the full rule.
+      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      if (saved && !saved.background && (saved.status === 'editing' || saved.restack)) return saved;
       if (busy.has(key)) return undefined;
-      busy.add(key);
-      try {
+      return asBackground(key, signal, async (yielding) => {
         await maintenance;
-        return await open(ctx, url, false, false, signal, () => {}, files);
-      } finally {
-        busy.delete(key);
-      }
+        return open(ctx, url, false, false, yielding, () => {}, files);
+      });
     },
     /** The saved draft for this PR head, while it is being edited: a background one or yours. */
     draft(url: string, headSha: string) {
@@ -1418,6 +1446,8 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
+      // Background work on this PR stops for you; only another request of yours makes this one wait.
+      await yieldToYou(key);
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
       try {

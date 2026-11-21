@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createConflictPrecompute, type ConflictPrecomputeDeps } from '../src/conflict-precompute';
-import { NO_PERMISSION } from '../src/conflict-resolution-service';
+import { BACKGROUND_YIELDED, NO_PERMISSION } from '../src/conflict-resolution-service';
 import { conflictHeader, conflictHeaderLine, NO_PUSH_LINE } from '../lib/conflict-header';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import type { ConflictFile, ConflictSession } from '../lib/conflict-resolution';
@@ -52,13 +52,22 @@ void test('the header line reads a prepared draft with the conflict dialog’s o
     sentence: '3 files have conflicts. 2 of 3 conflicts are merged and checked. 1 to decide.',
     merged: false,
   });
-  // Every conflict Merged: the action reads Review and push….
+  // Every conflict Merged, but "Show me every merged conflict" is on: they are still to review, so no Review and push….
   const merged = conflictHeader([proposed('a.ts', true), proposed('b.ts', true)]);
-  assert.equal(merged.state === 'ready' && merged.merged, true);
+  assert.equal(merged.state === 'ready' && merged.merged, false);
   assert.equal(
     conflictHeaderLine(merged),
     '2 files have conflicts. 2 of 2 conflicts are merged and checked. 2 files are ready for review.'
   );
+  // With it off, Merged files are reviewed for you: nothing is left to review.
+  const trusted = conflictHeader([proposed('a.ts', true), proposed('b.ts', true)], [], false);
+  assert.equal(trusted.state === 'ready' && trusted.merged, true);
+  // A file you reviewed leaves nothing either; one in Check does.
+  const reviewed = { ...proposed('a.ts', true), resolved: true };
+  const header = conflictHeader([reviewed]);
+  assert.equal(header.state === 'ready' && header.merged, true);
+  const toCheck = conflictHeader([proposed('a.ts', false)], [], false);
+  assert.equal(toCheck.state === 'ready' && toCheck.merged, false);
   // A verdict for other proposals does not count. Nothing runs checks for a header, so the proposal is to check,
   // never "Checking…".
   const stale = proposed('a.ts', true);
@@ -90,6 +99,7 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
   let trims = 0;
   const wanted = new Set([A, B, C]);
   let account = 'oddur';
+  let settings = '';
   const deps: ConflictPrecomputeDeps = {
     prepare: (url, signal, files) =>
       new Promise<ConflictSession | undefined>((resolve, reject) => {
@@ -124,6 +134,7 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
       return Promise.resolve();
     },
     account: () => account,
+    settingsKey: () => settings,
     onBattery: () => battery,
     changed: (url) => changed.push(url),
     ...options,
@@ -152,6 +163,10 @@ function harness(options: Partial<ConflictPrecomputeDeps> = {}) {
     signIn: (login: string) => {
       account = login;
     },
+    setSettings: (value: string) => {
+      settings = value;
+    },
+    deps,
     pending,
     started,
     aborted,
@@ -198,20 +213,27 @@ void test('background preparation runs one PR at a time for PRs you wrote or sta
   assert.ok(h.changed.includes(C), 'Windows hear when a line changes');
 });
 
-void test('a new head or a clean merge cancels the run and removes its background draft', async () => {
+void test('a new head replaces the background draft without dropping it first; a clean merge removes it', async () => {
   const h = harness();
   h.observe(A, sha(1), 'conflicts');
   h.observe(A, sha(4), 'conflicts');
   assert.deepEqual(h.aborted, [A]);
-  assert.deepEqual(h.forgotten, [A]);
+  assert.deepEqual(h.forgotten, [], 'Nothing is dropped: the new head’s preparation replaces the draft');
   // The cap holds until the stopped run has finished.
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(h.started, [A, A], 'The new head is prepared');
   await h.settle(A);
   assert.equal(h.precompute.header(A, sha(4))?.state, 'ready');
   assert.equal(h.precompute.header(A, sha(1)), undefined, 'Nothing for the old head');
-  h.observe(A, sha(4), 'clear');
-  assert.deepEqual(h.forgotten, [A, A]);
+  // Another head over a ready background draft: prepared, and its line shows.
+  h.observe(A, sha(5), 'conflicts');
+  assert.deepEqual(h.started, [A, A, A]);
+  assert.equal(h.precompute.header(A, sha(5))?.state, 'checking');
+  await h.settle(A);
+  assert.equal(h.precompute.header(A, sha(5))?.state, 'ready');
+  assert.deepEqual(h.forgotten, []);
+  h.observe(A, sha(5), 'clear');
+  assert.deepEqual(h.forgotten, [A]);
   assert.equal(h.drafts.has(A), false);
   assert.equal(h.precompute.header(A, sha(4)), undefined);
 });
@@ -275,9 +297,34 @@ void test('the header never moves a run to its head, another account starts afre
   assert.deepEqual(denied.precompute.header(A, sha(1)), { state: 'no-permission' });
   denied.signIn('someone-else');
   assert.equal(denied.precompute.header(A, sha(1)), undefined);
-  // Settings changes read every line again.
+  // Only a change to the settings a line reads reads it again.
   h.changed.length = 0;
   h.precompute.header(A, sha(1));
   h.precompute.settingsChanged();
+  assert.deepEqual(h.changed, [], 'Another setting changed');
+  h.setSettings('yaml off');
+  h.precompute.settingsChanged();
   assert.deepEqual(h.changed, [A]);
+});
+
+void test('a run that found the PR busy, or gave way to you, is tried again on the next look', async () => {
+  let busy = true;
+  const h = harness();
+  const prepare = h.deps.prepare;
+  h.deps.prepare = (url, signal, files) => (busy ? Promise.resolve(undefined) : prepare(url, signal, files));
+  h.observe(A, sha(1), 'conflicts');
+  await h.precompute.settle(A);
+  assert.equal(h.precompute.header(A, sha(1)), undefined, 'Not "Checking…" while it waits for the next look');
+  busy = false;
+  h.open(A, sha(1));
+  assert.equal(h.precompute.header(A, sha(1))?.state, 'checking');
+  await h.settle(A);
+  assert.equal(h.precompute.header(A, sha(1))?.state, 'ready');
+  // A run that gave way to a request of yours is tried again too.
+  const yielded = harness();
+  yielded.deps.prepare = () => Promise.reject(new Error(BACKGROUND_YIELDED));
+  yielded.observe(B, sha(2), 'conflicts');
+  await yielded.precompute.settle(B);
+  yielded.observe(B, sha(2), 'conflicts');
+  assert.equal(yielded.precompute.header(B, sha(2))?.state, 'checking');
 });

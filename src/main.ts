@@ -4162,6 +4162,12 @@ const conflictPrecompute = createConflictPrecompute({
   trim: () => conflicts.trimBackground(),
   account: () => cachedLogin ?? '',
   showMerged: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.showMergedConflicts !== false,
+  // Only the settings a header line reads: the languages off and each repository's "Show me every merged conflict".
+  settingsKey: () => {
+    const preferences = loadPreferences();
+    const shown = Object.entries(preferences.repositorySettings ?? {}).map(([repo, value]) => [repo, value?.showMergedConflicts]);
+    return JSON.stringify([disabledLanguages(codeIntelligenceSettings(preferences)), shown]);
+  },
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),

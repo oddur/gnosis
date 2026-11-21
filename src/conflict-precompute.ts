@@ -2,7 +2,7 @@ import type { ConflictSession } from '../lib/conflict-resolution';
 import { conflictHeader, type ConflictHeader } from '../lib/conflict-header';
 import type { MergeConflictState } from '../lib/merge-conflicts';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
-import { NO_PERMISSION } from './conflict-resolution-service';
+import { BACKGROUND_YIELDED, NO_PERMISSION } from './conflict-resolution-service';
 
 /**
  * Background conflict preparation (#445 item 4). When GitHub reports conflicts for a PR you wrote or starred, or one
@@ -32,6 +32,8 @@ export interface ConflictPrecomputeDeps {
   disabledLanguages?: () => SyntaxLanguage[];
   /** "Show me every merged conflict" for a repository: unset is on. */
   showMerged?: (repo: string) => boolean;
+  /** A fingerprint of the settings a header line depends on: the languages off and "Show me every merged conflict". */
+  settingsKey?: () => string;
   /** Preparations at once: 1 or 2. */
   concurrency?: number;
 }
@@ -41,7 +43,8 @@ const REMEMBERED = 200;
 interface Run {
   url: string;
   headSha: string;
-  state: 'queued' | 'running' | 'done' | 'failed' | 'no-permission';
+  /** `retry`: the run gave way to a request of yours, or found the PR busy: the next status read or look tries again. */
+  state: 'queued' | 'running' | 'done' | 'retry' | 'failed' | 'no-permission';
   files?: number;
   controller?: AbortController;
   finished?: Promise<void>;
@@ -54,6 +57,8 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
   const limit = Math.min(2, Math.max(1, deps.concurrency ?? 1));
   let running = 0;
   let account = '';
+  /** The settings the header lines were read with (settingsKey). */
+  let settings: string | undefined;
   /** Another account signed in: the runs and lines of the last one no longer apply. */
   function forAccount() {
     const current = deps.account();
@@ -78,6 +83,7 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     }
   };
   function fromDraft(url: string, headSha: string) {
+    settings ??= deps.settingsKey?.() ?? '';
     const known = lines.get(url);
     if (known?.headSha === headSha) return known.header;
     const draft = deps.draft(url, headSha);
@@ -108,11 +114,12 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
           run.files = files;
           note(run.url);
         });
-        run.state = 'done';
+        run.state = session ? 'done' : 'retry';
         if (session?.background) await deps.trim();
       } catch (error) {
         // Stopped on battery, it waits for power. Cancelled for a new head, `observe` already dropped it.
         if (controller.signal.aborted) run.state = 'queued';
+        else if (error instanceof Error && error.message === BACKGROUND_YIELDED) run.state = 'retry';
         else if (error instanceof Error && error.message === NO_PERMISSION) run.state = 'no-permission';
         else {
           run.state = 'failed';
@@ -128,7 +135,8 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
   }
 
   function queue(url: string, headSha: string) {
-    if (runs.has(url) || fromDraft(url, headSha)) return;
+    const known = runs.get(url);
+    if ((known && !(known.state === 'retry' && known.headSha === headSha)) || fromDraft(url, headSha)) return;
     runs.set(url, { url, headSha, state: 'queued' });
     bounded(runs, (value) => value.state === 'queued' || value.state === 'running');
     note(url);
@@ -137,8 +145,9 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
 
   return {
     /**
-     * GitHub's merge state for a PR head, from a status read or sync. `wanted`: you wrote or starred the PR. A new
-     * head, or a clean merge, cancels the run and removes its background draft. Only this path reports heads.
+     * GitHub's merge state for a PR head, from a status read or sync. `wanted`: you wrote or starred the PR. A new head
+     * cancels the run, and the new head's preparation replaces the background draft. A clean merge also removes the
+     * draft. Only this path reports heads.
      */
     observe(url: string, headSha: string, state: MergeConflictState, wanted = false) {
       forAccount();
@@ -147,7 +156,8 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
         run.controller?.abort();
         runs.delete(url);
         note(url);
-        void deps.forget(url).catch((error: unknown) => console.warn('[conflicts] Could not remove a draft.', error));
+        if (state === 'clear')
+          void deps.forget(url).catch((error: unknown) => console.warn('[conflicts] Could not remove a draft.', error));
       }
       if (state === 'conflicts' && wanted) queue(url, headSha);
     },
@@ -174,6 +184,9 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     refresh: note,
     /** Settings changed (Code intelligence, "Show me every merged conflict"): every line is read again. */
     settingsChanged() {
+      const key = deps.settingsKey?.() ?? '';
+      if (key === settings) return;
+      settings = key;
       const urls = [...lines.keys()];
       lines.clear();
       for (const url of urls) note(url);
