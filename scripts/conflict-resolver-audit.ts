@@ -28,8 +28,9 @@ async function main() {
       process.stderr.isTTY && process.stderr.write(`\r${done}/${total} ${name}`.padEnd(100).slice(0, 100)),
   });
   if (process.stderr.isTTY) process.stderr.write('\n');
-  const { lines, baseline } = summarize(report);
+  const { lines, checks, baseline } = summarize(report);
   console.log(lines.join('\n'));
+  console.log(`\n${checks.join('\n')}`);
   console.log(`\n${baseline}`);
   const escaped = report.results.filter((r) => r.outcome === 'escaped');
   const show = Number(value('--show') ?? 5);

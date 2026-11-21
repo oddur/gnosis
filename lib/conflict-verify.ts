@@ -255,12 +255,41 @@ export async function verifyProposals(
       probe = without.probe;
       parsed[3] = without.parsed;
     } else if (result.errors && (ours.errors || theirs.errors)) {
-      // A side that doesn't parse can't clear the result, but an error that reaches a proposal is still the proposal's:
-      // only the line accounting would see it otherwise, and your own earlier resolutions are not held to that.
-      if (!result.errorLines?.length) return { merged: false, note: 'The result doesn’t parse.' };
-      const lines = result.errorLines;
-      for (const [index, [a, z]] of probe.regions)
-        if (lines.some(([start, end]) => a <= end && z >= start)) fail(index, 'This result doesn’t parse.');
+      // A side that doesn't parse can't clear the result. An error that reaches a proposal is the proposal's when the
+      // proposal wrote lines neither side had, or when the file has fewer errors with either side's lines in its place;
+      // otherwise the error is the side's own. Your own earlier
+      // resolutions are not held to the line accounting, so this is the only check that sees them break the file.
+      const ranges = result.errorLines;
+      if (!ranges?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      const suspects = [...probe.regions]
+        .filter(([, [a, z]]) => ranges.some(([start, end]) => a <= end && z >= start))
+        .map(([index]) => index);
+      const conflictOf = (index: number) => conflicts.find((c) => c.index === index)?.block;
+      /** Lines the proposal wrote that neither side nor the ancestor had: inside an error, they are not cleared. */
+      const written = (index: number) => {
+        const block = conflictOf(index);
+        const known = new Set(
+          [block?.base ?? '', block?.ours ?? '', block?.theirs ?? ''].flatMap((t) =>
+            t.split(/\r?\n/).map((l) => l.trim())
+          )
+        );
+        return (proposals[index]?.text ?? '').split(/\r?\n/).some((l) => l.trim() && !known.has(l.trim()));
+      };
+      for (const index of suspects) {
+        if (written(index)) {
+          fail(index, 'This result doesn’t parse.');
+          continue;
+        }
+        for (const side of ['ours', 'theirs'] as const) {
+          const read = await analyse(language, fill(segments, proposals, side, new Set([index])).text);
+          // Errors the parser can't place can't be compared: the proposal is blamed.
+          const count = read.errors ? read.errorLines?.length || Infinity : 0;
+          if (count < ranges.length || count === Infinity) {
+            fail(index, 'This result doesn’t parse.');
+            break;
+          }
+        }
+      }
     }
   } catch {
     return { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' };
@@ -579,8 +608,9 @@ export function accountLines(
 /**
  * The result keeps the ancestor's order: the lines both sides kept, and each side's changes in place between them.
  * Line counts alone miss two statements swapped. Where one side inserted lines at the point where the other side's
- * change starts or ends, or both inserted at one point, either order is a merge: those lines may interleave, each
- * side's in its own order. Changes both sides made alike count once.
+ * change starts or ends, or both inserted at one point, either side's lines may come first, but each side's stay
+ * together and in order: a line moved inside the other side's lines can change what they do. Changes both sides made
+ * alike count once.
  */
 function outOfOrder(base: readonly string[], merged: readonly string[], mine: LineChange[], other: LineChange[]) {
   const changes = [
@@ -617,20 +647,11 @@ function outOfOrder(base: readonly string[], merged: readonly string[], mine: Li
       if (merged[r++] !== unit) return ORDER;
       continue;
     }
+    // Each side's lines stay together and in order: the PR's then main's, or main's then the PR's.
     const [a, b] = unit.sides;
-    const part = merged.slice(r, r + a.length + b.length);
+    const part = merged.slice(r, r + a.length + b.length).join('\n');
     r += a.length + b.length;
-    // reach[i][j]: the first i lines of one side and j of the other make up the start of `part`.
-    const width = b.length + 1;
-    const reach = new Uint8Array((a.length + 1) * width);
-    reach[0] = 1;
-    for (let i = 0; i <= a.length; i++)
-      for (let j = 0; j <= b.length; j++) {
-        if (!reach[i * width + j] || i + j >= part.length) continue;
-        if (a[i] === part[i + j]) reach[(i + 1) * width + j] = 1;
-        if (b[j] === part[i + j]) reach[i * width + j + 1] = 1;
-      }
-    if (part.length !== a.length + b.length || !reach[a.length * width + b.length]) return ORDER;
+    if (part !== [...a, ...b].join('\n') && part !== [...b, ...a].join('\n')) return ORDER;
   }
   if (r !== merged.length) return ORDER;
 }

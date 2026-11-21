@@ -394,6 +394,39 @@ void test('resolver audit: a result that swaps lines either side put in order is
   );
 });
 
+void test('resolver audit round 2: one side’s line moved inside the other side’s lines is not Merged', () => {
+  // Both sides inserted at one point: main's `stop();` may come before or after the PR's block, never inside it.
+  const inserted = {
+    base: 'start();\nfinish();\n',
+    ours: 'start();\nif (ready) {\n    go();\n  }\nfinish();\n',
+    theirs: 'start();\nstop();\nfinish();\n',
+  };
+  assert.equal(
+    accountLines(inserted, 'start();\nif (ready) {\n    go();\n  }\nstop();\nfinish();\n', false),
+    undefined
+  );
+  assert.equal(
+    accountLines(inserted, 'start();\nstop();\nif (ready) {\n    go();\n  }\nfinish();\n', false),
+    undefined
+  );
+  assert.equal(
+    accountLines(inserted, 'start();\nif (ready) {\n  stop();\n    go();\n  }\nfinish();\n', false),
+    'The result changes the order of lines from the PR or main.'
+  );
+  // Next to a change: the PR wrapped `go();` in an if, main appended `stop();` after it. Counted with indentation, the
+  // PR's change is one block; `stop();` inside the if is not a merge.
+  const wrapped = {
+    base: 'start();\ngo();\n',
+    ours: 'start();\nif (ready) {\n  go();\n}\n',
+    theirs: 'start();\ngo();\nstop();\n',
+  };
+  assert.equal(accountLines(wrapped, 'start();\nif (ready) {\n  go();\n}\nstop();\n', true), undefined);
+  assert.equal(
+    accountLines(wrapped, 'start();\nif (ready) {\n  go();\nstop();\n}\n', true),
+    'The result changes the order of lines from the PR or main.'
+  );
+});
+
 void test('resolver audit: with a side that does not parse, a result whose error reaches a proposal is not Merged', async () => {
   // main's side has a stray `= ;` far from the conflict, so the parse check can't clear the file.
   const sides = {
@@ -410,6 +443,26 @@ void test('resolver audit: with a side that does not parse, a result whose error
   const broken = await remembered('  timeout: 60_000 45_000,\n');
   assert.equal(broken.merged, false);
   assert.equal(broken.note, 'This result doesn’t parse.');
+});
+
+void test('resolver audit round 2: an error that is the side’s own does not demote a correct earlier resolution', async () => {
+  // main left an unclosed `if (debug) {` around the conflict: the error reaches the proposal, but it is main's.
+  const sides = {
+    path: 'src/run.ts',
+    base: 'export function run() {\n  const limit = 30;\n  return limit;\n}\n',
+    ours: 'export function run() {\n  const limit = 60;\n  return limit;\n}\n',
+    theirs: 'export function run() {\n  if (debug) {\n  const limit = 45;\n  return limit;\n}\n',
+    original:
+      'export function run() {\n  if (debug) {\n<<<<<<< feature\n  const limit = 60;\n||||||| ancestor\n  const limit = 30;\n=======\n  const limit = 45;\n>>>>>>> main\n  return limit;\n}\n',
+  };
+  const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
+  const good = await remembered('  const limit = 60;\n');
+  assert.equal(good.merged, true, good.note);
+  for (const text of ['  const limit = 60 45;\n', '  const limit = 60;\n)]}\n']) {
+    const broken = await remembered(text);
+    assert.equal(broken.merged, false, text);
+    assert.equal(broken.note, 'This result doesn’t parse.');
+  }
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {

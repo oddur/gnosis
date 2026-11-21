@@ -32,6 +32,7 @@ export type MutationKind =
   | 'drop-pr-line'
   | 'drop-main-line'
   | 'swap-order'
+  | 'interleave-sides'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -42,6 +43,7 @@ export const MUTATIONS: MutationKind[] = [
   'drop-pr-line',
   'drop-main-line',
   'swap-order',
+  'interleave-sides',
   'change-number',
   'change-string',
   'touch-outside',
@@ -56,6 +58,7 @@ export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
   'drop-pr-line',
   'drop-main-line',
   'swap-order',
+  'interleave-sides',
   'change-number',
   'change-string',
 ]);
@@ -75,6 +78,8 @@ export interface MutationResult {
   outcome: Outcome;
   /** The check's note, or why it escaped. */
   note: string;
+  /** Which check caught it (checkOf), for a caught mutation. */
+  check?: string;
   /** The mutated result, for an escape. */
   text?: string;
 }
@@ -360,6 +365,50 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
       }
       return { skip: 'no two statements of one function body in the result' };
     }
+    case 'interleave-sides': {
+      // One side's line moved inside the other side's lines, or past them: every line is still there, and each side's
+      // lines may even keep their own order, but they no longer stand together.
+      const base = sideLines(target.sides.base);
+      const pairs: [string, string][] = [
+        [target.sides.ours, target.sides.theirs],
+        [target.sides.theirs, target.sides.ours],
+      ];
+      for (const [x, y] of pairs) {
+        const [inX, inY] = [sideLines(x), sideLines(y)];
+        const own = (side: Set<string>, other: Set<string>) =>
+          lines.flatMap((line, i) =>
+            hasWord(line) && side.has(norm(line)) && !other.has(norm(line)) && !base.has(norm(line)) ? [i] : []
+          );
+        const [mine, theirs] = [own(inX, inY), own(inY, inX)];
+        if (!mine.length || !theirs.length) continue;
+        const runs: [number, number][] = [];
+        for (const i of theirs) {
+          const last = runs.at(-1);
+          if (last && last[1] === i - 1) last[1] = i;
+          else runs.push([i, i]);
+        }
+        const move = (from: number, to: number) => {
+          const next = [...lines];
+          const [line] = next.splice(from, 1);
+          next.splice(from < to ? to - 1 : to, 0, line);
+          return { text: next.join('') };
+        };
+        // Inside the other side's run of lines.
+        for (const [start, end] of runs)
+          if (end > start) {
+            const from = mine.reduce((best, i) => (Math.abs(i - start) < Math.abs(best - start) ? i : best));
+            return move(from, start + 1);
+          }
+        // Past it, leaving another line of its own side behind.
+        for (const [start, end] of runs) {
+          const before = mine.filter((i) => i < start);
+          const after = mine.filter((i) => i > end);
+          if (before.length > 1) return move(before[before.length - 1], end + 1);
+          if (after.length > 1) return move(after[0], start);
+        }
+      }
+      return { skip: 'the result has no lines only one side added beside the other side’s' };
+    }
     case 'change-number':
     case 'change-string': {
       const pattern = kind === 'change-number' ? /(?<![\w.$#])\d+(?![\w.])/ : /(["'])([^"'\\\n]*)\1/;
@@ -381,9 +430,46 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
       return { skip: 'handled on the whole output' };
   }
 }
-/** A line of `text` that holds a word, renamed: `value` becomes `valueX`. */
+const KEYWORDS = new Set(
+  'abstract as async await break case catch class const continue def default defer delete do elif else enum except export extends final finally fn for from func function go if impl implements import in interface is lambda let match mod module namespace new not or package pass private protected pub public raise readonly return select self static struct super switch this throw throws trait try type typeof use using val var void where while with yield'.split(
+    ' '
+  )
+);
+/**
+ * A line of text with one value changed: its first number plus one, else its first name that is not a keyword with `X`
+ * added (`value` becomes `valueX`). The line still parses, so only the check on text outside the conflicts can see it.
+ */
 function touch(line: string) {
-  return line.replace(/[\p{L}_][\p{L}\p{N}_]*/u, (word) => `${word}X`);
+  const number = /(?<![\w.$#])\d+(?![\w.])/.exec(line);
+  if (number)
+    return line.slice(0, number.index) + String(Number(number[0]) + 1) + line.slice(number.index + number[0].length);
+  return line.replace(/[\p{L}_$][\p{L}\p{N}_$]*/gu, (word, at: number) => (at === firstName(line) ? `${word}X` : word));
+}
+/** Where the first name that is not a keyword starts, or -1. */
+function firstName(line: string) {
+  for (const match of line.matchAll(/[\p{L}_$][\p{L}\p{N}_$]*/gu)) if (!KEYWORDS.has(match[0])) return match.index;
+  return -1;
+}
+const touchable = (line: string) => /(?<![\w.$#])\d+(?![\w.])/.test(line) || firstName(line) >= 0;
+
+/** Which check caught a mutation, from its note. */
+export function checkOf(note: string) {
+  const checks: [string, RegExp][] = [
+    ['outside text', /no longer maps onto Git|did not reach the draft|resolver output was not used/],
+    ['conflict markers', /conflict markers/],
+    ['line endings', /line endings/],
+    ['parse', /doesn’t parse|couldn’t parse/],
+    ['duplicate definition', /defined twice|declared twice/],
+    ['order', /changes the order of lines/],
+    ['both changed the same lines', /Both sides changed the same lines/],
+    ['same change / reformat', /couldn’t show it is the same change|only reformatted|took the proposal back/],
+    ['lost edit', /change to it\.|Check it yourself|neither side changed it/],
+    ['line accounting', /missing from the result|is in neither side|still in the result/],
+    ['renamed name', /renamed or removed/],
+    ['stray line', /semicolon/],
+    ['union rule', /^Both sides added /],
+  ];
+  return checks.find(([, pattern]) => pattern.test(note))?.[0] ?? 'other';
 }
 
 // ── The audit ────────────────────────────────────────────────────────────────
@@ -417,7 +503,10 @@ async function judge(
       ? { outcome: 'escaped', note: `Conflict ${merged + 1} is Merged with the touched line in the result.` }
       : { outcome: 'caught', note: verdict?.note ?? 'The resolver output was not used.' };
   }
-  const note = blockVerdict(verdict, index)?.note ?? 'The checks did not run.';
+  // A 'same' proposal the checks didn't confirm is taken back (withoutUnconfirmed): the conflict is yours to decide.
+  const note = !after.proposals?.[index]
+    ? 'The same-change rule took the proposal back.'
+    : (blockVerdict(verdict, index)?.note ?? 'The checks did not run.');
   if (buckets[index] === 'merged') return { outcome: 'escaped', note };
   if (resolver === 'union' && UNION_NOTES.test(note)) return { outcome: 'held', note };
   return { outcome: 'caught', note };
@@ -513,7 +602,8 @@ async function auditFile(
 ) {
   const { file, verdict } = await checked(subject, m.disabled);
   const at = { case: m.name, path: file.path };
-  const record = (r: Omit<MutationResult, 'case' | 'path'>) => report.results.push({ ...at, ...r });
+  const record = (r: Omit<MutationResult, 'case' | 'path'>) =>
+    report.results.push({ ...at, ...r, check: r.outcome === 'caught' ? (r.check ?? checkOf(r.note)) : undefined });
   if (file.wholeFile) {
     const passed = !!verdict?.passed;
     report.baselines.push({ ...at, block: 0, resolver: 'whole-file', passed, note: verdict?.note ?? '' });
@@ -525,7 +615,7 @@ async function auditFile(
         // A line neither side changed, far from the conflicts: the first one with a word that all three share.
         const shared = [sideLines(file.base), sideLines(file.ours), sideLines(file.theirs)];
         const lines = splitLines(target.text);
-        const i = lines.findIndex((l) => hasWord(l) && shared.every((s) => s.has(norm(l))));
+        const i = lines.findIndex((l) => touchable(l) && shared.every((s) => s.has(norm(l))));
         mutant = i < 0 ? { skip: 'no line both sides kept' } : { text: replaceLines(lines, i, 1, [touch(lines[i])]) };
       } else mutant = await mutate(mutation, target);
       if ('skip' in mutant || mutant.text === target.text) continue;
@@ -620,7 +710,7 @@ async function touchOutside(
     if (neighbour?.kind !== 'text') continue;
     const lines = splitLines(neighbour.text);
     const order = side < 0 ? [...lines.keys()].reverse() : [...lines.keys()];
-    const i = order.find((k) => hasWord(lines[k]));
+    const i = order.find((k) => touchable(lines[k]));
     if (i === undefined) continue;
     const touched = replaceLines(lines, i, 1, [touch(lines[i])]);
     // The same text before or after, in the resolver's output: the neighbour's text is there exactly once.
@@ -654,6 +744,10 @@ async function touchOutside(
       resolver,
       mutation: 'touch-outside',
       ...(kept ? result : { outcome: 'caught', note: 'The touched line did not reach the draft.' }),
+      // The mapping refused the output's conflicts, so it became a whole-file proposal, never Merged; its checks say why.
+      ...(next.wholeFile && result.outcome === 'caught'
+        ? { check: `outside text → whole file (${checkOf(result.note)})` }
+        : {}),
       text: kept && result.outcome === 'escaped' ? mutated : undefined,
     });
   }
@@ -677,6 +771,20 @@ export function summarize(report: AuditReport) {
         `${resolver.padEnd(12)} ${mutation.padEnd(21)} ${String(row.caught).padStart(6)} ${String(row.held).padStart(5)} ${String(row.own).padStart(4)} ${String(row.escaped).padStart(8)}`
       );
     }
+  const byCheck = new Map<string, Map<string, number>>();
+  for (const r of report.results) {
+    if (r.outcome !== 'caught' || !r.check) continue;
+    const row = byCheck.get(r.mutation) ?? new Map<string, number>();
+    row.set(r.check, (row.get(r.check) ?? 0) + 1);
+    byCheck.set(r.mutation, row);
+  }
+  const checks = MUTATIONS.filter((m) => byCheck.has(m)).map(
+    (m) =>
+      `${m.padEnd(21)} ${[...(byCheck.get(m) ?? [])]
+        .sort((a, b) => b[1] - a[1])
+        .map(([check, n]) => `${check} ${n}`)
+        .join(', ')}`
+  );
   const base = new Map<Resolver, { passed: number; total: number }>();
   for (const b of report.baselines) {
     const row = base.get(b.resolver) ?? { passed: 0, total: 0 };
@@ -685,5 +793,9 @@ export function summarize(report: AuditReport) {
     base.set(b.resolver, row);
   }
   const baseline = RESOLVERS.filter((r) => base.has(r)).map((r) => `${r} ${base.get(r)?.passed}/${base.get(r)?.total}`);
-  return { lines, baseline: `Results that passed the checks, by resolver: ${baseline.join(', ')}.` };
+  return {
+    lines,
+    checks: ['Caught by check, per mutation:', ...checks],
+    baseline: `Results that passed the checks, by resolver: ${baseline.join(', ')}.`,
+  };
 }

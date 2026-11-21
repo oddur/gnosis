@@ -103,15 +103,16 @@ The resolver audit checks the checks. Each resolver and rule runs over the lab's
 | `broken-parse` | A line that does not parse is inserted. |
 | `drop-pr-line`, `drop-main-line` | One line from the PR or from main is removed, a line that side added first. |
 | `swap-order` | Two lines of one function body, both from one side, change places. |
+| `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
 | `change-number`, `change-string` | A number or a string in the result changes. |
-| `touch-outside` | A line next to the conflict, outside it, changes in the resolver's whole output, which is then mapped onto Git's conflicts again. |
+| `touch-outside` | A number or a name that is not a keyword changes on a line next to the conflict, outside it, in the resolver's whole output. The output is then mapped onto Git's conflicts again. |
 
 No mutation may end Merged, and a whole-file proposal may not pass its checks. A union is never Merged; the audit still counts a mutation the checks would not catch (`held`). An earlier resolution is your own resolution of the same conflict, so it may drop a side, reorder or edit lines on purpose (`own`). It is held only to parsing, no duplicated definition and no text outside the conflict.
 
 ```
 npm run conflict-resolver-audit                 # the fixtures and one matrix case per pattern and language
-npm run conflict-resolver-audit -- --all        # the whole matrix (about 100 s)
+npm run conflict-resolver-audit -- --all        # the whole matrix (about 75 s)
 npm run conflict-resolver-audit -- --only ts-   # cases whose name contains "ts-"
 ```
 
-It prints a table of resolver × mutation (caught, held, own, escaped), and each escape with its case, file, conflict and mutated text. `npm test` runs the sample (`tests/conflict-resolver-audit.test.ts`, about 10 s), so CI runs it on every push. It needs Mergiraf (`npm run prepare:mergiraf`) and skips without it. When the audit finds an escape, fix the check so that it fails closed, and add the case to the lab.
+It prints a table of resolver × mutation (caught, held, own, escaped), which check caught each mutation, and each escape with its case, file, conflict and mutated text. `npm test` runs the sample (`tests/conflict-resolver-audit.test.ts`, about 10 s), so CI runs it on every push. It needs Mergiraf (`npm run prepare:mergiraf`) and skips without it. When the audit finds an escape, fix the check so that it fails closed, and add the case to the lab.
