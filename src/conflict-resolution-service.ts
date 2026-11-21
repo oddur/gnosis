@@ -28,6 +28,7 @@ import {
 import { conflictCount } from '../lib/conflict-blocks';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
+import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
 import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
@@ -59,6 +60,11 @@ interface Deps {
   /** `read` for many PRs at once, one promise per URL in order. */
   readMany?: (urls: string[]) => Promise<PrActionState>[];
   mergiraf: () => string;
+  /**
+   * Milliseconds for structural merge while preparing, for one retry, and for all retries together: 5000, 10000 and
+   * 30000. Tests change them.
+   */
+  structuralTimeouts?: [number, number, number];
   suggest: (
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
     signal: AbortSignal
@@ -630,7 +636,9 @@ export function createConflictResolutionService(deps: Deps) {
   }
   /**
    * Runs structural merge on every text conflict that your earlier resolutions did not settle, a few files at a time.
-   * Each conflict it resolves becomes a proposal; the ones it leaves, and any file it fails on, stay as Git wrote them.
+   * Each conflict it resolves becomes a proposal. A result that also changes lines outside the conflicts is kept whole,
+   * for you to check. A file that runs out of time gets one more try on its own, with the Suggest budget. Any file it
+   * still fails on stays as Git wrote it, with a note that says why.
    */
   async function mergeStructurally(
     ctx: Context,
@@ -638,31 +646,67 @@ export function createConflictResolutionService(deps: Deps) {
     branches: { head: string; base: string },
     files: ConflictFile[],
     signal: AbortSignal,
-    report: (text: string) => void
+    report: (text: string) => void,
+    /** Store what it proposes beside the draft, without applying it: the draft may be your own. */
+    keepDraft = false
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
+    if (!queue.length) return files;
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
-    if (!queue.length || !(await exists(deps.mergiraf()))) return files;
+    if (!(await exists(deps.mergiraf()))) {
+      for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
+      return files;
+    }
+    // A note from an earlier try (no binary, out of time) gives way to this one.
+    for (const file of queue) delete file.structuralNote;
     report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
-    const work = async () => {
-      for (let file = queue.shift(); file; file = queue.shift()) {
-        try {
-          const proposals = blockProposals(
-            file.original,
-            await mergiraf(ctx, id, branches, file, signal, 5000),
-            'mergiraf'
-          );
-          if (!proposals) continue;
-          file.proposals = proposals;
+    /** Keeps what structural merge proposed for one file. False when it ran out of time. */
+    const propose = async (file: ConflictFile, budget: number) => {
+      const started = Date.now();
+      let output: string;
+      try {
+        output = await mergiraf(ctx, id, branches, file, signal, budget);
+      } catch (error) {
+        signal.throwIfAborted();
+        console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
+        if (error instanceof Error && error.message.startsWith('The operation timed out')) return false;
+        file.structuralNote = 'Structural merge couldn’t combine this file.';
+        file.structuralRan = true;
+        return true;
+      }
+      // Out of time, Mergiraf falls back to Git's line merge and says nothing: whatever it printed is not its merge.
+      if (Date.now() - started >= budget) return false;
+      const proposals = blockProposals(file.original, output, 'mergiraf');
+      if (proposals) {
+        file.proposals = proposals;
+        if (!keepDraft) {
           file.result = withProposals(file.original, proposals);
           file.source = 'mergiraf';
-        } catch (error) {
-          signal.throwIfAborted();
-          console.warn(`[conflicts] Structural merge skipped ${file.path}.`, error);
         }
-      }
+      } else if (!hasConflictMarkers(output)) file.wholeFile = { source: 'mergiraf', text: output };
+      else file.structuralNote = 'Structural merge couldn’t combine this file.';
+      file.structuralRan = true;
+      return true;
     };
-    await Promise.all([work(), work(), work(), work()]);
+    const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
+    /** Four files at a time. A file that runs out of time goes on `late`. */
+    const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
+      const work = async () => {
+        for (let file = files.shift(); file; file = files.shift())
+          if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
+      };
+      await Promise.all([work(), work(), work(), work()]);
+    };
+    const late: ConflictFile[] = [];
+    await pool(queue, () => first, late);
+    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
+    const deadline = Date.now() + cap;
+    const failed: ConflictFile[] = [];
+    await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
+    for (const file of failed) {
+      console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
+      file.structuralNote = 'Structural merge timed out.';
+    }
     return files;
   }
   async function preparation(
@@ -795,6 +839,14 @@ export function createConflictResolutionService(deps: Deps) {
         const old = before.get(file.path);
         if (!old || old.unsupported || file.unsupported || conflictKeys(old.original) !== conflictKeys(file.original))
           return true;
+        // A whole-file proposal covers every line, and a note describes one run on these versions: both carry only
+        // when the file's three versions are the same. Otherwise structural merge runs again.
+        if (old.wholeFile || old.structuralNote) {
+          if (old.base !== file.base || old.ours !== file.ours || old.theirs !== file.theirs) return true;
+          file.wholeFile = old.wholeFile;
+          file.structuralNote = old.structuralNote;
+        }
+        file.structuralRan = old.structuralRan;
         if (old.proposals) {
           file.proposals = old.proposals;
           file.result = withProposals(file.original, old.proposals);
@@ -845,45 +897,99 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    // Recover a successful atomic restack push whose response or local persistence was interrupted, before anything
+    // decides what to show, so the history below says truthfully whether dependent PRs were restacked.
+    let recovered = false;
+    const pendingRestack = saved?.status === 'published' ? saved.restack : undefined;
+    if (pendingRestack?.status === 'prepared') {
+      const urls = pendingRestack.branches.map((branch) => branch.url);
+      const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
+      assertAccount(ctx);
+      recovered =
+        states.length > 0 &&
+        states.every(
+          (value, index) =>
+            value.account === ctx.account &&
+            value.headRepo === pendingRestack.branches[index].repo &&
+            value.headBranch === pendingRestack.branches[index].branch &&
+            value.headSha === pendingRestack.branches[index].newSha
+        );
+      if (recovered) pendingRestack.status = 'published';
+    }
+    const published = !restart && saved?.status === 'published' ? saved : undefined;
+    // GitHub reports conflicts again (main moved): prepare afresh, whatever state a restack is in. The push stays history.
+    const conflictsAgain = !!published && hasMergeConflicts(state);
+    if (
+      published?.restack &&
+      !conflictsAgain &&
+      published.restack.status !== 'published' &&
+      (published.commitSha !== state.headSha || published.headBranch !== state.headBranch || published.headRepo !== state.headRepo)
+    ) {
+      return { ...published, stale: true };
+    }
+    const dependents = deps.dependents?.(url) ?? [];
+    // Dependent PRs that a push left to restack: the published screen offers that next.
+    const leftToRestack = (pushed: ConflictSession) =>
+      pushed.restack?.status === 'published'
+        ? []
+        : pushed.restack?.branches.length
+          ? pushed.restack.branches.map((branch) => branch.url)
+          : dependents;
+    const restackPending = !!published && (published.restack ? published.restack.status !== 'published' : !!dependents.length);
+    const pushedHead = !!published && !conflictsAgain && published.commitSha === state.headSha;
+    // A push finished in an earlier session is history, not a result to show again: the published record, or the
+    // `lastPush` of a preparation made while GitHub was still computing. Clean now: say so, with the push as history.
+    // Still computing: prepare afresh below so Git answers, keeping the push in `lastPush`.
+    const history: ConflictSession['lastPush'] =
+      pushedHead && !restackPending && !recovered && published?.commitSha
+        ? { commitSha: published.commitSha, headSha: published.headSha }
+        : !restart && saved?.status === 'editing' && !saved.files.length ? saved.lastPush : undefined;
+    if (saved && history?.commitSha === state.headSha && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
+      return { ...saved, dependents, reopened: true, lastPush: history };
+    // The push, or the restack push just recovered, is this session's result: show it.
     if (
       !restart &&
-      saved?.status === 'published' &&
-      saved.restack &&
-      saved.restack.status !== 'published' &&
-      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
+      !conflictsAgain &&
+      (!pushedHead || restackPending || recovered) &&
+      saved?.commitSha === state.headSha
     ) {
-      return { ...saved, stale: true };
-    }
-    if (!restart && saved?.commitSha === state.headSha) {
       saved.status = 'published';
-      saved.dependents = deps.dependents?.(url) ?? [];
-      const restack = saved.restack;
-      if (restack?.status === 'prepared') {
-        // Recover a successful atomic push whose response or local persistence was interrupted.
-        const urls = restack.branches.map((branch) => branch.url);
-        const states = await settleInOrder(deps.readMany ? deps.readMany(urls) : urls.map((u) => deps.read(u)));
-        assertAccount(ctx);
-        if (
-          states.length &&
-          states.every(
-            (value, index) =>
-              value.account === ctx.account &&
-              value.headRepo === restack.branches[index].repo &&
-              value.headBranch === restack.branches[index].branch &&
-              value.headSha === restack.branches[index].newSha
-          )
-        )
-          restack.status = 'published';
-      }
+      saved.dependents = dependents;
       await persist(saved);
       return saved;
     }
     // New base commits alone leave the draft usable: preview and publish merge them again.
     if (saved?.status === 'editing' && !restart && saved.files.length > 0) {
       const change = revisionChange(saved, state);
-      return change === 'head-moved' || change === 'retargeted'
-        ? { ...saved, stale: true, staleReason: change }
-        : { ...saved, stale: false };
+      if (change === 'head-moved' || change === 'retargeted') return { ...saved, stale: true, staleReason: change };
+      // Files that structural merge never gave a result (a draft from an older build, no binary, out of time) get the
+      // pass on reopen, while the draft is still Git's conflict. It never changes the draft: what it finds is stored
+      // beside it. A Suggest result or your own edit is left alone.
+      const untried = saved.files.filter(
+        (f) =>
+          !f.structuralRan &&
+          !f.resolved &&
+          f.source === 'manual' &&
+          f.result === f.original &&
+          !f.proposals &&
+          !f.wholeFile
+      );
+      if (untried.length) {
+        await mergeStructurally(
+          ctx,
+          id,
+          { head: saved.headBranch, base: saved.baseBranch },
+          untried,
+          signal,
+          report,
+          true
+        );
+        signal.throwIfAborted();
+        assertAccount(ctx);
+        saved.version++;
+        await persist(saved);
+      }
+      return { ...saved, stale: false };
     }
     const prepared = await prepare(
       ctx,
@@ -934,9 +1040,17 @@ export function createConflictResolutionService(deps: Deps) {
       files,
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
-      dependents: deps.dependents?.(url) ?? [],
+      dependents,
       preparation: await preparation(ctx, id, prepared, files, state, signal),
     };
+    // The push a fresh preparation replaces, while it is still the PR head: its commit, undo point and restack.
+    const unrestacked = saved?.status === 'published' ? leftToRestack(saved) : [];
+    const lastPush: ConflictSession['lastPush'] =
+      saved?.status === 'published' && saved.commitSha
+        ? { commitSha: saved.commitSha, headSha: saved.headSha, ...(unrestacked.length ? { unrestacked } : {}) }
+        : saved?.lastPush;
+    // Kept while it is the PR head, and after someone pushed on top while dependent PRs still wait for a restack.
+    if (lastPush && (lastPush.commitSha === state.headSha || lastPush.unrestacked?.length)) session.lastPush = lastPush;
     signal.throwIfAborted();
     assertAccount(ctx);
     await persist(session);
@@ -1277,13 +1391,10 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              file.result = await mergiraf(
-                ctx,
-                id,
-                { head: session.headBranch, base: session.baseBranch },
-                file,
-                signal
-              );
+              // Preparation already ran Mergiraf on these three versions and kept its whole-file result.
+              file.result =
+                file.wholeFile?.text ??
+                (await mergiraf(ctx, id, { head: session.headBranch, base: session.baseBranch }, file, signal));
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
@@ -1291,6 +1402,8 @@ export function createConflictResolutionService(deps: Deps) {
             file.source = request.engine;
             // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
             delete file.proposals;
+            delete file.wholeFile;
+            delete file.structuralNote;
             file.resolved = false;
           }
         } else {

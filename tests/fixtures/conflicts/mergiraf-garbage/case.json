@@ -1,5 +1,5 @@
 {
-  "description": "Mergiraf exits 0 but prints unrelated text.",
+  "description": "Mergiraf exits 0 but prints unrelated text. It is kept as a whole-file proposal that fails its checks, so the conflict stays in Decide with the reason, never Merged.",
   "language": "typescript",
   "category": "failure/mergiraf",
   "mergiraf": "garbage",

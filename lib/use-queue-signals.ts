@@ -5,6 +5,7 @@ import {
   publishQueueSignals,
   signalAccount,
   signalStamp,
+  signalsChanged,
   signalValue,
   signalValues,
   updates,
@@ -55,7 +56,7 @@ function read(scope: string, request: QueueSignalRequest, options: Pick<QueueSig
           record.pending = undefined;
           item.resolve(record.value);
         }
-        updates.dispatchEvent(new Event(scope));
+        signalsChanged(scope);
       }
       for (const [id, record] of state.entries) {
         if (state.entries.size <= 500) break;

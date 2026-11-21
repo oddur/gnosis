@@ -32,7 +32,7 @@ import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type Noi
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
 import type { MoveMark } from '../lib/moved-symbols-store';
 import { MoveNavigation } from '../lib/use-moved-symbols';
-import { moveEditsLabel, moveNoteLines, movedLineKeys } from '../lib/moved-symbols-view';
+import { moveEditsLabel, moveNoteLines, moveWords, movedLineKeys } from '../lib/moved-symbols-view';
 
 type GapBarPart = Extract<GapPart, { kind: 'gap' }>;
 export type GapStatus =
@@ -901,22 +901,24 @@ function markLines(host: Element, marks: readonly (readonly [attribute: string, 
 /** A move's annotation: the metadata ChangesDiff gives its own rows among the caller's. */
 interface MoveAnnotation {
   gnosisMove: MoveMark;
+  words: MoveWords;
 }
+type MoveWords = ReturnType<typeof moveWords>;
 const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
   !!metadata && typeof metadata === 'object' && 'gnosisMove' in metadata;
 
 /**
  * Where a moved symbol came from, or went (#398), as one quiet code line under the line above it: "Moved from
- * src/a.ts:12 · renamed from load · 2 lines edited". The place is a link that goes there: in this diff for a move
- * within the file, else through the view's MoveNavigation. Without one, the place is plain text.
+ * src/a.ts:12 · renamed from load · 2 lines edited", or "Moved up from line 22" within the file. The place is a link
+ * that goes there: in this diff for a move within the file, else through the view's MoveNavigation. Without one, the
+ * place is plain text. A note with no row above it in its hunk (`lead`) heads the hunk's code, outside the diff, in
+ * the code column of its side.
  */
-function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
+function MoveNote({ mark, words, onGo, lead }: { mark: MoveMark; words: MoveWords; onGo?: () => void; lead?: 'left' | 'right' }) {
   const { other } = mark;
   const into = mark.side === 'after';
-  const place = mark.sameFile ? `${other.side === 'before' ? 'old ' : ''}L${other.start}` : `${other.path}:${other.start}`;
-  const verb = into ? 'Moved from' : 'Moved to';
+  const { verb, place, where } = words;
   const edits = moveEditsLabel(mark);
-  const where = mark.sameFile ? `line ${other.start} of this file${other.side === 'before' ? ', old side' : ''}` : `${other.path}, line ${other.start}`;
   const rename = mark.renamed ? `, renamed ${into ? 'from' : 'to'} ${other.name}` : '';
   const how = mark.exact ? 'the same code' : `${Math.round(mark.similarity * 100)}% similar`;
   return (
@@ -928,6 +930,7 @@ function MoveNote({ mark, onGo }: { mark: MoveMark; onGo?: () => void }) {
       data-trailing=""
       data-move-note={mark.side}
       data-move-exact={mark.exact || undefined}
+      data-move-lead={lead}
     >
       {/* Spaces between the parts keep the note's text readable when copied; the flex gap lays it out. */}
       <span className="diff-gap-trailing">
@@ -1257,7 +1260,7 @@ export function ChangesDiff<A>({
     const metadata: unknown = annotation.metadata;
     if (isMoveAnnotation(metadata)) {
       const mark = metadata.gnosisMove;
-      return <MoveNote mark={mark} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
+      return <MoveNote mark={mark} words={metadata.words} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
     }
     return latestRender.current(annotation);
   });
@@ -1300,17 +1303,23 @@ export function ChangesDiff<A>({
   }, [blocks]);
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
-  // Lines each move carried over unchanged: dimmed, so its real edits read first.
-  // Each move's note heads its symbol (lib/moved-symbols-view.ts); only a symbol with a note shows as moved.
-  const noteLines = useMemo(() => moveNoteLines(parts, moves?.marks ?? []), [parts, moves?.marks]);
-  const movedLines = useMemo(() => movedLineKeys([...noteLines.keys()]), [noteLines]);
-  const latestMovedLines = useRef(movedLines);
-  latestMovedLines.current = movedLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
   const progressive = slices.length > MANY_DIFFS || (slices.length > 1 && slices.some((slice) => slice.key.includes(':')));
   const split = layout === 'split' && file.status !== 'added' && file.status !== 'deleted';
+  // Each move's note heads its symbol (lib/moved-symbols-view.ts); only a symbol with a note shows as moved.
+  const noteLines = useMemo(() => moveNoteLines(parts, moves?.marks ?? [], split), [parts, moves?.marks, split]);
+  // Lines each move carried over unchanged: dimmed, so its real edits read first.
+  const movedLines = useMemo(() => movedLineKeys([...noteLines.keys()]), [noteLines]);
+  const latestMovedLines = useRef(movedLines);
+  latestMovedLines.current = movedLines;
+  // Notes with no row above them in their hunk, by hunk: they head its code.
+  const leadNotes = useMemo(() => {
+    const result = new Map<string, MoveMark[]>();
+    for (const [mark, at] of noteLines) if ('hunk' in at) result.set(at.hunk, [...(result.get(at.hunk) ?? []), mark]);
+    return result;
+  }, [noteLines]);
   const style = useMemo(
     () =>
       ({
@@ -1346,17 +1355,20 @@ export function ChangesDiff<A>({
   const moveBySlice = useMemo(() => {
     const result = new Map<string, DiffLineAnnotation<A>[]>();
     if (!moves?.marks.length) return result;
-    for (const [mark, lineNumber] of noteLines) {
-      const side = mark.side === 'after' ? ('additions' as const) : ('deletions' as const);
+    for (const [mark, at] of noteLines) {
+      if ('hunk' in at) continue;
+      const lineNumber = at.line;
+      const side = at.side === 'after' ? ('additions' as const) : ('deletions' as const);
       const owner = slices.find((slice) => {
         const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
         return lineNumber >= from && lineNumber <= to;
       });
-      const annotation = { side, lineNumber, metadata: { gnosisMove: mark } } as unknown as DiffLineAnnotation<A>;
+      const metadata: MoveAnnotation = { gnosisMove: mark, words: moveWords(mark, parts) };
+      const annotation = { side, lineNumber, metadata } as unknown as DiffLineAnnotation<A>;
       if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), annotation]);
     }
     return result;
-  }, [noteLines, slices]);
+  }, [noteLines, slices, parts]);
   const sliceAnnotations = useMemo(() => {
     if (!moveBySlice.size) return bySlice;
     const result = new Map(bySlice);
@@ -1895,6 +1907,28 @@ export function ChangesDiff<A>({
         <NoiseBar key={`noise-${block.key}`} quiet={block.quiet} rows={block.rows} lines={block.lines} onShow={noise && (() => noise.show(block.blockKeys))} />
       );
       return;
+    }
+    // A hunk's lead notes share one row: in a split diff, each in its side's column.
+    const leads = leadNotes.get(block.key);
+    if (leads) {
+      const note = (mark: MoveMark) => (
+        <MoveNote
+          key={`move-${mark.side}${mark.start}`}
+          mark={mark}
+          words={moveWords(mark, parts)}
+          lead={split && mark.side === 'after' ? 'right' : 'left'}
+          onGo={mark.sameFile || openMove ? () => goToMove(mark) : undefined}
+        />
+      );
+      // Unified: every lead note, stacked. Split: one per column.
+      const left = split ? leads.filter((mark) => mark.side === 'before') : leads;
+      const right = split ? leads.filter((mark) => mark.side === 'after') : [];
+      current.children.push(
+        <div key={`move-lead-${block.key}`} className="diff-move-lead" data-split={split || undefined}>
+          {left.length ? <div>{left.map(note)}</div> : <div aria-hidden="true" />}
+          {right.length > 0 && <div>{right.map(note)}</div>}
+        </div>
+      );
     }
     for (const slice of block.slices) {
       const diff = (

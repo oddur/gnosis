@@ -16,6 +16,15 @@ export interface ConflictFile {
    * with these applied. The renderer checks them (lib/conflict-verify.ts) before it calls one Merged.
    */
   proposals?: (ConflictProposal | null)[];
+  /**
+   * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
+   * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
+   */
+  wholeFile?: ConflictProposal;
+  /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
+  structuralNote?: string;
+  /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
+  structuralRan?: boolean;
 }
 /** One conflict block resolved during preparation: by your earlier resolution, or by structural merge. */
 export interface ConflictProposal {
@@ -44,6 +53,17 @@ export interface ConflictSession {
   staleReason?: 'head-moved' | 'retargeted';
   dependents?: string[];
   restack?: RestackPlan;
+  /**
+   * Reopened after a push from an earlier session, and GitHub reports no conflicts now. The workspace says there is
+   * nothing to resolve and keeps that push (`lastPush`) as history. Never saved.
+   */
+  reopened?: boolean;
+  /**
+   * The push from an earlier session that this fresh preparation follows, while it is still the PR head (or while
+   * dependent PRs still wait for a restack): its merge commit, the head to reset to for undo, and the dependent PRs it
+   * left to restack.
+   */
+  lastPush?: { commitSha: string; headSha: string; unrestacked?: string[] };
 }
 export interface RestackPlan {
   token: string;
@@ -96,8 +116,12 @@ export interface ConflictReply {
   baseMoved?: BaseMove;
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
+const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
+const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
+/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
 export function hasConflictMarkers(text: string) {
-  return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
+  return MARKER_LINES.test(text);
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
