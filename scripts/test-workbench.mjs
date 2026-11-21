@@ -61,7 +61,25 @@ const splitDiff = process.argv.includes('--split-diff');
 const threads = process.argv.includes('--threads');
 const prSummary = process.argv.includes('--pr-summary');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-test-'));
-const server = await createServer({ configFile: 'vite.renderer.config.ts', cacheDir: path.resolve('node_modules/.vite-workbench', createHash('sha256').update(process.cwd()).digest('hex').slice(0, 16)), server: { host: '127.0.0.1', port: 0 } });
+// The fixtures carry fixed dates: queue PRs from 2026-10-22 (tests/fixtures/workbench.tsx), other fixture times up to
+// 2026-11-18, and milestones due in December. The queue hides PRs inactive for 30 days, so every suite runs at
+// 2026-11-20T12:00Z: after every fixture time (elapsed times, durations and reply order stay positive), midday (away
+// from day edges), and within 30 days of the queue PRs. The unit tests keep their own moment (tests/fixture-clock.ts).
+// One offset, computed here, shifts `Date` (not timers or performance.now) in the test main
+// (tests/electron-test-shim.ts) and, before any fixture script runs, in every fixture page, so reloads keep the clock.
+const fixtureClockOffset = String(Date.parse('2026-11-20T12:00:00Z') - Date.now());
+const fixtureClock = {
+  name: 'fixture-clock',
+  transformIndexHtml: () => [
+    {
+      tag: 'script',
+      attrs: { type: 'module' },
+      children: `import { shiftClock } from '/tests/fixture-clock.ts'; shiftClock(${fixtureClockOffset});`,
+      injectTo: 'head-prepend',
+    },
+  ],
+};
+const server = await createServer({ configFile: 'vite.renderer.config.ts', plugins: [fixtureClock], cacheDir: path.resolve('node_modules/.vite-workbench', createHash('sha256').update(process.cwd()).digest('hex').slice(0, 16)), server: { host: '127.0.0.1', port: 0 } });
 try {
   await server.listen();
   const address = server.httpServer.address();
@@ -97,6 +115,7 @@ try {
   const env = {
     ...process.env,
     GNOSIS_BROWSER_TEST_PROFILE: path.join(dir, 'profile'),
+    GNOSIS_FIXTURE_CLOCK_OFFSET: fixtureClockOffset,
     [suiteResultVariable]: path.join(dir, 'result'),
     GNOSIS_NATIVE_SWIPE: process.argv.includes('--navigation-swipe') ? '1' : process.env.GNOSIS_NATIVE_SWIPE,
     GNOSIS_WORKBENCH_URL: `http://127.0.0.1:${address.port}/tests/fixtures/${splitDiff ? 'split-diff' : 'workbench'}.html`,
