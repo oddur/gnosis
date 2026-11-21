@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseChatDiff, withDiffIslands } from '../lib/chat-diffs';
+import { parseChatDiff, withChatIslands } from '../lib/chat-diffs';
 
 const gitPatch = [
   'diff --git a/src/queue.ts b/src/queue.ts',
@@ -110,9 +110,9 @@ void test('parseChatDiff refuses what is not a readable patch', () => {
   assert.equal(parseChatDiff(''), undefined);
 });
 
-void test('withDiffIslands turns closed, readable diff fences into numbered islands', () => {
+void test('withChatIslands turns closed, readable diff fences into numbered islands', () => {
   const markdown = `Change it so:\n\n\`\`\`diff\n${gitPatch}\n\`\`\`\n\nThen this:\n\n\`\`\`diff\n-old\n+new\n\`\`\`\n\nAnd:\n\n~~~patch\n@@ -1 +1 @@\n-a\n+b\n~~~\n`;
-  const out = withDiffIslands(markdown);
+  const out = withChatIslands(markdown);
   const islands = [...out.matchAll(/```island-diff\n(.*)\n```/g)].map(
     (m) => JSON.parse(m[1]) as { id: string; patch: string }
   );
@@ -127,10 +127,31 @@ void test('withDiffIslands turns closed, readable diff fences into numbered isla
   assert.match(out, /\n\nAnd:\n\n```island-diff/);
 });
 
-void test('withDiffIslands leaves a fence that is still streaming, and other languages, as they are', () => {
+void test('withChatIslands turns closed mermaid and d2 fences into numbered diagram islands', () => {
+  const markdown =
+    'Flow:\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nShape:\n\n```d2\nqueue -> worker\n```\n\n```mermaid\n```\n\n```mermaid\nsequenceDiagram\n  A->>B: go\n```';
+  const islands = [...withChatIslands(markdown).matchAll(/```island-(\w+)\n(.*)\n```/g)].map(
+    (m) => [m[1], JSON.parse(m[2]) as { id: string; source: string }] as const
+  );
+  assert.deepEqual(islands, [
+    ['mermaid', { id: 'mermaid-0', source: 'flowchart LR\n  A --> B' }],
+    ['d2', { id: 'd2-0', source: 'queue -> worker' }],
+    ['mermaid', { id: 'mermaid-2', source: 'sequenceDiagram\n  A->>B: go' }],
+  ]);
+  assert.match(
+    withChatIslands(markdown),
+    /```mermaid\n```/,
+    'An empty diagram stays code, and keeps its place in the count'
+  );
+  // While a diagram streams, it stays code: it renders once, when its fence closes.
+  const streaming = 'Flow:\n\n```mermaid\nflowchart LR\n  A --> B';
+  assert.equal(withChatIslands(streaming), streaming);
+});
+
+void test('withChatIslands leaves a fence that is still streaming, and other languages, as they are', () => {
   const streaming = `Here:\n\n\`\`\`diff\n${gitPatch}`;
-  assert.equal(withDiffIslands(streaming), streaming);
+  assert.equal(withChatIslands(streaming), streaming);
   const other = '```ts\nconst diff = 1;\n```\n\n````md\n```diff\n@@ -1 +1 @@\n-a\n+b\n```\n````';
-  assert.equal(withDiffIslands(other), other, 'A diff fence quoted inside another fence is text');
-  assert.equal(withDiffIslands('No code here.'), 'No code here.');
+  assert.equal(withChatIslands(other), other, 'A diff fence quoted inside another fence is text');
+  assert.equal(withChatIslands('No code here.'), 'No code here.');
 });

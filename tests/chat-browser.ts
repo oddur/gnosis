@@ -16,8 +16,8 @@ void app.whenReady().then(async () => {
     if (level === 'error') console.error('[renderer]', message);
   });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (code: string) => {
-    for (let i = 0; i < 200; i++) {
+  const wait = async (code: string, tries = 200) => {
+    for (let i = 0; i < tries; i++) {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -265,6 +265,31 @@ void app.whenReady().then(async () => {
     await finish('The coordinator retries the command before it advances.');
     await wait("document.body.textContent.includes('The coordinator retries')");
     assert.equal(await js('window.chatFixture.requests.length'), 3);
+    // Diagrams in an answer render as Explanation renders them, once their fence closes; until then they are code.
+    await fill('Draw the flow.');
+    await click('Send question');
+    const diagrams = "[...document.querySelectorAll('.chat-message-body')].at(-1)";
+    const drawn =
+      'The flow:\n\n```mermaid\nflowchart LR\n  Queue --> Worker\n```\n\nThe same as D2:\n\n```d2\nqueue -> worker: dispatch\n```';
+    const open = drawn.indexOf('worker: dispatch');
+    await emit(drawn.slice(0, open));
+    await wait(`!!${diagrams}?.querySelector('.mermaid-diagram svg')`, 600);
+    assert.equal(
+      await js(`!!${diagrams}.querySelector('[data-markdown=code-block][data-language=d2]')`),
+      true,
+      'A diagram still streaming shows as code'
+    );
+    await emit(drawn.slice(open));
+    await finish(drawn);
+    await wait(
+      `!!${diagrams}?.querySelector('.d2-diagram svg') && !!${diagrams}.querySelector('.mermaid-diagram svg')`,
+      600
+    );
+    assert.equal(
+      await js(`${diagrams}.querySelectorAll('[data-markdown=code-block]').length`),
+      0,
+      'Closed diagram fences are not also shown as code'
+    );
     await click('Switch chat');
     await viewport(360, 600);
     await js("document.documentElement.classList.add('dark')");

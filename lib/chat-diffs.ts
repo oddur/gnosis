@@ -2,9 +2,10 @@ import { prepareReviewHunk } from './review-diff';
 import type { DiffHunk } from './types';
 
 /**
- * Diffs in chat messages. A closed ```diff or ```patch fence whose hunks Gnosis can read becomes a Words island
- * (`island-diff`), which ChatMarkdown mounts as a diff rendered the way Changes renders one (ReviewDiff). A fence still
- * streaming, or one without readable hunks, stays a code block, highlighted as a diff.
+ * Diffs and diagrams in chat messages. A closed ```diff or ```patch fence whose hunks Gnosis can read becomes a Words
+ * island (`island-diff`), which ChatMarkdown mounts as a diff rendered the way Changes renders one (ReviewDiff). Closed
+ * ```mermaid and ```d2 fences become islands that mount the app's own diagram components, as Explanation and PR
+ * descriptions show them. A fence still streaming, or a diff without readable hunks, stays a code block.
  */
 
 /** The island's name: Words reads ```island-diff fences. */
@@ -117,15 +118,21 @@ function parse(patch: string): ChatDiffFile[] | undefined {
   return files;
 }
 
+/** Diagram islands: Words reads ```island-mermaid and ```island-d2 fences, with the diagram's source. */
+export const CHAT_MERMAID_ISLAND = 'mermaid';
+export const CHAT_D2_ISLAND = 'd2';
+
 /**
- * Rewrites each closed, readable ```diff or ```patch fence of `markdown` as an `island-diff` fence for Words, numbered
- * in order so an island keeps its id, and its state, while the rest of the message streams in.
+ * Rewrites each closed fence of `markdown` that chat shows as more than code into a Words island fence: a readable
+ * ```diff or ```patch becomes `island-diff`, a ```mermaid diagram `island-mermaid` and a ```d2 diagram `island-d2`.
+ * Each kind is numbered in order, so an island keeps its id, and its state, while the rest of the message streams in.
+ * A fence still open stays code until it closes, so a diagram does not render again on every chunk.
  */
-export function withDiffIslands(markdown: string): string {
-  if (!/(```|~~~)\s*(diff|patch)\b/i.test(markdown)) return markdown;
+export function withChatIslands(markdown: string): string {
+  if (!/(```|~~~)\s*(diff|patch|mermaid|d2)\b/i.test(markdown)) return markdown;
   const lines = markdown.split('\n');
   const out: string[] = [];
-  let count = 0;
+  const counts = { diff: 0, mermaid: 0, d2: 0 };
   for (let i = 0; i < lines.length; i++) {
     const open = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/.exec(lines[i]);
     if (!open) {
@@ -142,12 +149,18 @@ export function withDiffIslands(markdown: string): string {
       break;
     }
     const body = lines.slice(i + 1, end).join('\n');
-    const files = LANGUAGES.has(info.toLowerCase()) ? parseChatDiff(body) : undefined;
-    if (files) out.push('```island-' + CHAT_DIFF_ISLAND, JSON.stringify({ id: `diff-${count++}`, patch: body }), '```');
-    else {
-      if (LANGUAGES.has(info.toLowerCase())) count++;
-      out.push(...lines.slice(i, end + 1));
-    }
+    const language = info.toLowerCase();
+    const kind = LANGUAGES.has(language) ? 'diff' : language === 'mermaid' || language === 'd2' ? language : undefined;
+    // Every fence of a kind has its place in the count, so one shown as code never shifts the ids after it.
+    const id = kind ? `${kind}-${counts[kind]++}` : '';
+    const data =
+      kind === 'diff'
+        ? parseChatDiff(body) && { id, patch: body }
+        : kind && body.trim()
+          ? { id, source: body.trimEnd() }
+          : undefined;
+    if (kind && data) out.push('```island-' + kind, JSON.stringify(data), '```');
+    else out.push(...lines.slice(i, end + 1));
     i = end;
   }
   return out.join('\n');

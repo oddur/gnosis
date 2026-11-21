@@ -8,7 +8,15 @@ import { diffThemeName } from '../lib/diff-worker-pool';
 import { readableHighlightsTheme } from '../lib/highlights-theme';
 import { useReaderCodeTheme } from '../lib/reader-code-theme';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
-import { CHAT_DIFF_ISLAND, parseChatDiff, withDiffIslands } from '../lib/chat-diffs';
+import {
+  CHAT_D2_ISLAND,
+  CHAT_DIFF_ISLAND,
+  CHAT_MERMAID_ISLAND,
+  parseChatDiff,
+  withChatIslands,
+} from '../lib/chat-diffs';
+import { D2Diagram } from './D2Diagram';
+import { MermaidDiagram } from './MermaidDiagram';
 import { countRender } from '../lib/render-count';
 import { startupPreferences } from '../lib/startup-preferences';
 import { cn } from '../lib/utils';
@@ -100,7 +108,7 @@ function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
 }
 
 const islandsByTheme = new Map<string, ReactiveIslands>();
-function diffIslands(theme: string): ReactiveIslands {
+function chatIslands(theme: string): ReactiveIslands {
   let islands = islandsByTheme.get(theme);
   if (!islands)
     islandsByTheme.set(
@@ -112,6 +120,15 @@ function diffIslands(theme: string): ReactiveIslands {
             typeof data.patch === 'string' && parseChatDiff(data.patch) ? (
               <ChatDiff patch={data.patch} theme={theme} />
             ) : null,
+        },
+        // Diagrams render as in Explanation and PR descriptions (Markdown's GitHubCodeBlock).
+        [CHAT_MERMAID_ISLAND]: {
+          fallback: 'Loading diagram…',
+          render: (data) => (typeof data.source === 'string' ? <MermaidDiagram chart={data.source} /> : null),
+        },
+        [CHAT_D2_ISLAND]: {
+          fallback: 'Loading diagram…',
+          render: (data) => (typeof data.source === 'string' ? <D2Diagram diagram={{ source: data.source }} /> : null),
         },
       })
     );
@@ -135,7 +152,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   const theme = diffThemeName(id);
   useLayoutEffect(() => applyCodePalette(theme), [theme]);
   const plugins = useCodePlugins(id);
-  const source = useMemo(() => withDiffIslands(children), [children]);
+  const source = useMemo(() => withChatIslands(children), [children]);
   return (
     <Words
       className={cn('markdown-body chat-markdown select-text', className)}
@@ -144,7 +161,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
       animated
       caret="block"
       plugins={plugins}
-      islands={diffIslands(theme)}
+      islands={chatIslands(theme)}
       onClick={openLink}
     >
       {source}
