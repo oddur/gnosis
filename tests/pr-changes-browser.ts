@@ -441,6 +441,8 @@ void app.whenReady().then(async () => {
       'Files without patches also reopen synchronously from the renderer cache'
     );
     await click('Ask about this');
+    // The composer loads with the chat (components/chat-lazy.tsx).
+    await wait("!!document.querySelector('#changes-question')");
     await js(
       `(()=>{const input=document.querySelector('#changes-question');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'What changes here?');input.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );

@@ -215,6 +215,18 @@ void app.whenReady().then(async () => {
     console.log('Changes headers:', JSON.stringify(changes));
     await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const h=document.querySelector(${JSON.stringify(changesRow)}+' [data-show-definition]').closest('.diff-gap');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
     await capture('changes-unpinned', region('.commit-diff-stream', 0, 420));
+    if (shots) {
+      // The same place in split view: D switches the layout, and again switches it back.
+      const layoutKey = `document.querySelector('.commit-diff-stream').dispatchEvent(new KeyboardEvent('keydown',{key:'d',bubbles:true,cancelable:true,composed:true}))`;
+      const deletionColumns = `window.deepAll('[data-deletions]',document.querySelector(${JSON.stringify(changesRow)})).length`;
+      await js(layoutKey);
+      await wait(`document.querySelector('.pr-changes')?.dataset.diffLayout==='split'&&${deletionColumns}>0`);
+      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const h=document.querySelector(${JSON.stringify(changesRow)}+' [data-show-definition]').closest('.diff-gap');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
+      await capture('changes-split', region('.commit-diff-stream', 0, 420));
+      await js(layoutKey);
+      await wait(`document.querySelector('.pr-changes')?.dataset.diffLayout==='unified'&&${deletionColumns}===0`);
+      await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const h=document.querySelector(${JSON.stringify(changesRow)}+' [data-show-definition]').closest('.diff-gap');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
+    }
     // A draft comment on the line the topic explains, for the same view in both.
     const flush = await js<number>(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(changesRow)})).find(e=>e.textContent.includes('total += 30 * 2'))?.dataset.line|0`);
     assert.ok(flush > 0, 'Changes shows the flush change');

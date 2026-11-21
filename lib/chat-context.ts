@@ -1,6 +1,17 @@
-/** Selections are attachments in the UI and explicit context in model messages. */
+import { parseChatSelection } from './chat-selection';
+/**
+ * Selections are attachments in the UI and explicit context in model messages: where the code sits (file, side and
+ * lines, lib/chat-selection.ts), then the code in a fence long enough to hold any backticks in it.
+ */
 export function chatQuestion(content: string, selection?: string | null) {
-  return selection ? `Regarding this code:\n\`\`\`\n${selection}\n\`\`\`\n\n${content}` : content;
+  if (!selection) return content;
+  const { code, path, side, startLine, endLine } = parseChatSelection(selection);
+  const fence = '`'.repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  const lines = startLine
+    ? `${side === 'before' ? 'old' : 'new'} ${endLine && endLine !== startLine ? `lines ${startLine}–${endLine}` : `line ${startLine}`}`
+    : '';
+  const where = path ? ` in ${path}${lines ? `, ${lines}` : ''}` : lines ? ` (${lines})` : '';
+  return `Regarding this code${where}:\n${fence}\n${code}\n${fence}\n\n${content}`;
 }
 
 export function chatSuggestions(context: {

@@ -133,8 +133,17 @@ void app.whenReady().then(async () => {
 
   // ── Measurement ──────────────────────────────────────────────────
   const results = new Map<string, Interaction[]>();
-  /** Runs one input and returns the slowest interaction the monitor recorded for it. Interactions under 16 ms
-   * are not reported by the browser and count as 16. */
+  /**
+   * Runs one input and returns the slowest interaction the monitor recorded for it. The browser reports no Event
+   * Timing entry under 16 ms, so a fast input is measured here instead: from each trusted input event's timestamp to
+   * the next frame after its handlers ran (requestAnimationFrame, then a task). An input that leaves neither is sent
+   * once more; if it still reaches nothing, the measure fails rather than report a time it never took.
+   */
+  const inputRecorder = `(()=>{if(window.__inputs)return;window.__inputs=[];
+    for(const type of ['pointerdown','pointerup','click','keydown','keyup','input'])
+      window.addEventListener(type,(e)=>{if(!e.isTrusted)return;const handled=performance.now();
+        requestAnimationFrame(()=>setTimeout(()=>window.__inputs.push({type:e.type,at:performance.timeOrigin+e.timeStamp,
+          inputDelay:Math.max(0,handled-e.timeStamp),duration:performance.now()-e.timeStamp})))},true)})()`;
   // GNOSIS_INTERACTION_PROFILE=1 samples the main thread during each measured input and prints where it went.
   const profiling = !!process.env.GNOSIS_INTERACTION_PROFILE;
   const profiles = new Map<string, Map<string, number>>();
@@ -164,6 +173,7 @@ void app.whenReady().then(async () => {
         window.__mutationObserver.observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true})})()`);
     // Node's clock, not a round trip to the page: a script call would wait for, and so hide, work already running.
     const since = Date.now() - 5;
+    await js(inputRecorder);
     await act();
     await wait(done);
     await js(frames);
@@ -195,15 +205,32 @@ void app.whenReady().then(async () => {
     const entries = await js<Interaction[]>(
       `window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1})`
     );
-    const slowest = entries.sort((a, b) => b.duration - a.duration)[0] ?? {
-      type: '(under 16 ms)',
+    const fast = async () =>
+      js<{ type: string; at: number; inputDelay: number; duration: number }[]>(
+        `window.__inputs.filter(e=>e.at>=${Math.floor(since) - 1})`
+      );
+    let inputs = entries.length ? [] : await fast();
+    if (!entries.length && !inputs.length) {
+      // Nothing reached the page: send the input once more before giving up.
+      await act();
+      await wait(done);
+      await js(frames);
+      await sleep(160);
+      inputs = await fast();
+      if (!inputs.length && !(await js<number>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1}).length`)))
+        throw new Error(`${name}: no input reached the page, so there is nothing to measure`);
+    }
+    const again = entries.length ? entries : await js<Interaction[]>(`window.__perf.slowInteractions().filter(e=>e.at>=${Math.floor(since) - 1})`);
+    const quick = inputs.sort((a, b) => b.duration - a.duration)[0];
+    const slowest: Interaction = again.sort((a, b) => b.duration - a.duration)[0] ?? {
+      type: `${quick.type} (measured here, under the 16 ms Event Timing floor)`,
       target: '',
-      duration: 16,
-      inputDelay: 0,
+      duration: Math.round(quick.duration),
+      inputDelay: Math.round(quick.inputDelay),
       processing: 0,
       presentation: 0,
       scripts: [],
-      at: since,
+      at: quick.at,
     };
     results.set(name, [...(results.get(name) ?? []), slowest]);
     return slowest;

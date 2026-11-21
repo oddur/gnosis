@@ -1,4 +1,5 @@
 import { sourceChunks } from './prompt-budget';
+import { extractImports, TS_EXTENSIONS } from './import-paths';
 import { readCommitChecks } from './github-checks';
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
@@ -548,39 +549,6 @@ export function summarizeReviews(reviews: { login: string; state: string; canPus
 
   return { approved, changesRequested, commented };
 }
-
-function extractImports(content: string, filePath: string): string[] {
-  const imports: string[] = [];
-  const dir = filePath.split('/').slice(0, -1).join('/');
-
-  // Match ES import statements
-  const importRegex = /import\s+(?:.*?\s+from\s+)?['"]([^'"]+)['"]/g;
-  let match;
-  while ((match = importRegex.exec(content)) !== null) {
-    const importPath = match[1];
-    if (importPath.startsWith('.')) {
-      // Relative import — resolve to a file path
-      const resolved = resolveRelativePath(dir, importPath);
-      if (resolved) imports.push(resolved);
-    }
-  }
-
-  return imports;
-}
-
-function resolveRelativePath(dir: string, importPath: string): string | null {
-  const parts = (dir ? dir + '/' + importPath : importPath).split('/');
-  const normalized: string[] = [];
-  for (const part of parts) {
-    if (part === '..') normalized.pop();
-    else if (part !== '.') normalized.push(part);
-  }
-  const base = normalized.join('/');
-  // Return without extension — caller will try common extensions
-  return base;
-}
-
-const TS_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js'];
 
 const SMART_IMPORTS_SYSTEM_PROMPT = `You are a code analysis tool. Given source files from a repository, identify all local/internal file imports. Return repo-relative file paths as a JSON array of strings. Nothing else.
 

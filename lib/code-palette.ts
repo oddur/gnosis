@@ -209,9 +209,9 @@ export function codePaletteCSS(theme: string, palette: CodePalette): string {
     `--diff-file-added:${palette.fileAdded}`,
     `--diff-file-deleted:${palette.fileDeleted}`,
   ];
-  // Only the bars, the file headers and the outlines take the properties: set on .changes-diff or the file's section, they would
-  // restyle every line of the diff (#366).
-  return `[data-code-theme="${name}"] :is(.diff-gap,.diff-move-lead,.changes-file-header,.diff-outline){${declarations.join(';')}}`;
+  // Only the bars, the file headers, the outlines and chat's code blocks (components/ChatMarkdown.tsx) take the
+  // properties: set on .changes-diff or the file's section, they would restyle every line of the diff (#366).
+  return `[data-code-theme="${name}"] :is(.diff-gap,.diff-move-lead,.changes-file-header,.diff-outline,[data-markdown=code-block]){${declarations.join(';')}}`;
 }
 
 /**
