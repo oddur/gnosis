@@ -12,6 +12,8 @@ import { assertPerf } from './perf-budget';
  * - Each moved symbol has a note right above it: "Moved from src/moves/store.ts:35 · 1 line edited", "Moved to …",
  *   "renamed from parseHeader", "unchanged". The lines it carried over unchanged are dimmed; its real edit is not.
  * - The tie shows no note, on either side.
+ * - A note sits right above its symbol's first line in unified and split diffs: after deleted rows, and on a hunk's
+ *   first row, where it heads the hunk's code.
  * - A note's place is a link: to another file (Changes selects it and lands on the line), or within the file (the
  *   line is marked "here").
  * - An Explanation topic of the same files shows the same notes (AGENTS.md, diff parity).
@@ -185,13 +187,124 @@ void app.whenReady().then(async () => {
     assert.deepEqual(
       [...storeNotes].sort(),
       [
-        'Moved from old L3 · unchanged',
-        'Moved to L49 · unchanged',
+        'Moved down from line 3 · unchanged',
+        'Moved down to line 49 · unchanged',
         'Moved to src/moves/headers.ts:3 · renamed to readHeader · body unchanged',
         'Moved to src/moves/queue.ts:16 · 1 line edited',
       ],
       'The old side says where each symbol went, and the move within the file says both'
     );
+    // The old side dims what a move carried over too: flushQueue's old body, but its edited weight line keeps its red.
+    const oldFlush = `(()=>{const r=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).filter(e=>e.dataset.lineType==='change-deletion');const s=r.findIndex(e=>e.textContent.includes('export function flushQueue('));return r.slice(s,s+9).map(e=>({text:e.textContent,moved:e.hasAttribute('data-moved-line'),paint:getComputedStyle(e).backgroundImage}))})()`;
+    await wait(`${oldFlush}.filter(r=>r.moved).length===8`, 300).catch(async (error: unknown) => {
+      console.log('Old flushQueue rows:', JSON.stringify(await js(oldFlush)));
+      throw error;
+    });
+    const oldRows = await js<{ text: string; moved: boolean; paint: string }[]>(oldFlush);
+    const edited = oldRows.find((r) => r.text.includes('job.weight * 2'));
+    console.log('Old flushQueue paint:', JSON.stringify(oldRows.map((r) => [r.moved, r.paint])));
+    assert.equal(edited?.moved, false, 'The old side’s edited line keeps its colour');
+    assert.ok(
+      oldRows.every((r) => r === edited || (r.moved && r.paint !== edited?.paint)),
+      'The old side’s carried-over lines are painted dimmed'
+    );
+    await capture('old-side-dimmed', row(MOVE_FILES.store));
+
+    // ── A note sits right above its symbol: after deleted rows, and on a hunk's first row (#111) ──
+    /**
+     * A note's box and how far its bottom is above its symbol's first line (0 when right above it, negative when
+     * below), once both are on screen and the layout holds across two reads.
+     */
+    const placed = async (path: string, note: string, type: string, line: string) => {
+      const read = () =>
+        js<string>(
+          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({gap:Math.round(r.top-b.bottom),top:Math.round(b.top),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
+        );
+      let last = '';
+      for (let i = 0; i < 300; i++) {
+        const now = await read();
+        if (now && now === last)
+          return JSON.parse(now) as { gap: number; top: number; left: number; right: number; row: number };
+        last = now;
+        await sleep(40);
+      }
+      throw Error(`${path}: "${note}" never settled above "${line}"`);
+    };
+    const layout = async (key: 'u' | 's') => {
+      await js(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
+      await wait(
+        `document.querySelector(${JSON.stringify(row(MOVE_FILES.lines))})?.closest('[data-diff-layout]')?.dataset.diffLayout===${JSON.stringify(key === 's' ? 'split' : 'unified')}`,
+        200
+      );
+    };
+    for (const [path, count] of [
+      [MOVE_FILES.lines, 4],
+      [MOVE_FILES.render, 2],
+    ] as const) {
+      await openFile(path);
+      await wait(
+        `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(path))})).length===${count}`,
+        300
+      );
+    }
+    assert.deepEqual(
+      [...(await notes(row(MOVE_FILES.lines)))].sort(),
+      [
+        'Moved to src/moves/render.ts:1 · renamed to renderLine · body unchanged',
+        'Moved to src/moves/render.ts:7 · unchanged',
+        'Moved up from line 18 · unchanged',
+        'Moved up to line 1 · unchanged',
+      ],
+      'A move up the file says so'
+    );
+    assert.deepEqual([...(await notes(row(MOVE_FILES.render)))].sort(), [
+      'Moved from src/moves/lines.ts:1 · unchanged',
+      'Moved from src/moves/lines.ts:24 · renamed from formatLine · body unchanged',
+    ]);
+    for (const key of ['u', 's'] as const) {
+      await layout(key);
+      const name = key === 's' ? 'Split' : 'Unified';
+      // Right above: under the row before it, or heading the hunk over the diff's top padding.
+      const totalWidth = await placed(
+        MOVE_FILES.lines,
+        'Moved up from line 18',
+        'change-addition',
+        'export function totalWidth('
+      );
+      const normalize = await placed(
+        MOVE_FILES.lines,
+        'render.ts:7',
+        'change-deletion',
+        'export function normalizeLines('
+      );
+      const renderLine = await placed(
+        MOVE_FILES.render,
+        'renamed from formatLine',
+        'change-addition',
+        'export function renderLine('
+      );
+      for (const [label, at] of Object.entries({ totalWidth, normalize, renderLine })) {
+        console.log(`${key} ${label}: note ${at.gap}px above its symbol`);
+        assert.ok(at.gap >= 0 && at.gap <= 10, `${name}, ${label}: the note is right above its symbol (${at.gap}px)`);
+      }
+      // Split: the hunk's two lead notes share one row, each over its own column.
+      if (key === 's') {
+        assert.equal(normalize.top, totalWidth.top, 'Split: both notes heading the hunk are on one row');
+        assert.ok(
+          normalize.right <= normalize.row && totalWidth.left >= totalWidth.row,
+          'Split: each note is in its column'
+        );
+      }
+      for (const [file, path] of [
+        ['lines', MOVE_FILES.lines],
+        ['render', MOVE_FILES.render],
+      ]) {
+        if (!shots) continue;
+        await openFile(path);
+        await capture(`first-row-note-${key}-${file}`, row(path));
+      }
+    }
+    await layout('u');
 
     // ── The tie: two removed copies of closeAll, one added: no note anywhere ──
     for (const path of [MOVE_FILES.base, MOVE_FILES.closeA]) {
@@ -213,7 +326,7 @@ void app.whenReady().then(async () => {
     console.log('Jump to another file: landed on store.ts flushQueue');
     // ── And within the file: formatEntry's new copy goes to its old line, marked "here" ──
     await js(
-      `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).find(n=>n.textContent.includes('old L3')).querySelector('[data-move-jump]').click()`
+      `window.deepAll('[data-move-note]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).find(n=>n.textContent.includes('from line 3')).querySelector('[data-move-jump]').click()`
     );
     await wait(
       `window.deepAll('[data-here]',document.querySelector(${JSON.stringify(row(MOVE_FILES.store))})).some(e=>e.textContent.includes('export function formatEntry('))`,
@@ -244,10 +357,17 @@ void app.whenReady().then(async () => {
     });
     const topicNotes = await notes(topic);
     console.log('Topic notes:', JSON.stringify(topicNotes));
-    for (const note of [...queueNotes, 'Moved to src/moves/queue.ts:16 · 1 line edited', 'Moved to L49 · unchanged'])
+    for (const note of [
+      ...queueNotes,
+      'Moved to src/moves/queue.ts:16 · 1 line edited',
+      'Moved down to line 49 · unchanged',
+    ])
       assert.ok(topicNotes.includes(note), `The topic shows "${note}" as Changes does`);
     // The topic leaves out store.ts's third hunk: formatEntry's new copy and parseHeader's removal are not shown.
-    assert.ok(!topicNotes.some((note) => /old L3|readHeader/.test(note)), 'Hunks the topic leaves out have no notes');
+    assert.ok(
+      !topicNotes.some((note) => /from line 3|readHeader/.test(note)),
+      'Hunks the topic leaves out have no notes'
+    );
     assert.ok(
       await js<boolean>(
         `window.deepAll('[data-line][data-moved-line]',document.querySelector(${JSON.stringify(topic)})).length>=8`
