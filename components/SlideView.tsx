@@ -21,7 +21,14 @@ import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
 import { estimateFileBlockHeight } from '@/lib/review-gap-hunks';
-import { groupSlideHunks, slideFileKeys, type SlideFileGroup } from '@/lib/slide-file-groups';
+import {
+  blockRanges,
+  elsewhereChanges,
+  groupSlideHunks,
+  slideFileGroupKey,
+  slideFiles,
+  type SlideFileGroup,
+} from '@/lib/slide-file-groups';
 import { ReviewFileHeader } from './ReviewFileHeader';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FileTypeIcon } from './FileTypeIcon';
@@ -452,6 +459,10 @@ export function SlideView({
     }
     return groups;
   }, [slide.diffHunks, slide.affectedFiles]);
+  // Per file: its blocks' keys and all of its hunks; per block: the changes its file's other blocks show.
+  const files = useMemo(() => slideFiles(groupedHunks), [groupedHunks]);
+  const elsewhere = useMemo(() => elsewhereChanges(groupedHunks), [groupedHunks]);
+  const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
   const contextLines = diffContextLines(diffAppearance);
   const fileEstimates = useMemo(
@@ -557,7 +568,7 @@ export function SlideView({
       setNarrowPane('code');
       setFileExpansion((current) => ({
         ...current,
-        ...Object.fromEntries(slideFileKeys(groupedHunks, filePath).map((key) => [key, true])),
+        ...Object.fromEntries(keysOf(filePath).map((key) => [key, true])),
       }));
       requestAnimationFrame(() => {
         // Expanding a file can replace the diff's line nodes. Resolve after that render.
@@ -568,7 +579,7 @@ export function SlideView({
         markHere([line]);
       });
     },
-    [onInspectCode, groupedHunks]
+    [onInspectCode, keysOf]
   );
   const handleCheckClickRef = useRef(handleCheckClick);
   handleCheckClickRef.current = handleCheckClick;
@@ -848,12 +859,25 @@ export function SlideView({
         const viewed = viewedFiles?.has(filePath) ?? false;
         const expanded = fileExpansion[key] ?? !viewed;
         const contentId = `${fileContentId}-${index}`;
-        const split = groupedHunks.some((group) => group.filePath === filePath && group.key !== key);
-        const fileHunks = split ? slide.diffHunks.filter((hunk) => hunk.filePath === filePath) : hunks;
+        const file = files.get(filePath);
+        const split = (file?.blocks ?? 1) > 1;
+        const ranges = split ? blockRanges(hunks) : undefined;
+        // A gap over a change another block shows offers a jump there.
+        const showElsewhere = (target: number) => {
+          const targetKey = slideFileGroupKey(filePath, target);
+          setFileExpansion((current) => ({ ...current, [targetKey]: true }));
+          requestAnimationFrame(() => {
+            const element = [
+              ...(rightPanelRef.current?.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]') ?? []),
+            ].find((g) => g.dataset.filePath === filePath && g.dataset.fileRun === String(target));
+            element?.scrollIntoView({ block: 'start' });
+            element?.querySelector<HTMLElement>('.review-file-expand')?.focus({ preventScroll: true });
+          });
+        };
         const setFileGroupsExpanded = (value: boolean) =>
           setFileExpansion((current) => ({
             ...current,
-            ...Object.fromEntries(slideFileKeys(groupedHunks, filePath).map((k) => [k, value])),
+            ...Object.fromEntries(keysOf(filePath).map((k) => [k, value])),
           }));
         const lfsResource = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
         const codeTheme = reviewDiffTheme(hunks);
@@ -878,8 +902,10 @@ export function SlideView({
             pendingComments={pendingComments}
             slideIndex={slideNumber}
             commentScope={key}
-            fileHunks={split ? fileHunks : undefined}
+            fileHunks={split ? file?.hunks : undefined}
             firstBlock={run === 0}
+            elsewhere={elsewhere.get(key)}
+            onShowElsewhere={split ? showElsewhere : undefined}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
             fileViewed={viewed}
@@ -900,6 +926,8 @@ export function SlideView({
             className="review-file-group flex flex-col gap-0"
             data-file-path={filePath}
             data-file-run={run}
+            data-new-ranges={ranges?.new}
+            data-old-ranges={ranges?.old}
             data-code-theme={codeTheme}
             style={{
               containIntrinsicBlockSize: `auto ${expanded ? (fileEstimates.get(key) ?? 48) : 48}px`,
@@ -932,7 +960,7 @@ export function SlideView({
                 run === 0 ? slide.fileSummaries?.find((entry) => entry.filePath === filePath)?.summary : undefined
               }
               source={review?.snapshot?.subject.kind === 'stack' ? origin?.member : undefined}
-              commentCount={pendingComments?.filter((c) => c.filePath === filePath).length ?? 0}
+              commentCount={run === 0 ? (pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) : 0}
               age={ageBadge}
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>

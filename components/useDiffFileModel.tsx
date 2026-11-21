@@ -3,6 +3,7 @@ import {
   afterLines,
   diffGaps,
   firstMismatch,
+  markElsewhere,
   gapSize,
   lineEndings,
   knownLines,
@@ -15,6 +16,7 @@ import {
   shownLines,
   withPins,
   type DiffGap,
+  type ElsewhereChange,
   type GapDirection,
   type GapHunk,
   type GapPart,
@@ -92,6 +94,7 @@ export function useDiffFileModel({
   hunks: baseHunks,
   known,
   partial = false,
+  elsewhere,
   request,
   contents,
   expandable,
@@ -117,6 +120,8 @@ export function useDiffFileModel({
   known?: readonly (string | undefined)[];
   /** The hunks are some of the file's (an Explanation topic): gaps that hold other changes never reveal. */
   partial?: boolean;
+  /** Changes other blocks of the topic show: gaps over them reveal nothing (`markElsewhere`). */
+  elsewhere?: readonly ElsewhereChange[];
   /** Where the after side is read from; undefined when it cannot be read (a local review). */
   request?: PrFileRequest;
   /** Both sides, when the view has loaded them already. */
@@ -201,7 +206,7 @@ export function useDiffFileModel({
     const all = expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined, { partial }) : undefined;
     if (!all || !partial) return all;
     // A topic's gap is unchanged code only where it saved those lines, or where both sides agree on every line.
-    return all.map((gap) => {
+    const topic = all.map((gap) => {
       const size = gapSize(gap);
       if (size === undefined || (!gap.opaque && known && knownLines(known, gap.newStart, size))) return gap;
       const verified = !!before && !!after && !!afterMatches;
@@ -217,7 +222,8 @@ export function useDiffFileModel({
       while (revealUp < size - revealDown && known?.[gap.newStart + size - revealUp - 2] !== undefined) revealUp++;
       return { ...gap, revealDown, revealUp };
     });
-  }, [expandable, hunks, afterMatches, after, before, partial, known]);
+    return markElsewhere(topic, elsewhere);
+  }, [expandable, hunks, afterMatches, after, before, partial, known, elsewhere]);
   // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
   // side when it is loaded. A file without a grammar, or with a stale after side, shows as before.
   // The old side is parsed when the file deletes lines: hunks that only delete are named by it, and the outline finds

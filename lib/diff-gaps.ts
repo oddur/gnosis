@@ -48,6 +48,17 @@ export interface DiffGap {
    */
   revealDown?: number;
   revealUp?: number;
+  /**
+   * An Explanation topic shows this file in more than one block, and this gap covers a change another block shows: the
+   * block (its `run`) that shows it. The gap is opaque and reveals nothing (`markElsewhere`).
+   */
+  elsewhere?: number;
+}
+/** A change another block of the same file shows, in new-side lines (lib/slide-file-groups.ts). */
+export interface ElsewhereChange {
+  start: number;
+  end: number;
+  run: number;
 }
 /** Lines revealed in one gap: `down` continues the hunk above, `up` the hunk below. */
 export interface GapReveal {
@@ -134,6 +145,19 @@ export function hunksFromDiff(diff: FileDiffMetadata): GapHunk[] {
       noEofOld: hunk.noEOFCRDeletions,
       noEofNew: hunk.noEOFCRAdditions,
     };
+  });
+}
+
+/**
+ * Gaps that cover a change another block of the topic shows reveal nothing: their lines are not unchanged code, and the
+ * change shows once, in its own block. Each names that block, for a jump there.
+ */
+export function markElsewhere(gaps: DiffGap[], changes: readonly ElsewhereChange[] | undefined): DiffGap[] {
+  if (!changes?.length) return gaps;
+  return gaps.map((gap) => {
+    const end = gap.newEnd ?? Infinity;
+    const hit = changes.find((change) => change.start <= end + 1 && change.end >= gap.newStart);
+    return hit ? { ...gap, opaque: true, revealDown: 0, revealUp: 0, elsewhere: hit.run } : gap;
   });
 }
 

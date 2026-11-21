@@ -394,6 +394,42 @@ void app.whenReady().then(async () => {
       await wait(`!${block(0)}.querySelector(':scope > .review-file-content').hidden&&!${block(2)}.querySelector(':scope > .review-file-content').hidden`);
       assert.deepEqual((await blocks()).map((b) => [b.viewed, b.hidden]), [[false, false], [false, false], [false, false]], 'Unmarking opens both again');
     } else assert.fail('The explanation offers the Viewed checkbox');
+    await settle();
+    // A gap over a change another block shows reveals nothing: it names the block and offers a jump there.
+    const elsewhere = await js<{ block: number; target: string; label: string; reveals: string[] }[]>(`[0,2].flatMap(n=>[...document.querySelectorAll(${JSON.stringify(ordered)})[n].querySelectorAll('.diff-gap[data-elsewhere]')].map(g=>({block:n,target:g.dataset.elsewhere,label:g.getAttribute('aria-label'),
+      reveals:[...g.querySelectorAll('button')].map(b=>b.getAttribute('aria-label')??b.textContent.trim())})))`);
+    console.log('Gaps over another block:', JSON.stringify(elsewhere));
+    assert.ok(elsewhere.some((g) => g.block === 0 && g.target === '1'), 'The first scope.ts block’s gap over the second block’s change names it');
+    assert.ok(elsewhere.some((g) => g.block === 2 && g.target === '0'), 'The second block’s gap over the first block’s change names it');
+    for (const g of elsewhere) {
+      assert.equal(g.label, 'Shown in another part of this topic');
+      // Its header's own controls (the hunk below's location and definition) stay; nothing reveals lines.
+      assert.ok(g.reveals.includes('Go to it'), 'The bar offers the jump');
+      assert.ok(!g.reveals.some((label) => /^(Show all|Show \d+ lines?|Show the rest)/.test(label)), `The bar reveals nothing: ${g.reveals.join(', ')}`);
+    }
+    await js(`[...${block(0)}.querySelectorAll('.diff-gap[data-elsewhere="1"] button')].find(b=>b.textContent.trim()==='Go to it').click()`);
+    await wait(`(()=>{const s=document.querySelector('.explanation-document').getBoundingClientRect();const r=${block(2)}.getBoundingClientRect();return r.top>=s.top-1&&r.top<s.bottom-40})()`);
+    // A jump to a line in the second scope.ts block, collapsed first, opens that block and lands on the line.
+    await js(`${block(2)}.querySelector('.review-file-expand').click()`);
+    await wait(`${block(2)}.querySelector(':scope > .review-file-content').hidden`);
+    await js(`document.querySelector('.explanation-document').scrollTop=0`);
+    const jumpLine = await js<number>('window.parityJumpLine');
+    await js(`[...document.querySelectorAll('[data-explanation-section="2"] .cursor-pointer')].find(e=>e.textContent.includes('Does the last change keep the total?')).click()`);
+    await wait(`window.deepAll('[data-here]',${block(2)}).some(e=>e.dataset.lineNumber==='${jumpLine}')`, 500);
+    assert.equal(await js(`${block(2)}.querySelector(':scope > .review-file-content').hidden`), false, 'The jump opened the block');
+    assert.equal(await js<number>(`window.deepAll('[data-here]',${block(0)}).length`), 0, 'Nothing in the first block is marked');
+
+    // ── Overlapping hunks listed apart share one block, and each line shows once ──
+    await js(`window.selectOption('[aria-label="Explanation section"]', '3')`);
+    const overlap = '[data-explanation-section="3"] .review-file-group';
+    await wait(`(()=>{const g=[...document.querySelectorAll(${JSON.stringify(overlap)})];return g.length===2&&g.every(e=>window.deepAll('[data-line]',e).length>0)})()`, 500);
+    await settle();
+    const merged = await js<{ paths: string[]; changes: string[] }>(`(()=>{const g=[...document.querySelectorAll(${JSON.stringify(overlap)})];
+      return {paths:g.map(e=>e.dataset.filePath.replace(/^.*?src\\//,'src/')),changes:window.deepAll('[data-line]',g[0]).filter(e=>/change-(addition|deletion)/.test(e.dataset.lineType??'')).map(e=>e.dataset.lineType+':'+e.textContent)}})()`);
+    console.log('Overlapping hunks:', JSON.stringify(merged));
+    assert.deepEqual(merged.paths, ['src/scope.ts', 'src/imports.ts'], 'One block of scope.ts, then imports.ts');
+    assert.ok(merged.changes.length > 0);
+    assert.equal(new Set(merged.changes).size, merged.changes.length, 'Every changed line shows once');
     await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();

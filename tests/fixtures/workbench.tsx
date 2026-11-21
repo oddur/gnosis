@@ -238,11 +238,48 @@ if (parityScenario) {
     fileSummaries: [{ filePath: path, summary: 'Doubles one flush step and trims names.' }],
     inlineExplanations: [],
     diffHunks: [hunks[2], imports[0], hunks[0], hunks[3]],
+    // A jump into the second scope.ts block: the added line of its last hunk.
+    reviewChecks: [{ text: 'Does the last change keep the total?', filePath: path, startLine: addedLine(hunks[3]) }],
+    explainer: undefined,
+    explainerIdea: undefined,
+    mermaidDiagram: undefined,
+    d2Diagram: undefined,
+  };
+  (window as unknown as { parityJumpLine: number }).parityJumpLine = addedLine(hunks[3]);
+  // The third topic lists two overlapping windows of scope.ts's first hunk around imports.ts: one block of scope.ts.
+  review.slides[2] = {
+    ...review.slides[2],
+    title: 'Read the path change twice over',
+    narrative: 'The same path change, listed in two overlapping parts.',
+    affectedFiles: [path, importsPath],
+    fileSummaries: [],
+    inlineExplanations: [],
+    diffHunks: [hunks[0], imports[0], withoutTopContext(hunks[0], 2)],
     reviewChecks: [],
     explainer: undefined,
     explainerIdea: undefined,
     mermaidDiagram: undefined,
     d2Diagram: undefined,
+  };
+}
+/** The new line number of a saved hunk's first added line. */
+function addedLine(hunk: { hunkHeader: string; content: string }) {
+  let line = Number(/\+(\d+)/.exec(hunk.hunkHeader)?.[1] ?? 0);
+  for (const row of hunk.content.split('\n')) {
+    if (row.startsWith('+')) return line;
+    if (!row.startsWith('-')) line++;
+  }
+  return line;
+}
+/** A saved hunk without its first `n` lines, which are context: it overlaps the hunk it came from. */
+function withoutTopContext<T extends { hunkHeader: string; content: string }>(hunk: T, n: number): T {
+  const rows = hunk.content.split('\n');
+  if (rows.slice(0, n).some((row) => !row.startsWith(' '))) throw Error('Not context');
+  const [, a, b, c, d, rest] = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@(.*)$/.exec(hunk.hunkHeader) ?? [];
+  return {
+    ...hunk,
+    hunkHeader: `@@ -${Number(a) + n},${Number(b) - n} +${Number(c) + n},${Number(d) - n} @@${rest}`,
+    content: rows.slice(n).join('\n'),
   };
 }
 // Quiet changes in a slide (#396, tests/noise-filter-browser.ts): the first topic shows every hunk of the noise

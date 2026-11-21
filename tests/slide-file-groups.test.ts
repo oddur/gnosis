@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { groupSlideHunks, slideFileKeys, slideFileRunOfLine } from '../lib/slide-file-groups';
+import { elsewhereChanges, groupSlideHunks, resolveBlock, slideFiles } from '../lib/slide-file-groups';
+import { diffGaps, markElsewhere } from '../lib/diff-gaps';
+import { reviewGapHunks } from '../lib/review-gap-hunks';
 import { estimateCodeColumnHeight, estimateFileBlockHeight } from '../lib/review-gap-hunks';
 import { buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, generateSlide, planReview } from '../lib/agent';
@@ -31,7 +33,7 @@ void test('a reading order that returns to a file gives the file another block',
   assert.equal(new Set(groups.map((g) => g.key)).size, 3, 'every block has its own key');
   assert.equal(groups[0].key, 'a.ts', 'the first block keeps the path as its key, as saved state did');
   assert.notEqual(groups[2].key, 'a.ts');
-  assert.deepEqual(slideFileKeys(groups, 'a.ts'), [groups[0].key, groups[2].key]);
+  assert.deepEqual(slideFiles(groups).get('a.ts')?.keys, [groups[0].key, groups[2].key]);
 });
 
 void test('consecutive hunks of one file share a block', () => {
@@ -64,13 +66,95 @@ void test('older explanations, saved sorted by file, group exactly as before', (
   );
 });
 
-void test('a jump to a line opens the block that holds it', () => {
-  const hunks = [hunk('a.ts', 1), hunk('b.ts', 1), hunk('a.ts', 40)];
-  assert.equal(slideFileRunOfLine(hunks, 'a.ts', 2), 0);
-  assert.equal(slideFileRunOfLine(hunks, 'a.ts', 41), 1);
-  assert.equal(slideFileRunOfLine(hunks, 'a.ts', 41, 'LEFT'), 1);
-  assert.equal(slideFileRunOfLine(hunks, 'a.ts', 400), 0, 'a line outside every block falls back to the first');
-  assert.equal(slideFileRunOfLine(hunks, 'b.ts', 2), 0);
+/** A saved hunk that changes its middle line, with context around it. */
+const changed = (filePath: string, start: number): DiffHunk => ({
+  filePath,
+  hunkHeader: `@@ -${start},5 +${start},5 @@`,
+  content: [
+    ` ctx ${start}`,
+    ` ctx ${start + 1}`,
+    `-old ${start + 2}`,
+    `+new ${start + 2}`,
+    ` ctx ${start + 3}`,
+    ` ctx ${start + 4}`,
+  ].join('\n'),
+  language: 'typescript',
+  renderedHtml: '',
+});
+
+void test('hunks of one file that overlap or touch share a block, wherever the order lists them', () => {
+  const [a1, b, a2] = [changed('a.ts', 10), changed('b.ts', 1), changed('a.ts', 12)];
+  const groups = groupSlideHunks([a1, b, a2]);
+  assert.deepEqual(
+    groups.map((g) => [g.filePath, g.run, g.hunks]),
+    [
+      ['a.ts', 0, [a1, a2]],
+      ['b.ts', 0, [b]],
+    ]
+  );
+  // Touching on the new side (10-14, then 15-19) also joins; one line apart does not.
+  assert.equal(groupSlideHunks([changed('a.ts', 10), b, changed('a.ts', 15)]).length, 2);
+  assert.equal(groupSlideHunks([changed('a.ts', 10), b, changed('a.ts', 16)]).length, 3);
+  // Listed out of line order, overlapping hunks still share a block.
+  assert.equal(groupSlideHunks([changed('a.ts', 12), changed('a.ts', 10)]).length, 1);
+});
+
+void test('in [A1, A3, B, A2], the gaps over A2 and over A1 and A3 reveal nothing and name the other block', () => {
+  const [a1, a3, b, a2] = [changed('a.ts', 10), changed('a.ts', 100), changed('b.ts', 1), changed('a.ts', 50)];
+  const groups = groupSlideHunks([a1, a3, b, a2]);
+  assert.deepEqual(
+    groups.map((g) => [g.filePath, g.run, g.hunks.length]),
+    [
+      ['a.ts', 0, 2],
+      ['b.ts', 0, 1],
+      ['a.ts', 1, 1],
+    ]
+  );
+  const elsewhere = elsewhereChanges(groups);
+  assert.equal(elsewhere.get('b.ts'), undefined, 'a file in one block has nothing elsewhere');
+  const gapsOf = (key: string) => {
+    const saved = reviewGapHunks(groups.find((g) => g.key === key)?.hunks ?? []);
+    return markElsewhere(diffGaps(saved.hunks, 200, { partial: true }) ?? [], elsewhere.get(key));
+  };
+  const first = gapsOf(groups[0].key);
+  // A1 shows 10-14 with three lines of context, A3 100-104: the gap between them holds A2's change at 52.
+  const between = first.find((gap) => gap.newStart <= 52 && (gap.newEnd ?? Infinity) >= 52);
+  assert.ok(between);
+  assert.deepEqual([between.opaque, between.elsewhere, between.revealDown, between.revealUp], [true, 1, 0, 0]);
+  assert.ok(
+    first.filter((gap) => gap !== between).every((gap) => gap.elsewhere === undefined),
+    'gaps that hold no other block’s change still reveal'
+  );
+  const second = gapsOf(groups[2].key);
+  assert.deepEqual(
+    second.map((gap) => gap.elsewhere),
+    [0, 0],
+    'A2’s gaps above and below cover A1 and A3'
+  );
+});
+
+void test('a jump lands in the block that shows the line, the new side first', () => {
+  type Block = { name: string; shows: Partial<Record<'LEFT' | 'RIGHT', boolean>>; old?: string; new?: string };
+  const blocks: Block[] = [
+    { name: 'first', shows: { LEFT: true }, old: '40-45', new: '1-5' },
+    { name: 'second', shows: { RIGHT: true }, old: '1-5', new: '40-45' },
+  ];
+  const resolve = (line: number | undefined, side?: 'LEFT' | 'RIGHT', list = blocks) =>
+    resolveBlock(
+      list,
+      { line, side },
+      (b, s) => !!b.shows[s],
+      (b, s) => (s === 'LEFT' ? b.old : b.new)
+    )?.name;
+  assert.equal(resolve(42), 'second', 'the new side wins when both sides show the line number');
+  assert.equal(resolve(42, 'LEFT'), 'first');
+  // Collapsed blocks show no lines: their saved spans decide, the new side first.
+  const collapsed = blocks.map((b) => ({ ...b, shows: {} }));
+  assert.equal(resolve(42, undefined, collapsed), 'second');
+  assert.equal(resolve(3, undefined, collapsed), 'first');
+  assert.equal(resolve(3, 'LEFT', collapsed), 'second');
+  assert.equal(resolve(400, undefined, collapsed), 'first', 'a line no block holds falls back to the first');
+  assert.equal(resolve(undefined), 'first');
 });
 
 void test('the code column estimate counts each block of a file', () => {
