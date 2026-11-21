@@ -1287,7 +1287,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
     structural++;
     return nativeMergiraf;
   };
-  // Using it is the Suggest step: the result becomes the draft, unreviewed, with no per-conflict proposals.
+  // Using it is the Suggest step: the result becomes the draft, unreviewed. The proposal stays for Reset file.
   let session = (
     await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path })
   ).session;
@@ -1296,7 +1296,7 @@ void test('a structural merge that also moves lines outside the conflicts is a w
   assert.equal(used.result, expected);
   assert.equal(used.source, 'mergiraf');
   assert.equal(used.resolved, false);
-  assert.equal(used.wholeFile, undefined);
+  assert.equal(used.wholeFile?.text, expected, 'Reset file can return to the proposal');
   assert.ok(blockBuckets(used, used.result, undefined).every((bucket) => bucket === 'decided'));
 
   // Start over, then resolve conflict by conflict instead: the proposal stays beside the draft.

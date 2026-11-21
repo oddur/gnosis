@@ -18,6 +18,14 @@ interface ShortcutGroup {
   shortcuts: Shortcut[];
 }
 
+/** Also listed by the conflict workspace's keyboard help. */
+export const CONFLICT_SHORTCUTS: Shortcut[] = [
+  { keys: 'j  k', label: 'Next / previous conflict' },
+  { keys: '1  2  3', label: 'Keep PR change / base change / both' },
+  { keys: 'm', label: 'Mark file reviewed and open the next file' },
+  { keys: 'n  p', label: 'Next / previous file' },
+];
+
 const groups: ShortcutGroup[] = [
   {
     heading: 'Reading',
@@ -39,15 +47,7 @@ const groups: ShortcutGroup[] = [
       { keys: QUIET_CHANGES_KEY, label: 'Show or hide quiet changes (whitespace, formatting, comments)' },
     ],
   },
-  {
-    heading: 'Resolving conflicts',
-    shortcuts: [
-      { keys: 'j  k', label: 'Next / previous conflict' },
-      { keys: '1  2  3', label: 'Keep PR change / base change / both' },
-      { keys: 'm', label: 'Mark file reviewed and open the next file' },
-      { keys: 'n  p', label: 'Next / previous file' },
-    ],
-  },
+  { heading: 'Resolving conflicts', shortcuts: CONFLICT_SHORTCUTS },
   {
     heading: 'Review controls',
     shortcuts: [

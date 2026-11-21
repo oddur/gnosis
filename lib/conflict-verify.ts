@@ -1,6 +1,13 @@
 import { diffArrays } from 'diff';
 import { blockResolutions } from './conflict-carry';
-import { conflictCount, inferChoices, parseConflicts, type ConflictSegment } from './conflict-blocks';
+import {
+  conflictCount,
+  inferChoices,
+  parseConflicts,
+  withPicks,
+  type BlockPicks,
+  type ConflictSegment,
+} from './conflict-blocks';
 import {
   hasConflictMarkers,
   type ConflictFile,
@@ -501,7 +508,9 @@ export function proposalKey(file: Pick<ConflictFile, 'original' | 'proposals' | 
 export function blockBuckets(
   file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
   contents: string,
-  verdict: Verdict | undefined
+  verdict: Verdict | undefined,
+  /** Keep choices you made: one whose text equals the proposal is Decided, not the proposal (withPicks). */
+  picks?: BlockPicks
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
   // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
@@ -509,7 +518,8 @@ export function blockBuckets(
   if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
     return parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? ['check' as const] : []));
   const segments = parseConflicts(file.original);
-  const choices = inferChoices(segments, contents, file.proposals);
+  const inferred = inferChoices(segments, contents, file.proposals);
+  const choices = inferred && withPicks(segments, inferred, file.proposals, picks);
   const blocks = segments.filter((s) => s.kind === 'conflict');
   if (!choices) {
     // Edited by hand somewhere: each block's own text where the draft still shows it. A proposal that is not shown
@@ -574,13 +584,16 @@ export function fileStatus(
   if (counts.decide || counts.check || counts.merged) return { kind: 'buckets', ...counts };
   return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
 }
+/** Every conflict in the file is Merged: nothing to decide or check, only Mark reviewed is left. */
+export const mergedOnly = (status: FileStatus) => status.kind === 'buckets' && !status.decide && !status.check;
 /** The parts a status shows, each with its tone (the icon): "1 to decide", "2 to check", "Resolved · needs review". */
-export function fileStatusParts(
-  status: FileStatus
-): { tone: 'decide' | 'check' | 'merged' | 'proposal' | 'conflicted' | 'resolved' | 'reviewed'; text: string }[] {
+export function fileStatusParts(status: FileStatus): {
+  tone: 'decide' | 'check' | 'merged' | 'proposal' | 'conflicted' | 'resolved' | 'reviewed' | 'unsupported';
+  text: string;
+}[] {
   switch (status.kind) {
     case 'unsupported':
-      return [];
+      return [{ tone: 'unsupported', text: 'Needs a local merge tool' }];
     case 'proposal':
       return [{ tone: 'proposal', text: 'Proposal ready' }];
     case 'buckets':
@@ -602,6 +615,7 @@ export function fileStatusParts(
 }
 /** The footer's words for the open file: "1 to check in this file", or nothing once it waits for Mark reviewed. */
 export function fileStatusLine(status: FileStatus): string | undefined {
+  if (status.kind === 'unsupported') return 'Gnosis can’t merge this file. Merge the PR on your computer';
   if (status.kind === 'proposal') return '1 proposal to check';
   if (status.kind === 'marker') return 'A conflict marker is left in the file. Check the result';
   if (status.kind === 'conflicted') return `${fileStatusParts(status)[0].text} left in this file`;
@@ -626,6 +640,10 @@ export interface BucketSummary {
   wholeFiles: number;
   /** Of `needs`: files with a conflict marker left outside any whole conflict (fileStatus `marker`). */
   markers: number;
+  /** Of `needs`: files Gnosis can't merge (fileStatus `unsupported`). */
+  local: number;
+  /** Files that need nothing but Mark reviewed. */
+  review: number;
 }
 export function bucketSummary(
   files: {
@@ -635,6 +653,10 @@ export function bucketSummary(
     whole?: boolean;
     /** The file's status is `marker`: it needs you for that alone, whatever its buckets. */
     marker?: boolean;
+    /** Gnosis can't merge the file: it needs a local merge tool. */
+    unsupported?: boolean;
+    /** The file needs nothing but Mark reviewed. */
+    review?: boolean;
   }[]
 ): BucketSummary {
   const summary: BucketSummary = {
@@ -647,8 +669,17 @@ export function bucketSummary(
     wholeConflicts: 0,
     wholeFiles: 0,
     markers: 0,
+    local: 0,
+    review: 0,
   };
-  for (const { buckets, verdict, reviewed, whole, marker } of files) {
+  for (const { buckets, verdict, reviewed, whole, marker, unsupported, review } of files) {
+    if (unsupported) {
+      summary.conflicts++;
+      summary.local++;
+      summary.needs++;
+      continue;
+    }
+    if (review && !reviewed) summary.review++;
     if (marker && !reviewed) {
       summary.markers++;
       summary.needs++;
@@ -670,12 +701,13 @@ export function bucketSummary(
   return summary;
 }
 /**
- * "3 files conflict. 7 of 9 conflicts are merged and checked. 2 need you." Whole-file proposals are named, with the
+ * "3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you." With nothing to decide or check,
+ * it names the files that wait for Mark reviewed: "1 file is ready for review." Whole-file proposals are named, with the
  * conflicts they cover: "1 proposal to check for 2 conflicts.", or "3 need you: 1 proposal to check for 2 conflicts,
  * 1 to decide."
  */
 export function summarySentence(s: BucketSummary) {
-  const files = s.files === 1 ? '1 file conflicts.' : `${s.files} files conflict.`;
+  const files = s.files === 1 ? '1 file has conflicts.' : `${s.files} files have conflicts.`;
   const merged = s.merged
     ? ` ${s.merged} of ${s.conflicts} ${s.conflicts === 1 ? 'conflict is' : 'conflicts are'} merged and checked.`
     : '';
@@ -683,18 +715,21 @@ export function summarySentence(s: BucketSummary) {
     ? ` Checking ${s.checking} ${s.checking === 1 ? 'result' : 'results'}…`
     : s.needs
       ? needsYou(s)
-      : ' Nothing needs you.';
+      : s.review
+        ? ` ${s.review} ${s.review === 1 ? 'file is' : 'files are'} ready for review.`
+        : ' Nothing needs you.';
   return files + merged + needs;
 }
 /** What needs you, in the file list's words: "1 to check.", or "3 need you: 2 to check, 1 to decide." */
 function needsYou(s: BucketSummary) {
-  const check = s.needs - s.decide - s.wholeConflicts - s.markers;
+  const check = s.needs - s.decide - s.wholeConflicts - s.markers - s.local;
   const covers = s.wholeConflicts > s.wholeFiles ? ` for ${s.wholeConflicts} conflicts` : '';
   const parts = [
     ...(s.wholeFiles ? [`${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`] : []),
     ...(check ? [`${check} to check`] : []),
     ...(s.decide ? [`${s.decide} to decide`] : []),
     ...(s.markers ? [`${s.markers} ${s.markers === 1 ? 'file' : 'files'} with a conflict marker left`] : []),
+    ...(s.local ? [`${s.local} ${s.local === 1 ? 'file needs' : 'files need'} a local merge tool`] : []),
   ];
   return parts.length === 1
     ? ` ${parts[0]}.`

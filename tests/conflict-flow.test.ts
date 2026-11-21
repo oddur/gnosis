@@ -10,6 +10,8 @@ void test('each file state has one next action; Mark reviewed waits for the resu
   assert.equal(conflictFileAction({ ...base, stage: 'reviewed', resultShown: true }), 'next-file');
   assert.equal(conflictFileAction({ stage: 'reviewed', resultShown: true, otherFilesPending: false }), 'confirm');
   assert.equal(conflictFileAction({ stage: undefined, resultShown: false, otherFilesPending: false }), 'none');
+  // Every conflict Merged: the results are on screen, so the next step is Mark reviewed, not Review result.
+  assert.equal(conflictFileAction({ ...base, stage: 'resolved', resultShown: false, merged: true }), 'mark-reviewed');
 });
 
 void test('errors use plain copy and keep the raw output for Details', () => {

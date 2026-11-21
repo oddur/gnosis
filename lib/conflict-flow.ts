@@ -13,11 +13,13 @@ export function conflictFileAction(state: {
   /** Another file still needs resolving or review. */
   otherFilesPending: boolean;
   unsupported?: boolean;
+  /** Every conflict is Merged: its results are on screen, so Mark reviewed needs no separate Review result. */
+  merged?: boolean;
 }): ConflictFileAction {
   if (!state.stage) return 'none';
   if (state.unsupported) return state.otherFilesPending ? 'next-file' : 'none';
   if (state.stage === 'conflicted') return 'next-conflict';
-  if (state.stage === 'resolved') return state.resultShown ? 'mark-reviewed' : 'review-result';
+  if (state.stage === 'resolved') return state.resultShown || state.merged ? 'mark-reviewed' : 'review-result';
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }
 

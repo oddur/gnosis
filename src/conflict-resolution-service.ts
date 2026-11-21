@@ -1400,9 +1400,9 @@ export function createConflictResolutionService(deps: Deps) {
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
             }
             file.source = request.engine;
-            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals.
+            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
+            // whole-file proposal stays, so Reset file returns to it.
             delete file.proposals;
-            delete file.wholeFile;
             delete file.structuralNote;
             file.resolved = false;
           }
