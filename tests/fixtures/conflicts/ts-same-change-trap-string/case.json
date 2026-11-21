@@ -1,0 +1,8 @@
+{
+  "description": "Trap: both sides change the same string, in different quotes, to different words ('hey' and 'hey!').",
+  "language": "typescript",
+  "category": "structure/same-change",
+  "expected": {
+    "src/greet.ts": "decide"
+  }
+}

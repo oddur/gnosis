@@ -1,0 +1,8 @@
+{
+  "description": "Trap: both sides change the same list in different layouts, but to different numbers (30 and 300).",
+  "language": "python",
+  "category": "structure/same-change",
+  "expected": {
+    "lab/targets.py": "decide"
+  }
+}

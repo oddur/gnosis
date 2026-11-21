@@ -49,22 +49,94 @@ export function unionOf(
   return { text, ...place };
 }
 
+/** Tokens as the layout checks read them: runs of whitespace, words and numbers, and each other character. */
+export const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
+
 /**
- * Each conflict that has no proposal gets the union of both sides' insertions, where there is one. Only in files with a
- * grammar: without one, nothing can tell whole definitions from lines whose order matters.
+ * Both sides may have made the same change in different layouts (#445 item 15): the same tokens, apart from line
+ * breaks, quote marks and trailing commas. Only a candidate: the checks compare the two sides' syntax trees
+ * (lib/conflict-verify.ts), and one they can't confirm is taken back (src/conflict-checks.ts). Spacing inside a line,
+ * and everything inside a string or comment, must match; so must a line's indentation outside brackets in Python and
+ * YAML.
+ */
+export function sameTokens(ours: string, theirs: string, indented: boolean) {
+  const read = (text: string) => {
+    /** `raw`: inside a string or comment, where brackets, commas and spacing are content. */
+    const tokens: { text: string; before: string; raw: boolean }[] = [];
+    let space = '';
+    let open: string | undefined; // the string's quote, or `//`, `#` or `/*`
+    let escaped = false;
+    for (const token of layoutTokens(text)) {
+      const raw = open !== undefined;
+      const blank = /^\s/.test(token);
+      if (blank && !raw) {
+        space += token;
+        continue;
+      }
+      const last = tokens.at(-1);
+      if (!raw && last?.text === ',' && !last.raw && /^[)\]}]$/.test(token)) {
+        // A trailing comma is dropped; its spacing joins the closing bracket's.
+        tokens.pop();
+        space = last.before + space;
+      }
+      const quote = (!raw && `'"\``.includes(token)) || (raw && token === open && !escaped);
+      tokens.push({ text: quote && token === '"' ? "'" : token, before: space, raw });
+      const adjacent = !space;
+      space = '';
+      if (!raw) {
+        if (quote) open = token;
+        else if (token === '#') open = '#';
+        else if ((token === '/' || token === '*') && last?.text === '/' && !last.raw && adjacent)
+          open = token === '/' ? '//' : '/*';
+      } else if (open === '//' || open === '#') {
+        if (blank && token.includes('\n')) open = undefined;
+      } else if (open === '/*') {
+        if (token === '/' && last?.text === '*' && adjacent) open = undefined;
+      } else if (quote) open = undefined;
+      escaped = raw && token === '\\' && !escaped;
+    }
+    return { tokens, after: space };
+  };
+  const [a, b] = [read(ours), read(theirs)];
+  if (a.tokens.length !== b.tokens.length || a.after !== b.after) return false;
+  let depth = 0;
+  return a.tokens.every((t, i) => {
+    const other = b.tokens[i];
+    // Line breaks may differ between code tokens, except where they set a Python or YAML line's indentation.
+    const wrapped = !t.raw && /\n/.test(t.before + other.before) && !(indented && depth === 0);
+    if (!t.raw) depth += /^[([{]$/.test(t.text) ? 1 : /^[)\]}]$/.test(t.text) ? -1 : 0;
+    return t.text === other.text && t.raw === other.raw && (t.before === other.before || wrapped);
+  });
+}
+
+/**
+ * Each conflict that has no proposal gets the PR's version where both sides may have made the same change (sameTokens),
+ * else the union of both sides' insertions, where there is one. Only in files with a grammar: without one, nothing can
+ * tell whole definitions from lines whose order matters, or prove two layouts are the same code.
  */
 export function withUnions(
   path: string,
   original: string,
   proposals: readonly (ConflictProposal | null)[] | undefined
 ): (ConflictProposal | null)[] | undefined {
-  if (!syntaxLanguage(path)) return proposals ? [...proposals] : undefined;
-  const next = parseConflicts(original).flatMap((s) => {
+  const language = syntaxLanguage(path);
+  if (!language) return proposals ? [...proposals] : undefined;
+  const indented = language === 'python' || language === 'yaml';
+  const next = parseConflicts(original).flatMap((s): (ConflictProposal | null)[] => {
     if (s.kind !== 'conflict') return [];
-    const union = proposals?.[s.index] ? undefined : unionOf(s.block);
-    return [union ? { source: 'union' as const, text: union.text } : (proposals?.[s.index] ?? null)];
+    const own = proposals?.[s.index];
+    if (own) return [own];
+    const { base, ours, theirs } = s.block;
+    if (base !== undefined && ours !== theirs && sameTokens(ours, theirs, indented))
+      return [{ source: 'same', text: ours }];
+    const union = unionOf(s.block);
+    return [union ? { source: 'union', text: union.text } : null];
   });
-  return next.some((p) => p?.source === 'union') ? next : proposals ? [...proposals] : undefined;
+  return next.some((p) => p?.source === 'union' || p?.source === 'same')
+    ? next
+    : proposals
+      ? [...proposals]
+      : undefined;
 }
 
 /** What each side added, in Gnosis's words. */

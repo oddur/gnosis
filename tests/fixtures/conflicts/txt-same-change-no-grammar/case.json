@@ -1,0 +1,8 @@
+{
+  "description": "Both sides make the same edit to a plain text file, wrapped differently. Without a grammar nothing proves they are the same, so it is not Merged.",
+  "language": "text",
+  "category": "structure/same-change",
+  "expected": {
+    "NOTES.txt": "decide"
+  }
+}

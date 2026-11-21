@@ -29,6 +29,7 @@ import { conflictCount } from '../lib/conflict-blocks';
 import { withUnions } from '../lib/conflict-union';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { withoutUnconfirmed } from './conflict-checks';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
@@ -689,8 +690,15 @@ export function createConflictResolutionService(deps: Deps) {
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
       signal.throwIfAborted();
-      const verdict = await deps.verify(file, disabled);
-      if (verdict) file.verdict = { key, verdict };
+      let verdict = await deps.verify(file, disabled);
+      // A same-change proposal its check didn't Merge is taken back, a check that couldn't run included
+      // (src/conflict-checks.ts). The rest are checked again once, only after a check that ran; else the dialog checks.
+      const back = withoutUnconfirmed(file, verdict);
+      if (back) {
+        Object.assign(file, back);
+        verdict = verdict && file.proposals ? await deps.verify(file, disabled) : undefined;
+      }
+      if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
       changed = true;
     }
@@ -1053,7 +1061,8 @@ export function createConflictResolutionService(deps: Deps) {
         : pushed.restack?.branches.length
           ? pushed.restack.branches.map((branch) => branch.url)
           : dependents;
-    const restackPending = !!published && (published.restack ? published.restack.status !== 'published' : !!dependents.length);
+    const restackPending =
+      !!published && (published.restack ? published.restack.status !== 'published' : !!dependents.length);
     const pushedHead = !!published && !conflictsAgain && published.commitSha === state.headSha;
     // A push finished in an earlier session is history, not a result to show again: the published record, or the
     // `lastPush` of a preparation made while GitHub was still computing. Clean now: say so, with the push as history.
@@ -1061,7 +1070,9 @@ export function createConflictResolutionService(deps: Deps) {
     const history: ConflictSession['lastPush'] =
       pushedHead && !restackPending && !recovered && published?.commitSha
         ? { commitSha: published.commitSha, headSha: published.headSha }
-        : !restart && saved?.status === 'editing' && !saved.files.length ? saved.lastPush : undefined;
+        : !restart && saved?.status === 'editing' && !saved.files.length
+          ? saved.lastPush
+          : undefined;
     if (saved && history?.commitSha === state.headSha && state.mergeable === 'MERGEABLE' && !hasMergeConflicts(state))
       return { ...saved, dependents, reopened: true, lastPush: history };
     // The push, or the restack push just recovered, is this session's result: show it.

@@ -1,0 +1,8 @@
+{
+  "description": "Trap: both sides change the same call in different layouts with the same tokens, but in a different order: the arguments swap.",
+  "language": "typescript",
+  "category": "structure/same-change",
+  "expected": {
+    "src/users.ts": "check"
+  }
+}

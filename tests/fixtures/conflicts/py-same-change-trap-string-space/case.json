@@ -1,0 +1,8 @@
+{
+  "description": "Trap: both sides change the same list in different layouts, but main's string has two spaces where the PR's has one.",
+  "language": "python",
+  "category": "structure/same-change",
+  "expected": {
+    "lab/targets.py": "decide"
+  }
+}
