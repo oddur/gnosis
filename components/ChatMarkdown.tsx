@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Markdown as Words, type Components, type PluginConfig, type ReactiveIslands } from '@pierre/words/react';
+import { memo, useEffect, useLayoutEffect, useMemo, useState, type MouseEvent } from 'react';
+import { Markdown as Words, type PluginConfig, type ReactiveIslands } from '@pierre/words/react';
 import { createHighlightsPlugin } from '@pierre/words/highlights';
 import { themes as highlightsThemes } from '@pierre/highlights/themes/loader';
 import { CODE_THEMES } from '../lib/constants';
@@ -10,6 +10,7 @@ import { useReaderCodeTheme } from '../lib/reader-code-theme';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { CHAT_DIFF_ISLAND, parseChatDiff, withDiffIslands } from '../lib/chat-diffs';
 import { countRender } from '../lib/render-count';
+import { startupPreferences } from '../lib/startup-preferences';
 import { cn } from '../lib/utils';
 import { DiffFileHeader } from './DiffFileHeader';
 import { ReviewDiff } from './ReviewDiff';
@@ -22,20 +23,18 @@ import { ReviewDiff } from './ReviewDiff';
  * Changes renders one (lib/chat-diffs.ts, ReviewDiff).
  */
 
-/** Headings keep the reading hierarchy of the app's other Markdown (MarkdownHeadings, globals.css). */
-const heading = (level: number) => (html: string) =>
-  html.replace(/^<h([1-6])\b/, `<h$1 class="markdown-heading" data-reading-level="${level}"`);
-const components: Components = {
-  h1: heading(1),
-  h2: heading(2),
-  h3: heading(3),
-  h4: heading(4),
-  h5: heading(5),
-  h6: heading(6),
-  // Links open in the browser (the main window's open handler); a footnote's link stays in the message.
-  a: (html) =>
-    /^<a\b[^>]*\shref="#/.test(html) ? html : html.replace(/^<a\b/, '<a target="_blank" rel="noopener noreferrer"'),
-};
+/**
+ * Links open in the browser, through the main window's open handler, as a `target="_blank"` link would. One delegated
+ * handler instead of a Words element hook: hooks turn off Words' streaming fast paths. A footnote's `#` link stays in
+ * the message.
+ */
+function openLink(event: MouseEvent<HTMLDivElement>) {
+  const link = (event.target as Element).closest('a[href]');
+  const href = link?.getAttribute('href');
+  if (!link || !href || href.startsWith('#') || !event.currentTarget.contains(link)) return;
+  event.preventDefault();
+  window.open((link as HTMLAnchorElement).href, '_blank', 'noopener,noreferrer');
+}
 
 /** One code plugin per code theme, created once: Words reuses its live tokenizers across updates. */
 const codePlugins = new Map<string, PluginConfig>();
@@ -69,7 +68,8 @@ function useCodePlugins(id: string) {
 /** A closed diff fence: each file under its code-tier header, rendered as Changes renders it. */
 function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
   const files = useMemo(() => parseChatDiff(patch) ?? [], [patch]);
-  const saved = useDiffAppearance();
+  // The saved appearance, as Changes uses it, until a change in Settings publishes another.
+  const saved = useDiffAppearance(startupPreferences()?.diffAppearance);
   // Long lines wrap, as Feedback's threads do: the chat column is narrow.
   const appearance = useMemo(() => ({ ...saved, wrap: true }), [saved]);
   return (
@@ -118,7 +118,8 @@ function diffIslands(theme: string): ReactiveIslands {
   return islands;
 }
 
-export function ChatMarkdown({
+/** Renders only when its text, streaming state or class changes: a transcript re-renders on every chunk. */
+export const ChatMarkdown = memo(function ChatMarkdown({
   children,
   streaming = false,
   className,
@@ -142,11 +143,11 @@ export function ChatMarkdown({
       isAnimating={streaming}
       animated
       caret="block"
-      components={components}
       plugins={plugins}
       islands={diffIslands(theme)}
+      onClick={openLink}
     >
       {source}
     </Words>
   );
-}
+});

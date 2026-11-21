@@ -46,8 +46,11 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '.'),
-    },
+    alias: [
+      // Chat renders no TeX (components/ChatMarkdown.tsx): Words' React and DOM renderers import the bare entry, so
+      // point it at the same API without math, whose WebAssembly is about a third smaller.
+      { find: /^@pierre\/words$/, replacement: path.resolve(__dirname, 'node_modules/@pierre/words/dist/no-math.js') },
+      { find: '@', replacement: path.resolve(__dirname, '.') },
+    ],
   },
 });

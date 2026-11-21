@@ -91,16 +91,19 @@ void app.whenReady().then(async () => {
     const answer =
       'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```\n\nSee [the queue notes](https://example.com/queue) for the retry rules. The change:\n\n```diff\n--- a/src/queue.ts\n+++ b/src/queue.ts\n@@ -40,2 +40,3 @@\n   await queue.dispatch(command);\n+  await worker.acknowledge(command.id);\n   return command.result;\n```';
     const body = "document.querySelectorAll('.chat-message-body')[1]";
+    // The answer streams in two parts; the second ends past the bottom of the panel.
+    const cut = answer.indexOf('await worker');
+    await emit(answer.slice(0, cut));
+    await wait(`${body}?.textContent.includes('queue.dispatch(command)')`);
+    const firstLine = `Math.round(${body}.querySelector('[data-markdown=p]').getBoundingClientRect().top)`;
+    const startTop = await js<number>(firstLine);
     if (printShots) {
-      const cut = answer.indexOf('await worker');
-      await emit(answer.slice(0, cut));
-      await wait(`${body}?.textContent.includes('queue.dispatch(command)')`);
       await capture('topic-midstream-light');
       await js("document.documentElement.classList.add('dark')");
       await capture('topic-midstream-dark');
       await js("document.documentElement.classList.remove('dark')");
-      await emit(answer.slice(cut));
-    } else await emit(answer);
+    }
+    await emit(answer.slice(cut));
     // The trace shows the context Gnosis assembled, live, before the answer settles.
     await wait("!!document.querySelector('.chat-trace[data-streaming]')");
     assert.deepEqual(
@@ -111,18 +114,36 @@ void app.whenReady().then(async () => {
     // Words renders the answer as it streams: the message is live, and its code is highlighted while it arrives.
     await wait(`${body}?.hasAttribute('data-streaming')`);
     await wait(`!!${body}.querySelector('[data-markdown=code-block][data-language=ts] code span[style*=color]')`);
+    // The panel does not follow the text: the answer holds still while it grows below, past the panel's bottom.
+    await wait(`!!${body}.querySelector('.chat-diff .changes-file-header')`);
+    assert.ok(
+      await js(
+        "(()=>{const v=document.querySelector('[data-slot=message-scroller-viewport]');return v.scrollHeight>v.scrollTop+v.clientHeight+40})()"
+      ),
+      'The streamed answer runs past the bottom of the panel'
+    );
+    assert.equal(
+      await js<number>(firstLine),
+      startTop,
+      'The first answer line stays where it was after the first chunk'
+    );
     await finish(answer);
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
     await wait("!document.querySelector('.chat-trace[data-streaming]')");
     await wait(`!${body}.hasAttribute('data-streaming') && !${body}.querySelector('[data-markdown=caret]')`);
     assert.deepEqual(
-      await js(`[...${body}.querySelectorAll('[data-markdown=code-block] [data-code-action]')].map(b=>b.getAttribute('aria-label'))`),
+      await js(
+        `[...${body}.querySelectorAll('[data-markdown=code-block] [data-code-action]')].map(b=>b.getAttribute('aria-label'))`
+      ),
       ['Copy code', 'Download code'],
       'Code blocks carry Copy and Download'
     );
+    // Links open in the browser, through the window's open handler; the page itself never navigates.
     assert.deepEqual(
-      await js(`(()=>{const a=${body}.querySelector('[data-markdown=a]');return [a.href,a.target,a.rel]})()`),
-      ['https://example.com/queue', '_blank', 'noopener noreferrer'],
+      await js(`(()=>{const opened=[];const open=window.open;window.open=(...a)=>{opened.push(a);return null};
+        const a=${body}.querySelector('[data-markdown=a]');const e=new MouseEvent('click',{bubbles:true,cancelable:true,button:0});
+        a.dispatchEvent(e);window.open=open;return [opened,e.defaultPrevented]})()`),
+      [[['https://example.com/queue', '_blank', 'noopener,noreferrer']], true],
       'Links open in the browser'
     );
     // A closed diff fence shows as a diff, with Changes' file header and diff (ReviewDiff), not as code.
@@ -320,7 +341,9 @@ void app.whenReady().then(async () => {
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
     const assertDock = async () => {
       // The dock slides in from the edge; measure where it settles.
-      await js("Promise.all([...document.querySelectorAll('.chat-panel-dock')].flatMap(el=>el.getAnimations()).map(a=>a.finished)).then(()=>true)");
+      await js(
+        "Promise.all([...document.querySelectorAll('.chat-panel-dock')].flatMap(el=>el.getAnimations()).map(a=>a.finished)).then(()=>true)"
+      );
       const rect = await js<{ right: number; width: number; parentRight: number }>(
         "(()=>{const panel=[...document.querySelectorAll('.chat-panel-dock')].find(el=>el.checkVisibility());const r=panel.getBoundingClientRect();return{right:r.right,width:r.width,parentRight:panel.parentElement.getBoundingClientRect().right}})()"
       );
@@ -410,6 +433,27 @@ void app.whenReady().then(async () => {
     await viewport(600, 720);
     await fullCapture('integrated-file-small-dark');
     await assertDock();
+    if (printShots) {
+      // Review shots of the chat type tier: a long answer beside Changes at 1440px, dark and light.
+      await viewport(1440, 900);
+      const long =
+        '## Review focus\n\nThe worker now **acknowledges before it advances**, so a crash between `dispatch` and `acknowledge` replays the command instead of losing it.\n\n### 5. What stays untouched\n\n- The queue order and its `retry` limit.\n- Commands that never reach a worker.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```\n\nRead `advance()` next: it is the only caller that skips the acknowledgment.';
+      await js(`window.electronAPI.askPrFile=async()=>${JSON.stringify(long)};void 0`);
+      await fill('What should I review first?');
+      await click('Send question');
+      await wait(
+        `[...document.querySelectorAll('.changes-chat .chat-message-body')].some(b=>b.textContent.includes('only caller that skips'))`
+      );
+      await wait(
+        "document.querySelectorAll('.changes-chat [data-markdown=code-block] code span[style*=color]').length>0"
+      );
+      for (const theme of ['dark', 'light']) {
+        await js(`document.documentElement.classList.toggle('dark',${theme === 'dark'})`);
+        await js('document.fonts.ready');
+        save(`typeset-changes-chat-1440-${theme}`, (await win.webContents.capturePage()).toPNG());
+      }
+      await js("document.documentElement.classList.add('dark')");
+    }
     await viewport(1280, 720);
     assert.ok((await transcriptHeight()) >= 240, 'File conversation needs240px of reading space');
     await click('Close chat');

@@ -59,6 +59,8 @@
   --type-control: .8125rem;
   --type-body: .9375rem;
   --type-prose: 1rem;
+  /* Chat answers and questions: compact reading text for the 400px side panel, a step above controls. */
+  --type-chat: .875rem;
   --type-code: .8125rem;
   --leading-code: 1.25rem;
   --leading-prose: 1.65;

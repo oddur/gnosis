@@ -556,7 +556,11 @@
       },
       "prose": {
         "displayName": "prose",
-        "purpose": "16px review narratives, PR descriptions, overview summaries, and chat; 68ch measure with shared dark-mode tuning."
+        "purpose": "16px review narratives, PR descriptions, and overview summaries; 68ch measure with shared dark-mode tuning."
+      },
+      "chat": {
+        "displayName": "chat",
+        "purpose": "14px chat questions and answers in the side panel (--type-chat), 1.6 leading (1.65 dark); quiet 16/15/14px headings at weight 650; code on the shared 13px tier."
       },
       "label-row": {
         "displayName": "label-row",

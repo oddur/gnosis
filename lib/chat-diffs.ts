@@ -17,14 +17,31 @@ export interface ChatDiffFile {
   hunks: DiffHunk[];
 }
 
-const HUNK = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
-const stripPrefix = (path: string) => path.replace(/^[ab]\//, '');
+const HUNK = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+/** A path from a `---` or `+++` line, without its `a/` or `b/` prefix or a `diff -u` timestamp after a tab. */
+const headerPath = (value: string) =>
+  value
+    .split('\t')[0]
+    .trim()
+    .replace(/^[ab]\//, '');
 
+const parsed = new Map<string, ChatDiffFile[] | undefined>();
 /** The files and hunks of a fenced patch, or undefined when it has a line no hunk can hold, or no hunk at all. */
 export function parseChatDiff(patch: string): ChatDiffFile[] | undefined {
+  // Each render of a message, and each island, asks again: parse a patch once.
+  if (parsed.has(patch)) return parsed.get(patch);
+  const files = parse(patch);
+  const oldest = parsed.size >= 200 ? parsed.keys().next() : undefined;
+  if (oldest && !oldest.done) parsed.delete(oldest.value);
+  parsed.set(patch, files);
+  return files;
+}
+
+function parse(patch: string): ChatDiffFile[] | undefined {
   const files: ChatDiffFile[] = [];
   let file: ChatDiffFile | undefined;
-  let hunk: { header: string; lines: string[] } | undefined;
+  // A hunk takes lines until the counts in its header are used up.
+  let hunk: { header: string; lines: string[]; old: number; new: number } | undefined;
   const closeHunk = () => {
     if (!hunk) return;
     const content = hunk.lines.join('\n');
@@ -40,41 +57,59 @@ export function parseChatDiff(patch: string): ChatDiffFile[] | undefined {
   const lines = patch.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (hunk) {
+      if (line.startsWith('\\')) {
+        hunk.lines.push(line);
+        continue;
+      }
+      if (hunk.old > 0 || hunk.new > 0) {
+        // A model often drops the space of an empty context line.
+        const kind = line === '' ? ' ' : line[0];
+        if (kind === ' ' && hunk.old > 0 && hunk.new > 0) {
+          hunk.old--;
+          hunk.new--;
+          hunk.lines.push(line === '' ? ' ' : line);
+        } else if (kind === '-' && hunk.old > 0) {
+          hunk.old--;
+          hunk.lines.push(line);
+        } else if (kind === '+' && hunk.new > 0) {
+          hunk.new--;
+          hunk.lines.push(line);
+        } else return undefined;
+        continue;
+      }
+      closeHunk();
+    }
     const git = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
     if (git) {
       startFile(git[2]);
       continue;
     }
     if (line.startsWith('--- ') && lines[i + 1]?.startsWith('+++ ')) {
-      const after = lines[i + 1].slice(4).trim();
-      const before = line.slice(4).trim();
-      const path = stripPrefix(after === '/dev/null' ? before : after);
-      if (!file || file.hunks.length || hunk) startFile(path);
+      const after = lines[i + 1].slice(4);
+      const path = headerPath(after.split('\t')[0].trim() === '/dev/null' ? line.slice(4) : after);
+      if (!file || file.hunks.length) startFile(path);
       else file.path = path;
       i++;
       continue;
     }
     const header = HUNK.exec(line);
     if (header) {
-      closeHunk();
-      hunk = { header: header[0], lines: [] };
+      // A count left out of the header is 1 (`@@ -3 +3 @@`).
+      hunk = { header: header[0], lines: [], old: Number(header[1] || 1), new: Number(header[2] || 1) };
       continue;
     }
-    if (!hunk) {
-      // Git's file metadata between `diff --git` and the first hunk.
-      if (
-        file &&
-        /^(index |new file mode|deleted file mode|old mode|new mode|similarity index|rename (from|to) |Binary files )/.test(
-          line
-        )
+    // A blank line between files and hunks separates them.
+    if (line.trim() === '') continue;
+    // Git's file metadata between `diff --git` and the first hunk.
+    if (
+      file &&
+      /^(index |new file mode|deleted file mode|old mode|new mode|similarity index|rename (from|to) |Binary files )/.test(
+        line
       )
-        continue;
-      return undefined;
-    }
-    // A model often drops the space of an empty context line.
-    if (line === '') hunk.lines.push(' ');
-    else if (/^[ +\-\\]/.test(line)) hunk.lines.push(line);
-    else return undefined;
+    )
+      continue;
+    return undefined;
   }
   closeHunk();
   for (const each of files) for (const h of each.hunks) h.filePath = each.path;

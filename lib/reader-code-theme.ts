@@ -23,8 +23,15 @@ function start() {
     set((preferences as { codeTheme?: unknown } | undefined)?.codeTheme);
   // Some windows and fixtures expose only part of the API.
   if (api?.loadPreferences) {
-    fromPreferences(startupPreferences());
-    void preferencesReady().then(fromPreferences, () => {});
+    // The startup read only until it has finished: after that, startupPreferences() follows every change, and the
+    // startup read would overwrite a theme saved later in the session.
+    const saved = startupPreferences();
+    if (saved) fromPreferences(saved);
+    else
+      void preferencesReady().then(
+        (ready) => fromPreferences(startupPreferences() ?? ready),
+        () => {}
+      );
   }
   api?.onPreferencesChanged?.(fromPreferences);
   window.addEventListener('gnosis-preferences-changed', (event) =>

@@ -51,6 +51,57 @@ void test('parseChatDiff reads several files, and a bare hunk without file names
   );
 });
 
+void test('parseChatDiff ends a hunk where its counts end, so blank separators are not context lines', () => {
+  const files = parseChatDiff(
+    [
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,2 +1,2 @@',
+      ' a',
+      '-b',
+      '+c',
+      '',
+      '@@ -9 +9 @@',
+      '-x',
+      '+y',
+      '',
+      '--- a/b.ts',
+      '+++ b/b.ts',
+      '@@ -1 +1 @@',
+      '-p',
+      '+q',
+      '\\ No newline at end of file',
+      '',
+    ].join('\n')
+  );
+  assert.deepEqual(
+    files?.map((f) => [f.path, f.hunks.map((h) => h.content)]),
+    [
+      ['a.ts', [' a\n-b\n+c', '-x\n+y']],
+      ['b.ts', ['-p\n+q\n\\ No newline at end of file']],
+    ]
+  );
+  // A line past the counts that is not a header: not a readable patch.
+  assert.equal(parseChatDiff('@@ -1 +1 @@\n-a\n+b\n+c'), undefined);
+});
+
+void test('parseChatDiff strips the timestamps of a unified diff from its paths', () => {
+  const files = parseChatDiff(
+    '--- src/queue.ts\t2026-11-20 10:00:00.000000000 +0000\n+++ src/queue.ts\t2026-11-21 09:30:12.000000000 +0000\n@@ -1 +1 @@\n-a\n+b'
+  );
+  assert.deepEqual(
+    files?.map((f) => f.path),
+    ['src/queue.ts']
+  );
+  const removed = parseChatDiff(
+    '--- a/old.ts\t2026-11-20 10:00:00 +0000\n+++ /dev/null\t1970-01-01 00:00:00 +0000\n@@ -1 +0,0 @@\n-gone'
+  );
+  assert.deepEqual(
+    removed?.map((f) => f.path),
+    ['old.ts']
+  );
+});
+
 void test('parseChatDiff refuses what is not a readable patch', () => {
   // A "diff" fence without hunk headers: plus and minus lines alone have no line numbers.
   assert.equal(parseChatDiff('-old\n+new'), undefined);

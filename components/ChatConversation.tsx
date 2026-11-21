@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { Check, Copy, Loader2, RotateCcw } from 'lucide-react';
-import { ChatMarkdown } from './ChatMarkdown';
+import { lazyComponent } from '../lib/lazy-screen';
+import { cn } from '../lib/utils';
+import type { ChatMarkdown as ChatMarkdownComponent } from './ChatMarkdown';
 import { Button } from './ui/button';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { Message, MessageContent, MessageHeader, MessageFooter } from './ui/message';
@@ -15,6 +17,24 @@ import {
 import type { ChatMessage } from '../lib/use-slide-chat';
 import type { ChatTraceStep } from '../lib/chat-trace';
 import { ChatTraceView } from './ChatTrace';
+
+// Words and its Highlights wasm load when a chat opens, not with every PR (components/ChatMarkdown.tsx).
+const LazyChatMarkdown = lazyComponent(() => import('./ChatMarkdown').then((module) => module.ChatMarkdown));
+
+/** A message's Markdown; its plain text shows for the moment Words takes to load. */
+function ChatMarkdown(props: ComponentProps<typeof ChatMarkdownComponent>) {
+  return (
+    <Suspense
+      fallback={
+        <div className={cn('markdown-body chat-markdown select-text whitespace-pre-wrap', props.className)}>
+          {props.children}
+        </div>
+      }
+    >
+      <LazyChatMarkdown {...props} />
+    </Suspense>
+  );
+}
 
 function AnswerCopy({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
@@ -64,6 +84,7 @@ export function ChatConversation({
   onOpenTraceStep?: (step: ChatTraceStep) => void;
   empty: ReactNode;
 }) {
+  useEffect(() => void LazyChatMarkdown.preload(), []);
   const streaming = messages.some((message) => message.isStreaming);
   const latest = messages.at(-1);
   const status = streaming
@@ -79,7 +100,8 @@ export function ChatConversation({
     <TooltipProvider delayDuration={350}>
       <MessageScrollerProvider
         key={conversationId}
-        autoScroll
+        // No follow: a new question scrolls once to the top of the panel, and its answer grows below it while the
+        // reader reads from the top. Scrolling frees the anchor; Jump to latest reaches the end.
         defaultScrollPosition="last-anchor"
         scrollPreviousItemPeek={12}
       >
