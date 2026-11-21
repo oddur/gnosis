@@ -917,6 +917,8 @@ export function PrChangesView({
                       setChatEntry(e);
                       setSelection(text);
                       setChatOpen(true);
+                      // Opening or not, the chat takes focus with the selection in its prompt.
+                      setChatFocusRequest((request) => request + 1);
                     }}
                   />
                 );
@@ -974,6 +976,14 @@ export function PrChangesView({
               const target = chatEntry && entries.find((e) => e.snapshot === chatEntry.snapshot && (e.file.path === step.path || e.file.previousPath === step.path));
               if (!target || !step.path) return;
               jumpToLines(target, { line: step.startLine, endLine: step.endLine, side: step.side });
+            }}
+            citations={chatEntry && {
+              // The files of the snapshot the conversation is about: a citation of any other file stays plain text.
+              files: entries.filter((e) => e.snapshot === chatEntry.snapshot).map((e) => e.file.path),
+              open: (cited) => {
+                const target = entries.find((e) => e.snapshot === chatEntry.snapshot && e.file.path === cited.path);
+                if (target) jumpToLines(target, { line: cited.startLine, endLine: cited.endLine, side: 'after' });
+              },
             }}
           />
         )}

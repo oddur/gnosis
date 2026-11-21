@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy, Loader2, RotateCcw } from 'lucide-react';
 import { lazyMarkdownComponent } from './LazyMarkdown';
 import { Button } from './ui/button';
@@ -15,6 +15,9 @@ import {
 import type { ChatMessage } from '../lib/use-slide-chat';
 import type { ChatTraceStep } from '../lib/chat-trace';
 import { ChatTraceView } from './ChatTrace';
+import { ChatCitationContext, type ChatCitationSource } from './ChatCitation';
+import { ReviewSelectionActions } from './ReviewSelectionActions';
+import { chatSelectionLabel, chatSelectionLineCount, parseChatSelection } from '../lib/chat-selection';
 
 // Words and its Highlights wasm load when a chat opens, not with every PR (components/ChatMarkdown.tsx). A message
 // shows its plain text until then, and if the renderer fails to load.
@@ -55,12 +58,28 @@ function AnswerCopy({ content }: { content: string }) {
   );
 }
 
+/** The code a question was about: its file and lines, the code on request. */
+function SentSelection({ selection }: { selection: string }) {
+  const parsed = parseChatSelection(selection);
+  const lines = chatSelectionLineCount(parsed);
+  return (
+    <details className="chat-quote">
+      <summary>
+        {chatSelectionLabel(parsed)} · {lines} {lines === 1 ? 'line' : 'lines'}
+      </summary>
+      <pre>{parsed.code}</pre>
+    </details>
+  );
+}
+
 export function ChatConversation({
   conversationId,
   messages,
   busy,
   onRetry,
   onOpenTraceStep,
+  citations,
+  onAskAboutSelection,
   empty,
 }: {
   conversationId: string;
@@ -69,9 +88,14 @@ export function ChatConversation({
   onRetry?: (id: string) => void;
   /** Opens a file step in the PR's Changes view. Without it, file chips are plain labels. */
   onOpenTraceStep?: (step: ChatTraceStep) => void;
+  /** The PR's files, for the answers' citations. Without it, every file citation shows as plain text. */
+  citations?: ChatCitationSource;
+  /** Code selected in an answer's diff, to quote in the next question. */
+  onAskAboutSelection?: (selection: string) => void;
   empty: ReactNode;
 }) {
   useEffect(() => void ChatMarkdown.preload(), []);
+  const scroller = useRef<HTMLDivElement>(null);
   const streaming = messages.some((message) => message.isStreaming);
   const latest = messages.at(-1);
   const status = streaming
@@ -85,74 +109,77 @@ export function ChatConversation({
           : '';
   return (
     <TooltipProvider delayDuration={350}>
-      <MessageScrollerProvider
-        key={conversationId}
-        // No follow: a new question scrolls once to the top of the panel, and its answer grows below it while the
-        // reader reads from the top. Scrolling frees the anchor; Jump to latest reaches the end.
-        defaultScrollPosition="last-anchor"
-        scrollPreviousItemPeek={12}
-      >
-        <MessageScroller className="chat-conversation flex-1">
-          <MessageScrollerViewport aria-label="Conversation">
-            <MessageScrollerContent className="chat-transcript" aria-live="off">
-              {!messages.length && <div className="chat-empty">{empty}</div>}
-              {messages.map((message, index) => (
-                <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.role === 'user'}>
-                  <Message align={message.role === 'user' ? 'end' : 'start'} className="chat-message">
-                    <MessageContent>
-                      <MessageHeader>{message.role === 'user' ? 'You' : 'Gnosis'}</MessageHeader>
-                      {message.role === 'assistant' && message.trace?.steps.length ? (
-                        <ChatTraceView trace={message.trace} streaming={message.isStreaming} onOpen={onOpenTraceStep} />
-                      ) : null}
-                      {message.selection && (
-                        <details className="chat-quote">
-                          <summary>
-                            Selected code · {message.selection.split('\n').length}{' '}
-                            {message.selection.includes('\n') ? 'lines' : 'line'}
-                          </summary>
-                          <pre>{message.selection}</pre>
-                        </details>
-                      )}
-                      {message.content && (
-                        <ChatMarkdown className="reading-prose chat-message-body" streaming={message.isStreaming}>
-                          {message.content}
-                        </ChatMarkdown>
-                      )}
-                      {message.isStreaming && (
-                        <div className="chat-answer-status">
-                          <Loader2 size={14} className="motion-safe:animate-spin" />
-                          {message.content ? 'Answering…' : 'Thinking…'}
-                        </div>
-                      )}
-                      {message.error && (
-                        <p role="alert" className="chat-answer-error">
-                          Answer interrupted. {message.error}
-                        </p>
-                      )}
-                      {message.stopped && <p className="chat-answer-status">Answer stopped.</p>}
-                      {message.role === 'assistant' && !message.isStreaming && (
-                        <MessageFooter className="chat-message-actions">
-                          {message.content && <AnswerCopy content={message.content} />}
-                          {(message.error || message.stopped) && index === messages.length - 1 && onRetry && (
-                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => onRetry(message.id)}>
-                              <RotateCcw size={14} />
-                              Retry answer
-                            </Button>
-                          )}
-                        </MessageFooter>
-                      )}
-                    </MessageContent>
-                  </Message>
-                </MessageScrollerItem>
-              ))}
-            </MessageScrollerContent>
-          </MessageScrollerViewport>
-          <MessageScrollerButton behavior="instant" aria-label="Jump to latest" />
-        </MessageScroller>
-        <span className="sr-only" role="status" aria-live="polite">
-          {status}
-        </span>
-      </MessageScrollerProvider>
+      <ChatCitationContext.Provider value={citations}>
+        <MessageScrollerProvider
+          key={conversationId}
+          // No follow: a new question scrolls once to the top of the panel, and its answer grows below it while the
+          // reader reads from the top. Scrolling frees the anchor; Jump to latest reaches the end.
+          defaultScrollPosition="last-anchor"
+          scrollPreviousItemPeek={12}
+        >
+          <MessageScroller className="chat-conversation flex-1">
+            {onAskAboutSelection && (
+              <ReviewSelectionActions containerRef={scroller} resetKey={conversationId} onAsk={onAskAboutSelection} />
+            )}
+            <MessageScrollerViewport ref={scroller} aria-label="Conversation">
+              <MessageScrollerContent className="chat-transcript" aria-live="off">
+                {!messages.length && <div className="chat-empty">{empty}</div>}
+                {messages.map((message, index) => (
+                  <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.role === 'user'}>
+                    <Message align={message.role === 'user' ? 'end' : 'start'} className="chat-message">
+                      <MessageContent>
+                        <MessageHeader>{message.role === 'user' ? 'You' : 'Gnosis'}</MessageHeader>
+                        {message.role === 'assistant' && message.trace?.steps.length ? (
+                          <ChatTraceView
+                            trace={message.trace}
+                            timing={message.timing}
+                            streaming={message.isStreaming}
+                            answered={!!message.content}
+                            onOpen={onOpenTraceStep}
+                          />
+                        ) : null}
+                        {message.selection && <SentSelection selection={message.selection} />}
+                        {message.content && (
+                          <ChatMarkdown className="reading-prose chat-message-body" streaming={message.isStreaming}>
+                            {message.content}
+                          </ChatMarkdown>
+                        )}
+                        {message.isStreaming && (
+                          <div className="chat-answer-status">
+                            <Loader2 size={14} className="motion-safe:animate-spin" />
+                            {message.content ? 'Answering…' : 'Thinking…'}
+                          </div>
+                        )}
+                        {message.error && (
+                          <p role="alert" className="chat-answer-error">
+                            Answer interrupted. {message.error}
+                          </p>
+                        )}
+                        {message.stopped && <p className="chat-answer-status">Answer stopped.</p>}
+                        {message.role === 'assistant' && !message.isStreaming && (
+                          <MessageFooter className="chat-message-actions">
+                            {message.content && <AnswerCopy content={message.content} />}
+                            {(message.error || message.stopped) && index === messages.length - 1 && onRetry && (
+                              <Button size="sm" variant="ghost" disabled={busy} onClick={() => onRetry(message.id)}>
+                                <RotateCcw size={14} />
+                                Retry answer
+                              </Button>
+                            )}
+                          </MessageFooter>
+                        )}
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                ))}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton behavior="instant" aria-label="Jump to latest" />
+          </MessageScroller>
+          <span className="sr-only" role="status" aria-live="polite">
+            {status}
+          </span>
+        </MessageScrollerProvider>
+      </ChatCitationContext.Provider>
     </TooltipProvider>
   );
 }

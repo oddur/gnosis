@@ -15,6 +15,8 @@ import {
   parseChatDiff,
   withChatIslands,
 } from '../lib/chat-diffs';
+import { CHAT_CITATION_ISLAND, withChatCitations } from '../lib/chat-citations';
+import { ChatCitation } from './ChatCitation';
 import { D2Diagram } from './D2Diagram';
 import type { D2DiagramSpec } from '../lib/types';
 import { MermaidDiagram } from './MermaidDiagram';
@@ -86,7 +88,12 @@ function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
       {files.map((file, index) => {
         const lines = file.hunks.flatMap((hunk) => hunk.content.split('\n'));
         return (
-          <section key={index} className="review-file-group" aria-label={`Diff, ${file.path || 'patch'}`}>
+          <section
+            key={index}
+            className="review-file-group"
+            data-file-path={file.path || undefined}
+            aria-label={`Diff, ${file.path || 'patch'}`}
+          >
             <DiffFileHeader
               path={file.path || 'patch'}
               additions={lines.filter((line) => line.startsWith('+')).length}
@@ -157,6 +164,12 @@ function chatIslands(theme: string): ReactiveIslands {
           fallback: 'Loading diagram…',
           render: (data) => (typeof data.source === 'string' ? <MermaidDiagram chart={data.source} /> : null),
         },
+        // `[path:start-end]` citations, as lib/chat-citations.ts rewrites them: a PR file or a page as an inline
+        // citation, anything else as the model's plain text (ChatCitation).
+        [CHAT_CITATION_ISLAND]: {
+          inline: true,
+          render: (data) => <ChatCitation data={data} />,
+        },
         [CHAT_D2_ISLAND]: {
           fallback: 'Loading diagram…',
           render: (data) => (typeof data.source === 'string' ? <ChatD2 source={data.source} /> : null),
@@ -183,7 +196,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   const theme = diffThemeName(id);
   useLayoutEffect(() => applyCodePalette(theme), [theme]);
   const plugins = useCodePlugins(id);
-  const source = useMemo(() => withChatIslands(children), [children]);
+  const source = useMemo(() => withChatCitations(withChatIslands(children)), [children]);
   return (
     <Words
       className={cn('markdown-body chat-markdown select-text', className)}

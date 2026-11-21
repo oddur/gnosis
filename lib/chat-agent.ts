@@ -1,9 +1,10 @@
 import type { SendSlideChatRequest } from './types';
+import { CHAT_CITATION_INSTRUCTION } from './chat-citations';
 
 const MAX_HISTORY_MESSAGES = 10;
 
 export function buildSlideChatSystemPrompt(): string {
-  return `You are a senior engineer helping a code reviewer understand a specific set of changes in a pull request. Answer follow-up questions about these code changes. Be direct and concrete. Reference the actual code when helpful. Keep answers focused on what the reviewer needs to understand.`;
+  return `You are a senior engineer helping a code reviewer understand a specific set of changes in a pull request. Answer follow-up questions about these code changes. Be direct and concrete. Reference the actual code when helpful. Keep answers focused on what the reviewer needs to understand. ${CHAT_CITATION_INSTRUCTION}`;
 }
 
 export function buildSlideChatUserMessage(req: SendSlideChatRequest): string {
