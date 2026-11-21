@@ -19,11 +19,12 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service.ts';
-import { blockBuckets, verifyProposals } from '../lib/conflict-verify.ts';
+import { blockBuckets, verifyProposals, verifyWholeFile } from '../lib/conflict-verify.ts';
 import { blockProposals } from '../lib/conflict-carry.ts';
 import { hasConflictMarkers } from '../lib/conflict-resolution.ts';
 import { parseConflicts } from '../lib/conflict-blocks.ts';
 import { createSyntaxEngine } from '../lib/syntax-scope.ts';
+import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise.ts';
 import { runConflictProcess } from '../src/conflict-process.ts';
 import { proposedChecks } from './conflict-lab-fixes.mjs';
 import { bare, bareGit, casePlan, commitFiles, loadCases, root, sortedLines, squash } from './conflict-lab-lib.mjs';
@@ -50,6 +51,14 @@ const analyser =
     if (text.length > SYNTAX_MAX_CHARACTERS) throw new Error('This file is too large to parse');
     const { definitions, errors } = await engine.definitions(language, text);
     return { definitions, errors };
+  };
+/** The renderer's checkFormatting, in Node, with the same limits. */
+const equivalence =
+  (off = []) =>
+  async (language, before, after) => {
+    if (off.includes(language)) throw new Error('This language is off in Settings');
+    if (Math.max(before.length, after.length) > NOISE_MAX_CHARACTERS) throw new Error('This file is too large to compare');
+    return engine.equivalent(language, before, after);
   };
 
 /** A stand-in Mergiraf binary for the failure-path cases. */
@@ -206,12 +215,17 @@ export async function runCase(c, { keep = false } = {}) {
     const binary = await mergirafFor(meta.mergiraf, dir, c.dir);
     const run = (request) => service.run(request, new AbortController().signal);
     const analyse = analyser(meta.languagesOff);
+    const equivalent = equivalence(meta.languagesOff);
 
     async function score(stepName, session, resolvedTree, expectedSpec) {
       const files = [];
       const expectedFiles = new Map(Object.entries(expectedSpec ?? {}));
       for (const f of session.files) {
-        const verdict = f.proposals ? await verifyProposals(f, analyse) : undefined;
+        const verdict = f.proposals
+          ? await verifyProposals(f, analyse, false, equivalent)
+          : f.wholeFile
+            ? await verifyWholeFile(f, f.wholeFile, analyse)
+            : undefined;
         const buckets = blockBuckets(f, f.result, verdict);
         // The checks proposed for #444, measured on the side: what the buckets would be with them.
         const fixNote = verdict?.merged ? proposedChecks(f) : undefined;
@@ -224,7 +238,7 @@ export async function runCase(c, { keep = false } = {}) {
           bucketsWithFixes,
           fixNote,
           expected,
-          note: verdict?.note,
+          note: verdict?.note ?? f.structuralNote,
           unsupported: f.unsupported,
           source: f.source,
         };
@@ -244,6 +258,14 @@ export async function runCase(c, { keep = false } = {}) {
           ...(resolvedTree?.has(f.path) ? [resolvedTree.get(f.path).toString('utf8')] : []),
           ...(meta.acceptable?.[f.path] ?? []),
         ];
+        // A whole-file proposal is in Check. It is correct when it equals a known-correct resolution, whitespace aside.
+        if (f.wholeFile) {
+          entry.tier = 'whole-file';
+          if (accepted.length)
+            entry.wholeFileProposal = accepted.some((r) => squash(r) === squash(f.wholeFile.text))
+              ? 'correct'
+              : 'differs';
+        }
         const segments = parseConflicts(f.original).filter((s) => s.kind === 'conflict');
         const mergedBlocks = segments.filter((_, i) => buckets[i] === 'merged').map((s) => f.proposals[s.index].text);
         if (mergedBlocks.length) {
@@ -432,6 +454,7 @@ export function blocks(results) {
             note: f.note,
             fixNote: f.fixNote,
             comparison: f.comparison,
+            wholeFile: f.wholeFileProposal,
             meta: r.meta,
           });
         }
@@ -474,7 +497,7 @@ export function fixtureReport(results) {
         r.actual,
         r.wrong ? 'WRONG MERGED' : matches(r.expected, r.actual) ? 'yes' : 'no',
         r.withFixes === r.actual ? '' : `${r.withFixes} (${r.fixNote})`,
-        [r.tier, r.note, r.comparison].filter(Boolean).join('; '),
+        [r.tier, r.note, r.comparison, r.wholeFile && `whole file ${r.wholeFile}`].filter(Boolean).join('; '),
       ])
     )
   );
@@ -505,6 +528,13 @@ export function fixtureReport(results) {
     `## With the proposed checks: ${wrongWithFixes.length} wrong Merged; ${lost.length} correct Merged moved to Check`,
     '',
     ...lost.map((r) => `- ${r.case} (${r.path}, block ${r.index + 1}): ${r.fixNote}`)
+  );
+  const whole = rows.filter((r) => r.tier === 'whole-file');
+  out.push(
+    '',
+    `## Conflicts with a whole-file proposal: ${whole.length}, ${whole.filter((r) => r.wholeFile === 'correct').length} equal the known-correct resolution`,
+    '',
+    ...whole.map((r) => `- ${r.case} (${r.path}): ${r.wholeFile ?? 'no known-correct resolution'}. ${r.note ?? ''}`)
   );
   const mismatched = rows.filter((r) => !r.wrong && !matches(r.expected, r.actual));
   out.push(

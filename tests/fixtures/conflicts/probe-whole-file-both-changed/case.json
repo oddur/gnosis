@@ -1,0 +1,9 @@
+{
+  "description": "Review probe for #448: the PR moves alpha below beta and edits its return; main edits its first line. A whole-file result that swaps the two edits between alpha and beta keeps every line, so the checks cannot vouch for it: both sides changed alpha. The conflict stays in Decide with that reason, never Merged.",
+  "language": "javascript",
+  "category": "probe/whole-file",
+  "mergiraf": "canned",
+  "expected": {
+    "src/order.js": "decide"
+  }
+}

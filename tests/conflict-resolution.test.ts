@@ -601,6 +601,23 @@ void test('rejects malformed IPC, leftover markers and cancelled operations with
     }),
     /remaining conflict markers/
   );
+  // Only the opening and closing markers removed: the lone `=======` between both sides still blocks the push.
+  const leftover = f.session.files[0].original
+    .split('\n')
+    .filter((line) => !/^(<{7}|>{7}|\|{7})/.test(line))
+    .join('\n');
+  assert.match(leftover, /^={7}$/m);
+  await assert.rejects(
+    f.run({
+      kind: 'save',
+      id: f.session.id,
+      version: f.session.version,
+      path: 'sample.ts',
+      contents: leftover,
+      resolved: true,
+    }),
+    /remaining conflict markers/
+  );
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(
@@ -1226,4 +1243,373 @@ void test('a restack check that fails early waits for every read it started', as
     /Cannot update/
   );
   assert.deepEqual(finished.sort(), [session.url, ...urls].sort(), 'no read is still running when the check rejects');
+});
+
+/** The reorder case from the conflict lab: the PR moves alpha below beta, and main edits alpha's body. */
+const goFunction = (name: string, total = 'value + 1') =>
+  `func ${name}(value int) int {\n\ttotal := ${total}\n\tscaled := total * 2\n\treturn scaled - 3\n}\n`;
+const goFile = (functions: string[], filler = 'value + 1') =>
+  [
+    'package lab\n',
+    'func filler0(value int) int {\n\treturn value + 0\n}\n',
+    ...functions,
+    `func filler1(value int) int {\n\treturn ${filler}\n}\n`,
+  ].join('\n');
+const nativeMergiraf = path.resolve(
+  'resources/mergiraf/runtime',
+  process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'
+);
+
+void test('a structural merge that also moves lines outside the conflicts is a whole-file proposal in Check, never Merged', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const expected = goFile([goFunction('beta'), goFunction('alpha', 'value + 10')]);
+  const f = await fixture(t, false, {
+    name: 'reorder.go',
+    base: goFile([goFunction('alpha'), goFunction('beta')]),
+    ours: goFile([goFunction('beta'), goFunction('alpha')]),
+    theirs: goFile([goFunction('alpha', 'value + 10'), goFunction('beta')]),
+  });
+  const file = f.session.files.find((x) => x.path === 'reorder.go') as ConflictFile;
+  assert.equal(file.wholeFile?.text, expected, 'Mergiraf’s whole-file result is kept');
+  assert.equal(file.proposals, undefined);
+  assert.equal(file.result, file.original, 'The draft stays as Git wrote it until you use the proposal');
+  assert.equal(file.resolved, false);
+  assert.deepEqual(
+    blockBuckets(file, file.result, { merged: false, passed: true, note: 'passed' }),
+    ['check'],
+    'One thing to check, even when its checks pass'
+  );
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  // Using it is the Suggest step: the result becomes the draft, unreviewed, with no per-conflict proposals.
+  let session = (
+    await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path })
+  ).session;
+  let used = session.files.find((x) => x.path === 'reorder.go') as ConflictFile;
+  assert.equal(structural, 0, 'The kept result is used; Mergiraf does not run again');
+  assert.equal(used.result, expected);
+  assert.equal(used.source, 'mergiraf');
+  assert.equal(used.resolved, false);
+  assert.equal(used.wholeFile, undefined);
+  assert.ok(blockBuckets(used, used.result, undefined).every((bucket) => bucket === 'decided'));
+
+  // Start over, then resolve conflict by conflict instead: the proposal stays beside the draft.
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  used = session.files.find((x) => x.path === 'reorder.go') as ConflictFile;
+  const theirs = parseConflicts(used.original)
+    .map((s) => (s.kind === 'text' ? s.text : s.block.theirs))
+    .join('');
+  session = (
+    await f.run({
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: used.path,
+      contents: theirs,
+      resolved: true,
+    })
+  ).session;
+  const advance = async (name: string, text: string) => {
+    await f.git('checkout', 'main');
+    await fs.writeFile(path.join(f.remote, name), text);
+    await f.git('add', '.');
+    await f.git('commit', '-m', 'Another PR merged');
+    f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  };
+  // The base moves elsewhere: the file's three versions are the same, so the proposal carries and Mergiraf rests.
+  structural = 0;
+  await advance('later.txt', 'Another PR merged.\n');
+  let reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  assert.equal(structural, 0);
+  assert.equal(reply.session.files.find((x) => x.path === 'reorder.go')?.wholeFile?.text, expected);
+  // The base changes this file outside the conflict: the old proposal would drop that change, so Mergiraf runs again.
+  await advance('reorder.go', goFile([goFunction('alpha', 'value + 10'), goFunction('beta')], 'value + 100'));
+  reply = await f.run({ kind: 'preview', id: reply.session.id, version: reply.session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  assert.notEqual(structural, 0, 'Mergiraf runs again');
+  assert.equal(
+    reply.session.files.find((x) => x.path === 'reorder.go')?.wholeFile?.text,
+    goFile([goFunction('beta'), goFunction('alpha', 'value + 10')], 'value + 100')
+  );
+});
+
+void test('a draft saved before the whole-file proposal gets the structural pass once, beside the draft', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const expected = goFile([goFunction('beta'), goFunction('alpha', 'value + 10')]);
+  const f = await fixture(
+    t,
+    false,
+    {
+      name: 'reorder.go',
+      base: goFile([goFunction('alpha'), goFunction('beta')]),
+      ours: goFile([goFunction('beta'), goFunction('alpha')]),
+      theirs: goFile([goFunction('alpha', 'value + 10'), goFunction('beta')]),
+    },
+    [
+      {
+        name: 'edited.ts',
+        base: 'export const a = 0;\n',
+        ours: 'export const a = 1;\n',
+        theirs: 'export const a = 2;\n',
+      },
+      {
+        name: 'settings.json',
+        base: '{"left":0,"right":0}\n',
+        ours: '{"left":1,"right":0}\n',
+        theirs: '{"left":0,"right":2}\n',
+      },
+    ]
+  );
+  // The draft as an older build saved it: no record of the pass, no proposals, one file edited by hand, and one
+  // holding a Suggest result.
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralNote;
+    delete file.structuralRan;
+    delete file.proposals;
+    file.result = file.original;
+    file.source = 'manual';
+  }
+  const edited = old.files.find((x) => x.path === 'edited.ts') as ConflictFile;
+  edited.result = 'export const a = 3;\n';
+  const suggested = old.files.find((x) => x.path === 'settings.json') as ConflictFile;
+  Object.assign(suggested, {
+    result: '{"left":1,"right":2}\n',
+    source: 'mergiraf',
+    explanation: 'Mergiraf proposed it.',
+  });
+  f.deps.storage.write(key, old);
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  const { session } = await f.run({ kind: 'open', url: f.state.url });
+  assert.ok(structural > 0);
+  const byPath = (path: string) => session.files.find((x) => x.path === path) as ConflictFile;
+  assert.equal(byPath('reorder.go').wholeFile?.text, expected);
+  assert.equal(byPath('reorder.go').result, byPath('reorder.go').original, 'The pass never writes a draft');
+  assert.equal(byPath('reorder.go').structuralRan, true);
+  // Your edit and the Suggest result are left exactly as they were.
+  assert.equal(byPath('edited.ts').result, 'export const a = 3;\n');
+  assert.equal(byPath('edited.ts').structuralRan, undefined);
+  assert.equal(byPath('settings.json').result, '{"left":1,"right":2}\n');
+  assert.equal(byPath('settings.json').proposals, undefined);
+  assert.equal(byPath('settings.json').wholeFile, undefined);
+  assert.equal(session.version, old.version + 1);
+  // Recorded: the next reopen does not run it again.
+  structural = 0;
+  await f.run({ kind: 'open', url: f.state.url });
+  assert.equal(structural, 0);
+});
+
+void test('a file reset to Git’s conflict after a suggestion stays as you left it on reopen', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const f = await fixture(t, false, {
+    name: 'settings.json',
+    base: '{"left":0,"right":0}\n',
+    ours: '{"left":1,"right":0}\n',
+    theirs: '{"left":0,"right":2}\n',
+  });
+  let session = (
+    await f.run({
+      kind: 'resolve',
+      id: f.session.id,
+      version: f.session.version,
+      engine: 'mergiraf',
+      path: 'settings.json',
+    })
+  ).session;
+  const file = session.files[0];
+  session = (
+    await f.run({
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents: file.original,
+      resolved: false,
+    })
+  ).session;
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.equal(structural, 0, 'Structural merge already ran for this draft');
+  assert.equal(reopened.result, file.original);
+  assert.equal(reopened.proposals, undefined);
+});
+
+/** A stand-in Mergiraf that answers by the budget it gets, and logs each budget. */
+async function stubMergiraf(t: TestContext, script: string) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-stub-mergiraf-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'log');
+  const binary = path.join(dir, 'mergiraf');
+  await fs.writeFile(
+    binary,
+    `#!/bin/sh\nfor a in "$@"; do [ "$prev" = "--timeout" ] && budget="$a"; prev="$a"; done\necho "$budget" >> '${log}'\n${script}`,
+    { mode: 0o755 }
+  );
+  return {
+    binary,
+    budgets: async () => (await fs.readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean),
+  };
+}
+const jsonSample = {
+  name: 'settings.json',
+  base: '{"left":0,"right":0}\n',
+  ours: '{"left":1,"right":0}\n',
+  theirs: '{"left":0,"right":2}\n',
+};
+
+void test('a structural merge that runs out of time is retried with the Suggest budget, then noted on the file', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample, [{ ...jsonSample, name: 'other.json' }]);
+  // Hangs on the first budget; answers at once on the retry budget.
+  const stub = await stubMergiraf(
+    t,
+    `[ "$budget" = 10000 ] && { printf '{"left":1,"right":2}\\n'; exit 0; }\nexec sleep 30\n`
+  );
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 60_000] });
+  let files = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files;
+  assert.deepEqual(await stub.budgets(), ['100', '100', '10000', '10000'], 'Every first try runs before any retry');
+  for (const file of files) {
+    assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 }, 'The retry’s proposal is kept');
+    assert.equal(file.structuralNote, undefined);
+  }
+  // No retry time left: the files stay as Git wrote them, and say why.
+  Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 0] });
+  files = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files;
+  for (const file of files) {
+    assert.equal(file.result, file.original);
+    assert.equal(file.structuralNote, 'Structural merge timed out.');
+  }
+  // Suggest replaces the draft, so the note no longer applies.
+  const session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  const suggested = (
+    await f.run({
+      kind: 'resolve',
+      id: session.id,
+      version: session.version,
+      engine: 'mergiraf',
+      path: 'settings.json',
+    })
+  ).session.files.find((x) => x.path === 'settings.json');
+  assert.equal(suggested?.structuralNote, undefined);
+});
+
+void test('a result that arrives after the budget is Mergiraf’s fallback, not its merge', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample);
+  // Past the first budget it prints a file with no markers, as a line merge may; the retry answers properly.
+  const stub = await stubMergiraf(
+    t,
+    `[ "$budget" = 10000 ] && { printf '{"left":1,"right":2}\\n'; exit 0; }\nsleep 1\nprintf 'not the merge\\n'\n`
+  );
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 60_000] });
+  const file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
+  assert.deepEqual(await stub.budgets(), ['100', '10000']);
+  assert.equal(file.wholeFile, undefined);
+  assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 });
+});
+
+void test('a file structural merge proposed nothing for says why, and a base move that changes it runs it again', async (t) => {
+  // Both sides changed the same line: Mergiraf leaves the conflict.
+  const tail = Array.from({ length: 8 }, (_, i) => `export const keep${i} = ${i};\n`).join('');
+  const sample = (answer: number, last = 0) =>
+    `export const answer = ${answer};\n${tail}export const last = ${last};\n`;
+  const f = await fixture(t, false, { name: 'sample.ts', base: sample(0), ours: sample(1), theirs: sample(2) });
+  const native = !!(await fs.stat(nativeMergiraf).catch(() => undefined));
+  if (native) assert.equal(f.session.files[0].structuralNote, 'Structural merge couldn’t combine this file.');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-failing-mergiraf-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  f.deps.mergiraf = () => path.join(dir, 'missing');
+  let session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(session.files[0].structuralNote, 'Structural merge isn’t available in this build.');
+  if (process.platform === 'win32') return;
+  const failing = path.join(dir, 'mergiraf');
+  await fs.writeFile(failing, '#!/bin/sh\necho "mergiraf: internal error" >&2\nexit 134\n', { mode: 0o755 });
+  let runs = 0;
+  f.deps.mergiraf = () => {
+    runs++;
+    return failing;
+  };
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  const file = session.files[0];
+  assert.equal(file.result, file.original);
+  assert.equal(file.structuralNote, 'Structural merge couldn’t combine this file.');
+  // Resolve it, then main changes the same file away from the conflict: the note was about other versions.
+  session = (
+    await f.run({
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents: sample(3),
+      resolved: true,
+    })
+  ).session;
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'sample.ts'), sample(2, 9));
+  await f.git('commit', '-am', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  runs = 0;
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  assert.notEqual(runs, 0, 'Structural merge ran again on the new versions');
+});
+
+void test('a file structural merge gave no result stays eligible, and the next reopen with Mergiraf replaces the note', async (t) => {
+  if (process.platform === 'win32' || !(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Needs a POSIX shell and npm run prepare:mergiraf.');
+    return;
+  }
+  const f = await fixture(t, false, jsonSample);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-no-mergiraf-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  f.deps.mergiraf = () => path.join(dir, 'missing');
+  let file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
+  assert.equal(file.structuralNote, 'Structural merge isn’t available in this build.');
+  assert.equal(file.structuralRan, undefined);
+  // Out of time with no retry budget left: also no result.
+  const stub = await stubMergiraf(t, 'exec sleep 30\n');
+  f.deps.mergiraf = () => stub.binary;
+  Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 0] });
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.deepEqual(await stub.budgets(), ['100']);
+  assert.equal(file.structuralNote, 'Structural merge timed out.');
+  assert.equal(file.structuralRan, undefined);
+  // Mergiraf is back: the pass runs, its proposal waits beside the draft, and the old note is gone.
+  f.deps.mergiraf = () => nativeMergiraf;
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.equal(file.structuralRan, true);
+  assert.equal(file.structuralNote, undefined);
+  assert.equal(file.result, file.original);
+  assert.ok(file.proposals?.[0]);
 });

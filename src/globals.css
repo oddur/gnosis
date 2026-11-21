@@ -1965,6 +1965,11 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    inside the diff (ChangesDiff's CSS), so its real edits read first. */
 .diff-gap.diff-move-note { min-height:var(--leading-code); padding:0; border:0; background:transparent; container-type:normal; }
 .diff-move-note .diff-gap-trailing { padding-left:0; color:var(--diff-header-muted); }
+/* Notes over a hunk's first row head the hunk's code in one row, outside the diff: on the code's background, each in
+   its side's code column. */
+.diff-move-lead { background:var(--diff-code-bg, #22272e); }
+.diff-move-lead[data-split] { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+.diff-move-note[data-move-lead] .diff-gap-trailing { padding-left:var(--diff-code-inset); }
 .diff-move-note code { font:inherit; color:var(--diff-header-fg); }
 .diff-move-note .diff-gap-text code { color:inherit; }
 .changes-file-noise { display:inline-flex; align-items:center; gap:4px; }
@@ -4033,7 +4038,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 .conflict-file-status { display:inline-flex;align-items:center;gap:5px;width:fit-content;padding:1px 6px;border-radius:var(--radius-sm);font-size:var(--type-caption);font-weight:600;line-height:1.5;white-space:nowrap; }
 .conflict-file-status[data-stage=conflicted] { color:var(--color-danger);background:var(--status-danger-bg,color-mix(in srgb,var(--color-danger) 10%,var(--background))); }
-.conflict-file-status[data-stage=resolved] { color:var(--color-warning);background:var(--status-warning-bg,color-mix(in srgb,var(--color-warning) 12%,var(--background))); }
+.conflict-file-status:is([data-stage=resolved],[data-stage=proposal]) { color:var(--color-warning);background:var(--status-warning-bg,color-mix(in srgb,var(--color-warning) 12%,var(--background))); }
 .conflict-file-status[data-stage=reviewed] { color:var(--color-success);background:var(--status-success-bg,color-mix(in srgb,var(--color-success) 10%,var(--background))); }
 
 /* Conflict buckets: Merged (checked), Check (a proposal to read), Decide (no safe proposal). Each has a label and an icon. */
@@ -4045,9 +4050,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-bucket[data-bucket=check] { color:var(--color-warning); }
 .conflict-bucket[data-bucket=merged] { color:var(--color-success); }
 .conflict-file-buckets { display:flex;flex-wrap:wrap;gap:4px; }
-.conflict-files .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
+:is(.conflict-files,.conflict-file-title) .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
 .conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
 .conflict-block-header [data-slot=button] { margin-left:auto; }
+.conflict-whole-file > p { padding:8px 12px;max-width:80ch;font-size:var(--type-control); }
 .conflict-merged-detail summary { color:var(--muted-foreground); }
 .conflict-help { padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--card);font-size:var(--type-control);line-height:1.6; }
 .conflict-help ol { margin:0;padding-left:20px;list-style:decimal;max-width:80ch; }

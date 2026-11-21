@@ -1,0 +1,16 @@
+{
+  "description": "One side only reformats a call over several lines; the other changes one argument in it. The case a user hit in Resolve conflicts (oddur/gnosis-conflict-lab #99): the PR’s change is formatting only, so Mergiraf’s result (the PR’s layout with main’s argument) is checked by its syntax tree and Merged.",
+  "language": "csharp",
+  "category": "matrix/auto (generated sample, regression)",
+  "pattern": "reformat-vs-edit",
+  "axes": {
+    "position": "middle",
+    "indent": "4",
+    "eol": "lf",
+    "nesting": "top",
+    "size": "small"
+  },
+  "expected": {
+    "lab/reformat-vs-edit.cs": "merged"
+  }
+}

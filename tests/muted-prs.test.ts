@@ -14,6 +14,10 @@ import type { ReviewHistoryEntry } from '../lib/types';
 import { localCommandSearch } from './fixtures/search-backend';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
+import { useFixtureClock } from './fixture-clock';
+
+// The fixtures use fixed dates; see tests/fixture-clock.ts.
+useFixtureClock('2026-10-27T00:00:00Z');
 
 function member(number: number): ReviewMember {
   return {

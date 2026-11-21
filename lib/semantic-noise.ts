@@ -1,3 +1,4 @@
+import { diffArrays } from 'diff';
 import type * as TreeSitter from 'web-tree-sitter';
 import type { SyntaxLanguage } from './syntax-scope';
 
@@ -885,6 +886,12 @@ const commentTexts = (comments: readonly Comment[], row: number, count: number) 
 const JOIN_BLOCKS = 48;
 const JOIN_GAP = 40;
 
+/**
+ * Files larger than this are not compared: a comparison parses both sides in the one worker, and a long one would hold
+ * up the next file's breadcrumbs.
+ */
+export const NOISE_MAX_CHARACTERS = 400_000;
+
 export interface NoiseParser {
   /** Parses `text`, reusing `previous` (already edited to match) where it can, as tree-sitter's incremental parse. */
   parse: (text: string, previous?: TreeSitter.Tree) => TreeSitter.Tree | null;
@@ -1103,6 +1110,24 @@ export function classifyNoise(
   if (!texts || texts.blocks.length !== blocks.length) return blocks.map((block) => ({ ...block, kind: 'code', reason: 'mismatch' }));
   const kinds = classifyBlocks(parser, language, texts, trees && ((before, now) => trees(texts, before, now)));
   return blocks.map((block, i) => ({ ...block, ...kinds[i] }));
+}
+
+/**
+ * Whether two versions of a file are the same program, by the comparison above: every change between them is
+ * whitespace or formatting. A comment change, a parse error on either side or any doubt is a difference. The conflict
+ * checks use it to tell a side that only reformatted lines (lib/conflict-verify.ts).
+ */
+export function formattingEquivalent(parser: NoiseParser, language: SyntaxLanguage, before: string, after: string): boolean {
+  const lines = (text: string) => {
+    const list = text.split('\n');
+    if (list.at(-1) === '') list.pop();
+    return list;
+  };
+  const rows: Row[] = diffArrays(lines(before), lines(after)).flatMap((part) =>
+    part.value.map((text) => ({ type: part.added ? ('+' as const) : part.removed ? ('-' as const) : (' ' as const), text }))
+  );
+  const blocks = classifyNoise(parser, language, after, [{ oldStart: 1, newStart: 1, rows }]);
+  return blocks.every((block) => block.kind === 'whitespace' || block.kind === 'formatting');
 }
 
 // ── Views ───────────────────────────────────────────────────────────────────

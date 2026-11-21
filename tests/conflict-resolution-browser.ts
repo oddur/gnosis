@@ -120,7 +120,8 @@ void app.whenReady().then(async () => {
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;}
-        if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
+        if(req.kind==='resolve'&&s.files.find(f=>f.path===req.path)?.wholeFile){const f=s.files.find(f=>f.path===req.path);f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';delete f.wholeFile;f.resolved=false;f.source='mergiraf';}
+        else if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
         if(req.kind==='publish'){if(window.failPublish)throw Error("Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. To github.com:klang/engine.git\\n ! [rejected]        feature/retry (stale info)\\nerror: failed to push some refs");s.status='published';s.commitSha='d'.repeat(40);}
         s.version++;return {session:structuredClone(s)};
@@ -1033,7 +1034,7 @@ void app.whenReady().then(async () => {
     })()`);
     await open();
     await wait(
-      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 2 of 4 conflicts are merged and checked. 2 need you.'"
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 2 of 4 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.'"
     );
     const showMerged = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
     assert.equal(await js(`${showMerged}.checked`), true, 'Merged conflicts still show for review by default');
@@ -1079,7 +1080,7 @@ void app.whenReady().then(async () => {
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await wait(
-      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 1 of 4 conflicts are merged and checked. 3 need you.'"
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files conflict. 1 of 4 conflicts are merged and checked. 3 need you: 1 to check, 2 to decide.'"
     );
     // Review probe: the proposal is one click away from Decide, and Reset file returns to the proposals.
     await click('Use the proposal');
@@ -1092,6 +1093,187 @@ void app.whenReady().then(async () => {
     assert.ok(await exists('Start from Git’s conflict'));
     await click('Start from Git’s conflict');
     await wait(`${block(0)}?.dataset.state==='open'`);
+    await click('Close');
+
+    // oddur/gnosis-conflict-lab #99: the PR only reformats a call and main changes one argument. Mergiraf's result is
+    // checked by its syntax tree and Merged. The trap beside it: the PR also changed a token while it reformatted, so
+    // its proposal stays in Check, and the header shows the same "1 to check" as the file list, not "Resolved".
+    const csharp = (call: string) =>
+      `public static class Lab\n{\n    public static int alpha(int value)\n    {\n        var total = value + 1;\n${call}    }\n}\n`;
+    const oneLine = (last: string) => `        return combine(value, total, value * 2, ${last});\n`;
+    const split = (last: string, total = 'total') =>
+      `        return combine(\n            value,\n            ${total},\n            value * 2,\n            ${last}\n        );\n`;
+    const reformat = (path: string, ours: string, proposal: string) => {
+      const [head, tail] = csharp('@').split('@');
+      return {
+        path,
+        mode: '100644',
+        base: csharp(oneLine('4')),
+        ours: csharp(ours),
+        theirs: csharp(oneLine('5')),
+        original: `${head}<<<<<<< feature/retry\n${ours}||||||| ancestor\n${oneLine('4')}=======\n${oneLine('5')}>>>>>>> main\n${tail}`,
+        proposals: [{ source: 'mergiraf', text: proposal }],
+        result: csharp(proposal),
+        resolved: false,
+        source: 'mergiraf',
+      };
+    };
+    const reformatted = reformat('lab/reformat.cs', split('4'), split('5'));
+    const trap = reformat('lab/trap.cs', split('4', 'total + 1'), split('5', 'total + 1'));
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([trap, reformatted])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='2 files conflict. 1 of 2 conflicts are merged and checked. 1 to check.'"
+    );
+    const badges = (scope: string) =>
+      js<string[][]>(
+        `[...document.querySelectorAll('${scope} [data-status]')].map(b=>[b.dataset.status,...[...b.querySelectorAll('svg')].map(s=>s.getAttribute('class')),b.textContent])`
+      );
+    const listBadge = (index: number) => badges(`.conflict-files button:nth-child(${index + 1})`);
+    assert.deepEqual(await badges('.conflict-file-title'), await listBadge(0), 'The header and the file list agree');
+    assert.deepEqual(
+      (await badges('.conflict-file-title')).map(([status, , text]) => [status, text]),
+      [['buckets', '1 to check']]
+    );
+    assert.match((await badges('.conflict-file-title'))[0][1], /circle-question-mark|circle-help/, 'The Check icon');
+    assert.equal(await js("!!document.querySelector('.conflict-file-title [data-status=resolved]')"), false);
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check');
+    assert.match(
+      await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`),
+      /Both sides changed the same lines\. Check that the result keeps both changes\./
+    );
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      /^1 to check in this file · 0 of 2 files reviewed$/
+    );
+    await captureAll('reformat-trap-check');
+    await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='lab/reformat.cs').click()");
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    assert.deepEqual(await badges('.conflict-file-title'), await listBadge(1), 'The header and the file list agree');
+    assert.equal((await badges('.conflict-file-title'))[0][2], '1 merged');
+    assert.match(
+      await js<string>(`${block(0)}.querySelector('summary').textContent`),
+      /^The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting\./
+    );
+    await js(`${block(0)}.querySelector('details').open=true`);
+    await captureAll('reformat-merged');
+    await click('Close');
+
+    // A reorder: Mergiraf's result also moves lines outside Git's conflict, so it is one whole-file proposal in Check.
+    // Its checks pass, and it still is not Merged. Using it is the Suggest step; the file is then reviewed as usual.
+    const fn = (name: string, total = 'value + 1') =>
+      `func ${name}(value int) int {\n\ttotal := ${total}\n\tscaled := total * 2\n\treturn scaled - 3\n}\n`;
+    const goFile = (functions: string[]) => ['package lab\n', ...functions].join('\n');
+    const reorder = {
+      path: 'lab/reorder.go',
+      mode: '100644',
+      base: goFile([fn('alpha'), fn('beta')]),
+      ours: goFile([fn('beta'), fn('alpha')]),
+      theirs: goFile([fn('alpha', 'value + 10'), fn('beta')]),
+      original: `package lab\n\n<<<<<<< feature/retry\n${fn('beta')}\n${fn('alpha')}||||||| ancestor\n${fn('alpha')}\n${fn('beta')}=======\n${fn('alpha', 'value + 10')}\n${fn('beta')}>>>>>>> main\n`,
+      wholeFile: { source: 'mergiraf', text: goFile([fn('beta'), fn('alpha', 'value + 10')]) },
+      resolved: false,
+      source: 'manual',
+    };
+    const late = {
+      path: 'src/limits.ts',
+      mode: '100644',
+      base: 'export const limit = 1;\n',
+      ours: 'export const limit = 2;\n',
+      theirs: 'export const limit = 3;\n',
+      original:
+        '<<<<<<< feature/retry\nexport const limit = 2;\n||||||| ancestor\nexport const limit = 1;\n=======\nexport const limit = 3;\n>>>>>>> main\n',
+      structuralNote: 'Structural merge timed out.',
+      resolved: false,
+      source: 'manual',
+    };
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([reorder, late].map((f) => ({ ...f, result: f.original })))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='2 files conflict. 2 need you: 1 proposal to check, 1 to decide.'"
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-file-title [data-stage]')].map(b=>[b.dataset.stage,b.textContent])"),
+      [['proposal', 'Proposal ready']]
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
+      ['Proposal ready', '1 to decide']
+    );
+    const whole = "document.querySelector('.conflict-whole-file')";
+    assert.equal(await js(`${whole}.dataset.bucket`), 'check');
+    await wait(`${whole}.querySelector('p').textContent.startsWith('Mergiraf moved')`);
+    assert.equal(
+      await js<string>(`${whole}.querySelector('p').textContent`),
+      'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.'
+    );
+    assert.equal(await js(`!!${block(0)}`), false, 'The conflicts wait behind the proposal');
+    assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
+    assert.equal(await js(`${whole}.querySelector('.conflict-block-header').textContent`), 'Whole fileCheck');
+    // The footer speaks of the proposal, and using it is the next step.
+    assert.equal(await primary(), 'use-proposal');
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      /^1 proposal to check · 0 of 2 files reviewed$/
+    );
+    // While the conflicts are hidden, the proposal is the file's one stop for J and K.
+    await wait("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex==='-1'");
+    await key('j');
+    assert.equal(await activeBlock(), '-1');
+    await captureAll('whole-file-check');
+    // The link shows the conflicts below the proposal; J and K then visit both.
+    await click('Resolve conflict by conflict instead (1)');
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    assert.equal(await js(`!!${whole}`), true);
+    assert.equal(await primary(), 'next-conflict');
+    // The proposal still covers the conflicts: the footer says what the header and the file list say.
+    assert.match(
+      await js<string>("document.querySelector('.conflict-footer-status').textContent"),
+      /^1 proposal to check · 0 of 2 files reviewed$/
+    );
+    await js(`${whole}.focus()`);
+    await key('j');
+    assert.equal(await activeBlock(), '0');
+    await key('k');
+    assert.equal(await activeBlock(), '-1');
+    await captureAll('whole-file-conflicts-shown');
+    // 1, 2 and 3 never choose for a conflict while the proposal has focus.
+    await key('1');
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    // Once you choose a conflict yourself, the proposal steps aside; Reset file brings it back.
+    await key('j');
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    assert.equal(await js(`!!${whole}`), false, 'Use this result would replace your choice');
+    await click('Reset file');
+    await wait(`!!${whole}`);
+    await click('Use this result');
+    await wait("window.conflictCalls.some(r=>r.kind==='resolve'&&r.engine==='mergiraf'&&r.path==='lab/reorder.go')");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
+    assert.equal(await js("!!document.querySelector('.conflict-whole-file')"), false);
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Using it does not review it');
+    // Now, and only now, it waits for Mark reviewed: the header and the file list say so together.
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-file-title [data-status], .conflict-files button:first-child [data-status]')].map(b=>b.textContent)"),
+      ['Resolved · needs review', 'Resolved · needs review']
+    );
+    await captureAll('whole-file-used');
+    await click('Mark reviewed & next file');
+    await wait("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved&&r.path==='lab/reorder.go')");
+    assert.equal(
+      await js("window.conflictCalls.find(r=>r.kind==='save'&&r.resolved&&r.path==='lab/reorder.go').contents"),
+      reorder.wholeFile.text
+    );
+    // The other file says why structural merge proposed nothing.
+    await wait(`${block(0)}?.querySelector('.conflict-block-note')?.textContent==='Structural merge timed out.'`);
+    await captureAll('structural-note');
+    assert.equal(await publishes(), 0);
     await click('Close');
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
