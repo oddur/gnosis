@@ -12,7 +12,10 @@ import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
-import { blockBuckets } from '../lib/conflict-verify';
+import { blockBuckets, proposalKey, verifyProposals } from '../lib/conflict-verify';
+import * as TreeSitter from 'web-tree-sitter';
+import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
+import { conflictChecker } from '../src/conflict-checks';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -998,6 +1001,56 @@ const movingSample = (a: number, b: number, c: number, filler = 'filler') =>
     `export const c = ${c};`,
     '',
   ].join('\n');
+void test('the service checks proposals itself and saves the verdict with the draft (#445)', async (t) => {
+  if (!(await fs.stat(nativeMergiraf).catch(() => undefined))) {
+    t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');
+    return;
+  }
+  const assets = path.resolve('src/assets/tree-sitter');
+  const engine = createSyntaxEngine(TreeSitter, {
+    runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+    grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
+    tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
+  });
+  // Opened first by a build without the checks: the draft has proposals and no verdict.
+  const f = await fixture(t, false, jsonSample);
+  const prepared = f.session.files[0];
+  assert.ok(prepared.proposals?.[0], 'Structural merge proposed the conflict');
+  assert.equal(prepared.verdict, undefined);
+  let disabled: SyntaxLanguage[] = [];
+  const checked: string[] = [];
+  Object.assign(f.deps, {
+    verify: (file: ConflictFile) => {
+      checked.push(file.path);
+      return conflictChecker(engine, disabled)(file);
+    },
+  });
+  // Reopening the draft checks it once; the verdict is saved, so the next open does not check again.
+  let file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.deepEqual(checked, ['settings.json']);
+  assert.equal(file.verdict?.key, proposalKey(file));
+  assert.deepEqual(file.verdict.verdict, await verifyProposals(
+      file,
+      (l, x) => engine.definitions(l, x),
+      false,
+      (l, a, b) => engine.equivalent(l, a, b)
+    ));
+  assert.deepEqual(blockBuckets(file, file.result, file.verdict.verdict), [file.verdict.verdict.merged ? 'merged' : 'check']);
+  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
+  assert.deepEqual(checked, ['settings.json'], 'A saved verdict for the same proposals is not checked again');
+  // A fresh preparation checks again, with the language settings: a language that is off is never parsed.
+  disabled = ['json'];
+  file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
+  assert.equal(checked.length, 2);
+  assert.deepEqual(file.verdict?.verdict, { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' });
+  // A Suggest result replaces the proposals: the verdict goes with them.
+  const session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  file = (await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'agent', path: 'settings.json' }))
+    .session.files[0];
+  assert.equal(file.proposals, undefined);
+  assert.equal(file.verdict, undefined);
+});
+
 async function movingFixture(t: TestContext, edit = (text: string) => text) {
   const f = await fixture(
     t,

@@ -26,6 +26,7 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount } from '../lib/conflict-blocks';
+import { proposalKey, type Verdict } from '../lib/conflict-verify';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
@@ -76,6 +77,11 @@ interface Deps {
   /** Tests use local bare remotes. Production only constructs github.com URLs. */
   remote?: (repo: string) => string;
   dependents?: (url: string) => string[];
+  /**
+   * Checks one file's proposals (src/conflict-checks.ts). The verdict is saved with the file, so its buckets are known
+   * before any dialog opens. Without it, the renderer checks them.
+   */
+  verify?: (file: ConflictFile) => Promise<Verdict>;
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -594,6 +600,32 @@ export function createConflictResolutionService(deps: Deps) {
     }
     return files;
   }
+  /**
+   * Checks each file's proposals that have no verdict for their current fingerprint, one file at a time. A file without
+   * proposals drops its verdict. True when any verdict changed.
+   */
+  async function check(files: ConflictFile[], signal: AbortSignal, report: (text: string) => void = () => {}) {
+    if (!deps.verify) return false;
+    let changed = false;
+    const due: { file: ConflictFile; key: string }[] = [];
+    for (const file of files) {
+      if (file.unsupported || (!file.proposals && !file.wholeFile)) {
+        if (file.verdict) changed = true;
+        delete file.verdict;
+        continue;
+      }
+      // A fresh object: proposalKey remembers its answer per object, and these files change in place.
+      const key = proposalKey({ original: file.original, proposals: file.proposals, wholeFile: file.wholeFile });
+      if (file.verdict?.key !== key) due.push({ file, key });
+    }
+    if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
+    for (const { file, key } of due) {
+      signal.throwIfAborted();
+      file.verdict = { key, verdict: await deps.verify(file) };
+      changed = true;
+    }
+    return changed;
+  }
   /** Structural merge of one file's three versions. Exit code 1 means some conflicts remain in the output. */
   async function mergiraf(
     ctx: Context,
@@ -867,6 +899,7 @@ export function createConflictResolutionService(deps: Deps) {
       session.baseSha = live.baseSha;
       session.tree = prepared.tree;
       session.files = carried.files;
+      await check(session.files, signal, report);
       session.preparation = await preparation(ctx, session.id, prepared, carried.files, session, signal);
       live = (await current(session, ctx)).state;
       if (live.baseSha === session.baseSha)
@@ -974,7 +1007,7 @@ export function createConflictResolutionService(deps: Deps) {
           !f.proposals &&
           !f.wholeFile
       );
-      if (untried.length) {
+      if (untried.length)
         await mergeStructurally(
           ctx,
           id,
@@ -984,6 +1017,8 @@ export function createConflictResolutionService(deps: Deps) {
           report,
           true
         );
+      // A draft saved before the main process checked proposals, or by a build without the checks, gets them now.
+      if ((await check(saved.files, signal, report)) || untried.length) {
         signal.throwIfAborted();
         assertAccount(ctx);
         saved.version++;
@@ -1025,6 +1060,7 @@ export function createConflictResolutionService(deps: Deps) {
           signal
         )
       ).files;
+    await check(files, signal, report);
     const session: ConflictSession = {
       id,
       account: ctx.account,
@@ -1506,6 +1542,7 @@ export function createConflictResolutionService(deps: Deps) {
           session.commitSha = sha;
         }
         if (session.status !== 'published') {
+          await check(session.files, signal, report);
           signal.throwIfAborted();
           assertAccount(ctx);
         }

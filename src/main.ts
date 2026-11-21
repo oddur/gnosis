@@ -169,7 +169,9 @@ import { createMenubarPanel } from './menubar-window';
 import { createStateSignature } from './tray-signature';
 import { buildMenubarState, menubarSignalRequests, menubarTooltip, type MenubarState } from '../lib/menubar-state';
 import { menubarBadge, menubarSettings } from '../lib/menubar-settings';
-import { codeIntelligenceSettings } from '../lib/code-intelligence';
+import { codeIntelligenceSettings, languageEnabled } from '../lib/code-intelligence';
+import { SYNTAX_LANGUAGES } from '../lib/syntax-scope';
+import { createConflictCheckWorker } from './conflict-checks';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
 import { createNotificationStore } from './notification-store';
@@ -4076,7 +4078,20 @@ async function conflictPermissions(client: ReturnType<typeof discussionClient>, 
   } else state.canUpdateBranch = state.canWrite;
   return state;
 }
+// The conflict checks parse with the runtime and grammars the renderer ships: from the source tree in development, and
+// from the renderer build in a package, where vite.renderer.config.ts keeps their names (#445).
+const conflictChecks = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), () => {
+  const grammars = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'src/assets/tree-sitter') : path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/assets/tree-sitter`);
+  const runtime = MAIN_WINDOW_VITE_DEV_SERVER_URL ? path.join(app.getAppPath(), 'node_modules/web-tree-sitter/web-tree-sitter.wasm') : path.join(grammars, 'web-tree-sitter.wasm');
+  return { grammars, runtime };
+});
+app.on('will-quit', () => conflictChecks.dispose());
 const conflicts = createConflictResolutionService({
+  // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
+  verify: file => {
+    const settings = codeIntelligenceSettings(loadPreferences());
+    return conflictChecks.check(file, SYNTAX_LANGUAGES.filter(language => !languageEnabled(settings, language)));
+  },
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
     if (!subject) return [];

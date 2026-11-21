@@ -316,7 +316,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   // proposals never counts: the file's proposals are Check until their own checks finish.
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
   const checking = useRef(new Map<string, string>());
+  // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
+  // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   const verdictOf = (f: ConflictFile) => {
+    if (f.verdict && f.verdict.key === proposalKey(f)) return f.verdict.verdict;
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === proposalKey(f) ? entry.verdict : undefined;
   };
@@ -324,7 +327,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     for (const f of session?.files ?? []) {
       if (!f.proposals && !f.wholeFile) continue;
       const key = proposalKey(f);
-      if (checking.current.get(f.path) === key) continue;
+      if (f.verdict?.key === key || checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
       void (f.wholeFile ? verifyWholeFile(f, f.wholeFile, checkSyntax) : verifyProposals(f, checkSyntax, false, checkFormatting))
         .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
