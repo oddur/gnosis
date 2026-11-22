@@ -327,3 +327,76 @@ void test('compare with both: a row equal to the ancestor still shows every line
   assert.deepEqual(compareRowPins([], ''), []);
   assert.deepEqual(compareRowPins([{ oldStart: 1, newStart: 1, rows: [], noEofOld: false, noEofNew: false }], 'x\n'), []);
 });
+
+// Lines a resolver wrote (#445 item 10): result lines neither side had, marked in the Conflicts view.
+void test('written lines: a combined or inserted line neither side had is marked, a side’s line never', async () => {
+  const { writtenLines } = await import('../lib/conflict-diff');
+  // Each side's added line, kept as it was: nothing marked.
+  assert.deepEqual(
+    writtenLines('call(a, {\n  retries,\n  timeout,\n});\n', 'call(a, {\n  retries,\n});\n', 'call(a, {\n  timeout,\n});\n'),
+    []
+  );
+  // Mergiraf combined both edits into one line: only that line.
+  assert.deepEqual(writtenLines('call(a, retries, timeout);\n', 'call(a, retries);\n', 'call(a, timeout);\n'), [0]);
+  // An inserted line between the two sides' lines.
+  assert.deepEqual(writtenLines('a\nseparator\nb\n', 'a\n', 'b\n'), [1]);
+  // A re-indented line is a new line; a missing final line feed or a CR is not.
+  assert.deepEqual(writtenLines('  a\nb', 'a\n', 'b\r\n'), [0]);
+  // Both sides' lines, in any order and dropped or not, are theirs.
+  assert.deepEqual(writtenLines('b\na\n', 'a\n', 'b\n'), []);
+  assert.deepEqual(writtenLines('', 'a\n', 'b\n'), []);
+});
+
+void test('written lines: a repeated line is a side’s only as often as the sides have it, else every copy is marked', async () => {
+  const { writtenLines } = await import('../lib/conflict-diff');
+  // A union of two blocks that each end in `}`: two copies, both sides', none marked.
+  assert.deepEqual(writtenLines('a\n}\nb\n}\n', 'a\n}\n', 'b\n}\n'), []);
+  // One `}` more than both sides together: which copy is new can't be told, so every copy is marked.
+  assert.deepEqual(writtenLines('a\n}\nb\n}\n}\n', 'a\n}\n', 'b\n}\n'), [1, 3, 4]);
+  // A line only one side has once, written twice.
+  assert.deepEqual(writtenLines('x\nx\n', 'x\n', 'y\n'), [0, 1]);
+  // An ancestor line both sides removed is not a side's line.
+  assert.deepEqual(writtenLines('old\n', 'new\n', 'other\n'), [0]);
+});
+
+void test('written lines: a whole-file proposal marks the lines neither whole side keeps, a moved line too', async () => {
+  const { writtenFileLines } = await import('../lib/conflict-diff');
+  const ours = 'import a\n\nfunction f() {\n  return 1;\n}\n\nfunction g() {}\n';
+  const theirs = 'import a\nimport b\n\nfunction f() {\n  return 2;\n}\n';
+  // main's import, the PR's g, and one line of f neither had.
+  const result = 'import a\nimport b\n\nfunction f() {\n  return 1 + 2;\n}\n\nfunction g() {}\n';
+  assert.deepEqual([...writtenFileLines(result, ours, theirs)], [5]);
+  // A side's line moved to where neither side had it is marked: no diff keeps it in place.
+  const moved = 'function g() {}\nimport a\nimport b\n\nfunction f() {\n  return 1;\n}\n';
+  assert.ok(writtenFileLines(moved, ours, theirs).has(1));
+  // A result that is one side has no marks.
+  assert.equal(writtenFileLines(theirs, ours, theirs).size, 0);
+});
+
+void test('written lines: only proposal-filled conflicts mark lines, by their place in the shown file', async () => {
+  const { conflictDiffText, conflictWritten, shownWritten } = await import('../lib/conflict-diff');
+  const original =
+    'head\n<<<<<<< pr\ncall(a, retries);\n=======\ncall(a, timeout);\n>>>>>>> main\nmid\n<<<<<<< pr\nx\n=======\ny\n>>>>>>> main\ntail\n';
+  const segments = parseConflicts(original);
+  const proposals = [{ text: 'call(a, retries, timeout);\n' }, { text: 'x\n' }];
+  // Mergiraf combined conflict 1; conflict 2's proposal is a same-change one: the PR's lines, nothing marked.
+  const draft = applyChoices(segments, ['proposal', 'proposal'], proposals);
+  const model = conflictModel(original, draft, proposals);
+  const written = conflictWritten(model, proposals);
+  assert.deepEqual([...written], [[0, [0]]]);
+  for (const against of ['ours', 'theirs'] as const) {
+    const shown = conflictDiffText(model, proposals, against);
+    assert.deepEqual([...shownWritten(shown.blocks, written)], [2], `against ${against}`);
+  }
+  // Keep removes the marks: a plain Keep, Keep both, or an open conflict writes nothing.
+  for (const choice of ['ours', 'theirs', 'both', undefined] as const) {
+    const kept = applyChoices(segments, [choice, 'proposal'], proposals);
+    assert.equal(conflictWritten(conflictModel(original, kept, proposals), proposals).size, 0, String(choice));
+  }
+});
+
+void test('written label: counts the lines in words', async () => {
+  const { writtenLabel } = await import('../lib/conflict-diff');
+  assert.equal(writtenLabel(1), '1 line written by Gnosis (neither side had it)');
+  assert.equal(writtenLabel(3), '3 lines written by Gnosis (neither side had them)');
+});

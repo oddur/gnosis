@@ -8,7 +8,7 @@ import {
   type BlockPicks,
   type ConflictSegment,
 } from './conflict-blocks';
-import { segmentsText, type ConflictDiffBlock } from './conflict-diff';
+import { segmentsText, writtenFileLines, writtenLines, type ConflictDiffBlock } from './conflict-diff';
 import { conflictFileStage, type ConflictFile, type ConflictProposal } from './conflict-resolution';
 import type { ConflictBucket } from './conflict-verify';
 
@@ -51,6 +51,11 @@ export interface ConfirmFile {
   whole?: ConfirmWhole;
   /** Conflicts this part accounts for. */
   conflicts: number;
+  /**
+   * Lines of `after` a resolver wrote, which neither side had (#445 item 10): in a proposal's conflict, or anywhere
+   * in a file a resolver wrote whole. Empty for your Keeps and your own edits.
+   */
+  written: number[];
 }
 export interface ConfirmGroups<P> {
   /** Every conflict you resolved: a Keep, an edit, a proposal you used or reviewed, a whole-file result you used. */
@@ -78,7 +83,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
   files: readonly {
     file: Pick<
       ConflictFile,
-      'path' | 'ours' | 'original' | 'result' | 'resolved' | 'source' | 'proposals' | 'wholeFile' | 'unsupported'
+      'path' | 'ours' | 'theirs' | 'original' | 'result' | 'resolved' | 'source' | 'proposals' | 'wholeFile' | 'unsupported'
     >;
     /** blockBuckets of the saved draft. */
     buckets: readonly ConflictBucket[];
@@ -113,6 +118,8 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
         blocks: [],
         whole: how,
         conflicts: conflicts.length,
+        // Your own edit is yours; any other whole file was written by a resolver, so its lines neither side had show.
+        written: how === 'manual' ? [] : [...writtenFileLines(file.result, file.ours, file.theirs)],
       });
     // A whole-file proposal also changes lines outside the conflicts: main's lines can't be told apart from it.
     if (file.wholeFile && file.result === file.wholeFile.text) {
@@ -166,6 +173,13 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
       blocks,
       items: blocks.flatMap((b) => items.get(b.index) ?? []),
       conflicts: blocks.length,
+      written: blocks.flatMap((b) => {
+        const how = items.get(b.index)?.how;
+        const segment = conflicts.find((s) => s.index === b.index);
+        const text = file.proposals?.[b.index]?.text;
+        if (!segment || text === undefined || !(how === 'merged' || how === 'proposal' || how === 'used')) return [];
+        return writtenLines(text, segment.block.ours, segment.block.theirs).map((i) => b.start + i);
+      }),
     });
     if (mine.blocks.length) groups.decided.push(part(withMain, mine.after, mine.blocks));
     if (all.blocks.length) groups.merged.push(part(mine.after, all.after, all.blocks));
@@ -187,6 +201,7 @@ const mainPart = (path: string, named: { previousPath?: string }, before: string
   items: [],
   blocks: [],
   conflicts: 0,
+  written: [],
 });
 
 /** "2 conflicts in 1 file", "1 file", or "none". */

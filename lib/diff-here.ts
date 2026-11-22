@@ -73,6 +73,21 @@ ${keyframes('gnosis-here-gutter-body', 18, 12, bar)}
   ${GUTTERS}[data-here]::after { box-shadow: inset 3px 0 0 var(--code-ring, #9bb8ff); }
 }`;
 
+/**
+ * The steady "here" (#445 item 10): the lines a conflict resolver wrote, which neither side had, keep a quiet mark for
+ * as long as they show. It is the band's visual language held still: the section's settled tint (12%, as reduced motion
+ * shows a marked section) under the line's text, and a thin solid `--code-ring` rail on the code's leading edge, so it
+ * reads beside the green or red change bar rather than under it. No animation and no pseudo-element: both are
+ * backgrounds of the row itself, over its change colour and under its text, so the transient band can still play on top.
+ * ChangesDiff writes `data-written-line` after each render.
+ */
+export const WRITTEN_CSS = `
+[data-line][data-written-line] {
+  background-image:
+    linear-gradient(to right, var(--code-ring, #9bb8ff) 0 2px, transparent 2px),
+    linear-gradient(rgb(${BAND} / 12%), rgb(${BAND} / 12%));
+}`;
+
 /** A row's line-number cell: the gutter cell with its line index, in the same column of a split diff. */
 export function gutterOf(row: Element): Element | undefined {
   const index = row.getAttribute('data-line-index');

@@ -23,7 +23,7 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
-import type { CompareWith } from '../lib/conflict-diff';
+import { writtenLabel, type CompareWith } from '../lib/conflict-diff';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
@@ -139,6 +139,7 @@ export function Block({
   verdict,
   note,
   compare = 'pr',
+  written = 0,
 }: {
   /** In the Conflicts view's diff (components/ConflictDiff.tsx): the diff shows the code, the card the decision. */
   inDiff?: boolean;
@@ -159,8 +160,13 @@ export function Block({
   verdict?: BlockVerdict;
   /** Why structural merge proposed nothing for this file, shown on its Decide conflicts. */
   note?: string;
+  /** How many of the proposal's lines neither side had (#445 item 10): the diff marks them, the card counts them. */
+  written?: number;
 }) {
   const title = `Conflict ${index + 1} of ${total}`;
+  const wrote = written > 0 && choice === 'proposal' && !!proposal;
+  const writtenNote = wrote && <WrittenLegend count={written} />;
+  const writtenText = wrote ? ` ${writtenLabel(written)}.` : '';
   const actions = (
     <div className="conflict-block-actions" role="group" aria-label={`Choose for conflict ${index + 1}`}>
       {(['ours', 'theirs', 'both'] as const).map((value) => (
@@ -219,7 +225,7 @@ export function Block({
         data-bucket="merged"
         data-conflict-index={index}
         tabIndex={-1}
-        aria-label={`${title}. Merged: ${what}. ${note}`}
+        aria-label={`${title}. Merged: ${what}. ${note}${writtenText}`}
       >
         <div className="conflict-kept">
           <CheckCheck size={14} aria-hidden="true" />
@@ -228,7 +234,10 @@ export function Block({
           {undo}
         </div>
         {inDiff ? (
-          <p className="conflict-block-note-line">{note}</p>
+          <>
+            <p className="conflict-block-note-line">{note}</p>
+            {writtenNote}
+          </>
         ) : (
           <details className="conflict-ancestor conflict-merged-detail">
             <summary>{note} Show the result</summary>
@@ -243,7 +252,7 @@ export function Block({
         data-bucket="check"
         data-conflict-index={index}
         tabIndex={0}
-        aria-label={`${title}, line ${block.line}. ${checkLabel(proposal)}. ${note}`}
+        aria-label={`${title}, line ${block.line}. ${checkLabel(proposal)}. ${note}${writtenText}`}
       >
         <header className="conflict-block-header">
           <strong>{title}</strong>
@@ -254,6 +263,7 @@ export function Block({
           <span>{note}</span>
           {undo}
         </header>
+        {inDiff && writtenNote}
         {inDiff ? null : proposal.text ? (
           <CodeSnippet name={name} text={proposal.text} />
         ) : (
@@ -360,6 +370,19 @@ export function Block({
       )}
       {actions}
     </section>
+  );
+}
+
+/**
+ * "3 lines written by Gnosis (neither side had them)" (#445 item 10), with a swatch of the diff's steady mark, so the
+ * card says what the marked lines in the diff are.
+ */
+export function WrittenLegend({ count }: { count: number }) {
+  return (
+    <p className="conflict-block-note-line conflict-written-legend" data-written={count}>
+      <span className="conflict-written-swatch" aria-hidden="true" />
+      {writtenLabel(count)}
+    </p>
   );
 }
 

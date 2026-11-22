@@ -26,10 +26,17 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { toast } from './ui/toast';
-import { ResultEditor, createEditor, proposalWhat, useCodeOptions, type ConflictViewHandle } from './ConflictBlocks';
+import {
+  ResultEditor,
+  WrittenLegend,
+  createEditor,
+  proposalWhat,
+  useCodeOptions,
+  type ConflictViewHandle,
+} from './ConflictBlocks';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
-import { cardAnchors } from '../lib/conflict-diff';
+import { cardAnchors, writtenLabel } from '../lib/conflict-diff';
 import {
   confirmCount,
   confirmGroups,
@@ -1609,6 +1616,9 @@ export function ConflictWorkspace({
                                 note={file.structuralNote}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
+                                resolverDraft={
+                                  file.source !== 'manual' || (!!file.wholeFile && contents === file.wholeFile.text)
+                                }
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {
@@ -1746,6 +1756,7 @@ function ConfirmFileDiff({
     [part.blocks]
   );
   const saved = session.files.find((f) => f.path === part.path);
+  const written = useMemo(() => new Set(part.written), [part.written]);
   const total = useMemo(() => conflictCount(saved?.original ?? ''), [saved?.original]);
   const note = (index: number) => {
     const item = part.items.find((i) => i.index === index);
@@ -1759,12 +1770,17 @@ function ConfirmFileDiff({
           : item.how === 'used'
             ? `Used the proposal${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
             : labels.kept[item.how];
+    const wrote = part.written.filter((line) => {
+      const block = part.blocks.find((b) => b.index === index);
+      return !!block && line >= block.start && line <= block.end;
+    }).length;
     const Icon = item.how === 'merged' ? CheckCheck : Check;
     return (
       <p key={index} className="conflict-confirm-note" data-confirm-how={item.how}>
         <Icon size={13} aria-hidden="true" />
         <span>
           Conflict {index + 1} of {total} · {text}
+          {wrote > 0 && ` · ${writtenLabel(wrote)}`}
         </span>
       </p>
     );
@@ -1784,6 +1800,7 @@ function ConfirmFileDiff({
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
         </p>
       )}
+      {part.whole && part.written.length > 0 && <WrittenLegend count={part.written.length} />}
       <ConflictFileDiff
         name={part.path}
         previousPath={part.previousPath}
@@ -1795,6 +1812,7 @@ function ConfirmFileDiff({
         annotate={annotate}
         renderAnnotation={renderNotes}
         preferences={preferences}
+        written={written}
       />
     </div>
   );

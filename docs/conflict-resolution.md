@@ -31,6 +31,12 @@ A conflict Gnosis can't write as text, such as a rename on both sides, a deletio
 
 Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
 
+### Lines Gnosis wrote
+
+A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them, such as "1 line written by Gnosis (neither side had it)". A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), and in the confirmation's diffs. A screen reader reads "Written by Gnosis. Neither side had this line." for each marked line, and the line number shows the same tooltip.
+
+The rule is careful. Gnosis compares each conflict's result with both sides' lines, exactly, so a re-indented line is a new line. A result that has a line more often than both sides together marks every copy of that line. In a file written whole, a line is a side's only where a line diff against that side keeps it. A Keep, your own edit and an open conflict have no marks. The mark never hides a line or its change colour.
+
 ### Keyboard
 
 | Key | Action |

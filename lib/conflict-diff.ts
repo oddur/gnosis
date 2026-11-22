@@ -1,4 +1,5 @@
-import { chosenText, type BlockProposals, type ConflictModel, type ConflictSegment } from './conflict-blocks';
+import { diffArrays } from 'diff';
+import { chosenText, textLines, type BlockProposals, type ConflictModel, type ConflictSegment } from './conflict-blocks';
 import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
@@ -151,3 +152,79 @@ export function compareRowPins(hunks: readonly GapHunk[], after: string): (reado
   const count = lineCount(after);
   return hunks.length || !count ? [] : [[1, count]];
 }
+
+/*
+ * The lines a resolver wrote (#445 item 10): Mergiraf, a union, the same-change or move rules, a remembered resolution
+ * or a suggestion. Each is a line of the result that neither side had, so the reader knows which lines to read most
+ * carefully. When in doubt a line is marked: the mark never hides anything, and an unmarked line must be a side's.
+ */
+const lineText = (line: string) => line.replace(/\r?\n$/, '');
+const tally = (lines: readonly string[]) => {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  return counts;
+};
+
+/**
+ * One conflict's result lines that neither side wrote, as 0-based indexes into `result`'s lines. The two sides' lines
+ * are one multiset, compared exactly (a re-indented line is a new line). A text the result has more often than both
+ * sides together marks every one of its copies: which copy is new can't be told, so none is trusted.
+ */
+export function writtenLines(result: string, ours: string, theirs: string): number[] {
+  const sides = tally([...textLines(ours), ...textLines(theirs)].map(lineText));
+  const lines = textLines(result).map(lineText);
+  const counts = tally(lines);
+  return lines.flatMap((line, i) => ((counts.get(line) ?? 0) > (sides.get(line) ?? 0) ? [i] : []));
+}
+
+/**
+ * A whole file's lines that neither side wrote (a whole-file proposal, or a remembered resolution or suggestion whose
+ * conflicts can't be told apart), as 1-based line numbers of `result`. A line is a side's only where a line diff
+ * against that side keeps it, so a line moved to where neither side had it is marked too. A diff that runs out of time
+ * falls back to the multiset rule over the whole files.
+ */
+export function writtenFileLines(result: string, ours: string, theirs: string): Set<number> {
+  const lines = textLines(result).map(lineText);
+  const kept = new Set<number>();
+  for (const side of [ours, theirs]) {
+    const parts = diffArrays(textLines(side).map(lineText), lines, { timeout: 500 });
+    if (!parts) return new Set(writtenLines(result, ours, theirs).map((i) => i + 1));
+    let at = 0;
+    for (const part of parts) {
+      if (part.removed) continue;
+      if (!part.added) for (let i = 0; i < part.count; i++) kept.add(at + i);
+      at += part.count;
+    }
+  }
+  return new Set(lines.flatMap((_, i) => (kept.has(i) ? [] : [i + 1])));
+}
+
+/**
+ * Each proposal-filled conflict's written lines (writtenLines), by conflict index, as 0-based indexes into its
+ * proposal's lines. A Keep, an open conflict or a proposal with no new line has no entry.
+ */
+export function conflictWritten(model: ConflictModel, proposals?: BlockProposals): Map<number, number[]> {
+  const written = new Map<number, number[]>();
+  for (const segment of model.segments) {
+    if (segment.kind !== 'conflict' || model.choices[segment.index] !== 'proposal') continue;
+    const text = proposals?.[segment.index]?.text;
+    if (text === undefined) continue;
+    const lines = writtenLines(text, segment.block.ours, segment.block.theirs);
+    if (lines.length) written.set(segment.index, lines);
+  }
+  return written;
+}
+
+/** The shown text's line numbers of each conflict's written lines (conflictWritten), from its place in the text. */
+export function shownWritten(
+  blocks: readonly ConflictDiffBlock[],
+  written: ReadonlyMap<number, readonly number[]>
+): Set<number> {
+  const lines = new Set<number>();
+  for (const block of blocks) for (const i of written.get(block.index) ?? []) lines.add(block.start + i);
+  return lines;
+}
+
+/** "3 lines written by Gnosis (neither side had them)". */
+export const writtenLabel = (count: number) =>
+  `${count} ${count === 1 ? 'line' : 'lines'} written by Gnosis (neither side had ${count === 1 ? 'it' : 'them'})`;

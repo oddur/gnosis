@@ -1884,6 +1884,111 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[data-confirm-group=decided] [data-confirm-how]')");
     assert.match((await notesIn('decided'))[0], /^used: Conflict 1 of 1 · Used the proposal · /);
     await click('Close');
+    // Lines a resolver wrote (#445 item 10): Mergiraf combined both sides' arguments into a line neither side had, and a
+    // union kept both sides' lines. Only the combined line is marked, steadily, in every compare mode, through a Pierre
+    // re-render, and in the push confirmation. Keep removes the mark.
+    const padLines = (from: number) =>
+      Array.from({ length: 12 }, (_, i) => `export const pad${from + i} = ${from + i};\n`).join('');
+    const combined = 'call(a, retries, timeout);';
+    const written = {
+      path: 'src/written.ts',
+      base: `${padLines(0)}call(a);\nexport const mid = 0;\n${padLines(12)}`,
+      ours: `${padLines(0)}call(a, retries);\nexport const mid = 0;\nlog('pr');\n${padLines(12)}`,
+      theirs: `${padLines(0)}call(a, timeout);\nexport const mid = 0;\nlog('main');\n${padLines(12)}`,
+      original: `${padLines(0)}<<<<<<< feature/retry\ncall(a, retries);\n||||||| ancestor\ncall(a);\n=======\ncall(a, timeout);\n>>>>>>> main\nexport const mid = 0;\n<<<<<<< feature/retry\nlog('pr');\n||||||| ancestor\n=======\nlog('main');\n>>>>>>> main\n${padLines(12)}`,
+      proposals: [
+        { source: 'mergiraf', text: `${combined}\n` },
+        { source: 'union', text: "log('pr');\nlog('main');\n" },
+      ],
+      source: 'mergiraf',
+    };
+    await js(`(()=>{
+      window.conflictPreview=[];
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([withResult(written)])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    /** The text of the marked rows in a scope's diffs: a selector, or a script that returns the scope's elements. */
+    const writtenRows = (scope: string) =>
+      `JSON.stringify([...(${scope.startsWith('[') ? scope : `document.querySelectorAll(${JSON.stringify(scope)})`})].flatMap(e=>[...e.querySelectorAll('diffs-container')]).flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line][data-written-line]')??[])]).map(r=>(r.querySelector('[data-column-content]')??r).textContent.replace(/\\n$/,'')))`;
+    const marksAre = async (scope: string, lines: string[]) => {
+      try {
+        await wait(`${writtenRows(scope)}===${JSON.stringify(JSON.stringify(lines))}`);
+      } catch (error) {
+        throw new Error(`Marked rows in ${scope}: ${await js<string>(writtenRows(scope))}, not ${JSON.stringify(lines)}`, { cause: error });
+      }
+    };
+    const prDiff = '.conflict-compare-diff[data-compare=pr]';
+    await wait(`${block(0)}?.dataset.state==='proposal' && ${block(1)}?.dataset.state==='proposal'`);
+    await marksAre(prDiff, [combined]);
+    assert.equal(
+      await js(`${block(0)}.querySelector('.conflict-written-legend')?.textContent`),
+      '1 line written by Gnosis (neither side had it)'
+    );
+    assert.match(await js<string>(`${block(0)}.getAttribute('aria-label')`), /1 line written by Gnosis \(neither side had it\)\.$/);
+    assert.equal(await js(`!!${block(1)}.querySelector('.conflict-written-legend')`), false, 'A union wrote no line');
+    // The marked row is described for assistive technology, and its line number has the same tooltip.
+    assert.deepEqual(
+      await js(`(()=>{const h=[...document.querySelectorAll('${prDiff} diffs-container')].find(h=>h.shadowRoot?.querySelector('[data-line][data-written-line]'));const r=h.shadowRoot.querySelector('[data-line][data-written-line]');const g=h.shadowRoot.querySelector('[data-column-number][data-written-line]');return [r.getAttribute('aria-description'),g?.getAttribute('title')??null,getComputedStyle(r).backgroundImage.includes('gradient')]})()`),
+      ['Written by Gnosis. Neither side had this line.', 'Written by Gnosis. Neither side had this line.', true]
+    );
+    await captureAll('written-lines-pr');
+    // Revealing a gap re-renders the hunk: the mark follows its line, and no other line takes it.
+    const writtenGaps = () => js<number>(`document.querySelectorAll('${prDiff} .diff-gap-text').length`);
+    const gapCount = await writtenGaps();
+    assert.ok(gapCount > 0, 'the file has hidden lines to reveal');
+    await js(`document.querySelector('${prDiff} .diff-gap-text').click()`);
+    await wait(`document.querySelectorAll('${prDiff} .diff-gap-text').length<${gapCount}`);
+    await wait(
+      `[...document.querySelectorAll('${prDiff} diffs-container')].some(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])].some(r=>/pad(2|9|14|21) =/.test(r.textContent)))`
+    );
+    await marksAre(prDiff, [combined]);
+    // main and both mark the same line; in both, only the result row of the combined conflict.
+    await compareWith('main');
+    await marksAre('.conflict-compare-diff[data-compare=main]', [combined]);
+    await compareWith('both');
+    await wait("document.querySelectorAll('.conflict-compare-group').length===2");
+    const resultRow = (group: number) =>
+      `[document.querySelectorAll('.conflict-compare-group')[${group}].querySelector('.conflict-compare-row[data-side=result]')]`;
+    await wait(`${resultRow(0)}[0].querySelector('diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
+    await marksAre(resultRow(0), [combined]);
+    await wait(`${resultRow(1)}[0].querySelector('diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
+    await marksAre(resultRow(1), []);
+    await marksAre('.conflict-compare-group .conflict-compare-row:is([data-side=ours],[data-side=theirs])', []);
+    await captureAll('written-lines-both');
+    await compareWith('pr');
+    await marksAre(prDiff, [combined]);
+    // Keep removes the mark and the count, and so does Undo, which leaves the conflict to decide. Use the proposal brings
+    // both back.
+    await pick(0, 'ours');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    await marksAre(prDiff, []);
+    assert.equal(await js("!!document.querySelector('.conflict-written-legend')"), false);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await marksAre(prDiff, []);
+    await pick(0, 'proposal');
+    await wait(`${block(0)}?.dataset.state==='proposal'`);
+    await marksAre(prDiff, [combined]);
+    assert.ok(await js(`!!${block(0)}.querySelector('.conflict-written-legend')`));
+    // The push confirmation marks the same line in the group that holds it.
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await checksDone();
+    if (await exists('Review result')) await click('Review result');
+    await click('Mark reviewed');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    for (const group of ['decided', 'merged'])
+      await js(
+        `(()=>{const d=document.querySelector('[data-confirm-group=${group}] .conflict-disclosure');if(d&&d.getAttribute('aria-expanded')!=='true')d.click()})()`
+      );
+    await marksAre('.conflict-confirm', [combined]);
+    assert.match(
+      await js<string>("[...document.querySelectorAll('.conflict-confirm [data-confirm-how]')].map(e=>e.textContent).join('|')"),
+      /Conflict 1 of 2 · [^|]* · 1 line written by Gnosis \(neither side had it\)/
+    );
+    await captureAll('written-lines-confirm');
+    await click('Close');
     // A clean merge of 300 files: Arriving from main opens at once and mounts only the files in view.
     const many = Array.from(
       { length: 300 },
