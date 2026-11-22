@@ -1190,14 +1190,12 @@ export function ConflictWorkspace({
         return true;
       }
       if (key === 'a') {
-        if (!canEdit || !view.current) return false;
-        if (view.current.accept()) setHint('');
-        else
-          setHint(
-            proposalOnly
-              ? 'A accepts one conflict’s proposal. Use this result takes the whole-file proposal.'
-              : 'Nothing to accept here: this conflict has no proposal that needs you.'
-          );
+        if (!canEdit) return false;
+        // A whole-file proposal is never accepted by a key: Use this result takes it.
+        if (proposalOnly) setHint('A accepts one conflict’s proposal. Use this result takes the whole-file proposal.');
+        else if (!view.current) return false;
+        else if (view.current.accept()) setHint('');
+        else setHint('Nothing to accept here: this conflict has no proposal that needs you.');
         return true;
       }
       if (key === 'u') {
