@@ -215,6 +215,7 @@ export function ConflictCard({
           variant="outline"
           disabled={disabled}
           data-choice="proposal"
+          aria-keyshortcuts={shortcuts ? 'A' : undefined}
           onClick={() => onChoose('proposal')}
         >
           Use the proposal
@@ -229,6 +230,7 @@ export function ConflictCard({
       variant="ghost"
       disabled={disabled}
       onClick={onUndo}
+      aria-keyshortcuts={shortcuts ? 'U' : undefined}
       aria-label={`Undo and decide conflict ${index + 1} yourself`}
     >
       <Undo2 aria-hidden="true" />
@@ -320,6 +322,7 @@ export function ConflictCard({
       variant="ghost"
       disabled={disabled}
       onClick={onUndo}
+      aria-keyshortcuts={shortcuts ? 'U' : undefined}
       aria-label={`Undo your edit of conflict ${index + 1}`}
     >
       <Undo2 aria-hidden="true" />
@@ -388,6 +391,7 @@ export function ConflictCard({
                 variant="ghost"
                 disabled={disabled}
                 onClick={onUndo}
+                aria-keyshortcuts={shortcuts ? 'U' : undefined}
                 aria-label={`Undo: ${labels.kept[choice]} in conflict ${index + 1}`}
               >
                 <Undo2 aria-hidden="true" />

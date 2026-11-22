@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffMetadata, type FileDiffOptions } from '@pierre/diffs';
 import { CircleHelp } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
@@ -38,6 +38,7 @@ import {
 } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { nextCompare } from '../lib/conflict-shortcuts';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -284,7 +285,10 @@ function CompareSwitch({
   baseLabel,
   bothDisabled = false,
   kind = 'merge',
+  shortcut = false,
 }: {
+  /** V cycles the modes (lib/conflict-shortcuts.ts). */
+  shortcut?: boolean;
   value: CompareWith;
   onChange: (value: CompareWith) => void;
   baseName: string;
@@ -324,6 +328,7 @@ function CompareSwitch({
             title={mode === 'both' && bothDisabled ? 'No conflicts left to compare' : titles[mode]}
             // aria-disabled, not disabled: a disabled button takes no pointer events, so its tooltip could not show.
             aria-disabled={(mode === 'both' && bothDisabled) || undefined}
+            aria-keyshortcuts={shortcut ? 'V' : undefined}
             onClick={() => {
               if (!(mode === 'both' && bothDisabled)) onChange(mode);
             }}
@@ -509,7 +514,10 @@ export function ConflictDiff({
   edits,
   onEdits,
   kind = 'merge',
+  onEditorDirty,
 }: {
+  /** The in-place editor is open with text you haven't saved (true), or not any more (false). */
+  onEditorDirty?: (dirty: boolean) => void;
   /** A paused restack's file (components/RestackReview.tsx): its versions are the updated parent and the PR's commit. */
   kind?: 'merge' | 'restack';
   /** Each open conflict's model request, by index (#445 item 7). */
@@ -551,7 +559,9 @@ export function ConflictDiff({
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
+  const cycleCompare = useRef<() => boolean>(undefined);
   const { root, model, total, choose, undo, editStart, saveEdit } = useConflictChoices({
+    cycleCompare,
     onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
@@ -569,8 +579,19 @@ export function ConflictDiff({
   // The conflict open in the in-place editor, and what you typed in it: kept here, not in the draft, until you save.
   const [editing, setEditing] = useState<number>();
   const typed = useRef(new Map<number, string>());
+  // Told only when it changes, never per keystroke.
+  const dirtyShown = useRef(false);
+  const reportDirty = (dirty: boolean) => {
+    if (dirtyShown.current === dirty) return;
+    dirtyShown.current = dirty;
+    onEditorDirty?.(dirty);
+  };
+  const dirtyReport = useRef(reportDirty);
+  dirtyReport.current = reportDirty;
+  useEffect(() => () => dirtyReport.current(false), []);
   const closeEditor = (index: number) => {
     typed.current.delete(index);
+    reportDirty(false);
     setEditing(undefined);
     // Focus returns to the conflict's card once it is back.
     requestAnimationFrame(() =>
@@ -619,7 +640,10 @@ export function ConflictDiff({
                   : undefined
               }
               disabled={disabled}
-              onType={(text) => typed.current.set(index, text)}
+              onType={(text) => {
+                typed.current.set(index, text);
+                reportDirty(text !== start);
+              }}
               onSave={(text) => {
                 const saved = saveEdit(index, text);
                 if (saved) closeEditor(index);
@@ -664,6 +688,13 @@ export function ConflictDiff({
     focusSwitch.current = false;
     root.current?.querySelector<HTMLElement>(`.conflict-compare [data-compare=${mode}]`)?.focus();
   }, [mode, root]);
+  // V steps through the modes, as a click on the switch would (lib/conflict-shortcuts.ts).
+  cycleCompare.current = hideBlocks
+    ? undefined
+    : () => {
+        switchTo(nextCompare(mode, !hasConflicts));
+        return true;
+      };
   const switcher = (
     <CompareSwitch
       value={mode}
@@ -672,6 +703,7 @@ export function ConflictDiff({
       baseLabel={labels.theirs}
       bothDisabled={!hasConflicts}
       kind={kind}
+      shortcut={shortcuts}
     />
   );
   const sides = useMemo(

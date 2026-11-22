@@ -1,7 +1,7 @@
 import { QUIET_CHANGES_KEY } from '../lib/quiet-changes';
 import { useRef } from 'react';
 import { DIFF_LAYOUT_KEYS } from '../lib/diff-layout';
-import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
+import { CONFLICT_SHORTCUTS, hasGlyph, spokenKeys } from '../lib/conflict-shortcuts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 
 interface Props {
@@ -87,7 +87,16 @@ export function ShortcutOverlay({ open, onClose }: Props) {
                   <div key={shortcut.keys + shortcut.label}>
                     <dt>{shortcut.label}</dt>
                     <dd>
-                      <kbd className="kbd">{shortcut.keys}</kbd>
+                      {!hasGlyph(shortcut.keys) ? (
+                        <kbd className="kbd">{shortcut.keys}</kbd>
+                      ) : (
+                        <>
+                          <kbd className="kbd" aria-hidden="true">
+                            {shortcut.keys}
+                          </kbd>
+                          <span className="sr-only">{spokenKeys(shortcut.keys)}</span>
+                        </>
+                      )}
                     </dd>
                   </div>
                 ))}

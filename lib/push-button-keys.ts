@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react';
+import { isReviewAndPushKey } from './conflict-shortcuts';
 
 /**
  * Keys on a button that pushes (#489): only a click, or Cmd+Enter (Ctrl+Enter off macOS) while it has focus. Enter or
@@ -9,7 +10,5 @@ export function pushButtonKey(event: KeyboardEvent<HTMLElement>, mac: boolean, p
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
   event.stopPropagation();
-  const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  if (event.type === 'keydown' && event.key === 'Enter' && mod && !event.repeat && !event.altKey && !event.shiftKey)
-    press();
+  if (event.type === 'keydown' && !event.repeat && isReviewAndPushKey(event, mac)) press();
 }
