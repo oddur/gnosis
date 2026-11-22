@@ -1035,6 +1035,12 @@ void test('where structural merge leaves both sides’ new functions open, prepa
   );
   assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
   assert.ok(!file.resolved, 'A union is never reviewed for you');
+  // "Try structural merge again" would throw the union away: the service refuses it, as the dialog does (#462).
+  assert.equal(canRetryStructural(file, true), false);
+  await assert.rejects(
+    f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path }),
+    /Structural merge already ran/
+  );
 });
 
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {

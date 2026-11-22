@@ -20,6 +20,7 @@ import {
   waitsForReview,
   proposalKey,
   proposalReady,
+  typeCheckKey,
   SAME_LINES,
   summarySentence,
   verifyProposals,
@@ -128,7 +129,11 @@ void test('a lost definition, a duplicate, a parse error, markers or mixed line 
   const unparsed = { merged: false, note: 'This result doesn’t parse.' };
   assert.deepEqual(broken.blocks, [passed, unparsed]);
   assert.deepEqual(
-    blockBuckets(file([merged(imports), merged(three)]), withProposals(original, [merged(imports), merged(three)]), lost),
+    blockBuckets(
+      file([merged(imports), merged(three)]),
+      withProposals(original, [merged(imports), merged(three)]),
+      lost
+    ),
     ['check', 'check']
   );
   const markers = await verifyProposals(file([merged('<<<<<<< x\n'), null]), analyse);
@@ -314,6 +319,15 @@ void test('review probe: a check result belongs to the proposals it checked', ()
   const after = file([merged(imports), merged(three)]);
   assert.notEqual(proposalKey(before), proposalKey(after));
   assert.equal(proposalKey(before), proposalKey(file([merged(imports), merged(three + four)])));
+  // The path and the three versions the checks read count too (#464); the type check's key leaves them out as before.
+  const same = file([merged(imports), merged(three + four)]);
+  for (const field of ['path', 'base', 'ours', 'theirs'] as const)
+    assert.notEqual(proposalKey(before), proposalKey({ ...same, [field]: `${same[field]} ` }), field);
+  assert.equal(
+    typeCheckKey(before),
+    proposalKey({ original: before.original, proposals: before.proposals, wholeFile: before.wholeFile })
+  );
+  assert.equal(typeCheckKey(before), typeCheckKey(Object.assign({ ...same }, { base: `${same.base} ` })));
 });
 
 void test('second review probe: a draft that splits two ways is never carried, so a choice cannot swap', () => {
