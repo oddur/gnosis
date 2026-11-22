@@ -23,7 +23,8 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
-import { writtenLabel, type CompareWith } from '../lib/conflict-diff';
+import { writtenFileLines, writtenLabel, type CompareWith } from '../lib/conflict-diff';
+import { WRITTEN_CSS, WRITTEN_SWATCH, markWritten } from '../lib/diff-here';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
@@ -380,7 +381,7 @@ export function Block({
 export function WrittenLegend({ count }: { count: number }) {
   return (
     <p className="conflict-block-note-line conflict-written-legend" data-written={count}>
-      <span className="conflict-written-swatch" aria-hidden="true" />
+      <span className="conflict-written-swatch" style={{ background: WRITTEN_SWATCH }} aria-hidden="true" />
       {writtenLabel(count)}
     </p>
   );
@@ -609,7 +610,7 @@ export function ConflictView({
   note?: string;
   /** Structural merge's whole-file result, shown first as one thing to check. */
   /** `shown`: you asked to see the conflicts too. */
-  wholeFile?: { proposal: ConflictProposal; ours: string; onUse: () => void; shown: boolean; onShow: () => void };
+  wholeFile?: { proposal: ConflictProposal; ours: string; theirs: string; onUse: () => void; shown: boolean; onShow: () => void };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -684,6 +685,7 @@ export function WholeFile({
   name,
   proposal,
   ours,
+  theirs,
   onUse,
   verdict,
   labels,
@@ -692,12 +694,19 @@ export function WholeFile({
   name: string;
   proposal: ConflictProposal;
   ours: string;
+  /** main's whole file: with the PR's, what the proposal's lines are compared with for their marks (#445 item 10). */
+  theirs: string;
   onUse: () => void;
   verdict?: Verdict;
   labels: ConflictLabels;
   disabled: boolean;
 }) {
   const note = verdict?.note ?? 'Checking the result…';
+  // The proposal's lines neither side had are marked before you use it, as they are after (#445 item 10).
+  const written = useMemo(
+    () => writtenFileLines(proposal.text, ours, theirs, proposal.text),
+    [proposal.text, ours, theirs]
+  );
   return (
     <section
       className="conflict-block conflict-whole-file"
@@ -715,6 +724,7 @@ export function WholeFile({
         </span>
       </header>
       <p>{note}</p>
+      {written.size > 0 && <WrittenLegend count={written.size} />}
       <ResultDiff
         name={name}
         before={ours}
@@ -722,6 +732,7 @@ export function WholeFile({
         beforeLabel={labels.ours}
         afterLabel="Proposed result"
         quiet
+        written={written}
       />
       <div className="conflict-block-actions">
         <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
@@ -754,6 +765,7 @@ export function ResultDiff({
   beforeLabel,
   afterLabel,
   quiet = false,
+  written,
 }: {
   name: string;
   before: string;
@@ -762,7 +774,11 @@ export function ResultDiff({
   afterLabel: string;
   /** No change icon in the file header, for a diff inside a panel that already says what it is. */
   quiet?: boolean;
+  /** Lines of `after` a resolver wrote, which neither side had (#445 item 10): marked as in the Conflicts view. */
+  written?: ReadonlySet<number>;
 }) {
+  const latestWritten = useRef(written);
+  latestWritten.current = written;
   const options = useCodeOptions();
   const root = useRef<HTMLDivElement>(null);
   const width = useElementWidth(root);
@@ -771,10 +787,17 @@ export function ResultDiff({
     () => ({
       ...options,
       diffStyle: split ? ('split' as const) : ('unified' as const),
-      ...(quiet ? { unsafeCSS: '[data-change-icon]{display:none}' } : {}),
+      unsafeCSS: `${WRITTEN_CSS}${quiet ? '\n[data-change-icon]{display:none}' : ''}`,
+      // Each render writes the rows anew: the marks go back on them (lib/diff-here.ts).
+      onPostRender: (node: HTMLElement) => {
+        if (latestWritten.current) markWritten(node, latestWritten.current);
+      },
     }),
     [options, split, quiet]
   );
+  useEffect(() => {
+    for (const host of root.current?.querySelectorAll('diffs-container') ?? []) markWritten(host, written ?? new Set());
+  }, [written]);
   const oldFile = useMemo(() => ({ name, contents: before }), [name, before]);
   const newFile = useMemo(() => ({ name, contents: after }), [name, after]);
   return (

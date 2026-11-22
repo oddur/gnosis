@@ -8,7 +8,13 @@ import {
   type BlockPicks,
   type ConflictSegment,
 } from './conflict-blocks';
-import { segmentsText, writtenFileLines, writtenLines, type ConflictDiffBlock } from './conflict-diff';
+import {
+  resolverBaseline,
+  segmentsText,
+  writtenFileLines,
+  writtenLines,
+  type ConflictDiffBlock,
+} from './conflict-diff';
 import { conflictFileStage, type ConflictFile, type ConflictProposal } from './conflict-resolution';
 import type { ConflictBucket } from './conflict-verify';
 
@@ -71,6 +77,9 @@ export interface ConfirmGroups<P> {
   counts: { decided: number; merged: number; mainFiles: number };
 }
 
+/** How long the confirmation's whole files may spend on line diffs for their marks, together. */
+export const WRITTEN_BUDGET_MS = 300;
+
 /**
  * The push confirmation's three groups (#445 item 12): You decided, Merged for you and Arriving from main.
  *
@@ -83,7 +92,17 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
   files: readonly {
     file: Pick<
       ConflictFile,
-      'path' | 'ours' | 'theirs' | 'original' | 'result' | 'resolved' | 'source' | 'proposals' | 'wholeFile' | 'unsupported'
+      | 'path'
+      | 'ours'
+      | 'theirs'
+      | 'original'
+      | 'result'
+      | 'resolved'
+      | 'source'
+      | 'proposals'
+      | 'wholeFile'
+      | 'unsupported'
+      | 'resolverText'
     >;
     /** blockBuckets of the saved draft. */
     buckets: readonly ConflictBucket[];
@@ -91,6 +110,9 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
   }[],
   preview: readonly P[]
 ): ConfirmGroups<P> {
+  // Whole files' marks share one time limit: a confirmation of many large files opens at once, marking cautiously
+  // what it had no time to diff (writtenFileLines).
+  const budget = { until: Date.now() + WRITTEN_BUDGET_MS };
   const groups: ConfirmGroups<P> = {
     decided: [],
     merged: [],
@@ -118,8 +140,12 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
         blocks: [],
         whole: how,
         conflicts: conflicts.length,
-        // Your own edit is yours; any other whole file was written by a resolver, so its lines neither side had show.
-        written: how === 'manual' ? [] : [...writtenFileLines(file.result, file.ours, file.theirs)],
+        // The resolver's lines neither side had are marked, also after you kept or edited parts of its draft; lines you
+        // typed never are.
+        written: ((resolver) =>
+          resolver === undefined ? [] : [...writtenFileLines(file.result, file.ours, file.theirs, resolver, budget)])(
+          resolverBaseline(file, file.result)
+        ),
       });
     // A whole-file proposal also changes lines outside the conflicts: main's lines can't be told apart from it.
     if (file.wholeFile && file.result === file.wholeFile.text) {

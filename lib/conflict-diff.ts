@@ -1,5 +1,17 @@
 import { diffArrays } from 'diff';
-import { chosenText, textLines, type BlockProposals, type ConflictModel, type ConflictSegment } from './conflict-blocks';
+import {
+  applyChoices,
+  chosenText,
+  conflictModel,
+  parseConflicts,
+  pickText,
+  textLines,
+  type BlockPicks,
+  type BlockProposals,
+  type ConflictModel,
+  type ConflictSegment,
+} from './conflict-blocks';
+import type { ConflictFile } from './conflict-resolution';
 import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
@@ -158,7 +170,12 @@ export function compareRowPins(hunks: readonly GapHunk[], after: string): (reado
  * or a suggestion. Each is a line of the result that neither side had, so the reader knows which lines to read most
  * carefully. When in doubt a line is marked: the mark never hides anything, and an unmarked line must be a side's.
  */
-const lineText = (line: string) => line.replace(/\r?\n$/, '');
+/**
+ * A line as the rules compare it: its text with its line ending, so a resolver that turns CRLF into LF (or back) wrote
+ * that line. A last line without a line ending compares as if it had an LF: Git's markers end every side with one.
+ */
+const lineKey = (line: string) => (line.endsWith('\n') ? line : `${line}\n`);
+const keys = (text: string) => textLines(text).map(lineKey);
 const tally = (lines: readonly string[]) => {
   const counts = new Map<string, number>();
   for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
@@ -167,28 +184,65 @@ const tally = (lines: readonly string[]) => {
 
 /**
  * One conflict's result lines that neither side wrote, as 0-based indexes into `result`'s lines. The two sides' lines
- * are one multiset, compared exactly (a re-indented line is a new line). A text the result has more often than both
- * sides together marks every one of its copies: which copy is new can't be told, so none is trusted.
+ * are one multiset, compared exactly, line endings included (a re-indented line is a new line). A text the result has
+ * more often than both sides together marks every one of its copies: which copy is new can't be told, so none is
+ * trusted.
  */
 export function writtenLines(result: string, ours: string, theirs: string): number[] {
-  const sides = tally([...textLines(ours), ...textLines(theirs)].map(lineText));
-  const lines = textLines(result).map(lineText);
+  const sides = tally([...keys(ours), ...keys(theirs)]);
+  const lines = keys(result);
   const counts = tally(lines);
   return lines.flatMap((line, i) => ((counts.get(line) ?? 0) > (sides.get(line) ?? 0) ? [i] : []));
 }
 
+/** A shared time limit for whole-file marks (writtenFileLines): a confirmation with many files spends it once. */
+export interface WrittenBudget {
+  /** Epoch milliseconds after which no line diff runs, and the cautious rule marks instead. */
+  until: number;
+}
+/** The longest one line diff may take, when no budget says less. */
+const DIFF_MS = 150;
+/** Whole-file marks by their four texts: a file's draft version is diffed once, however often it renders. */
+const fileMarks = new Map<string, ReadonlySet<number>>();
+const FILE_MARKS = 64;
+
 /**
- * A whole file's lines that neither side wrote (a whole-file proposal, or a remembered resolution or suggestion whose
- * conflicts can't be told apart), as 1-based line numbers of `result`. A line is a side's only where a line diff
- * against that side keeps it, so a line moved to where neither side had it is marked too. A diff that runs out of time
- * falls back to the multiset rule over the whole files.
+ * A whole file's lines that neither side wrote, as 1-based line numbers of `result`: the draft of a whole-file proposal,
+ * a remembered resolution or a suggestion, whose conflicts can't be told apart. A line is a side's only where a line
+ * diff against that side keeps it, so a line moved to where neither side had it is marked too.
+ *
+ * When a diff doesn't finish in time (or `budget` is spent), the cautious rule marks instead: every copy of a line the
+ * result has more often than the side that has it most, never the two sides' sum.
+ *
+ * With `resolver`, the text the resolver wrote (ConflictFile.resolverText), only its lines can be marked: a line you
+ * typed is yours, never Gnosis's, and a line you kept from a side is that side's.
  */
-export function writtenFileLines(result: string, ours: string, theirs: string): Set<number> {
-  const lines = textLines(result).map(lineText);
+export function writtenFileLines(
+  result: string,
+  ours: string,
+  theirs: string,
+  resolver?: string,
+  budget?: WrittenBudget
+): ReadonlySet<number> {
+  const key = [result, ours, theirs, resolver ?? '\u0001'].join('\0');
+  const known = fileMarks.get(key);
+  if (known) {
+    fileMarks.delete(key);
+    fileMarks.set(key, known);
+    return known;
+  }
+  const lines = keys(result);
+  let marked: number[] | undefined;
+  let cautious = false;
   const kept = new Set<number>();
   for (const side of [ours, theirs]) {
-    const parts = diffArrays(textLines(side).map(lineText), lines, { timeout: 500 });
-    if (!parts) return new Set(writtenLines(result, ours, theirs).map((i) => i + 1));
+    const left = Math.min(DIFF_MS, budget ? budget.until - Date.now() : DIFF_MS);
+    const parts = left > 0 ? diffArrays(keys(side), lines, { timeout: left }) : undefined;
+    if (!parts) {
+      marked = cautiousLines(lines, ours, theirs);
+      cautious = true;
+      break;
+    }
     let at = 0;
     for (const part of parts) {
       if (part.removed) continue;
@@ -196,7 +250,25 @@ export function writtenFileLines(result: string, ours: string, theirs: string): 
       at += part.count;
     }
   }
-  return new Set(lines.flatMap((_, i) => (kept.has(i) ? [] : [i + 1])));
+  marked ??= lines.flatMap((_, i) => (kept.has(i) ? [] : [i]));
+  const own = resolver === undefined ? undefined : new Set(keys(resolver));
+  const set = new Set(marked.filter((i) => !own || own.has(lines[i])).map((i) => i + 1));
+  // A cautious result for a spent budget is not kept: with time, the next call diffs the file properly. One whose diff
+  // timed out on its own is kept, so a render does not wait for that diff again.
+  if (!cautious || !budget) {
+    fileMarks.set(key, set);
+    if (fileMarks.size > FILE_MARKS) fileMarks.delete(fileMarks.keys().next().value as string);
+  }
+  return set;
+}
+/** Every copy of a line the result has more often than the side with most copies of it: no diff needed. */
+function cautiousLines(lines: readonly string[], ours: string, theirs: string): number[] {
+  const a = tally(keys(ours)),
+    b = tally(keys(theirs));
+  const counts = tally(lines);
+  return lines.flatMap((line, i) =>
+    (counts.get(line) ?? 0) > Math.max(a.get(line) ?? 0, b.get(line) ?? 0) ? [i] : []
+  );
 }
 
 /**
@@ -223,6 +295,50 @@ export function shownWritten(
   const lines = new Set<number>();
   for (const block of blocks) for (const i of written.get(block.index) ?? []) lines.add(block.start + i);
   return lines;
+}
+
+/**
+ * The text a resolver wrote for a file, the baseline its marks come from (#445 item 10): the resolver's whole draft
+ * (`resolverText`, kept by the service), a whole-file proposal the draft still is, or else the file with every proposal
+ * applied. Undefined when no resolver wrote anything for the file.
+ */
+export function resolverBaseline(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'resolverText'>,
+  contents: string
+): string | undefined {
+  if (file.resolverText !== undefined) return file.resolverText;
+  if (file.wholeFile && contents === file.wholeFile.text) return file.wholeFile.text;
+  if (!file.proposals?.some(Boolean)) return undefined;
+  const segments = parseConflicts(file.original);
+  // Choices are by conflict index, as the proposals are.
+  const choices = file.proposals.map((proposal) => (proposal ? ('proposal' as const) : undefined));
+  return applyChoices(segments, choices, file.proposals);
+}
+
+/**
+ * The lines of a draft a resolver wrote, which neither side had (#445 item 10), as 1-based line numbers of `contents`,
+ * the live draft. A draft that still derives from its conflicts marks each proposal's new lines (conflictWritten).
+ * Otherwise (a whole-file result, a suggestion, a hand edit of either) the whole file is compared with both sides
+ * (writtenFileLines), and only lines of `resolver` (resolverBaseline) count: one you typed is never Gnosis's.
+ */
+export function draftWritten(
+  file: Pick<ConflictFile, 'original' | 'ours' | 'theirs' | 'proposals'>,
+  contents: string,
+  resolver: string | undefined,
+  picks?: BlockPicks,
+  budget?: WrittenBudget
+): ReadonlySet<number> {
+  const model = conflictModel(file.original, contents, file.proposals, picks);
+  if (model.undoable) {
+    const { blocks } = segmentsText(model.segments, (s) => pickText(s, model.choices[s.index], file.proposals));
+    return shownWritten(blocks, conflictWritten(model, file.proposals));
+  }
+  if (resolver === undefined) return new Set();
+  const marked = writtenFileLines(contents, file.ours, file.theirs, resolver, budget);
+  // A conflict the draft still has open (its markers and sides) is undecided: its card says Decide, not Gnosis wrote it.
+  const open = segmentsText(model.segments, (s) => s.block.raw).blocks;
+  if (!open.length) return marked;
+  return new Set([...marked].filter((line) => !open.some((b) => line >= b.start && line <= b.end)));
 }
 
 /** "3 lines written by Gnosis (neither side had them)". */

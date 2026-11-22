@@ -340,8 +340,8 @@ void test('written lines: a combined or inserted line neither side had is marked
   assert.deepEqual(writtenLines('call(a, retries, timeout);\n', 'call(a, retries);\n', 'call(a, timeout);\n'), [0]);
   // An inserted line between the two sides' lines.
   assert.deepEqual(writtenLines('a\nseparator\nb\n', 'a\n', 'b\n'), [1]);
-  // A re-indented line is a new line; a missing final line feed or a CR is not.
-  assert.deepEqual(writtenLines('  a\nb', 'a\n', 'b\r\n'), [0]);
+  // A re-indented line is a new line; a missing final line feed is not.
+  assert.deepEqual(writtenLines('  a\nb', 'a\n', 'b\n'), [0]);
   // Both sides' lines, in any order and dropped or not, are theirs.
   assert.deepEqual(writtenLines('b\na\n', 'a\n', 'b\n'), []);
   assert.deepEqual(writtenLines('', 'a\n', 'b\n'), []);
@@ -399,4 +399,105 @@ void test('written label: counts the lines in words', async () => {
   const { writtenLabel } = await import('../lib/conflict-diff');
   assert.equal(writtenLabel(1), '1 line written by Gnosis (neither side had it)');
   assert.equal(writtenLabel(3), '3 lines written by Gnosis (neither side had them)');
+});
+
+// Review round 1 of #493: the user's rule is "when in doubt, mark".
+void test('written lines: a line ending is part of the line, so a resolver that changes CRLF to LF wrote that line', async () => {
+  const { writtenLines, writtenFileLines } = await import('../lib/conflict-diff');
+  assert.deepEqual(writtenLines('a\r\nb\n', 'a\n', 'b\n'), [0]);
+  assert.deepEqual(writtenLines('a\n', 'a\r\n', 'b\r\n'), [0]);
+  assert.deepEqual([...writtenFileLines('x\r\ny\n', 'x\ny\n', 'x\ny\n')], [1]);
+});
+
+void test('written lines: with no time to diff, the cautious rule compares with the side that has most copies, never the sum', async () => {
+  const { writtenFileLines } = await import('../lib/conflict-diff');
+  // `}` once on each side, twice in the result: the sum of the sides would explain both copies; the cautious rule
+  // marks both.
+  const spent = { until: 0 };
+  assert.deepEqual([...writtenFileLines('a\n}\nb\n}\n', 'a\n}\n', 'b\n}\n', undefined, spent)], [2, 4]);
+  // A spent budget's cautious marks are not kept: with time, the line diffs show each `}` is a side's.
+  assert.deepEqual([...writtenFileLines('a\n}\nb\n}\n', 'a\n}\n', 'b\n}\n')], []);
+});
+
+void test('written lines: a suggestion’s marks stay after you keep a conflict, and the lines you type are never marked', async () => {
+  const { draftWritten, resolverBaseline } = await import('../lib/conflict-diff');
+  const original =
+    'head\n<<<<<<< pr\ncall(a, retries);\n=======\ncall(a, timeout);\n>>>>>>> main\nmid\n<<<<<<< pr\nx\n=======\ny\n>>>>>>> main\ntail\n';
+  const file = {
+    original,
+    ours: 'head\ncall(a, retries);\nmid\nx\ntail\n',
+    theirs: 'head\ncall(a, timeout);\nmid\ny\ntail\n',
+    proposals: undefined,
+    wholeFile: undefined,
+    // The suggestion combined conflict 1, rewrote `mid`, and left conflict 2 open.
+    resolverText: 'head\ncall(a, retries, timeout);\nmid();\n<<<<<<< pr\nx\n=======\ny\n>>>>>>> main\ntail\n',
+  };
+  const baseline = resolverBaseline(file, file.resolverText);
+  assert.deepEqual([...draftWritten(file, file.resolverText, baseline)], [2, 3]);
+  // Keep the PR's side of conflict 2: the suggestion's lines stay marked, the kept side's line is the PR's.
+  const kept = 'head\ncall(a, retries, timeout);\nmid();\nx\ntail\n';
+  assert.deepEqual([...draftWritten(file, kept, baseline)], [2, 3]);
+  // A line you typed, unsaved: never Gnosis's.
+  const typed = 'head\ncall(a, retries, timeout);\nmid();\nx\n// mine\ntail\n';
+  assert.deepEqual([...draftWritten(file, typed, baseline)], [2, 3]);
+  // Without a resolver's text, a hand edit has no marks.
+  assert.equal(draftWritten({ ...file }, typed, undefined).size, 0);
+});
+
+void test('written lines: the baseline is the resolver’s text, a whole-file proposal the draft still is, or every proposal applied', async () => {
+  const { draftWritten, resolverBaseline } = await import('../lib/conflict-diff');
+  const original = 'a\n<<<<<<< pr\ncall(a, retries);\n=======\ncall(a, timeout);\n>>>>>>> main\nb\n';
+  const proposals = [{ source: 'mergiraf' as const, text: 'call(a, retries, timeout);\n' }];
+  const ours = 'a\ncall(a, retries);\nb\n';
+  const theirs = 'a\ncall(a, timeout);\nb\n';
+  const applied = 'a\ncall(a, retries, timeout);\nb\n';
+  assert.equal(resolverBaseline({ original, proposals }, applied), applied);
+  // Structural merge's per-conflict draft, then an edit by hand elsewhere: its combined line stays marked.
+  const edited = 'a\ncall(a, retries, timeout);\nb\n// note\n';
+  assert.deepEqual([...draftWritten({ original, ours, theirs, proposals }, edited, resolverBaseline({ original, proposals }, edited))], [2]);
+  // A whole-file proposal: marked in its preview (the same rule, with the proposal as the baseline) and once used.
+  const whole = { source: 'moved' as const, text: 'a\ncall(a, retries, timeout);\nb\n' };
+  assert.equal(resolverBaseline({ original, wholeFile: whole }, whole.text), whole.text);
+  assert.equal(resolverBaseline({ original, wholeFile: whole }, original), undefined);
+  assert.equal(resolverBaseline({ original, wholeFile: whole, resolverText: 'x\n' }, original), 'x\n');
+});
+
+void test('written lines: a confirmation of 100 large whole-file drafts opens without freezing', async () => {
+  const { confirmGroups } = await import('../lib/conflict-confirm');
+  const { perfBudget, withinPerf } = await import('./perf-budget');
+  // Different enough on each side that a full line diff is slow: the shared budget marks the rest cautiously.
+  const lines = (seed: number) => Array.from({ length: 4000 }, (_, i) => `const v${(i * seed) % 4001} = ${i};\n`).join('');
+  const files = Array.from({ length: 100 }, (_, n) => {
+    const original = `<<<<<<< pr\n${lines(3)}=======\n${lines(7)}>>>>>>> main\n`;
+    const result = lines(11 + n);
+    return {
+      file: {
+        path: `src/f${n}.ts`,
+        mode: '100644',
+        base: '',
+        ours: lines(3),
+        theirs: lines(7),
+        original,
+        result,
+        resolved: true,
+        source: 'agent' as const,
+        resolverText: result,
+      },
+      buckets: [],
+    };
+  });
+  const started = performance.now();
+  const groups = confirmGroups(files, []);
+  withinPerf('conflict confirmation, 100 large whole-file drafts: marks', performance.now() - started, perfBudget(1500));
+  assert.equal(groups.decided.length, 100);
+  assert.ok(groups.decided.every((f) => f.written.length > 0), 'every file is still marked');
+});
+
+void test('slice fingerprint: rows with the same count and different text differ, and a row break is part of it', async () => {
+  const { hunkFingerprint } = await import('../lib/diff-gaps');
+  const rows = (...texts: string[]) => texts.map((text) => ({ type: '+', text }));
+  assert.equal(hunkFingerprint(rows('a\n', 'b\n')), hunkFingerprint(rows('a\n', 'b\n')));
+  assert.notEqual(hunkFingerprint(rows('call(a, timeout);\n')), hunkFingerprint(rows('call(a, retries);\n')));
+  assert.notEqual(hunkFingerprint(rows('ab', 'c')), hunkFingerprint(rows('a', 'bc')));
+  assert.notEqual(hunkFingerprint([{ type: '+', text: 'x' }]), hunkFingerprint([{ type: '-', text: 'x' }]));
 });

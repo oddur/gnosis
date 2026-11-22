@@ -7,6 +7,7 @@ import {
   hunkSlices,
   type DiffSlice,
   hunkCounts,
+  hunkFingerprint,
   hunkRange,
   placeOfLine,
   newLineAt,
@@ -17,7 +18,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
-import { HERE_CSS, WRITTEN_CSS, clearHere, markHere, markSection } from '../lib/diff-here';
+import { HERE_CSS, WRITTEN_CSS, clearHere, markHere, markSection, markWritten } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -978,34 +979,6 @@ function markLines(host: Element, marks: readonly (readonly [attribute: string, 
   }
 }
 
-/** What a marked written line says to assistive technology, and in its line number's tooltip. */
-export const WRITTEN_LINE_DESCRIPTION = 'Written by Gnosis. Neither side had this line.';
-/**
- * Marks the new side's rows a conflict resolver wrote (#445 item 10, `data-written-line`), context or added, with their
- * gutter cells. Each marked row is described for assistive technology and its line number has the same tooltip.
- * Attributes change only where they differ, so a pass over a diff that is already marked writes nothing; a diff with
- * nothing to mark and nothing marked costs one query.
- */
-function markWritten(host: Element, lines: ReadonlySet<number>) {
-  const root = host.shadowRoot;
-  if (!root) return;
-  if (!lines.size && !root.querySelector('[data-written-line]')) return;
-  const gutters = new Map<string, Element>();
-  for (const cell of root.querySelectorAll('[data-column-number]'))
-    if (!cell.closest('[data-deletions]')) gutters.set(cell.getAttribute('data-line-index') ?? '', cell);
-  const write = (element: Element | undefined, on: boolean, attribute: string) => {
-    if (!element || element.hasAttribute('data-written-line') === on) return;
-    element.toggleAttribute('data-written-line', on);
-    if (on) element.setAttribute(attribute, WRITTEN_LINE_DESCRIPTION);
-    else element.removeAttribute(attribute);
-  };
-  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
-    if (row.closest('[data-deletions]')) continue;
-    const on = row.dataset.lineType !== 'change-deletion' && lines.has(Number(row.dataset.line));
-    write(row, on, 'aria-description');
-    write(gutters.get(row.getAttribute('data-line-index') ?? ''), on, 'title');
-  }
-}
 const NO_WRITTEN: ReadonlySet<number> = new Set();
 
 /** A move's annotation: the metadata ChangesDiff gives its own rows among the caller's. */
@@ -1390,9 +1363,9 @@ export function ChangesDiff<A>({
     const result = parts.map((part) => {
       if (part.kind === 'gap') return part;
       const { hunk } = part;
-      // The rows' text is part of the id: a hunk whose lines changed but not their count (a conflict's Keep or proposal
-      // in the Conflicts view) must never reuse slices that show the old text.
-      const id = `${part.key}|${hunk.oldStart}|${hunk.newStart}|${hunk.rows.length}|${hunk.noEofOld}|${hunk.noEofNew}|${hunk.rows.map((row) => row.type + row.text).join('')}`;
+      // The rows' fingerprint is part of the id: a hunk whose lines changed but not their count (a conflict's Keep or
+      // proposal in the Conflicts view) must never reuse slices that show the old text.
+      const id = `${part.key}|${hunk.oldStart}|${hunk.newStart}|${hunk.rows.length}|${hunk.noEofOld}|${hunk.noEofNew}|${hunkFingerprint(hunk.rows)}`;
       const slices = cache.current.get(id) ?? hunkSlices(part.key, hunk, file, parse);
       next.set(id, slices);
       return {

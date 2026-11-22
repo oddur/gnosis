@@ -2,7 +2,7 @@ import { LoadingIndicator } from './LoadingState';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { DiffLineAnnotation } from '@pierre/diffs';
 import { EditProvider } from '@pierre/diffs/react';
-import { ConflictDiff, ConflictFileDiff, ConflictResult } from './ConflictDiff';
+import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
@@ -36,7 +36,7 @@ import {
 } from './ConflictBlocks';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
-import { cardAnchors, writtenLabel } from '../lib/conflict-diff';
+import { cardAnchors, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
   confirmCount,
   confirmGroups,
@@ -1616,14 +1616,13 @@ export function ConflictWorkspace({
                                 note={file.structuralNote}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
-                                resolverDraft={
-                                  file.source !== 'manual' || (!!file.wholeFile && contents === file.wholeFile.text)
-                                }
+                                resolverText={resolverBaseline(file, contents)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {
                                         proposal: file.wholeFile,
                                         ours: file.ours,
+                                        theirs: file.theirs,
                                         // The proposal as it is, structural merge's or the move rule's: nothing runs again.
                                         onUse: () => suggest('whole-file'),
                                         shown: blocksShown === viewKey,
@@ -1641,6 +1640,8 @@ export function ConflictWorkspace({
                                 afterLabel="Result after the merge"
                                 fileKey={diffKey}
                                 preferences={preferences}
+                                file={file}
+                                picks={picksOf(file)}
                               />
                             )
                           ) : mode === 'edit' ? (
@@ -1665,6 +1666,8 @@ export function ConflictWorkspace({
                               afterLabel="Result after the merge"
                               fileKey={diffKey}
                               preferences={preferences}
+                              file={file}
+                              picks={picksOf(file)}
                             />
                           )}
                         </>
@@ -1738,9 +1741,13 @@ function ConfirmFileDiff({
   verdict: Verdict | undefined;
   preferences?: Preferences | null;
 }) {
+  // Each conflict's lines, and every marked line, stay in view: a mark never sits in a hidden gap.
   const pins = useMemo(
-    () => part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
-    [part.blocks]
+    () => [
+      ...part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
+      ...lineRuns(new Set(part.written)),
+    ],
+    [part.blocks, part.written]
   );
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
@@ -1770,10 +1777,8 @@ function ConfirmFileDiff({
           : item.how === 'used'
             ? `Used the proposal${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
             : labels.kept[item.how];
-    const wrote = part.written.filter((line) => {
-      const block = part.blocks.find((b) => b.index === index);
-      return !!block && line >= block.start && line <= block.end;
-    }).length;
+    const block = part.blocks.find((b) => b.index === index);
+    const wrote = block ? part.written.filter((line) => line >= block.start && line <= block.end).length : 0;
     const Icon = item.how === 'merged' ? CheckCheck : Check;
     return (
       <p key={index} className="conflict-confirm-note" data-confirm-how={item.how}>

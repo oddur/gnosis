@@ -669,6 +669,8 @@ export function createConflictResolutionService(deps: Deps) {
         file.result = proposals ? withProposals(file.original, proposals) : contents;
         if (proposals) file.proposals = proposals;
         file.source = 'rerere';
+        // The remembered resolution as replayed: the baseline its lines neither side had are marked from (#445 item 10).
+        file.resolverText = file.result;
         file.explanation =
           'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
       }
@@ -1625,6 +1627,7 @@ export function createConflictResolutionService(deps: Deps) {
               if (!proposal || hasConflictMarkers(proposal.text)) throw new Error('This file has no whole-file proposal.');
               if (proposal.text !== file.result) file.picks = undefined;
               file.result = proposal.text;
+              file.resolverText = proposal.text;
               file.explanation =
                 proposal.source === 'moved'
                   ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
@@ -1647,6 +1650,7 @@ export function createConflictResolutionService(deps: Deps) {
                 // Your Keep choices were for the draft this replaces.
                 if (result.contents !== file.result) file.picks = undefined;
                 file.result = result.contents;
+                file.resolverText = result.contents;
               }
               file.explanation = result.explanation;
             } else {
@@ -1679,6 +1683,7 @@ export function createConflictResolutionService(deps: Deps) {
               }
               if (output !== file.result) file.picks = undefined;
               file.result = output;
+              file.resolverText = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';

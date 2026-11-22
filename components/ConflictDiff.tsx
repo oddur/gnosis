@@ -18,7 +18,9 @@ import {
   conflictCompareRows,
   conflictDiffText,
   conflictWritten,
+  draftWritten,
   isCompareWith,
+  resolverBaseline,
   shownWritten,
   writtenFileLines,
   type CompareWith,
@@ -32,7 +34,7 @@ import {
   type ConflictLabels,
   type ConflictModel,
 } from '../lib/conflict-blocks';
-import type { ConflictProposal } from '../lib/conflict-resolution';
+import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -488,14 +490,14 @@ export function ConflictDiff({
   wholeFile,
   picks,
   onPick,
-  resolverDraft = false,
+  resolverText,
 }: {
   name: string;
   /**
-   * The draft is a resolver's whole file (structural merge's, the move rule's, a remembered resolution or a
-   * suggestion): where its conflicts can't be told apart, every line neither side had is marked (#445 item 10).
+   * The text a resolver wrote for this file (resolverBaseline): where the draft's conflicts can't be told apart, its
+   * lines that neither side had are marked when they are this text's, never when you typed them (#445 item 10).
    */
-  resolverDraft?: boolean;
+  resolverText?: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
   ours: string;
   /** The base branch's version of the file: the diff's old side in Compare with: main. */
@@ -507,7 +509,7 @@ export function ConflictDiff({
   proposals?: readonly (ConflictProposal | null)[];
   verdict?: Verdict;
   note?: string;
-  wholeFile?: { proposal: ConflictProposal; ours: string; onUse: () => void; shown: boolean; onShow: () => void };
+  wholeFile?: { proposal: ConflictProposal; ours: string; theirs: string; onUse: () => void; shown: boolean; onShow: () => void };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -539,7 +541,7 @@ export function ConflictDiff({
   // The lines a resolver wrote, which neither side had (#445 item 10): per conflict, or over the whole draft when its
   // conflicts can't be told apart and a resolver wrote it.
   const written = useMemo(() => conflictWritten(model, proposals), [model, proposals]);
-  const wholeWritten = resolverDraft && !model.undoable;
+  const wholeWritten = resolverText !== undefined && !model.undoable;
   const card = (index: number) => {
     const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
     if (segment?.kind !== 'conflict') return null;
@@ -589,7 +591,10 @@ export function ConflictDiff({
       bothDisabled={!hasConflicts}
     />
   );
-  const sides = useMemo(() => (wholeWritten ? { ours, theirs } : undefined), [wholeWritten, ours, theirs]);
+  const sides = useMemo(
+    () => (wholeWritten ? { ours, theirs, resolver: resolverText } : undefined),
+    [wholeWritten, ours, theirs, resolverText]
+  );
   const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
   return (
     <div ref={root} className="conflict-view conflict-diff-view" data-undoable={model.undoable || undefined}>
@@ -629,6 +634,16 @@ export function ConflictDiff({
 }
 
 const NO_CARDS = () => null;
+/** Line numbers as runs of consecutive lines, for pins: a marked line is never hidden in a gap. */
+export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number])[] {
+  const runs: [number, number][] = [];
+  for (const line of [...lines].sort((a, b) => a - b)) {
+    const last = runs.at(-1);
+    if (last && line === last[1] + 1) last[1] = line;
+    else runs.push([line, line]);
+  }
+  return runs;
+}
 /**
  * One mode's diff of the draft (#445 items 8 and 9), with each conflict's card under its lines: against the PR's version
  * (`against` 'ours') or main's ('theirs'). A diff that isn't `live` is hidden and keeps the draft it last showed: it
@@ -663,7 +678,7 @@ function CompareDiff({
   /** Each conflict's lines neither side had (conflictWritten). */
   written: ReadonlyMap<number, readonly number[]>;
   /** Both whole versions, when the draft is a resolver's whole file: its lines neither had are marked instead. */
-  sides?: { ours: string; theirs: string };
+  sides?: { ours: string; theirs: string; resolver?: string };
 }) {
   const last = useRef({ model, proposals, written, sides });
   if (live) last.current = { model, proposals, written, sides };
@@ -676,13 +691,18 @@ function CompareDiff({
   const marks = useMemo(
     () =>
       draft.sides
-        ? writtenFileLines(shown.after, draft.sides.ours, draft.sides.theirs)
+        ? writtenFileLines(shown.after, draft.sides.ours, draft.sides.theirs, draft.sides.resolver)
         : shownWritten(shown.blocks, draft.written),
     [shown, draft.written, draft.sides]
   );
+  // A conflict's lines stay in view, and so does every marked line: the mark never sits in a hidden gap, even where
+  // the diff reads the line as unchanged context (a moved line in a resolver's whole file).
   const pins = useMemo(
-    () => shown.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
-    [shown]
+    () => [
+      ...shown.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
+      ...lineRuns(marks),
+    ],
+    [shown, marks]
   );
   // Annotations only place the cards. The cards read their state from context, so a check result or a busy state
   // updates them in place: a card that kept its DOM keeps its focus and its open details.
@@ -735,6 +755,8 @@ export function ConflictResult({
   afterLabel,
   fileKey,
   preferences,
+  file,
+  picks,
 }: {
   name: string;
   before: string;
@@ -743,15 +765,34 @@ export function ConflictResult({
   afterLabel: string;
   fileKey: string;
   preferences?: Preferences | null;
+  /** The conflicted file the result is the draft of: its lines a resolver wrote are marked (#445 item 10). */
+  file?: Pick<ConflictFile, 'original' | 'ours' | 'theirs' | 'proposals' | 'wholeFile' | 'resolverText'>;
+  picks?: BlockPicks;
 }) {
   const layout = useDiffLayout(preferences?.diffLayout);
+  const written = useMemo(
+    () => (file ? draftWritten(file, after, resolverBaseline(file, after), picks) : undefined),
+    [file, after, picks]
+  );
+  const pins = useMemo(() => (written ? lineRuns(written) : []), [written]);
   return (
     <div className="conflict-result-diff">
       <DiffColumns split={layout === 'split'} before={beforeLabel} after={afterLabel} />
       {before === after ? (
         <p className="conflict-side-empty">The result is the same as {beforeLabel}.</p>
       ) : (
-        <ConflictFileDiff name={name} before={before} after={after} fileKey={fileKey} preferences={preferences} />
+        <>
+          {written && written.size > 0 && <WrittenLegend count={written.size} />}
+          <ConflictFileDiff
+            name={name}
+            before={before}
+            after={after}
+            fileKey={fileKey}
+            preferences={preferences}
+            written={written}
+            pins={pins}
+          />
+        </>
       )}
     </div>
   );

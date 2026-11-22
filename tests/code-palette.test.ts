@@ -146,4 +146,10 @@ void test('"You are here" shows on every theme and surface, and the line under i
   const { WRITTEN_CSS } = await import('../lib/diff-here');
   assert.ok(WRITTEN_CSS.includes(`rgb(${rgb} / ${Math.round(HERE_SECTION_SETTLED * 100)}%)`), 'the steady band in WRITTEN_CSS');
   assert.ok(!/animation|@keyframes|transition/.test(WRITTEN_CSS), 'the steady band never moves');
+  // The card's swatch is drawn from the same colours, never a copy of them (#493 review).
+  const { WRITTEN_SWATCH } = await import('../lib/diff-here');
+  assert.ok(WRITTEN_SWATCH.includes(`rgb(${rgb} / ${Math.round(HERE_SECTION_SETTLED * 100)}%)`), 'the swatch uses the band');
+  const css = (await import('node:fs')).readFileSync(new URL('../src/globals.css', import.meta.url), 'utf8');
+  const swatch = css.match(/\.conflict-written-swatch \{[^}]*\}/)?.[0] ?? '';
+  assert.ok(swatch && !/rgb|#[0-9a-f]{3}/i.test(swatch), `the swatch CSS has no colour of its own: ${swatch}`);
 });

@@ -496,6 +496,27 @@ export interface DiffSlice {
  * Explanation view's (lib/review-diff.ts), so slices outside the viewport skip style and layout (#353). Source
  * numbers are kept, so line numbers, comments and jumps still address the original lines.
  */
+/**
+ * A hunk's rows as a short fingerprint, for reusing its rendered slices only while its lines are the same: the rows'
+ * total length and a 32-bit FNV-1a hash of each row's type and text, with a NUL between rows, so `ab`+`c` and `a`+`bc`
+ * differ. A hunk whose lines change but not their count (a conflict's Keep or proposal) gets new slices.
+ */
+export function hunkFingerprint(rows: readonly { type: string; text: string }[]): string {
+  let hash = 0x811c9dc5;
+  let length = 0;
+  const mix = (code: number) => {
+    hash ^= code;
+    hash = Math.imul(hash, 0x01000193);
+  };
+  for (const row of rows) {
+    mix(row.type.charCodeAt(0));
+    for (let i = 0; i < row.text.length; i++) mix(row.text.charCodeAt(i));
+    mix(0);
+    length += row.text.length + 1;
+  }
+  return `${length}:${(hash >>> 0).toString(36)}`;
+}
+
 export function hunkSlices(
   key: string,
   hunk: GapHunk,

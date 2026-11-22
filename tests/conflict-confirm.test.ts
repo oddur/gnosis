@@ -126,15 +126,15 @@ void test('a file edited by hand is yours, Merged proposals included, and its no
   const groups = confirmGroups([entry(f, merged, ['theirs'])], []);
   assert.deepEqual(groups.counts, { decided: 2, merged: 0, mainFiles: 1 });
   assert.equal(groups.decided[0].whole, 'manual');
-  // Your own edit is yours: nothing in it is marked as written by Gnosis.
-  assert.deepEqual(groups.decided[0].written, []);
+  // Your own edit is yours: the line you typed is never marked, and Mergiraf's combined line still is.
+  assert.deepEqual(groups.decided[0].written, [4]);
   assert.equal(groups.decided[0].before, 'a = 10\nb = 2\nx = 5\nc = 30\n');
   assert.equal(wholeNote('manual', 2, 'main'), 'You edited this file, so its 2 conflicts are yours.');
   // A suggestion or a remembered resolution is not your edit: the note names what produced the draft.
   for (const source of ['agent', 'rerere', 'mergiraf'] as const) {
-    const g = confirmGroups([entry({ ...f, source }, merged, ['theirs'])], []);
+    const g = confirmGroups([entry({ ...f, source, resolverText: f.result }, merged, ['theirs'])], []);
     assert.equal(g.decided[0].whole, source);
-    // A resolver's whole file: every line neither side had is marked, its added note line and Mergiraf's line alike.
+    // A resolver's whole file: every line of its text neither side had is marked, its note line and Mergiraf's alike.
     assert.deepEqual(g.decided[0].written, [4, 5]);
     assert.doesNotMatch(wholeNote(source, 2, 'main'), /You edited/);
   }

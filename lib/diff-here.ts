@@ -81,13 +81,44 @@ ${keyframes('gnosis-here-gutter-body', 18, 12, bar)}
  * backgrounds of the row itself, over its change colour and under its text, so the transient band can still play on top.
  * ChangesDiff writes `data-written-line` after each render.
  */
+const WRITTEN_LAYERS = `linear-gradient(to right, var(--code-ring, #9bb8ff) 0 2px, transparent 2px), linear-gradient(rgb(${BAND} / 12%), rgb(${BAND} / 12%))`;
 export const WRITTEN_CSS = `
-[data-line][data-written-line] {
-  background-image:
-    linear-gradient(to right, var(--code-ring, #9bb8ff) 0 2px, transparent 2px),
-    linear-gradient(rgb(${BAND} / 12%), rgb(${BAND} / 12%));
-}`;
+[data-line][data-written-line] { background-image: ${WRITTEN_LAYERS}; }`;
 
+/**
+ * The steady mark as a swatch for the card's legend ("1 line written by Gnosis"): the same rail and band, on the code
+ * surface, so the legend looks as the marked rows do.
+ */
+export const WRITTEN_SWATCH = `${WRITTEN_LAYERS}, var(--diff-code-bg, #0d1117)`;
+
+/** What a marked written line says to assistive technology, and in its line number's tooltip. */
+export const WRITTEN_LINE_DESCRIPTION = 'Written by Gnosis. Neither side had this line.';
+/**
+ * Marks the new side's rows a conflict resolver wrote (#445 item 10, `data-written-line`), context or added, with their
+ * gutter cells. Each marked row is described for assistive technology and its line number has the same tooltip.
+ * Attributes change only where they differ, so a pass over a diff that is already marked writes nothing; a diff with
+ * nothing to mark and nothing marked costs one query.
+ */
+export function markWritten(host: Element, lines: ReadonlySet<number>) {
+  const root = host.shadowRoot;
+  if (!root) return;
+  if (!lines.size && !root.querySelector('[data-written-line]')) return;
+  const gutters = new Map<string, Element>();
+  for (const cell of root.querySelectorAll('[data-column-number]'))
+    if (!cell.closest('[data-deletions]')) gutters.set(cell.getAttribute('data-line-index') ?? '', cell);
+  const write = (element: Element | undefined, on: boolean, attribute: string) => {
+    if (!element || element.hasAttribute('data-written-line') === on) return;
+    element.toggleAttribute('data-written-line', on);
+    if (on) element.setAttribute(attribute, WRITTEN_LINE_DESCRIPTION);
+    else element.removeAttribute(attribute);
+  };
+  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
+    if (row.closest('[data-deletions]')) continue;
+    const on = row.dataset.lineType !== 'change-deletion' && lines.has(Number(row.dataset.line));
+    write(row, on, 'aria-description');
+    write(gutters.get(row.getAttribute('data-line-index') ?? ''), on, 'title');
+  }
+}
 /** A row's line-number cell: the gutter cell with its line index, in the same column of a split diff. */
 export function gutterOf(row: Element): Element | undefined {
   const index = row.getAttribute('data-line-index');

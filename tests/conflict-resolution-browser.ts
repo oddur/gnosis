@@ -152,8 +152,8 @@ void app.whenReady().then(async () => {
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
-        if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
-        else if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
+        if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
+        else if(req.kind==='resolve'){s.files[0].result=s.files[0].resolverText='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
         if(req.kind==='publish'){if(window.failPublish)throw Error("Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. To github.com:klang/engine.git\\n ! [rejected]        feature/retry (stale info)\\nerror: failed to push some refs");s.status='published';s.commitSha='d'.repeat(40);}
         s.version++;return {session:structuredClone(s)};
@@ -1419,6 +1419,12 @@ void app.whenReady().then(async () => {
     await wait("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex==='-1'");
     await key('j');
     assert.equal(await activeBlock(), '-1');
+    // The proposal's preview marks the lines neither side had (#445 item 10), as many as its legend counts.
+    const markedIn = (scope: string) =>
+      `[...document.querySelectorAll(${JSON.stringify(scope)})].flatMap(e=>[...e.querySelectorAll('diffs-container')]).flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line][data-written-line]')??[])]).length`;
+    const legendIn = (scope: string) =>
+      `Number(document.querySelector(${JSON.stringify(`${scope} .conflict-written-legend`)})?.dataset.written ?? 0)`;
+    await wait(`${legendIn('.conflict-whole-file')}>0 && ${markedIn('.conflict-whole-file')}===${legendIn('.conflict-whole-file')}`);
     await captureAll('whole-file-check');
     // The link shows the conflicts below the proposal; J and K then visit both.
     await click('Resolve conflict by conflict instead (1)');
@@ -1456,6 +1462,20 @@ void app.whenReady().then(async () => {
       await js("[...document.querySelectorAll('.conflict-file-title [data-status], .conflict-files button:first-child [data-status]')].map(b=>b.textContent)"),
       ['Resolved · needs review', 'Resolved · needs review']
     );
+    // Used, the same lines stay marked in the draft's diff, each one in view: a marked line is pinned, never in a gap.
+    await wait("!!document.querySelector('.conflict-result-diff diffs-container, .conflict-compare-diff:not([hidden]) diffs-container')");
+    // Using it shows the result (Review result), or the Conflicts view's diff: either marks the same lines.
+    const prScope = (await js<boolean>("!!document.querySelector('.conflict-result-diff')"))
+      ? '.conflict-result-diff'
+      : '.conflict-compare-diff[data-compare=pr]';
+    try {
+      await wait(`${legendIn(prScope)}>0 && ${markedIn(prScope)}===${legendIn(prScope)}`);
+    } catch (error) {
+      const rows = await js(
+        `[...document.querySelectorAll('${prScope} diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).map(r=>(r.closest('[data-deletions]')?'old ':'new ')+r.dataset.line+' '+r.dataset.lineType+(r.hasAttribute('data-written-line')?' W':''))`
+      );
+      throw new Error(`legend ${await js(legendIn(prScope))}, marked ${await js(markedIn(prScope))}, rows ${JSON.stringify(rows)}`, { cause: error });
+    }
     await captureAll('whole-file-used');
     // Reset file brings the whole-file proposal back, and the footer drops the suggestion's note.
     await click('Reset file');
@@ -1972,10 +1992,16 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='proposal'`);
     await marksAre(prDiff, [combined]);
     assert.ok(await js(`!!${block(0)}.querySelector('.conflict-written-legend')`));
-    // The push confirmation marks the same line in the group that holds it.
+    // Review result marks the same line, with its count.
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     await checksDone();
-    if (await exists('Review result')) await click('Review result');
+    await click('Review result');
+    await marksAre('.conflict-result-diff', [combined]);
+    assert.equal(
+      await js("document.querySelector('.conflict-result-diff .conflict-written-legend')?.textContent"),
+      '1 line written by Gnosis (neither side had it)'
+    );
+    // The push confirmation marks the same line in the group that holds it.
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");
     for (const group of ['decided', 'merged'])
