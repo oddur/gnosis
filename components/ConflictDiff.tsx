@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffMetadata, type FileDiffOptions } from '@pierre/diffs';
+import { CircleHelp } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { diffThemeName } from '../lib/diff-worker-pool';
 import { applyCodePalette } from '../lib/diff-code-palette';
@@ -47,7 +48,6 @@ import { useDiffFileModel } from './useDiffFileModel';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
-import { CircleHelp } from 'lucide-react';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
@@ -79,6 +79,7 @@ export function ConflictFileDiff<A>({
   previousPath,
   note,
   written,
+  landmark = true,
 }: {
   name: string;
   before?: string;
@@ -107,6 +108,8 @@ export function ConflictFileDiff<A>({
   note?: string;
   /** Lines of `after` a resolver wrote, which neither side had (#445 item 10): each keeps a steady mark. */
   written?: ReadonlySet<number>;
+  /** Off for a diff inside a card that names the file already: no second region with the same name. */
+  landmark?: boolean;
 }) {
   const before = patch ? '' : beforeText;
   const after = patch ? '' : afterText;
@@ -191,7 +194,7 @@ export function ConflictFileDiff<A>({
     <section
       ref={sectionRef}
       className="commit-stream-file conflict-diff-file"
-      aria-label={bare ? undefined : name}
+      aria-label={bare || !landmark ? undefined : name}
       data-code-theme={theme}
     >
       {!bare && (
@@ -478,7 +481,8 @@ const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) =>
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
- * under its lines (components/ConflictCard.tsx): Merged, Check or Decide, with Keep, Undo and Edit in place.
+ * under its lines (components/ConflictCard.tsx): Merged, Check or Decide, with Keep, Use the proposal, Undo and Edit
+ * in place (#445 item 11).
  */
 export function ConflictDiff({
   name,
@@ -593,7 +597,7 @@ export function ConflictDiff({
     const start = editing === index ? editStart(index) : '';
     return (
       <ConflictCard
-        edit={model.edits?.[index]}
+        edit={model.edits?.[index] ?? undefined}
         // Only a draft that is exactly its choices can be edited conflict by conflict.
         onEdit={
           onEdits && model.undoable
@@ -855,6 +859,8 @@ export function ConflictResult({
   preferences,
   file,
   picks,
+  written: marked,
+  landmark,
 }: {
   name: string;
   before: string;
@@ -866,11 +872,14 @@ export function ConflictResult({
   /** The conflicted file the result is the draft of: its lines a resolver wrote are marked (#445 item 10). */
   file?: Pick<ConflictFile, 'original' | 'ours' | 'theirs' | 'proposals' | 'wholeFile' | 'resolverText' | 'source'>;
   picks?: BlockPicks;
+  /** The marked lines, when the caller knows them (a whole-file proposal), in place of the file's. */
+  written?: ReadonlySet<number>;
+  landmark?: boolean;
 }) {
   const layout = useDiffLayout(preferences?.diffLayout);
   const written = useMemo(
-    () => (file ? draftWritten(file, after, resolverBaseline(file, after), picks) : undefined),
-    [file, after, picks]
+    () => marked ?? (file ? draftWritten(file, after, resolverBaseline(file, after), picks) : undefined),
+    [marked, file, after, picks]
   );
   const pins = useMemo(() => (written ? lineRuns(written) : []), [written]);
   return (
@@ -889,6 +898,7 @@ export function ConflictResult({
             preferences={preferences}
             written={written}
             pins={pins}
+            landmark={landmark}
           />
         </>
       )}
@@ -930,8 +940,6 @@ function WholeFile({
     () => writtenFileLines(proposal.text, ours, theirs, proposal.text),
     [proposal.text, ours, theirs]
   );
-  // Each marked line stays in view: a mark never sits in a hidden gap.
-  const pins = useMemo(() => lineRuns(written), [written]);
   return (
     <section
       className="conflict-block conflict-whole-file"
@@ -949,17 +957,18 @@ function WholeFile({
         </span>
       </header>
       <p>{note}</p>
-      {written.size > 0 && <WrittenLegend count={written.size} />}
-      {/* The proposal against the PR's version, in the same diff as the conflicts below it. */}
-      <ConflictFileDiff
+      {/* The proposal against the PR's version, with named columns, in the same diff as the conflicts below it. Inside
+          this card it is no region of its own: the card names it. */}
+      <ConflictResult
         name={name}
         before={ours}
         after={proposal.text}
+        beforeLabel={labels.ours}
+        afterLabel="Proposed result"
         fileKey={`${fileKey}:whole-file`}
-        pins={pins}
         preferences={preferences}
-        label={`Proposed result against ${labels.ours}`}
         written={written}
+        landmark={false}
       />
       <div className="conflict-block-actions">
         <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
@@ -971,7 +980,7 @@ function WholeFile({
 }
 
 /** Column names for a diff, matching its split or unified layout. */
-export function DiffColumns({ split, before, after }: { split: boolean; before: string; after: string }) {
+function DiffColumns({ split, before, after }: { split: boolean; before: string; after: string }) {
   return split ? (
     <div className="conflict-diff-columns" data-layout="split">
       <span>

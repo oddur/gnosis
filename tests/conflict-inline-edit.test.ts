@@ -12,7 +12,14 @@ import {
 } from '../lib/conflict-blocks';
 import { conflictCompareRows, conflictDiffText, conflictWritten, keptMarks } from '../lib/conflict-diff';
 import { blockBuckets } from '../lib/conflict-verify';
-import { hasConflictMarkers } from '../lib/conflict-resolution';
+import { CONFLICT_FILE_LIMIT, hasConflictMarkers, validateConflictRequest } from '../lib/conflict-resolution';
+import { modelTargets, openConflicts, spliceModelProposal } from '../lib/conflict-model';
+import { carryFile } from '../lib/conflict-carry';
+import type { BlockEdits } from '../lib/conflict-blocks';
+
+/** Edits as the draft saves them (ConflictFile.edits). */
+const savedEdits = (edits: BlockEdits) =>
+  Array.from(edits, (edit) => (edit ? { text: edit.text, before: edit.before ?? null, pick: edit.pick ?? null } : null));
 
 /** Two conflicts with text before, between and after them, as Git writes them. */
 const original = [
@@ -182,4 +189,82 @@ void test('inline edit: the diff shows your text; only the resolver’s lines yo
   // A line you typed that reads like the resolver's is still yours: nothing kept from it, nothing marked.
   assert.deepEqual(keptMarks('', [], proposal), []);
   assert.deepEqual(keptMarks('a\nb\n', [0, 1], 'b\na\n').length, 1, 'Only a line the diff keeps in place keeps its mark');
+});
+
+void test('inline edit: an edit after an empty Keep never joins the line after the conflict', () => {
+  // Keep main's change: main's side is empty here, so the conflict holds no lines.
+  const source = 'a\n<<<<<<< pr\nb\n=======\n>>>>>>> main\nc\n';
+  const contents = applyChoices(parseConflicts(source), ['theirs']);
+  assert.equal(contents, 'a\nc\n');
+  const result = editConflict(conflictModel(source, contents), contents, 0, 'x');
+  assert.ok(result);
+  assert.equal(result.contents, 'a\nx\nc\n');
+  // At the end of the file there is no line to join: your text stays as you typed it.
+  const last = 'a\n<<<<<<< pr\nb\n=======\n>>>>>>> main\n';
+  const end = applyChoices(parseConflicts(last), ['theirs']);
+  assert.equal(editConflict(conflictModel(last, end), end, 0, 'x')?.contents, 'a\nx');
+});
+
+void test('inline edit: model requests skip only the edited conflict; the others stay open and askable', () => {
+  const contents = applyChoices(segments, [undefined, undefined]);
+  const result = editConflict(conflictModel(original, contents), contents, 0, typed);
+  assert.ok(result);
+  const file = { path: 'src/retry.ts', original, result: result.contents, proposals: undefined, edits: result.edits };
+  // Without the edits the draft can't be read conflict by conflict, so nothing would be asked.
+  assert.deepEqual(modelTargets({ ...file, edits: undefined }), []);
+  assert.deepEqual(modelTargets(file), [1]);
+  assert.deepEqual([...(openConflicts(original, result.contents, undefined, result.edits) ?? [])], [1]);
+  // The service puts a proposal into the other conflict and keeps your edit; never into the edited one.
+  const proposal = { source: 'model' as const, text: 'export const retries = 4;\n', by: 'Claude' };
+  const saved = savedEdits(result.edits);
+  assert.equal(spliceModelProposal({ original, result: result.contents, edits: saved }, 0, proposal), undefined);
+  const spliced = spliceModelProposal({ original, result: result.contents, edits: saved }, 1, proposal);
+  assert.ok(spliced);
+  const raw = segments[3].kind === 'conflict' ? segments[3].block.raw : '';
+  assert.equal(spliced.result, result.contents.replace(raw, proposal.text));
+  assert.ok(spliced.result.includes(typed), 'Your edit stays');
+  // The resolver's text leaves your edit out: no line you typed is ever marked as the model's.
+  assert.ok(!spliced.resolver.includes(typed));
+  assert.ok(spliced.resolver.includes(proposal.text));
+});
+
+void test('inline edit: saved edits are validated, carried to an unchanged conflict when main moves, dropped otherwise', () => {
+  const id = 'a'.repeat(64);
+  const save = { kind: 'save', id, version: 1, path: 'a', contents: '', resolved: false };
+  validateConflictRequest({ ...save, edits: [null, { text: 'x\n', before: 'proposal', pick: null, written: [0] }] });
+  for (const edits of [
+    'x',
+    [{ text: 1, before: null, pick: null }],
+    [{ text: 'x', before: 'mine', pick: null }],
+    [{ text: 'x', before: null, pick: null, extra: true }],
+    [{ text: 'x', before: null, pick: null, written: [-1] }],
+    [
+      { text: 'x'.repeat(CONFLICT_FILE_LIMIT), before: null, pick: null },
+      { text: 'y', before: null, pick: null },
+    ],
+  ])
+    assert.throws(() => validateConflictRequest({ ...save, edits }));
+  // Main moved, and the first conflict's three sides are the same: your edit and its Undo come with it.
+  const contents = applyChoices(segments, [undefined, 'theirs']);
+  const result = editConflict(conflictModel(original, contents), contents, 0, typed);
+  assert.ok(result);
+  const old = {
+    path: 'src/retry.ts',
+    mode: '100644',
+    base: '',
+    ours: '',
+    theirs: '',
+    original,
+    result: result.contents,
+    resolved: false,
+    source: 'manual' as const,
+    edits: savedEdits(result.edits),
+  };
+  const moved = carryFile(old, { ...old, result: original, edits: undefined }, false);
+  assert.deepEqual(moved.file.edits, [{ text: typed, before: null, pick: null }, null]);
+  assert.equal(moved.file.result, result.contents);
+  // A conflict whose text changed is open again, without the edit.
+  const changed = original.replace('return Math.max(100, attempt * 200);', 'return Math.max(50, attempt * 200);');
+  const fresh = carryFile(old, { ...old, original: changed, result: changed, edits: undefined }, false);
+  assert.equal(fresh.file.edits, undefined);
 });
