@@ -2338,7 +2338,7 @@ function ArrivingList({
     count,
     getScrollElement: () => scroller.current,
     estimateSize: (i) => {
-      if (i < main.length) return estimate(Math.abs(main[i].after.split('\n').length - main[i].before.split('\n').length) + 8);
+      if (i < main.length) return estimate(Math.abs(newlines(main[i].after) - newlines(main[i].before)) + 8);
       const f = incoming[i - main.length];
       return estimate(f.hunks.reduce((n, h) => n + Math.max(h.additionCount, h.deletionCount) + 1, 0));
     },
@@ -2381,6 +2381,13 @@ function ArrivingList({
       </div>
     </div>
   );
+}
+
+/** How many line feeds `text` has: a whole file's size, without splitting it. */
+function newlines(text: string) {
+  let n = 0;
+  for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) n++;
+  return n;
 }
 
 /** A group of the confirmation: its heading is the disclosure, with what it counts. */
