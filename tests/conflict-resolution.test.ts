@@ -11,7 +11,13 @@ import { composeCarried, replayBuckets, restackWorktreePath } from '../src/confl
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
 import { createConflictMemory } from '../src/conflict-rerere';
-import { hasConflictMarkers, conflictFileStage, validateConflictRequest, type ConflictFile } from '../lib/conflict-resolution';
+import {
+  hasConflictMarkers,
+  conflictFileStage,
+  validateConflictRequest,
+  type ConflictFile,
+  type ConflictSession,
+} from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import type { PrActionState } from '../lib/pr-actions';
 import { blockBuckets, CHECKS_VERSION, verifyProposals } from '../lib/conflict-verify';
@@ -20,6 +26,7 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 import { conflictChecker, createConflictCheckWorker, moveProposer } from '../src/conflict-checks';
 import { canRetryStructural } from '../lib/conflict-flow';
+import { cascadeSentence } from '../lib/conflict-cascade';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -2388,4 +2395,150 @@ void test('replay buckets fail closed: only an unchanged, checked proposal is Me
   assert.deepEqual(replayBuckets({ ...merged, result: original }), ['decide']);
   assert.deepEqual(replayBuckets(merged, [0]), ['yours'], 'Carried is yours, even where a proposal passed');
   assert.deepEqual(replayBuckets({ ...merged, unsupported: 'binary' }), ['decide']);
+});
+/**
+ * A 4-PR stack whose root (PR 1, feature) is resolved but not pushed (#445 item 22). Above it: PR 2 (child) adds a
+ * method where main added another, which the checks merge; PR 3 (mid) changes the line PR 1 resolved, a new Decide;
+ * PR 4 (tip) adds a file through a merge commit of its own.
+ */
+async function cascadeStack(t: TestContext) {
+  const f = await fixture(t, false, undefined, [{ name: 'account.py', base: ACCOUNT, ours: ACCOUNT, theirs: ACCOUNT + STATEMENT }]);
+  Object.assign(f.deps, {
+    verify: (checked: ConflictFile, off: SyntaxLanguage[]) => conflictChecker(movedEngine, off)(checked),
+    moved: (checked: ConflictFile, off: SyntaxLanguage[]) => moveProposer(movedEngine, off)(checked),
+  });
+  const remote = f.deps.remote();
+  const commit = async (branch: string, from: string, name: string, text: string) => {
+    await f.git('checkout', '-b', branch, from);
+    await fs.writeFile(path.join(remote, name), text);
+    await f.git('add', '.');
+    await f.git('commit', '-m', `${branch} change`);
+  };
+  await commit('child', 'feature', 'account.py', ACCOUNT + WITHDRAW);
+  await commit('mid', 'child', 'sample.ts', 'export const answer = 4;\n');
+  await commit('side', 'mid', 'tip.txt', 'tip change\n');
+  await f.git('checkout', '-b', 'tip', 'mid');
+  await f.git('merge', '--no-ff', '-m', 'Merge side', 'side');
+  await f.git('checkout', 'main');
+  const urls = [2, 3, 4].map((n) => `https://github.com/test/repo/pull/${n}`);
+  const read = async (url: string) => {
+    const index = [f.state.url, ...urls].indexOf(url);
+    assert.ok(index >= 0);
+    const branch = ['feature', 'child', 'mid', 'tip'][index],
+      baseBranch = ['main', 'feature', 'child', 'mid'][index];
+    return {
+      ...f.state,
+      url,
+      title: branch,
+      headBranch: branch,
+      baseBranch,
+      headSha: await f.git('rev-parse', branch),
+      baseSha: await f.git('rev-parse', baseBranch),
+    };
+  };
+  const deps = { ...f.deps, read, dependents: () => urls };
+  const service = createConflictResolutionService(deps);
+  const signal = new AbortController().signal;
+  let session = (await service.run({ kind: 'open', url: f.state.url, restart: true }, signal)).session;
+  session = (
+    await service.run(
+      { kind: 'save', id: session.id, version: session.version, path: 'sample.ts', contents: 'export const answer = 3;\n', resolved: true },
+      signal
+    )
+  ).session;
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', session.id);
+  /** Every ref in the remote and in the session's repository, the session's worktrees, and restack directories. */
+  const refs = async () => ({
+    remote: await f.git('for-each-ref', '--format=%(refname) %(objectname)'),
+    cache: (await exec('git', ['for-each-ref', '--format=%(refname) %(objectname)'], { cwd: cache })).stdout,
+    worktrees: (await exec('git', ['worktree', 'list', '--porcelain'], { cwd: cache })).stdout,
+    restacks: (await fs.readdir(cache)).filter((name) => name.startsWith('restack-')),
+  });
+  return { ...f, deps, service, session, urls, refs };
+}
+void test('the cascade preview dry-runs the stack before the push and changes nothing (#445 item 22)', async (t) => {
+  if (await nativeMergirafMissing(t)) return;
+  const f = await cascadeStack(t);
+  const before = await f.refs();
+  const memory = path.join(f.deps.directory(), 'resolution-memory');
+  const memoryFiles = async () => (await fs.readdir(memory, { recursive: true }).catch((): string[] => [])).sort();
+  const remembered = await memoryFiles();
+  const signal = new AbortController().signal;
+  let preview = await f.service.previewCascade(f.session.id, f.session.version, signal);
+  assert.ok(preview);
+  assert.deepEqual(
+    preview.prs.map(({ outcome, conflicts, merges, review }) => ({ outcome, conflicts, merges, review })),
+    [
+      { outcome: 'merged', conflicts: undefined, merges: 0, review: false },
+      { outcome: 'conflicts', conflicts: 1, merges: 0, review: true },
+      { outcome: 'waiting', conflicts: undefined, merges: 0, review: true },
+    ],
+    'PR 2 is Merged by the checks, PR 3 stops on a Decide, and PR 4 waits for it'
+  );
+  assert.equal(cascadeSentence(preview), 'Resolving #1 also settles #2. #3 has 1 new conflict. #4 waits for #3.');
+  assert.deepEqual(await f.refs(), before, 'No ref or branch changes, and the private worktree is gone');
+  assert.deepEqual(await memoryFiles(), remembered, 'Nothing is remembered: no preimage, no resolution');
+  const saved = f.deps.storage.read(`conflict-draft:tester:${f.session.id}`) as ConflictSession;
+  assert.equal(saved.version, f.session.version, 'The draft is unchanged');
+  assert.equal(saved.status, 'editing');
+  assert.equal(saved.restack, undefined);
+  assert.equal(saved.commitSha, undefined);
+
+  // Your choice for PR 3's conflict, carried as in a restack (matched on the conflict's text, not its labels): PR 3 is
+  // settled by it, and PR 4 replays.
+  const conflict = '<<<<<<< parent\nexport const answer = 3;\n||||||| base\nexport const answer = 1;\n=======\nexport const answer = 4;\n>>>>>>> pr\n';
+  f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, [
+    { path: 'sample.ts', mode: '', base: '', ours: '', theirs: '', original: conflict, result: 'export const answer = 5;\n', resolved: true, source: 'manual' },
+  ]);
+  preview = await f.service.previewCascade(f.session.id, f.session.version, signal);
+  assert.ok(preview);
+  assert.deepEqual(
+    preview.prs.map(({ outcome, merges, review }) => ({ outcome, merges, review })),
+    [
+      { outcome: 'merged', merges: 0, review: false },
+      { outcome: 'carried', merges: 0, review: true },
+      { outcome: 'clean', merges: 1, review: true },
+    ],
+    'A carried choice is yours, and a recreated merge commit still needs its tick'
+  );
+  assert.equal(cascadeSentence(preview), 'Resolving #1 also settles #2, #3 and #4.');
+  assert.deepEqual(await f.refs(), before);
+  assert.deepEqual(await memoryFiles(), remembered);
+  await assert.rejects(f.service.previewCascade(f.session.id, f.session.version + 1, signal), /resolution changed/);
+
+  // The restack after the push decides by the same rule: PR 2 needs no tick, and PR 3 stops for you.
+  f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, null);
+  const run = (r: Parameters<typeof f.service.run>[0]) => f.service.run(r, signal);
+  const shown = (await run({ kind: 'preview', id: f.session.id, version: f.session.version })).preview;
+  assert.ok(shown);
+  const pushed = (
+    await run({ kind: 'publish', id: f.session.id, version: f.session.version, previewToken: shown.token, message: 'Resolve root' })
+  ).session;
+  const restack = (await run({ kind: 'restack-prepare', id: pushed.id, version: pushed.version })).session.restack;
+  assert.equal(restack?.status, 'blocked');
+  assert.deepEqual(
+    restack.branches.map(({ url, review }) => ({ url, review })),
+    [{ url: f.urls[0], review: false }]
+  );
+  assert.equal(restack.blocked?.url, f.urls[1]);
+});
+void test('a request of yours stops a running cascade preview, which gives way (#445 item 22)', async (t) => {
+  const f = await cascadeStack(t);
+  const before = await f.refs();
+  const running = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  const { session } = await f.service.run(
+    { kind: 'save', id: f.session.id, version: f.session.version, path: 'sample.ts', contents: 'export const answer = 7;\n', resolved: true },
+    new AbortController().signal
+  );
+  await assert.rejects(running, (error: Error) => error.message === BACKGROUND_YIELDED);
+  assert.equal(session.version, f.session.version + 1, 'Your save went through');
+  assert.deepEqual(await f.refs(), before, 'The stopped run removed its worktree and changed no ref');
+  // Nothing to preview while the draft has a file that isn't reviewed.
+  const open = (
+    await f.service.run(
+      { kind: 'save', id: session.id, version: session.version, path: 'sample.ts', contents: 'export const answer = 7;\n', resolved: false },
+      new AbortController().signal
+    )
+  ).session;
+  await assert.rejects(f.service.previewCascade(open.id, open.version, new AbortController().signal), /every file reviewed/);
 });

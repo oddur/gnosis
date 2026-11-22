@@ -1,0 +1,71 @@
+import { useEffect, useState } from 'react';
+import { cascadePrLine, cascadeSentence, type CascadeState } from '../lib/conflict-cascade';
+import { hasConflictMarkers, type ConflictSession } from '../lib/conflict-resolution';
+
+/**
+ * The cascade preview for this draft version (#445 item 22), once every file is reviewed and other PRs stack on this
+ * one. Main runs the dry run in the background and says when it changes; a request of yours (`busy`) stops it, and it
+ * is asked for again when that is done.
+ */
+export function useConflictCascade(session: ConflictSession | undefined, busy: boolean): CascadeState | undefined {
+  const [value, setValue] = useState<{ key: string; state: CascadeState | undefined }>();
+  const ready =
+    !!session &&
+    session.status === 'editing' &&
+    !session.stale &&
+    session.preparation !== 'up-to-date' &&
+    !!session.dependents?.length &&
+    session.files.every((file) => !file.unsupported && file.resolved && !hasConflictMarkers(file.result));
+  const key = ready ? `${session.id}@${session.version}` : '';
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!key || busy || !session || !api.conflictCascade) return;
+    const { id, version } = session;
+    let live = true;
+    const read = () =>
+      api.conflictCascade?.(id, version).then(
+        (state) => {
+          if (live && state) setValue({ key, state });
+        },
+        // An older main process, or a test without the handler: nothing shows.
+        () => {}
+      );
+    void read();
+    const off = api.onConflictCascadeChanged?.((changed) => {
+      if (changed === id) void read();
+    });
+    return () => {
+      live = false;
+      off?.();
+    };
+  }, [key, busy]);
+  return key && value?.key === key ? value.state : undefined;
+}
+
+/** The preview in the push confirmation: advisory, it never changes what needs review. */
+export function ConflictCascadeLine({ state }: { state: CascadeState | undefined }) {
+  if (!state) return null;
+  if (state.state === 'checking')
+    return (
+      <li data-cascade="checking" role="status">
+        Checking the stack…
+      </li>
+    );
+  if (state.state === 'battery')
+    return <li data-cascade="battery">The stack is checked when your computer is on power.</li>;
+  if (state.state === 'failed') return <li data-cascade="failed">Couldn’t check the stack: {state.message}</li>;
+  if (!state.preview.prs.length) return null;
+  return (
+    <li data-cascade="ready">
+      <span data-cascade-sentence="">{cascadeSentence(state.preview)}</span> A dry run that pushes nothing. The
+      restack after the push still asks you to review each update that needs it.
+      <ul className="conflict-cascade-prs">
+        {state.preview.prs.map((pr) => (
+          <li key={pr.url} data-cascade-outcome={pr.outcome}>
+            {cascadePrLine(pr)}
+          </li>
+        ))}
+      </ul>
+    </li>
+  );
+}

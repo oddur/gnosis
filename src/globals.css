@@ -4276,6 +4276,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-confirm-facts { margin:0;padding-left:18px;list-style:disc; }
 .conflict-confirm-facts li + li { margin-top:4px; }
 .conflict-confirm-facts li:not(:first-child) { color:var(--muted-foreground); }
+/* The cascade preview (#445 item 22): the sentence reads first, each dependent PR's line below it. */
+.conflict-confirm-facts [data-cascade-sentence] { color:var(--foreground); }
+.conflict-cascade-prs { margin:4px 0 0;padding-left:16px;list-style:circle; }
 .conflict-confirm-diff { display:flex;flex-direction:column;gap:14px;margin-top:4px; }
 .conflict-confirm-diff h3 { margin-bottom:6px;font-size:var(--type-control);font-weight:600; }
 .conflict-disclosure { display:inline-flex;align-items:center;gap:6px;font-weight:600; }

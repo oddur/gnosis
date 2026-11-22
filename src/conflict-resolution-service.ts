@@ -39,7 +39,8 @@ import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
-import { carryList, prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import { cascadeOutcomes, carryList, prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import type { CascadePreview } from '../lib/conflict-cascade';
 import {
   SHARED_LAYOUT_FILE,
   STORES_DIRECTORY,
@@ -1293,14 +1294,18 @@ export function createConflictResolutionService(deps: Deps) {
     if (prepared.tree !== session.tree)
       throw new Error('The saved resolution no longer matches its revisions. Reopen the workspace and start again.');
   }
-  /** Restack walks history. A shallow or removed cache fetches it first, as the full path always did. */
+  /**
+   * Restack walks history. A shallow or removed cache fetches it first, as the full path always did. `tip` is the
+   * commit whose history is fetched: the pushed merge commit, or, for a dry run before the push, the PR head.
+   */
   async function restoreHistory(
     ctx: Context,
     session: ConflictSession,
     signal: AbortSignal,
-    report: (text: string) => void
+    report: (text: string) => void,
+    tip = session.commitSha
   ) {
-    if (!session.commitSha || !oid(session.commitSha)) return;
+    if (!tip || !oid(tip)) return;
     const dir = await directory(ctx.account, session.id);
     if (!(await exists(path.join(dir, 'HEAD')))) {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
@@ -1320,7 +1325,7 @@ export function createConflictResolutionService(deps: Deps) {
         await git(
           ctx,
           session.id,
-          ['cat-file', '-e', `${session.commitSha}^{commit}`],
+          ['cat-file', '-e', `${tip}^{commit}`],
           signal,
           undefined,
           [0, 1, 128],
@@ -1341,7 +1346,7 @@ export function createConflictResolutionService(deps: Deps) {
         '--filter=blob:none',
         ...(shallow ? ['--unshallow'] : []),
         'pr',
-        session.commitSha,
+        tip,
       ],
       signal
     );
@@ -1368,6 +1373,26 @@ export function createConflictResolutionService(deps: Deps) {
       await git(ctx, session.id, ['update-index', '-z', '--index-info'], signal, `${file.mode} ${sha}\t${file.path}\0`);
     }
     return (await git(ctx, session.id, ['write-tree'], signal)).stdout.toString().trim();
+  }
+  /** What a restack, or its dry run, needs from the service. */
+  async function restackDepsFor(ctx: Context, id: string, signal: AbortSignal, report: (text: string) => void) {
+    return {
+      git: (args: string[], input?: string, allowed?: number[], overrideSignal?: AbortSignal) =>
+        git(ctx, id, args, overrideSignal ?? signal, input, allowed),
+      read: deps.read,
+      readMany: deps.readMany,
+      directory: await directory(ctx.account, id),
+      remote,
+      signal,
+      report,
+      // The main merge's pipeline for each paused commit (#445 item 21): the same steps, not a copy of them.
+      propose: async (files: ConflictFile[], branches: { head: string; base: string }, keepDraft: boolean) => {
+        await mergeStructurally(ctx, id, branches, files, signal, report, keepDraft);
+      },
+      check: async (files: ConflictFile[]) => {
+        await check(files, signal, report);
+      },
+    };
   }
   let maintenance: Promise<unknown> = Promise.resolve();
   /**
@@ -1521,6 +1546,61 @@ export function createConflictResolutionService(deps: Deps) {
         return open(ctx, url, false, false, yielding, () => {}, files);
       });
     },
+    /**
+     * The cascade preview (#445 item 22): replays the dependent PRs onto the merge commit this draft would push, as the
+     * restack after the push would, and says what each would need. A dry run: the merge commit is made locally and
+     * never pushed, the private worktree is removed, no ref or branch changes, and no resolution is remembered. It runs
+     * as background work, so any request of yours stops it. Undefined while another operation runs for the PR.
+     */
+    async previewCascade(id: string, version: number, signal: AbortSignal): Promise<CascadePreview | undefined> {
+      const ctx = deps.context();
+      if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
+      if (!/^[a-f0-9]{64}$/.test(id) || !Number.isSafeInteger(version)) throw new Error('Invalid conflict session.');
+      const key = storageKey(ctx.account, id);
+      if (busy.has(key)) return undefined;
+      return asBackground(key, signal, async (yielding) => {
+        await maintenance;
+        const session = sessionFor(ctx, id);
+        if (session.version !== version)
+          throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+        if (session.status !== 'editing') throw new Error('This resolution has already been published.');
+        const urls = deps.dependents?.(session.url) ?? [];
+        if (!urls.length) return { version, url: session.url, prs: [] };
+        const quiet = () => {};
+        const tree = await resultTree(ctx, session, yielding, quiet);
+        // The merge commit the push would make, with the same tree and parents. Only an object: no ref names it.
+        const rootSha = (
+          await git(
+            ctx,
+            id,
+            [
+              '-c',
+              `user.name=${ctx.account}`,
+              '-c',
+              `user.email=${ctx.account}@users.noreply.github.com`,
+              'commit-tree',
+              tree,
+              '-p',
+              session.headSha,
+              '-p',
+              session.baseSha,
+            ],
+            yielding,
+            'Preview the cascade\n'
+          )
+        ).stdout
+          .toString()
+          .trim();
+        await restoreHistory(ctx, session, yielding, quiet, session.headSha);
+        const restackDeps = await restackDepsFor(ctx, id, yielding, quiet);
+        // Your choices so far carry to the same conflicts, as in the restack. Read, never written.
+        const carry = carryList(readCarry(ctx.account, id));
+        const plan = await memory.withRepository(memoryScope(session), restackDeps.directory, () =>
+          prepareRestack(session, urls, { ...restackDeps, carry, dryRun: rootSha })
+        );
+        return { version, url: session.url, prs: cascadeOutcomes(plan, urls) };
+      });
+    },
     /** The saved draft for this PR head, while it is being edited: a background one or yours. */
     draft(url: string, headSha: string) {
       const ctx = deps.context();
@@ -1620,23 +1700,7 @@ export function createConflictResolutionService(deps: Deps) {
         ) {
           if (session.status !== 'published')
             throw new Error('Publish this PR’s conflict resolution before restacking its dependents.');
-          const restackDeps = {
-            git: (args: string[], input?: string, allowed?: number[], overrideSignal?: AbortSignal) =>
-              git(ctx, id, args, overrideSignal ?? signal, input, allowed),
-            read: deps.read,
-            readMany: deps.readMany,
-            directory: await directory(ctx.account, id),
-            remote,
-            signal,
-            report,
-            // The main merge's pipeline for each paused commit (#445 item 21): the same steps, not a copy of them.
-            propose: async (files: ConflictFile[], branches: { head: string; base: string }, keepDraft: boolean) => {
-              await mergeStructurally(ctx, id, branches, files, signal, report, keepDraft);
-            },
-            check: async (files: ConflictFile[]) => {
-              await check(files, signal, report);
-            },
-          };
+          const restackDeps = await restackDepsFor(ctx, id, signal, report);
           if (request.kind === 'restack-prepare') {
             // Your reviewed choices so far, and the paused plan's this one replaces, carry to the same conflicts.
             const previous = session.restack;
