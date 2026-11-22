@@ -2,7 +2,8 @@
  * What needs the user's action, shared by notifications (#307) and the menu bar (#308).
  *
  * The menu bar shows the *current set* of kinds per PR. Notifications announce the *moment a kind enters*
- * a PR's set (see `lib/notification-events.ts`). Same kinds, same rank, same target, same switches.
+ * a PR's set (see `lib/notification-events.ts`). Same kinds, same rank, same target, same switches, except `restack`:
+ * the menu bar and the Overview show it, and no notification announces it.
  * Pure: no Node or Electron imports.
  *
  * Built by #307 Phase 1; #308 Phase 1 adds `explanation-ready` rows. `restack`: your PR's stack parent merged and the PR
@@ -57,7 +58,7 @@ export const ATTENTION_LABEL: Readonly<Record<AttentionKind, string>> = {
   'checks-failed': 'Checks failed',
   conflicts: 'Merge conflicts',
   replies: 'Awaiting your reply',
-  restack: 'Parent merged',
+  restack: 'Needs to move',
   'ready-to-merge': 'Ready to merge',
   'explanation-ready': 'Explanation ready',
 };
@@ -177,13 +178,14 @@ export function memberKinds(
   member: ReviewMember,
   fresh: QueueSignals | undefined,
   login: string,
-  /** `merged`: the PR's `mergedParent`, when the caller already has it. */
-  options: { teamRequests?: boolean; merged?: MergedParent } = {}
+  /** `merged`: the PR's `mergedParent` when the caller already has it, null for none. Undefined: found here. */
+  options: { teamRequests?: boolean; merged?: MergedParent | null } = {}
 ): Set<AttentionKind> {
   const kinds = new Set(Object.keys(memberAttention(member, fresh, login, options)) as AttentionKind[]);
   if (updatedSinceYourReview(item, member.url) && !isOwnPr(member, login)) kinds.add('updated-since-review');
   if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
-  if (isOwnPr(member, login) && ('merged' in options ? options.merged : mergedParent(item.subject, member, fresh))) kinds.add('restack');
+  if (isOwnPr(member, login) && (options.merged === undefined ? mergedParent(item.subject, member) : options.merged))
+    kinds.add('restack');
   // A finished, current, unread explanation. It folds into a review request on the same row.
   if (explanationFor(item, member.url)?.unread) kinds.add('explanation-ready');
   return kinds;
@@ -209,7 +211,7 @@ export function attentionItems(input: {
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url)) continue;
       const signals = input.signals(member);
       const fresh = freshSignals(signals, input.now);
-      const merged = isOwnPr(member, input.login) ? mergedParent(item.subject, member, fresh) : undefined;
+      const merged = mergedParent(item.subject, member) ?? null;
       const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests, merged });
       const explanation = explanationFor(item, member.url);
       for (const kind of kinds) if (!input.enabled(kind, member.repo)) kinds.delete(kind);

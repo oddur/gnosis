@@ -21,7 +21,7 @@ export const PR_METADATA_FIELDS = `number title url body createdAt updatedAt sta
       author { __typename login }
       assignees(first:100) { totalCount nodes { login } }
       assignedActors(first:1) { totalCount }
-      baseRefName baseRefOid headRefName headRefOid
+      baseRefName baseRefOid headRefName headRefOid headRef { id }
       baseRepository { nameWithOwner isArchived } headRepository { nameWithOwner }
       comments { totalCount } commits { totalCount }
       reviews(first:100,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { totalCount nodes { comments { totalCount } } }
@@ -57,6 +57,8 @@ export interface GraphPrMetadata {
   baseRefOid: string;
   headRefName: string;
   headRefOid: string;
+  /** Null once the head branch is deleted. Absent in answers to older queries. */
+  headRef?: { id: string } | null;
   baseRepository: { nameWithOwner: string; isArchived: boolean } | null;
   headRepository: { nameWithOwner: string } | null;
   comments: { totalCount: number };
@@ -120,6 +122,7 @@ export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined
     baseSha: pr.baseRefOid,
     headSha: pr.headRefOid,
     merged: pr.merged,
+    ...(pr.headRef === undefined ? {} : { headRefDeleted: pr.headRef === null }),
     state: pr.state === 'OPEN' ? 'open' : 'closed',
     createdAt: pr.createdAt,
     updatedAt: pr.updatedAt,

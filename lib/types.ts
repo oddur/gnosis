@@ -632,6 +632,11 @@ export interface PrMetadata {
   baseSha: string;
   headSha: string;
   merged: boolean;
+  /**
+   * The head branch is gone, such as deleted after the merge (GraphQL's `headRef` is null). Only GraphQL reads say;
+   * absent when unknown. A merged PR whose branch is gone is a stack parent whatever the branch's name.
+   */
+  headRefDeleted?: boolean;
   state: 'open' | 'closed';
   createdAt: string;
   updatedAt: string;
