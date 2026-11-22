@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
+import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
@@ -1021,6 +1022,8 @@ export function ConflictWorkspace({
       : describedError;
   // The preview lists every file the merge commit changes against the PR head. Push waits for the workflow permission.
   const pushNeedsWorkflow = conflictPushNeedsWorkflow(access?.scopes, preview?.files);
+  // The dependent PRs' dry run (#445 item 22): starts once every file is reviewed, shown in the confirmation.
+  const cascade = useConflictCascade(session, busy);
   // The confirmation's three groups (#445 item 12), from the saved drafts the preview was made from.
   const groups = useMemo(
     () =>
@@ -1470,6 +1473,7 @@ export function ConflictWorkspace({
                   )}
                 </li>
                 <li>Approvals may be dismissed if the repository requires it.</li>
+                <ConflictCascadeLine cascade={cascade} />
                 <li>
                   Pushes only if the branch is still at <code>{session.headSha.slice(0, 7)}</code>. The PR stays open;
                   checks run again.
