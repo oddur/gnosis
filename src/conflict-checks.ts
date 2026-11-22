@@ -9,7 +9,7 @@ import {
   type Verdict,
 } from '../lib/conflict-verify';
 import { parseConflicts } from '../lib/conflict-blocks';
-import { blockResolutions, withProposals } from '../lib/conflict-carry';
+import { blockResolutions, restoreMarkers, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { movedProposal } from '../lib/conflict-moved';
 import {
@@ -56,22 +56,15 @@ export function withoutUnconfirmed(
   const kept = proposals.map((p, index) => (drop.includes(index) ? null : p));
   const segments = parseConflicts(file.original);
   const texts = blockResolutions(segments, file.result);
-  /** The draft rebuilt from its conflicts' texts, with Git's markers in `restore`. */
-  const draft = (restore: readonly number[]) =>
-    segments
-      .map((s) =>
-        s.kind === 'text' ? s.text : restore.includes(s.index) ? s.block.raw : (texts?.[s.index] ?? s.block.raw)
-      )
-      .join('');
-  // Only when the draft splits back into its conflicts exactly: anything else is left as it is.
-  const restore =
-    texts && draft([]) === file.result ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  // Only when the draft splits back into its conflicts exactly (restoreMarkers): anything else is left as it is.
+  const restore = texts ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  const restored = texts && restore.length ? restoreMarkers(segments, texts, file.result, restore) : undefined;
   const prepared = file.result === withProposals(file.original, proposals);
   const left = kept.some(Boolean);
   return {
     proposals: left ? kept : undefined,
-    result: restore.length ? draft(restore) : file.result,
-    resolved: restore.length ? false : file.resolved,
+    result: restored ?? file.result,
+    resolved: restored !== undefined ? false : file.resolved,
     source: prepared && !left && file.source === 'mergiraf' ? 'manual' : file.source,
     structuralNote: left ? undefined : 'Structural merge couldn’t combine this file.',
   };
@@ -176,6 +169,8 @@ interface Job {
   /** The worker's answer, or undefined when it failed, ran out of time or stopped. */
   resolve: (response: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
+  /** Stops listening to the request's AbortSignal. */
+  release?: () => void;
 }
 const jobLabel = (request: CheckRequest) =>
   request.kind === 'noise'
@@ -225,7 +220,9 @@ export async function noiseAnswer(
 /**
  * The worker that runs the checks, started on the first check and stopped after a minute without one, so its grammars
  * leave memory. One job at a time. A job that runs over 30 seconds, counted from when it starts, answers undefined;
- * the worker restarts for the jobs after it.
+ * the worker restarts for the jobs after it. So does a running job whose request is cancelled (#464): the next job
+ * doesn't wait for a file nobody reads; a cancelled job that hasn't started never runs. A cancelled job answers
+ * undefined, never a verdict.
  */
 export function createConflictCheckWorker(
   script: string,
@@ -245,12 +242,17 @@ export function createConflictCheckWorker(
     previous?.removeAllListeners();
     void previous?.terminate();
   };
+  /** Answers a job: its timer and its signal listener go. */
+  const settle = (job: Job, response: CheckResponse | undefined) => {
+    clearTimeout(job.timer);
+    job.release?.();
+    job.resolve(response);
+  };
   /** Answers the running job, then starts the next. `restart`: the worker is stuck or gone, so a new one takes over. */
   const finish = (job: Job, response: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
-    clearTimeout(job.timer);
     current = undefined;
-    job.resolve(response);
+    settle(job, response);
     if (restart) terminate();
     pump();
   };
@@ -297,36 +299,65 @@ export function createConflictCheckWorker(
       finish(job, undefined, true);
     }
   }
-  const run = (request: CheckRequest) =>
+  const run = (request: CheckRequest, signal?: AbortSignal) =>
     new Promise<CheckResponse | undefined>((resolve) => {
-      queue.push({ request, resolve });
+      // After dispose, or for a request already cancelled, no job starts.
+      if (disposed || signal?.aborted) {
+        resolve(undefined);
+        return;
+      }
+      const job: Job = { request, resolve };
+      if (signal) {
+        const cancel = () => {
+          if (current === job) {
+            finish(job, undefined, true);
+            return;
+          }
+          const at = queue.indexOf(job);
+          if (at < 0) return;
+          queue.splice(at, 1);
+          settle(job, undefined);
+        };
+        signal.addEventListener('abort', cancel, { once: true });
+        job.release = () => signal.removeEventListener('abort', cancel);
+      }
+      queue.push(job);
       pump();
     });
   /** A conflict file's job: its check, or the move rule's proposal. */
-  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved') => {
-    if (disposed) return Promise.resolve(undefined);
+  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved', signal?: AbortSignal) => {
     const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-    return run({
-      id: ++serial,
-      ...(kind === 'moved' ? { kind } : {}),
-      file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-      disabled,
-    });
+    return run(
+      {
+        id: ++serial,
+        ...(kind === 'moved' ? { kind } : {}),
+        file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+        disabled,
+      },
+      signal
+    );
   };
   return {
-    async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
-      const response = await ask(file, disabled, 'check');
+    async check(
+      file: CheckedFile,
+      disabled: SyntaxLanguage[] = [],
+      signal?: AbortSignal
+    ): Promise<Verdict | undefined> {
+      const response = await ask(file, disabled, 'check', signal);
       return response && 'verdict' in response ? response.verdict : undefined;
     },
     /** A text's definitions (definitionsOf), in the same worker, one job at a time with the checks. */
     async definitions(path: string, text: string, disabled: SyntaxLanguage[] = []) {
-      if (disposed) return undefined;
       const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled });
       return response && 'definitions' in response ? response.definitions : undefined;
     },
     /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
-    async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
-      const response = await ask(file, disabled, 'moved');
+    async moved(
+      file: CheckedFile,
+      disabled: SyntaxLanguage[] = [],
+      signal?: AbortSignal
+    ): Promise<ConflictProposal | undefined> {
+      const response = await ask(file, disabled, 'moved', signal);
       return response && 'proposal' in response ? response.proposal : undefined;
     },
     /**
@@ -338,7 +369,10 @@ export function createConflictCheckWorker(
       const answers: (NoiseAnswer | null)[] = files.map(() => null);
       for (const [index, { language, after, hunks, imports }] of files.entries()) {
         if (disposed || signal?.aborted) break;
-        const response = await run({ id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] });
+        const response = await run(
+          { id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] },
+          signal
+        );
         if (!response || !('noise' in response) || response.noise.length !== 1) break;
         answers[index] = response.noise[0];
       }
@@ -348,10 +382,7 @@ export function createConflictCheckWorker(
       disposed = true;
       clearTimeout(idle);
       terminate();
-      for (const job of [...(current ? [current] : []), ...queue.splice(0)]) {
-        clearTimeout(job.timer);
-        job.resolve(undefined);
-      }
+      for (const job of [...(current ? [current] : []), ...queue.splice(0)]) settle(job, undefined);
       current = undefined;
     },
   };

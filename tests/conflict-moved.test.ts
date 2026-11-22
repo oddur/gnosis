@@ -104,7 +104,7 @@ void test('a renamed function whose edit lands wrong fails the checks', async ()
   assert.notEqual(swapped, resolved);
   const verdict = await verifyWholeFile(f, { source: 'moved', text: swapped }, analyse);
   assert.equal(verdict.passed, undefined);
-  assert.match(verdict.note, /findUser in the result doesn’t match main’s change to loadUser|doesn’t parse/);
+  assert.match(verdict.note, /findUser in the proposal doesn’t match main’s change to loadUser|doesn’t parse/);
   // The old name back beside the new one.
   const both = `${resolved}\n${f.theirs.slice(f.theirs.indexOf('export function loadUser'), f.theirs.indexOf('\n}\n') + 3)}`;
   const twice = await verifyWholeFile(f, { source: 'moved', text: both }, analyse);

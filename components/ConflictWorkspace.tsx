@@ -91,19 +91,21 @@ import {
   allMerged,
   blockVerdict,
   summarySentence,
+  unchosenConflicts,
+  preparedDraft,
+  waitingHint,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
   type ConflictBucket,
   type Verdict,
-  typeCheckKey,
-  typeErrorNote,
+  typeCheckFor,
+  typeErrorOf,
   withTypeError,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
-import { withProposals } from '../lib/conflict-carry';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -215,6 +217,8 @@ function KeyboardHelp() {
 /** The type check's one line (#445 item 24), "Type check: …". */
 export function typeCheckLine(status: ConflictTypeCheck) {
   switch (status.state) {
+    case 'waiting':
+      return 'Type check: waiting for your changes';
     case 'running':
       return 'Type check: running…';
     case 'passed':
@@ -244,7 +248,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
         : undefined;
   const already =
     (status.state === 'errors' || status.state === 'passed') && status.preExisting
-      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR already has.`
+      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR or its base already has.`
       : undefined;
   return (
     <span className="conflict-type-check" role="status" data-type-check={status.state}>
@@ -259,7 +263,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
             <TooltipContent side="bottom" align="end" className="conflict-type-check-errors">
               {status.state === 'errors' && (
                 <>
-                  <p>Errors in a conflicted file keep its merged conflicts in Check. Errors elsewhere are for your information.</p>
+                  <p>Any new error keeps every merged conflict in Check: an error in one file can come from a conflict in another.</p>
                   <ul>
                     {detail.map((error, i) => (
                       <li key={i}>{error}</li>
@@ -275,7 +279,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
       ) : (
         line
       )}
-      {status.state === 'running' && (
+      {(status.state === 'running' || status.state === 'waiting') && (
         <Button size="xs" variant="ghost" onClick={onStop}>
           Stop
         </Button>
@@ -563,15 +567,21 @@ export function ConflictWorkspace({
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
-  const [typeCheck, setTypeCheck] = useState<ConflictTypeCheck | null>(null);
+  // Kept across saves of the same draft, so files don't flash between buckets while the status is read again.
+  const [typeCheckOf, setTypeCheck] = useState<{ id: string; status: ConflictTypeCheck | null | undefined }>();
   const sessionId = session?.id;
+  // Undefined until read for this draft, or on but not run: the demotions saved on the files apply.
+  // Only a result for this draft counts; one for an earlier draft reads as waiting (lib/conflict-verify.ts).
+  const typeCheck = useMemo(
+    () => typeCheckFor(typeCheckOf && typeCheckOf.id === sessionId ? typeCheckOf.status : undefined, session?.files ?? []),
+    [typeCheckOf, sessionId, session?.files]
+  );
   useEffect(() => {
-    setTypeCheck(null);
     if (!sessionId) return;
     let active = true;
     const refresh = () =>
       void window.electronAPI.conflictTypeCheck(sessionId).then(
-        (value) => active && setTypeCheck(value),
+        (status) => active && setTypeCheck({ id: sessionId, status }),
         () => {}
       );
     refresh();
@@ -581,16 +591,8 @@ export function ConflictWorkspace({
       off();
     };
   }, [sessionId, session?.version]);
-  // New type errors in a file keep its Merged proposals in Check: saved on the file, or just found by the check.
-  // Only while the check is on (it has a status): a finished run's own result, else the demotion saved on the file.
-  const typeNoteOf = (f: ConflictFile) =>
-    !typeCheck
-      ? undefined
-      : typeCheck.state === 'errors'
-        ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
-        : typeCheck.state === 'passed'
-          ? undefined
-          : typeErrorNote(f);
+  // New type errors keep Merged proposals in Check: the same overlay as the PR header's (lib/conflict-verify.ts).
+  const typeNoteOf = (f: ConflictFile) => typeErrorOf(f, typeCheck);
   const verdictOf = (f: ConflictFile) => {
     if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
       return withTypeError(f.verdict.verdict, typeNoteOf(f));
@@ -685,10 +687,13 @@ export function ConflictWorkspace({
   const proposalOnly = ready && blocksShown !== viewKey;
   // The result is always on screen, in the diff (PR shows it against the PR's version): Mark reviewed needs no separate
   // step. The push confirmation shows the whole update once more before anything is pushed.
+  // Conflicts in Check with no choice of yours: nothing is accepted by default, so Mark reviewed waits for them.
+  const unchosen = file ? unchosenConflicts(file, contents, verdictOf(file), picksOf(file), editsOf(file)) : [];
   const action = conflictFileAction({
     stage: fileStage,
     otherFilesPending: !!nextPending(selected),
     unsupported: !!file?.unsupported,
+    unchosen: unchosen.length > 0,
   });
   const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
@@ -899,17 +904,21 @@ export function ConflictWorkspace({
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
-  /**
-   * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: every file
-   * reviewed in its draft on screen, none with a marker left or a local merge, and no unsaved edit in place.
-   */
   /** An in-place edit with unsaved text holds every step that would leave or review the draft: says so, and true. */
   function editHeld() {
     if (editorDirty.current) setHint('Save or cancel your edit first.');
     return editorDirty.current;
   }
+  /**
+   * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: no unsaved edit
+   * in place, no conflict left unchosen, and every file reviewed in its draft on screen, with no marker or local merge.
+   */
   function confirm() {
     if (editHeld()) return;
+    if (file && unchosen.length) {
+      setHint(waitingHint(file, contents, unchosen.length));
+      return;
+    }
     const waiting = sessionRef.current?.files.find((f) =>
       needsYou(f, f.path === selectedRef.current ? contentsRef.current : f.result)
     );
@@ -938,6 +947,11 @@ export function ConflictWorkspace({
   function markReviewed() {
     if (editHeld()) return;
     if (!file || markersRemain || file.unsupported) return;
+    if (unchosen.length) {
+      setHint(waitingHint(file, contents, unchosen.length));
+      view.current?.move(1);
+      return;
+    }
     const path = selected;
     let finished = false;
     void run(
@@ -969,7 +983,9 @@ export function ConflictWorkspace({
       (reply) => setSession(reply.session)
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
-  const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  // What preparation left: the original conflict with only the proposals nobody has to choose in place (the checks'
+  // Merged ones, and remembered resolutions). Every other proposal stays on its card.
+  const resetTarget = (f: ConflictFile) => preparedDraft(f, verdictOf(f));
   // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
@@ -1027,16 +1043,21 @@ export function ConflictWorkspace({
       (reply) => {
         const current = reply.session.files.find((f) => f.path === path);
         const who = engine === 'mergiraf' ? 'Structural merge' : model.replace(/^the /, 'The ');
+        // A suggestion is offered as proposals (fail closed): the service says what it offered, and what it left to your
+        // decisions.
         setOutcome(
           engine === 'whole-file'
             ? 'The draft is the whole-file proposal now. Review it before you mark the file reviewed.'
-            : current && hasConflictMarkers(current.result)
-              ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
-              : `${who} suggested a result. Review it before you mark the file reviewed.`
+            : engine === 'mergiraf'
+              ? // Structural merge's own words already name it; a timeout says so in its note.
+                (current?.explanation ?? current?.structuralNote ?? 'Structural merge proposed nothing new.')
+              : current?.explanation
+                ? `${who}: ${current.explanation}`
+                : `${who} proposed nothing new.`
         );
-        // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
+        // Only using a whole-file result replaces your choices; a suggestion never overrides them.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
-        if (current?.result !== before) dropPicks(path);
+        if (engine === 'whole-file' && current?.result !== before) dropPicks(path);
         apply(reply, path);
       }
     );
@@ -1959,10 +1980,11 @@ export function ConflictWorkspace({
                   <span className="conflict-footer-status">
                     Start over with the latest code? Your current resolutions are replaced by a fresh merge.
                   </span>
-                  <Button size="sm" variant="ghost" onClick={() => setResetPrompt(false)}>
+                  {/* Cancel has focus: Enter or a stray Space never discards your resolutions. */}
+                  <Button size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
                     Cancel
                   </Button>
-                  <Button size="sm" disabled={busy} onClick={() => void load(true)}>
+                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => void load(true)}>
                     Start over
                   </Button>
                 </>

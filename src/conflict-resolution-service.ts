@@ -12,6 +12,7 @@ import {
   type ConflictRequest,
   type ConflictReply,
   type ConflictTypeCheck,
+  type TypeErrorMark,
   type BaseMove,
 } from '../lib/conflict-resolution';
 import {
@@ -50,9 +51,19 @@ import {
 } from '../lib/conflict-model';
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
-import { typeCheckKey, type Verdict } from '../lib/conflict-verify';
+import {
+  typeCheckKey,
+  typeErrorOf,
+  unchosenConflicts,
+  waitingHint,
+  withTypeError,
+  withoutUnchosen,
+  type Verdict,
+} from '../lib/conflict-verify';
+import { offerSuggestion } from '../lib/conflict-offer';
 import {
   FROM_FORK,
+  TYPE_CHECK_DELAY,
   TYPE_CHECK_TIMEOUT,
   TypeCheckSkipped,
   TypeCheckUnchecked,
@@ -62,6 +73,7 @@ import {
 } from './conflict-type-check';
 import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { hasUnion } from '../lib/conflict-flow';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
@@ -129,12 +141,16 @@ interface Deps {
    * before any dialog opens. Without it, the renderer checks them. Undefined: the check could not run, so nothing is
    * saved and the next open checks again.
    */
-  verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
+  verify?: (file: ConflictFile, disabled: SyntaxLanguage[], signal?: AbortSignal) => Promise<Verdict | undefined>;
   /**
    * The 'moved' proposal for a file whose conflicts structural merge left open (lib/conflict-moved.ts), found in the
    * checks' worker. Undefined: nothing safe to propose, or the worker could not run it.
    */
-  moved?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<ConflictProposal | undefined>;
+  moved?: (
+    file: ConflictFile,
+    disabled: SyntaxLanguage[],
+    signal?: AbortSignal
+  ) => Promise<ConflictProposal | undefined>;
   /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
   disabledLanguages?: () => SyntaxLanguage[];
   /**
@@ -174,6 +190,8 @@ interface Deps {
   runScript?: RunScript;
   /** Milliseconds for the type check (TYPE_CHECK_TIMEOUT). Tests change it. */
   typeCheckTimeout?: number;
+  /** Milliseconds after the last change to a draft before it is type checked again. Tests change it. */
+  typeCheckDelay?: number;
   /** A PR's type check status changed (`typeCheck`). */
   typeCheckChanged?: (id: string) => void;
 }
@@ -335,10 +353,31 @@ export function createConflictResolutionService(deps: Deps) {
     if (file.wholeFile) return 'This file has a whole-file proposal. Use it or decide the conflicts yourself.';
     const probe = conflictProbe(file.original, index);
     if (!probe) return 'This conflict changed.';
-    if (!modelTargets(file).includes(index)) return 'You already decided this conflict.';
+    if (!modelTargets(file).includes(index))
+      return file.proposals?.[index] ? 'This conflict already has a proposal to check.' : 'You already decided this conflict.';
     if ([probe.block.ours, probe.block.theirs, probe.block.base ?? ''].some(hasSecretText))
       return 'This conflict looks like it holds a key or a token, so Gnosis doesn’t send it to a model.';
     return undefined;
+  };
+  /**
+   * A file marked reviewed has an explicit choice for every conflict in Check (fail closed): none is accepted by default.
+   * The saved verdict counts only when it was made for this draft (its key); else nothing counts as Merged.
+   */
+  const unchosenOf = (
+    file: ConflictFile,
+    request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
+  ) => {
+    const key = verdictKey({ ...file, result: request.contents }, deps.disabledLanguages?.() ?? []);
+    // The type check's demotion saved on the file counts too: a Merged proposal it demoted waits for a choice.
+    const verdict = withTypeError(file.verdict?.key === key ? file.verdict.verdict : undefined, typeErrorOf(file, undefined));
+    return unchosenConflicts(file, request.contents, verdict, request.picks ?? file.picks, request.edits ?? file.edits);
+  };
+  const assertChosen = (
+    file: ConflictFile,
+    request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
+  ) => {
+    const waiting = unchosenOf(file, request);
+    if (waiting.length) throw new Error(waitingHint(file, request.contents, waiting.length));
   };
   /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
@@ -357,23 +396,38 @@ export function createConflictResolutionService(deps: Deps) {
     pushedCache.delete(key);
     deps.storage.write(key, value);
   }
+  /** A file's new type errors from a finished type check (lib/conflict-resolution.ts `TypeErrorMark`). */
+  type TypedFile = TypeErrorMark & { path: string };
+  /**
+   * A finished run's demotions, with the fingerprint of the whole draft it checked (`typeCheckFingerprint`). Without a
+   * fingerprint (the check turned off), every file's demotion goes.
+   */
+  interface TypedResult {
+    files: readonly TypedFile[];
+    fingerprint?: string;
+  }
   /**
    * A type check's demotions that came while a request held the draft: saved with its next write, as choices are. Each
    * entry is a whole run's list, so it replaces the one before; an empty list clears them (a pass, or the check off).
    */
-  const pendingTypeErrors = new Map<string, { path: string; key: string; note: string }[]>();
+  const pendingTypeErrors = new Map<string, TypedResult>();
   /**
    * The type check's demotions as an overlay on the files (`typeError`): the files with new errors get theirs, every
    * other file loses its own. The checks' saved verdict is never changed; the view applies the overlay while the check
-   * is on. Only for the proposals the type check saw.
+   * is on. Only for the whole draft the run checked: when any file changed since, the result is dropped, and the
+   * demotions saved on the files stand.
    */
-  function applyTypeErrors(session: ConflictSession, files: readonly { path: string; key: string; note: string }[]) {
+  function applyTypeErrors(session: ConflictSession, { files, fingerprint }: TypedResult) {
     let changed = false;
     if (session.status !== 'editing') return changed;
+    if (fingerprint !== undefined && fingerprint !== typeCheckFingerprint(session)) return changed;
     for (const file of session.files) {
       const typed = files.find((x) => x.path === file.path && x.key === typeCheckKey(file));
-      if (typed && file.typeError?.note !== typed.note) {
-        file.typeError = { key: typed.key, note: typed.note };
+      const mark: TypeErrorMark | undefined = typed && { key: typed.key, note: typed.note };
+      if (mark && JSON.stringify(file.typeError) !== JSON.stringify(mark)) {
+        file.typeError = mark;
+        // A demotion that lands after Mark reviewed reopens the file: its demoted conflicts wait for a choice again.
+        if (file.resolved && unchosenOf(file, { contents: file.result }).length) file.resolved = false;
         changed = true;
       } else if (!typed && file.typeError) {
         delete file.typeError;
@@ -383,14 +437,14 @@ export function createConflictResolutionService(deps: Deps) {
     return changed;
   }
   /** Saves a run's demotions on the draft now, or with the next write while a request holds it. */
-  function saveTypeErrors(key: string, files: { path: string; key: string; note: string }[], match?: (saved: ConflictSession) => boolean) {
+  function saveTypeErrors(key: string, result: TypedResult, match?: (saved: ConflictSession) => boolean) {
     if (busy.has(key)) {
-      pendingTypeErrors.set(key, files);
+      pendingTypeErrors.set(key, result);
       return;
     }
     pendingTypeErrors.delete(key);
     const saved = deps.storage.read(key) as ConflictSession | undefined;
-    if (saved && (!match || match(saved)) && applyTypeErrors(saved, files)) {
+    if (saved && (!match || match(saved)) && applyTypeErrors(saved, result)) {
       write(key, saved);
       void deps.storage.flush();
     }
@@ -406,6 +460,42 @@ export function createConflictResolutionService(deps: Deps) {
     done: Promise<void>;
   }
   const typeChecks = new Map<string, TypeCheckRun>();
+  /** A changed draft's type check, waiting for the changes to stop (`typeCheckDelay`), by draft key. */
+  const typeCheckLater = new Map<string, NodeJS.Timeout>();
+  /**
+   * The draft changed (#445 item 24): a run in flight for an earlier draft stops at once, and the status reads waiting.
+   * The draft is checked again once the changes stop (`typeCheckDelay`), so autosave doesn't start a run each time.
+   * Meanwhile the demotions saved on its files stay. A check you stopped stays stopped until the next open.
+   */
+  function draftChanged(ctx: Context, session: ConflictSession) {
+    const key = storageKey(ctx.account, session.id);
+    const run = typeChecks.get(key);
+    const fingerprint = typeCheckFingerprint(session);
+    if (run?.status.state === 'cancelled' || run?.fingerprint === fingerprint) return;
+    run?.controller.abort();
+    const clone = deps.typeCheckClone?.(session.baseRepo);
+    if (clone)
+      typeChecks.set(key, {
+        status: { state: 'waiting' },
+        fingerprint,
+        controller: new AbortController(),
+        repo: session.baseRepo,
+        clone,
+        done: Promise.resolve(),
+      });
+    else typeChecks.delete(key);
+    if (run || clone) deps.typeCheckChanged?.(session.id);
+    clearTimeout(typeCheckLater.get(key));
+    const timer = setTimeout(() => {
+      typeCheckLater.delete(key);
+      if (deps.context().account !== ctx.account) return;
+      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      if (saved?.id !== session.id || typeChecks.get(key)?.status.state === 'cancelled') return;
+      startTypeCheck(ctx, saved);
+    }, deps.typeCheckDelay ?? TYPE_CHECK_DELAY);
+    timer.unref();
+    typeCheckLater.set(key, timer);
+  }
   const typeCheckFingerprint = (session: ConflictSession) =>
     hash(JSON.stringify([session.headSha, session.baseSha, session.tree, session.files.map((f) => [f.path, typeCheckKey(f)])]));
   /**
@@ -413,6 +503,8 @@ export function createConflictResolutionService(deps: Deps) {
    * to let go of its worktree; a result that comes later is dropped.
    */
   async function stopTypeCheck(key: string, id: string) {
+    clearTimeout(typeCheckLater.get(key));
+    typeCheckLater.delete(key);
     const run = typeChecks.get(key);
     if (!run) return;
     typeChecks.delete(key);
@@ -427,6 +519,8 @@ export function createConflictResolutionService(deps: Deps) {
    */
   function startTypeCheck(ctx: Context, session: ConflictSession) {
     const key = storageKey(ctx.account, session.id);
+    clearTimeout(typeCheckLater.get(key));
+    typeCheckLater.delete(key);
     const clone =
       session.status === 'editing' && session.preparation === 'conflicts' && !session.stale
         ? deps.typeCheckClone?.(session.baseRepo)
@@ -441,7 +535,7 @@ export function createConflictResolutionService(deps: Deps) {
     ) {
       // Start over made new files for the same proposals: they get the errors again with the next write.
       if (previous.status.state === 'errors' && previous.status.files.length)
-        pendingTypeErrors.set(key, previous.status.files);
+        pendingTypeErrors.set(key, { files: previous.status.files, fingerprint });
       return;
     }
     previous?.controller.abort();
@@ -451,7 +545,7 @@ export function createConflictResolutionService(deps: Deps) {
         deps.typeCheckChanged?.(session.id);
       }
       // The check is off: its demotions go with the next write.
-      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, []);
+      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, { files: [] });
       return;
     }
     // The draft as it was prepared: the reply that carries `session` goes on without waiting for the check.
@@ -477,9 +571,12 @@ export function createConflictResolutionService(deps: Deps) {
       }
       entry.status = status;
       // A finished run decides each file: its new errors demote it, and a file without any is clear again.
+      // Only for the whole draft it checked (`fingerprint`).
       if (status.state === 'errors' || status.state === 'passed')
-        saveTypeErrors(key, status.state === 'errors' ? status.files : [], (saved) =>
-          saved.id === session.id && saved.headSha === session.headSha
+        saveTypeErrors(
+          key,
+          { files: status.state === 'errors' ? status.files : [], fingerprint: entry.fingerprint },
+          (saved) => saved.id === session.id && saved.headSha === session.headSha
         );
       deps.typeCheckChanged?.(session.id);
     };
@@ -1037,11 +1134,11 @@ export function createConflictResolutionService(deps: Deps) {
    * proposals drops its verdict. True when any verdict changed.
    */
   async function check(files: ConflictFile[], signal: AbortSignal, report: (text: string) => void = () => {}) {
-    if (!deps.verify) return false;
     let changed = false;
     const disabled = deps.disabledLanguages?.() ?? [];
     const due: { file: ConflictFile; key: string }[] = [];
-    for (const file of files) {
+    // Without the checks (a build without them) nothing is verified, but the strip below still runs: fail closed.
+    for (const file of deps.verify ? files : []) {
       if (file.unsupported || (!file.proposals && !file.wholeFile)) {
         if (file.verdict) changed = true;
         delete file.verdict;
@@ -1053,17 +1150,35 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
+      if (!deps.verify) break;
       signal.throwIfAborted();
-      let verdict = await deps.verify(file, disabled);
+      // A cancelled request stops its check in the worker (#464), and nothing of the file changes for it.
+      let verdict = await deps.verify(file, disabled, signal);
+      signal.throwIfAborted();
       // A same-change proposal its check didn't Merge is taken back, a check that couldn't run included
       // (src/conflict-checks.ts). The rest are checked again once, only after a check that ran; else the dialog checks.
       const back = withoutUnconfirmed(file, verdict);
       if (back) {
         Object.assign(file, back);
-        verdict = verdict && file.proposals ? await deps.verify(file, disabled) : undefined;
+        verdict = verdict && file.proposals ? await deps.verify(file, disabled, signal) : undefined;
+        signal.throwIfAborted();
       }
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
+      changed = true;
+    }
+    // Fail closed: a proposal nobody chose stays in the draft only when the checks Merged it. Every other one is taken
+    // out of the draft, with the conflict's markers back, and stays offered on its card (Use the proposal). Its verdict
+    // is the same either way: the checks read an unchosen conflict as its proposal.
+    for (const file of files) {
+      if (file.unsupported) continue;
+      // Only a verdict made for this draft counts; a stale one Merges nothing.
+      const current = file.verdict?.key === verdictKey({ ...file }, disabled) ? file.verdict.verdict : undefined;
+      const held = withoutUnchosen(file, current);
+      if (held === undefined) continue;
+      file.result = held;
+      file.resolved = false;
+      if (file.verdict) file.verdict = { ...file.verdict, key: verdictKey({ ...file }, disabled) };
       changed = true;
     }
     return changed;
@@ -1207,7 +1322,7 @@ export function createConflictResolutionService(deps: Deps) {
     for (const file of files) {
       signal.throwIfAborted();
       if (taken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
-      const proposal = await deps.moved(file, disabled);
+      const proposal = await deps.moved(file, disabled, signal);
       signal.throwIfAborted();
       if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
       // The file may have changed while the worker read it.
@@ -1844,6 +1959,8 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('The PR already contains the base branch. No update is needed.');
     if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
+    // The same guard as Mark reviewed, at the last moment: a conflict in Check without a choice is never pushed.
+    for (const file of session.files) assertChosen(file, { contents: file.result });
   }
   async function resultTree(
     ctx: Context,
@@ -2214,10 +2331,33 @@ export function createConflictResolutionService(deps: Deps) {
       const ctx = deps.context();
       return ctx.account ? typeChecks.get(storageKey(ctx.account, id))?.status : undefined;
     },
+    /**
+     * The type check as the conflict dialog and the PR header both read it (lib/conflict-verify.ts `typeErrorOf`): its
+     * run's status; null when the repository's check is off; undefined when it is on but hasn't run since the app started.
+     */
+    typeCheckStatus(id: string, repo?: string): ConflictTypeCheck | null | undefined {
+      const ctx = deps.context();
+      const status = ctx.account ? typeChecks.get(storageKey(ctx.account, id))?.status : undefined;
+      if (status) return status;
+      repo ??= ctx.account
+        ? (deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined)?.baseRepo
+        : undefined;
+      return repo && deps.typeCheckClone?.(repo) ? undefined : null;
+    },
     /** Stops a running type check. Nothing it found is applied. */
     cancelTypeCheck(id: string) {
       const ctx = deps.context();
-      if (ctx.account) typeChecks.get(storageKey(ctx.account, id))?.controller.abort();
+      if (!ctx.account) return;
+      const key = storageKey(ctx.account, id);
+      const run = typeChecks.get(key);
+      run?.controller.abort();
+      // Waiting for your changes: nothing runs yet, so it is stopped here.
+      if (run?.status.state === 'waiting') {
+        clearTimeout(typeCheckLater.get(key));
+        typeCheckLater.delete(key);
+        run.status = { state: 'cancelled' };
+        deps.typeCheckChanged?.(id);
+      }
     },
     /**
      * Settings › Local clones changed: a type check whose clone is no longer linked with the check on, or is another
@@ -2235,8 +2375,10 @@ export function createConflictResolutionService(deps: Deps) {
       for (const name of deps.storage.names?.() ?? []) {
         if (!name.startsWith('conflict-draft:')) continue;
         const saved = deps.storage.read(name) as ConflictSession | null | undefined;
-        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name)))
-          saveTypeErrors(name, []);
+        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name))) {
+          saveTypeErrors(name, { files: [] });
+          deps.typeCheckChanged?.(saved.id);
+        }
       }
     },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
@@ -2464,10 +2606,15 @@ export function createConflictResolutionService(deps: Deps) {
               throw new Error('This paused file cannot be edited.');
             if (request.resolved && hasConflictMarkers(request.contents))
               throw new Error('Remove the remaining conflict markers first.');
+            if (request.resolved) assertChosen(file, request);
             file.result = request.contents;
             file.resolved = request.resolved;
             if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
             if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
+            // As for a save: the checks read the draft with your choices, and take back a proposal nobody chose that
+            // they no longer Merge beside them.
+            await check([file], signal, report);
+            if (file.resolved && file.result !== request.contents) file.resolved = false;
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
@@ -2530,6 +2677,7 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('This file cannot be saved in the conflict editor.');
           if (request.resolved && hasConflictMarkers(request.contents))
             throw new Error('Remove the remaining conflict markers first.');
+          if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {
             file.source = 'manual';
             file.explanation = undefined;
@@ -2563,13 +2711,16 @@ export function createConflictResolutionService(deps: Deps) {
           const refused = modelRefusal(session, file, request.index);
           if (refused) throw new Error(`${refused.replace(/\.$/, '')}, so the proposal wasn’t used.`);
           const spliced = spliceModelProposal(file, request.index, modelProposal(waiting.reply, waiting.text, waiting.by));
-          if (!spliced) throw new Error('You already decided this conflict, so the proposal wasn’t used.');
-          file.result = spliced.result;
+          if (!spliced)
+            throw new Error(
+              file.proposals?.[request.index]
+                ? 'This conflict already has a proposal to check, so the new one wasn’t used.'
+                : 'You already decided this conflict, so the proposal wasn’t used.'
+            );
+          // Fail closed: the proposal is offered on the conflict's card, never written into the draft. The conflict keeps
+          // its markers until you choose (Use the proposal, a Keep or an edit). spliceModelProposal checked that it fits
+          // this conflict's span alone.
           file.proposals = spliced.proposals;
-          file.resolved = false;
-          // The draft a resolver wrote now holds the model's lines too: lines neither side had are marked (#445 item 10).
-          // Its text leaves your in-place edits out (spliceModelProposal), so no line you typed is ever taken for it.
-          file.resolverText = spliced.resolver;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -2586,8 +2737,10 @@ export function createConflictResolutionService(deps: Deps) {
               file.explanation =
                 proposal.source === 'moved'
                   ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
-                  : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
-              file.source = proposal.source === 'mergiraf' ? 'mergiraf' : 'manual';
+                  : proposal.source === 'model'
+                    ? 'You used the model’s result for the whole file. Review it before marking the file reviewed.'
+                    : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+              file.source = proposal.source === 'mergiraf' ? 'mergiraf' : proposal.source === 'model' ? 'agent' : 'manual';
               // The draft no longer derives from the per-conflict proposals. The whole-file proposal stays, so Reset
               // file returns to Git's conflicts and the proposal is offered again; so is "Try structural merge again".
               delete file.proposals;
@@ -2605,16 +2758,19 @@ export function createConflictResolutionService(deps: Deps) {
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
                 throw new Error('This file is too large for agent context. Use the manual editor.');
               const result = await deps.suggest({ session, file, instructions: request.instructions ?? '' }, signal);
+              let note = '';
               if (result.contents !== undefined) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
-                // Your Keep choices were for the draft this replaces.
-                if (result.contents !== file.result) file.picks = file.edits = undefined;
-                file.result = result.contents;
-                file.resolverText = result.contents;
+                note = offerSuggestion(file, result.contents, 'model');
               }
-              file.explanation = result.explanation;
+              file.explanation = [result.explanation, note].filter(Boolean).join(' ');
+              continue;
             } else {
+              // Structural merge already ran and left these conflicts open: a retry would throw the unions away, and
+              // the dialog never offers one (canRetryStructural). Refused here too (#462).
+              if (hasUnion(file))
+                throw new Error('Structural merge already ran on this file. Resolve its conflicts here.');
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's. A move rule's proposal is not
               // Mergiraf's result: "Try structural merge again" runs Mergiraf.
@@ -2639,25 +2795,22 @@ export function createConflictResolutionService(deps: Deps) {
                 // output is not its merge. The draft stays as it was, and the note says so.
                 if (output === undefined || Date.now() - started >= budget) {
                   file.structuralNote = 'Structural merge timed out again.';
+                  // An older suggestion's words would read as this run's.
+                  file.explanation = undefined;
                   continue;
                 }
               }
-              if (output !== file.result) file.picks = file.edits = undefined;
-              file.result = output;
-              file.resolverText = output;
-              file.explanation = hasConflictMarkers(file.result)
-                ? 'Mergiraf left conflicts that need your input.'
-                : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+              const note = offerSuggestion(file, output, 'mergiraf');
+              file.explanation = [
+                hasConflictMarkers(output)
+                  ? 'Structural merge left conflicts that need your input.'
+                  : 'Structural merge proposed a result. Choose for each conflict before you mark the file reviewed.',
+                note,
+              ]
+                .filter(Boolean)
+                .join(' ');
+              delete file.structuralNote;
             }
-            file.source = request.engine;
-            // A suggestion that declined (no new contents) leaves the draft as it was: its text stays the baseline its
-            // marks come from, once the per-conflict proposals are gone (#445 item 10).
-            file.resolverText ??= file.result;
-            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
-            // whole-file proposal stays, so Reset file returns to it.
-            delete file.proposals;
-            delete file.structuralNote;
-            file.resolved = false;
           }
         } else {
           const digestOf = (tree: string) =>
@@ -2752,6 +2905,8 @@ export function createConflictResolutionService(deps: Deps) {
         }
         session.version++;
         await persist(session);
+        // A changed draft is type checked again once the changes stop (#445 item 24).
+        if (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model') draftChanged(ctx, session);
         return { session, ...(baseMoved ? { baseMoved } : {}) };
       } finally {
         release(key);

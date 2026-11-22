@@ -615,6 +615,7 @@ export function ConflictDiff({
     const start = editing === index ? editStart(index) : '';
     return (
       <ConflictCard
+        picked={picks?.[index]}
         edit={model.edits?.[index] ?? undefined}
         // Only a draft that is exactly its choices can be edited conflict by conflict.
         onEdit={

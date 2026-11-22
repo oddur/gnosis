@@ -16,7 +16,9 @@ import {
   type ConflictSession,
   type SavedBlockEdit,
 } from '../lib/conflict-resolution';
-import { withProposals } from '../lib/conflict-carry';
+import { preparedDraft, unchosenConflicts, waitingHint } from '../lib/conflict-verify';
+import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
@@ -250,7 +252,15 @@ export function RestackReview({
             // Your edits as you make them, else the ones saved with the paused draft.
             const fileEdits = entry?.original === file.original ? entry.edits : file.edits;
             // Reset file returns to what the replay proposed, as in the main workspace: after Use this result too.
-            const resetTarget = file.proposals ? withProposals(file.original, file.proposals) : file.original;
+            // Only the proposals nobody has to choose (the checks' Merged ones) are in place; the rest wait on their cards.
+            const resetTarget = preparedDraft(file, file.verdict?.verdict);
+            // Mark reviewed waits for a choice on every conflict in Check, as in the main workspace (fail closed).
+            // Only a verdict made for this draft counts, as in the service's guard; a stale one Merges nothing.
+            const current =
+              file.verdict?.key === verdictKey({ ...file, result: value }, disabledLanguages(currentCodeIntelligence()))
+                ? file.verdict.verdict
+                : undefined;
+            const unchosen = unchosenConflicts(file, value, current, filePicks, fileEdits);
             const reset = () => {
               setPicks((previous) => ({ ...previous, [file.path]: [] }));
               setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: [] } }));
@@ -331,11 +341,16 @@ export function RestackReview({
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busy || markers || (file.resolved && !dirty)}
+                        disabled={busy || markers || unchosen.length > 0 || (file.resolved && !dirty)}
                         onClick={() => onSave(file.path, value, true, savedPicks, savedEdits(fileEdits))}
                       >
                         Mark reviewed
                       </Button>
+                      {unchosen.length > 0 && (
+                        <span className="restack-conflict-hint" role="status" data-restack-unchosen="">
+                          {waitingHint(file, value, unchosen.length)}
+                        </span>
+                      )}
                       {value !== resetTarget && (
                         <Button size="sm" variant="ghost" disabled={busy} data-restack-reset="" onClick={reset}>
                           <RotateCcw aria-hidden="true" />

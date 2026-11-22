@@ -85,8 +85,9 @@ void test('Use the proposal after another choice is yours; only a proposal you n
   ]);
   // A proposal you used is still a resolver's lines: marked where you decided.
   assert.deepEqual(groups.decided[0].written, [4]);
-  // The bucket stays Merged in the Conflicts view: the pick changes only who the confirmation says decided it.
-  assert.deepEqual(blockBuckets(f, f.result, merged, ['theirs', 'proposal']), ['decided', 'merged']);
+  // Use the proposal is your decision in the Conflicts view too: only a proposal nobody chose is Merged.
+  assert.deepEqual(blockBuckets(f, f.result, merged, ['theirs', 'proposal']), ['decided', 'decided']);
+  assert.deepEqual(blockBuckets(f, f.result, merged, ['theirs']), ['decided', 'merged']);
   // A `proposal` pick whose draft no longer holds the proposal is whatever the draft reads as.
   const kept = file('a = 11\nb = 2\nx = 5\nc = 31\n', proposal);
   assert.deepEqual(

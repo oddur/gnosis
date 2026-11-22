@@ -12,13 +12,18 @@ export function conflictFileAction(state: {
   /** Another file still needs resolving or review. */
   otherFilesPending: boolean;
   unsupported?: boolean;
+  /** A conflict in Check has no choice of yours yet (unchosenConflicts): nothing is accepted by default. */
+  unchosen?: boolean;
 }): ConflictFileAction {
   if (!state.stage) return 'none';
   if (state.unsupported) return state.otherFilesPending ? 'next-file' : 'none';
-  if (state.stage === 'conflicted') return 'next-conflict';
+  if (state.stage === 'conflicted' || (state.stage === 'resolved' && state.unchosen)) return 'next-conflict';
   if (state.stage === 'resolved') return 'mark-reviewed';
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }
+
+/** Structural merge already ran and left these conflicts open, with both sides' lines kept as unions. */
+export const hasUnion = (file: Pick<ConflictFile, 'proposals'>) => !!file.proposals?.some((p) => p?.source === 'union');
 
 export const STRUCTURAL_UNAVAILABLE = 'Structural merge isn’t available in this build.';
 /**
@@ -34,7 +39,7 @@ export function canRetryStructural(
   const merged = file.wholeFile?.source === 'mergiraf';
   if (!unchanged || file.unsupported || merged || file.structuralNote === STRUCTURAL_UNAVAILABLE) return false;
   // Structural merge already ran and left these conflicts open: running it again would throw the unions away.
-  if (file.proposals?.some((p) => p?.source === 'union')) return false;
+  if (hasUnion(file)) return false;
   return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');
 }
 

@@ -19,8 +19,9 @@ import {
   type ConflictSession,
 } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import { withProposals } from '../lib/conflict-carry';
 import type { PrActionState } from '../lib/pr-actions';
-import { blockBuckets, CHECKS_VERSION, verifyProposals } from '../lib/conflict-verify';
+import { blockBuckets, CHECKS_VERSION, unchosenConflicts, verifyProposals } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
@@ -126,20 +127,29 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: f.session.files[0].path }))
     .session;
   assert.equal(session.files[0].resolved, false, 'Automatic suggestions always need review');
+  // Fail closed: the suggestion is a proposal on the conflict's card; the draft keeps the conflict until you choose.
+  assert.ok(hasConflictMarkers(session.files[0].result));
+  const proposal = session.files[0].proposals?.[0];
+  assert.equal(proposal?.source, 'model');
   await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
+  // Its text in the draft without your choice is never accepted by default.
+  await assert.rejects(
+    f.run({ kind: 'save', id: session.id, version: session.version, path: 'sample.ts', contents: proposal.text, resolved: true }),
+    /in Check first/
+  );
   session = (
     await f.run({
       kind: 'save',
       id: session.id,
       version: session.version,
       path: 'sample.ts',
-      contents: session.files[0].result,
+      contents: proposal.text,
       resolved: true,
-      picks: ['ours'],
+      picks: ['proposal'],
     })
   ).session;
-  // Your Keep choices are saved with the draft (#445 item 8), so a Keep never reads as Merged after a reopen.
-  assert.deepEqual(session.files[0].picks, ['ours']);
+  // Your choices are saved with the draft (#445 item 8): Use the proposal is yours after a reopen too.
+  assert.deepEqual(session.files[0].picks, ['proposal']);
   assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['mine'] }));
   // Use the proposal after another choice is a pick too (#445 item 12): the confirmation lists it as yours.
   validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal', null] });
@@ -649,7 +659,6 @@ void test('Mergiraf executable returns a saved proposal without auto-approving i
   }
   const f = await fixture(t);
   const result = await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path });
-  assert.equal(result.session.files[0].source, 'mergiraf');
   assert.equal(result.session.files[0].resolved, false);
   assert.ok(hasConflictMarkers(result.session.files[0].result), 'Incompatible changes remain visible for a human');
   await assert.rejects(
@@ -901,11 +910,12 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   assert.ok(hasConflictMarkers(f.session.files[0].original), 'Native Git must first report a real text conflict');
   let session = (await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: f.session.files[0].path }))
     .session;
-  const proposal = session.files[0];
-  assert.equal(hasConflictMarkers(proposal.result), false);
+  // Fail closed: without the checks' Merge, the proposal waits on its card and the draft keeps the conflict.
+  const proposal = { result: session.files[0].proposals?.[0]?.text ?? '', resolved: session.files[0].resolved };
+  assert.ok(hasConflictMarkers(session.files[0].result));
   assert.deepEqual(JSON.parse(proposal.result), { left: 1, right: 2 }, 'Neither branch’s edit is lost');
   assert.equal(proposal.resolved, false);
-  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].result, proposal.result);
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].result, session.files[0].result);
   assert.equal(await f.git('rev-parse', 'feature'), f.state.headSha, 'Proposing never pushes');
   await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
   session = (
@@ -916,9 +926,10 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
       path: 'settings.json',
       contents: proposal.result,
       resolved: true,
+      // Fail closed: a proposal is accepted only by choosing it (Use the proposal).
+      picks: ['proposal'],
     })
   ).session;
-  assert.equal(session.files[0].source, 'mergiraf', 'Reviewing unchanged contents preserves proposal provenance');
   const { preview } = await f.run({ kind: 'preview', id: session.id, version: session.version });
   assert.ok(preview);
   await f.run({
@@ -966,9 +977,13 @@ void test('preparation runs structural merge on every conflicted file and keeps 
     ts.proposals?.map((p) => p && p.source),
     ['mergiraf', null]
   );
-  assert.match(ts.result, /import \{ b \} from '\.\/b';\nimport \{ c \} from '\.\/c';/);
-  assert.equal(conflictCount(ts.result), 1);
-  assert.deepEqual(JSON.parse(json.result), { left: 1, right: 2 });
+  // Fail closed: without the checks' Merge, proposals wait on their cards; the drafts keep the conflicts.
+  assert.equal(conflictCount(ts.result), 2);
+  const tsUsed = withProposals(ts.original, ts.proposals ?? []);
+  const jsonUsed = withProposals(json.original, json.proposals ?? []);
+  assert.match(tsUsed, /import \{ b \} from '\.\/b';\nimport \{ c \} from '\.\/c';/);
+  assert.equal(conflictCount(tsUsed), 1);
+  assert.deepEqual(JSON.parse(jsonUsed), { left: 1, right: 2 });
   assert.ok(
     f.session.files.every((file) => !file.resolved),
     'Proposals are never reviewed for you'
@@ -978,16 +993,17 @@ void test('preparation runs structural merge on every conflicted file and keeps 
   // Review probe: main moves while the draft waits. Files already in the session get their proposals again, so a
   // proposal you kept stays a proposal, not a conflict you decided.
   let session = f.session;
-  const kept = ts.result.replace(
+  const kept = tsUsed.replace(
     /<<<<<<< [\s\S]*?>>>>>>> [^\n]*\n/,
     parseConflicts(ts.original).flatMap((s) => (s.kind === 'conflict' ? [s.block.ours] : []))[1]
   );
-  for (const [file, contents] of [
-    ['numbers.ts', kept],
-    ['settings.json', json.result],
-  ])
+  // Fail closed: each proposal is accepted by choosing it (Use the proposal).
+  for (const [file, contents, picks] of [
+    ['numbers.ts', kept, ['proposal', null]],
+    ['settings.json', jsonUsed, ['proposal']],
+  ] as const)
     session = (
-      await f.run({ kind: 'save', id: session.id, version: session.version, path: file, contents, resolved: true })
+      await f.run({ kind: 'save', id: session.id, version: session.version, path: file, contents, resolved: true, picks: [...picks] })
     ).session;
   await f.git('checkout', 'main');
   await fs.writeFile(path.join(f.remote, 'later.txt'), 'Another PR merged.\n');
@@ -1033,8 +1049,14 @@ void test('where structural merge leaves both sides’ new functions open, prepa
     file.proposals?.map((p) => p && p.source),
     ['union']
   );
-  assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+  assert.equal(withProposals(file.original, file.proposals ?? []), before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
   assert.ok(!file.resolved, 'A union is never reviewed for you');
+  // "Try structural merge again" would throw the union away: the service refuses it, as the dialog does (#462).
+  assert.equal(canRetryStructural(file, true), false);
+  await assert.rejects(
+    f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path }),
+    /Structural merge already ran/
+  );
 });
 
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
@@ -1255,12 +1277,15 @@ void test('the service checks proposals itself and saves the verdict with the dr
   file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.equal(checked.length, 2);
   assert.deepEqual(file.verdict?.verdict, { merged: false, note: 'Gnosis couldn’t parse this file to check the result.' });
-  // A Suggest result replaces the proposals: the verdict goes with them.
+  // The structural proposal json can't check stays on its card; the draft keeps the conflict's markers (fail closed).
+  assert.ok(hasConflictMarkers(file.result), 'A proposal the checks did not Merge is never left in the draft');
+  // A Suggest result is offered for the open conflict, as a model proposal: checked, never Merged, never in the draft.
   const session = (await f.run({ kind: 'open', url: f.state.url })).session;
   file = (await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'agent', path: 'settings.json' }))
     .session.files[0];
-  assert.equal(file.proposals, undefined);
-  assert.equal(file.verdict, undefined);
+  assert.deepEqual(file.proposals?.map((p) => p?.source), ['model']);
+  assert.ok(hasConflictMarkers(file.result));
+  assert.equal(file.verdict?.verdict.merged, false);
 });
 
 void test('an engine that fails answers nothing, so nothing is saved; a file that does not parse still says so (#445)', async () => {
@@ -1281,7 +1306,7 @@ void test('an engine that fails answers nothing, so nothing is saved; a file tha
     grammar: async (language) => new Uint8Array(await fs.readFile(path.join(assets, `${language}.wasm`))),
     tags: (name) => fs.readFile(path.join(assets, `${name}-tags.scm`), 'utf8'),
   });
-  assert.deepEqual(await conflictChecker(engine)(file), { merged: false, note: 'The result doesn’t parse.' });
+  assert.deepEqual(await conflictChecker(engine)(file), { merged: false, note: 'With the proposals in place, the file doesn’t parse.' });
 });
 
 void test('a check that runs out of time answers nothing, and the worker restarts for the files after it (#445)', async (t) => {
@@ -1601,9 +1626,9 @@ void test('a structural merge that also moves lines outside the conflicts is a w
     structural++;
     return nativeMergiraf;
   };
-  // Using it is the Suggest step: the result becomes the draft, unreviewed. The proposal stays for Reset file.
+  // Using it (Use this result) makes it the draft, unreviewed. The proposal stays for Reset file.
   let session = (
-    await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path })
+    await f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'whole-file', path: file.path })
   ).session;
   let used = session.files.find((x) => x.path === 'reorder.go') as ConflictFile;
   assert.equal(structural, 0, 'The kept result is used; Mergiraf does not run again');
@@ -1768,7 +1793,8 @@ void test('a file reset to Git’s conflict after a suggestion stays as you left
   const reopened = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.equal(structural, 0, 'Structural merge already ran for this draft');
   assert.equal(reopened.result, file.original);
-  assert.equal(reopened.proposals, undefined);
+  // The suggestion's part stays offered on its card; the draft is as you left it.
+  assert.deepEqual(reopened.proposals?.map((p) => p?.source), ['mergiraf']);
 });
 
 /** A stand-in Mergiraf that answers by the budget it gets, and logs each budget. */
@@ -1810,7 +1836,7 @@ void test('a structural merge that runs out of time is retried with the Suggest 
   let files = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files;
   assert.deepEqual(await stub.budgets(), ['100', '100', '10000', '10000'], 'Every first try runs before any retry');
   for (const file of files) {
-    assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 }, 'The retry’s proposal is kept');
+    assert.deepEqual(JSON.parse(file.proposals?.[0]?.text ?? ''), { left: 1, right: 2 }, 'The retry’s proposal is kept');
     assert.equal(file.structuralNote, undefined);
   }
   // No retry time left: the files stay as Git wrote them, and say why.
@@ -1850,7 +1876,7 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   const file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
   assert.deepEqual(await stub.budgets(), ['100', '10000']);
   assert.equal(file.wholeFile, undefined);
-  assert.deepEqual(JSON.parse(file.result), { left: 1, right: 2 });
+  assert.deepEqual(JSON.parse(file.proposals?.[0]?.text ?? ''), { left: 1, right: 2 });
 });
 
 void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
@@ -2030,7 +2056,7 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
     ['union']
   );
   assert.equal(file.wholeFile, undefined);
-  assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+  assert.equal(withProposals(file.original, file.proposals ?? []), before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
 });
 
 // #493: the lines a resolver wrote keep their marks while its text is the baseline, and lose them once it isn't.
@@ -2043,32 +2069,70 @@ void test('a suggestion that declines keeps the marks; Reset clears the resolver
     ours: 'export function run() {\n  return call(10, 2);\n}\n',
     theirs: 'export function run() {\n  return call(1, 20);\n}\n',
   });
-  const marks = (file: ConflictFile) => [...draftWritten(file, file.result, resolverBaseline(file, file.result))];
+  const marks = (file: ConflictFile) => [
+    ...draftWritten(
+      file,
+      file.result,
+      resolverBaseline(file, file.result),
+      file.picks?.map((pick) => pick ?? undefined),
+      undefined,
+      file.edits
+    ),
+  ];
   let file = f.session.files[0];
-  const prepared = marks(file);
+  // Without the checks nothing is Merged: the proposal waits on its card, and nothing in the draft is marked.
+  assert.ok(hasConflictMarkers(file.result));
+  assert.deepEqual(marks(file), []);
+  // Use the proposal: structural merge's line is in the draft now, marked.
+  let session = (
+    await f.run({
+      kind: 'save',
+      id: f.session.id,
+      version: f.session.version,
+      path: file.path,
+      contents: withProposals(file.original, file.proposals ?? []),
+      resolved: false,
+      picks: ['proposal'],
+    })
+  ).session;
+  const prepared = marks(session.files[0]);
   assert.deepEqual(prepared, [2], 'structural merge wrote call(10, 20)');
-  // Whatever preparation wrote, a suggestion that declines keeps its draft, and its marks, once the proposals are gone.
+  // A suggestion that declines keeps the draft, and its marks.
   f.deps.suggest = () => Promise.resolve({ explanation: 'Nothing to change.' } as never);
-  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: file.path })).session;
+  session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: file.path })).session;
   file = session.files[0];
-  assert.equal(file.proposals, undefined);
-  assert.equal(file.resolverText, file.result, 'the declined draft is the baseline');
+  assert.deepEqual(file.proposals?.map((p) => p?.source), ['mergiraf'], 'A declined suggestion leaves the proposals');
   assert.deepEqual(marks(file), prepared);
-  // A suggestion that writes a line neither side had: marked.
+  // Back to the original conflict, a suggestion's part is offered on the card, never written into the draft: nothing of
+  // it is marked until you use it.
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: file.original, resolved: false, picks: [] })
+  ).session;
   f.deps.suggest = () => Promise.resolve({ contents: 'export function run() {\n  return call(10, 20);\n}\n', explanation: 'Both.' });
   session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: file.path })).session;
   file = session.files[0];
-  assert.equal(file.resolverText, file.result, 'a later resolver run replaces the baseline');
-  assert.deepEqual(marks(file), [2]);
-  // Reset to Git's conflict, then type the same line yourself: it is yours, never marked.
-  session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: file.original, resolved: false })).session;
-  assert.equal(session.files[0].resolverText, undefined, 'Reset clears the resolver text');
+  assert.deepEqual(file.proposals?.map((p) => p?.source), ['model']);
+  assert.equal(file.result, file.original);
+  assert.deepEqual(marks(file), []);
+  // Type the same line yourself, in place: it is yours, never marked, even where it reads like the model's.
   const typed = 'export function run() {\n  return call(10, 20);\n}\n';
-  session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: typed, resolved: false })).session;
+  session = (
+    await f.run({
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents: typed,
+      resolved: false,
+      edits: [{ text: '  return call(10, 20);\n', before: null, pick: null }],
+    })
+  ).session;
   assert.deepEqual(marks(session.files[0]), [], 'no typed line is marked');
-  // A save whose draft no longer holds the resolver's lines drops its text too.
+  // A conflict you decided keeps your text: a later suggestion never overrides it, and its note says so.
+  f.deps.suggest = () => Promise.resolve({ contents: 'export function run() {\n  return call(11, 22);\n}\n', explanation: 'Other.' });
   session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: file.path })).session;
-  assert.equal(session.files[0].resolverText, session.files[0].result);
+  assert.equal(session.files[0].result, typed);
+  assert.match(session.files[0].explanation ?? '', /already decided; that one keeps its text/);
   session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: 'export function run() {\n  return call(10, 2);\n}\n', resolved: false })).session;
   assert.equal(session.files[0].resolverText, undefined);
 });
@@ -2212,15 +2276,23 @@ void test('a replayed conflict the checks leave in Check pauses the restack, and
   assert.equal(file.path, 'imports.ts');
   assert.ok(file.proposals?.[0], 'Structural merge proposed both imports');
   assert.deepEqual(replayBuckets(file), ['check'], 'Order can matter for imports: Check, never Merged');
-  assert.equal(file.result, imports("import { b } from './b';\nimport { c } from './c';\n"));
+  // Fail closed: the proposal waits on its card; the paused draft keeps the conflict's markers until you choose.
+  assert.ok(hasConflictMarkers(file.result));
+  const used = imports("import { b } from './b';\nimport { c } from './c';\n");
+  await assert.rejects(
+    f.run({ kind: 'restack-save', id: session.id, version: session.version, path: 'imports.ts', contents: used, resolved: true }),
+    /in Check first/,
+    'An untouched proposal is never accepted by default'
+  );
   session = (
     await f.run({
       kind: 'restack-save',
       id: session.id,
       version: session.version,
       path: 'imports.ts',
-      contents: file.result,
+      contents: used,
       resolved: true,
+      picks: ['proposal'],
     })
   ).session;
   session = (await f.run({ kind: 'restack-continue', id: session.id, version: session.version })).session;
@@ -2246,7 +2318,7 @@ void test('a replayed conflict the checks leave in Check pauses the restack, and
     })
   ).session;
   assert.equal(session.restack?.status, 'published');
-  assert.equal(await f.git('show', 'tip:imports.ts'), file.result.trimEnd());
+  assert.equal(await f.git('show', 'tip:imports.ts'), used.trimEnd());
 });
 void test('a Continue that fails after Git moved on leaves a stale pause that is never written (#445)', async (t) => {
   const f = await stackedFixture(t, true);
@@ -2436,7 +2508,7 @@ void test('replay buckets fail closed: only an unchanged, checked proposal is Me
   const merged = { ...file, verdict: { key: '', verdict: { merged: true, note: '', blocks: [{ merged: true, note: '' }] } } };
   assert.deepEqual(replayBuckets(merged), ['merged']);
   assert.deepEqual(replayBuckets({ ...merged, result: 'b\na\n' }), ['decide'], 'A text the pipeline did not write');
-  assert.deepEqual(replayBuckets({ ...merged, result: original }), ['decide']);
+  assert.deepEqual(replayBuckets({ ...merged, result: original }), ['check'], 'Open, its proposal waits on the card');
   assert.deepEqual(replayBuckets(merged, [0]), ['yours'], 'Carried is yours, even where a proposal passed');
   assert.deepEqual(replayBuckets({ ...merged, unsupported: 'binary' }), ['decide']);
 });
@@ -3013,4 +3085,64 @@ void test('undo is refused while any restack plan exists, and pushed() is cached
     );
   }
   assert.equal(await f.git('rev-parse', 'feature'), f.merge);
+});
+
+// Fail closed: a proposal nobody chose stays in the draft only when the checks Merged it.
+void test('an untouched Check proposal is never in the pushed text and never counts as yours; a suggestion never overrides a Keep', async (t) => {
+  if (await nativeMergirafMissing(t)) return;
+  const f = await fixture(t, false, jsonSample);
+  const prepared = f.session.files[0];
+  const proposal = prepared.proposals?.[0];
+  assert.ok(proposal, 'Structural merge proposed the conflict');
+  // The checks don't Merge it: on the next open the draft has the conflict's markers back; the proposal waits on its card.
+  Object.assign(f.deps, { verify: () => Promise.resolve({ merged: false, note: 'Check the order.' }) });
+  let { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  let file = session.files[0];
+  assert.ok(hasConflictMarkers(file.result));
+  assert.deepEqual(file.proposals?.map((p) => p?.text), [proposal.text]);
+  assert.deepEqual(blockBuckets(file, file.result, file.verdict?.verdict), ['check']);
+  assert.deepEqual(unchosenConflicts(file, file.result, file.verdict?.verdict), [0]);
+  // Its text without your choice is refused as reviewed, so it can never reach the push as "You decided".
+  await assert.rejects(
+    f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: proposal.text, resolved: true }),
+    /in Check first/
+  );
+  await assert.rejects(f.run({ kind: 'preview', id: session.id, version: session.version }), /every file reviewed/);
+  // A save that puts it back unchosen is taken back by the checks: it is never left in the draft.
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: proposal.text, resolved: false })
+  ).session;
+  assert.ok(hasConflictMarkers(session.files[0].result));
+  // Use the proposal: yours, and then it is what is pushed.
+  session = (
+    await f.run({
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents: proposal.text,
+      resolved: true,
+      picks: ['proposal'],
+    })
+  ).session;
+  file = session.files[0];
+  assert.equal(file.result, proposal.text);
+  assert.deepEqual(blockBuckets(file, file.result, file.verdict?.verdict, ['proposal']), ['decided']);
+  // A proposal the checks Merge stays in place, as before.
+  Object.assign(f.deps, { verify: () => Promise.resolve({ merged: true, note: 'Merged.', blocks: [{ merged: true, note: 'Merged.' }] }) });
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(session.files[0].result, proposal.text);
+
+  // A Keep you made is never overridden by a suggestion: the draft keeps it, and the note says the suggestion differed.
+  Object.assign(f.deps, { verify: () => Promise.resolve({ merged: false, note: 'Check the order.' }) });
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  const kept = jsonSample.theirs;
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: 'settings.json', contents: kept, resolved: false, picks: ['theirs'] })
+  ).session;
+  f.deps.suggest = () => Promise.resolve({ contents: jsonSample.ours, explanation: 'The PR’s value.' });
+  session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: 'settings.json' })).session;
+  assert.equal(session.files[0].result, kept, 'Your Keep stands');
+  assert.deepEqual(session.files[0].picks, ['theirs']);
+  assert.match(session.files[0].explanation ?? '', /already decided; that one keeps its text/);
 });

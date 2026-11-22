@@ -35,7 +35,7 @@ export function danglingName(file) {
         block[other].has(word) &&
         ((base.has(word) && !{ ours, theirs }[side].has(word)) || (block.base.has(word) && !block[side].has(word)));
       if (removed('ours', 'theirs') || removed('theirs', 'ours'))
-        return `${word} was removed or renamed on ${removed('ours', 'theirs') ? 'the PR' : 'main'}, but the result still uses it.`;
+        return `${word} was removed or renamed on ${removed('ours', 'theirs') ? 'the PR' : 'main'}, but the proposal still uses it.`;
     }
   }
 }

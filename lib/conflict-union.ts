@@ -282,6 +282,17 @@ const OVERLOADS = new Set<SyntaxLanguage>(['java', 'csharp']);
  */
 const ORDERED = new Set<AddedKind>(['member', 'arm', 'item']);
 const RUNS_ON_IMPORT = new Set<SyntaxLanguage>(['typescript', 'tsx', 'javascript', 'python']);
+/**
+ * In those languages, units that run code where they stand (#462): a class runs its body (Python) or its static
+ * initializers (JavaScript, TypeScript) when it is defined, and a class field's initializer runs in field order.
+ */
+const RUNS_IN_ORDER = new Set([
+  'class_declaration',
+  'abstract_class_declaration',
+  'class_definition',
+  'public_field_definition',
+  'field_definition',
+]);
 
 const kindOf = (language: SyntaxLanguage, parent: string, unit: RangeUnit): AddedKind | 'neutral' | undefined => {
   if (NEUTRAL.has(unit.type)) return 'neutral';
@@ -297,7 +308,7 @@ const kindOf = (language: SyntaxLanguage, parent: string, unit: RangeUnit): Adde
  * plainest note.
  */
 export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
-  const kept = 'Gnosis kept both, the PR’s lines first.';
+  const kept = 'Proposal: keep both, the PR’s lines first.';
   const unknown = `Both sides added lines here. ${kept} Check that both belong, in this order.`;
   if (!ours || !theirs) return unknown;
   const read = (side: RangeUnits) => side.units.map((unit) => ({ unit, kind: kindOf(language, side.parent, unit) }));
@@ -315,6 +326,7 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
   const ordered =
     [...kinds].some((kind) => ORDERED.has(kind)) ||
     (kinds.has('import') && RUNS_ON_IMPORT.has(language)) ||
+    (RUNS_ON_IMPORT.has(language) && real.some(({ unit }) => RUNS_IN_ORDER.has(unit.inner ?? unit.type))) ||
     real.some(({ unit }) => unit.decorated || unit.type === 'decorator');
   return ordered
     ? `Both sides added different ${what} here. ${kept} Check the order: it can matter here.`

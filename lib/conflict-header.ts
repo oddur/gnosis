@@ -1,11 +1,15 @@
-import { conflictFileStage, type ConflictFile } from './conflict-resolution';
+import { conflictFileStage, type ConflictFile, type ConflictTypeCheck } from './conflict-resolution';
 import {
   allMerged,
   blockBuckets,
   bucketSummary,
   fileStatus,
   summarySentence,
+  typeCheckFor,
+  typeErrorOf,
+  unchosenConflicts,
   waitsForReview,
+  withTypeError,
   type ConflictBucket,
   type FileStatus,
   type Verdict,
@@ -57,23 +61,33 @@ export function summaryEntry(
  */
 const NOT_CHECKED: Verdict = { merged: false, passed: true, note: 'Not checked yet.' };
 
-/** A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals. */
+/**
+ * A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals and the
+ * type check's demotions over it, as the conflict dialog applies them (`typeErrorOf`). `typeCheck`: the PR's type check,
+ * null when it is off.
+ */
 export function conflictHeader(
   files: readonly ConflictFile[],
   disabled: readonly SyntaxLanguage[] = [],
-  showMerged = true
+  showMerged = true,
+  typeCheck?: ConflictTypeCheck | null
 ): ConflictHeader {
   let review = false;
+  const status = typeCheckFor(typeCheck, files);
   const states = files.map((f) => {
     // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
-    const saved = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
+    const saved = withTypeError(
+      f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined,
+      typeErrorOf(f, status)
+    );
     const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
-    const buckets = blockBuckets(f, f.result, verdict, undefined, f.edits);
+    const buckets = blockBuckets(f, f.result, verdict, f.picks, f.edits);
     const stage = conflictFileStage(f);
     const merged = allMerged(buckets);
     // The dialog's own next step for the file. Only a reviewed file, or an all-Merged one that "Show me every merged
     // conflict" off reviews for you, leaves nothing to review.
-    const action = conflictFileAction({ stage, otherFilesPending: false, unsupported: !!f.unsupported });
+    const unchosen = unchosenConflicts(f, f.result, verdict, f.picks, f.edits).length > 0;
+    const action = conflictFileAction({ stage, otherFilesPending: false, unsupported: !!f.unsupported, unchosen });
     if (action !== 'confirm' && !(action === 'mark-reviewed' && merged && !showMerged)) review = true;
     return summaryEntry(f, fileStatus(f, f.result, stage, buckets), buckets, verdict, showMerged);
   });
