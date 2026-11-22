@@ -90,11 +90,13 @@ On startup, Gnosis removes cache directories that no saved session needs: discar
 
 ### Conflict resolution stats
 
-**Settings → Diagnostics → Conflict resolution stats** counts how the buckets fare, so a later version can decide whether verified Merged conflicts may skip review by default. Nothing changes a default yet. For Merged, Check and Decide it counts the conflicts shown, accepted as is, undone, and changed to another option. It also counts the sessions started, started over and pushed, and shows the Merged undo rate. **Reset** sets every count to zero.
+**Settings → Diagnostics → Conflict resolution stats** counts how the buckets fare, so a later version can decide whether verified Merged conflicts may skip review by default. Nothing changes a default yet. For Merged, Check and Decide it counts the conflicts shown, accepted as is, undone, and changed to another option. It also counts the sessions started, started over and pushed, and shows the Merged undo rate. **Reset** sets every count to zero. While saved data is still loading, Reset is refused.
 
-- **Shown:** each conflict of a fresh preparation that you open, once its checks have run. The bucket is saved with the draft, so a reopen does not count it again. Load latest changes keeps the conflicts that did not change.
-- **Accepted as is:** a conflict pushed with its proposal unchanged. Decide has no proposal, so it shows "—".
-- **Undone** and **changed to another option:** at most once per conflict and session. Undo of a Merged conflict is the signal for the Merged undo rate.
+- **Shown:** each conflict of a fresh preparation that you open. Its bucket is saved with the draft, per conflict, so a reopen does not count it again. Load latest changes counts only the conflicts that changed, and it never counts as a new session.
+- **Accepted as is:** a conflict pushed with its proposal unchanged: its text is the proposal's and you did not choose a Keep for it. A result edited around the conflicts counts nothing. A whole-file proposal pushed as proposed counts its conflicts in Check.
+- **Undone:** Undo that removes Gnosis's proposal. Undoing your own Keep is not counted. Decide has no proposal, so its accepted and undone columns show "—".
+- **Changed to another option:** a Keep over the proposal, another Keep, or the proposal again after a Keep.
+- Undone and changed count at most once per conflict. The main process saves that on the draft, so another window or a restart does not count a conflict twice.
 
 The stats are counts only, one record for the app in the local app-data store. There are no file contents, paths, file names, PR names or accounts, and nothing is sent anywhere. A count is written in the background and never delays Undo, Start over or Push. Restacks are not counted.
 

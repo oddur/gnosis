@@ -36,10 +36,11 @@ export interface ConflictFile {
    */
   verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
   /**
-   * Each conflict's bucket when you first opened it, for the local stats in Settings › Diagnostics (lib/conflict-stats.ts),
-   * with a fingerprint of `original`. Its presence means the conflicts were counted as shown.
+   * Each conflict block's bucket when you first opened it, for the local stats in Settings › Diagnostics
+   * (lib/conflict-stats.ts), with the block's fingerprint and whether it was counted as undone or re-chosen. A block
+   * that is present was counted as shown; null is one not counted yet.
    */
-  statsBuckets?: { key: string; buckets: import('./conflict-stats').StatsBucket[] };
+  statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural

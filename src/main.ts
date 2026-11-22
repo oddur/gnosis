@@ -89,7 +89,7 @@ import type { CommitSelection } from '../lib/pr-commits';
 import { createPrChangesService } from './pr-changes-service';
 import { createLocalCloneStore } from './local-clone-store';
 import { createConflictStatsStore } from './conflict-stats-store';
-import { validChoiceEvents } from '../lib/conflict-stats';
+import { validChoice } from '../lib/conflict-stats';
 import { localClones } from '../lib/local-clone';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
@@ -4313,7 +4313,10 @@ void app.whenReady().then(() => {
 app.on('will-quit', () => conflictPrecompute.dispose());
 preferencesSaved.push(() => conflictPrecompute.settingsChanged());
 // Undo and other choices in the workspace. Sent without a reply, so the choice never waits for the count.
-ipcMain.on('conflict-stats-record', (_event, events: unknown) => conflictStats.record(validChoiceEvents(events).map(event => ({ kind: 'bucket' as const, ...event }))));
+ipcMain.on('conflict-stats-choice', (_event, value: unknown) => {
+  const choice = validChoice(value);
+  if (choice) conflicts.countChoice(choice);
+});
 ipcMain.handle('conflict-stats', () => conflictStats.get());
 ipcMain.handle('conflict-stats-reset', () => conflictStats.reset());
 // The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.

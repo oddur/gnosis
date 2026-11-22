@@ -1,5 +1,6 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
+import { blockFingerprints } from '../lib/conflict-stats';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -1023,8 +1024,19 @@ void app.whenReady().then(async () => {
       resolved: false,
       result: ((index) => f.original.replace(/<<<<<<<[\s\S]*?>>>>>>> main\n/g, (raw) => f.proposals[index++]?.text ?? raw))(0),
     });
+    // Each conflict's bucket as the main process saves it when it counts them as shown (lib/conflict-stats.ts).
+    const counted = (
+      [
+        [retry, ['decide', 'check']],
+        [imports, ['merged']],
+        [notes, ['merged']],
+      ] as const
+    ).map(([f, buckets]) => ({
+      ...withResult(f),
+      statsBlocks: blockFingerprints(f.original).map((key, i) => ({ key, bucket: buckets[i] })),
+    }));
     await js(`(()=>{
-      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify([retry, imports, notes].map(withResult))}});
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify(counted)}});
       window.conflictCalls=[];
     })()`);
     await open();

@@ -444,8 +444,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
   // Settings › Diagnostics › Conflict resolution stats. A choice is sent without a reply, so it never waits.
-  recordConflictChoices: (events: import('../lib/conflict-stats').ConflictChoiceEvent[]) => {
-    ipcRenderer.send('conflict-stats-record', events);
+  recordConflictChoice: (choice: import('../lib/conflict-stats').ConflictChoice) => {
+    ipcRenderer.send('conflict-stats-choice', choice);
   },
   conflictStats: (): Promise<import('../lib/conflict-stats').ConflictStats> => ipcRenderer.invoke('conflict-stats'),
   resetConflictStats: (): Promise<import('../lib/conflict-stats').ConflictStats> => ipcRenderer.invoke('conflict-stats-reset'),

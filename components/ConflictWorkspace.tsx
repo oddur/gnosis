@@ -699,7 +699,6 @@ export function ConflictWorkspace({
       // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
       // carries them with the draft). Start over drops them.
       if (!keep) setPicks({});
-      if (restart && !keep) choiceStats.clear();
       apply(reply, selectedRef.current);
       setResetPrompt(false);
       setOutcome('');
@@ -1616,7 +1615,7 @@ export function ConflictWorkspace({
                                 note={file.structuralNote}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
-                                onChoice={(index, before, after, bucket) => choiceStats.choice(file, index, before, after, bucket)}
+                                onChoice={(key, before, after) => choiceStats(session.id, file.path, key, before, after)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {

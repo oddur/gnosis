@@ -16,7 +16,7 @@ export function ConflictStatsSettings() {
     let live = true;
     void api.conflictStats?.().then(
       (value) => live && setStats(value),
-      () => live && setError('Could not read the conflict resolution stats.')
+      () => live && setError('Could not read the stats. Saved data may still be loading; reopen Settings in a moment.')
     );
     return () => {
       live = false;
@@ -64,9 +64,9 @@ export function ConflictStatsSettings() {
                   <tr key={bucket} data-bucket={bucket}>
                     <th scope="row">{BUCKET_NAMES[bucket]}</th>
                     <td className="numeric">{counts.shown}</td>
-                    {/* Decide has no proposal to accept. */}
+                    {/* Decide has no proposal to accept or undo. */}
                     <td className="numeric">{bucket === 'decide' ? '—' : counts.accepted}</td>
-                    <td className="numeric">{counts.undone}</td>
+                    <td className="numeric">{bucket === 'decide' ? '—' : counts.undone}</td>
                     <td className="numeric">{counts.rechosen}</td>
                   </tr>
                 );
@@ -87,7 +87,7 @@ export function ConflictStatsSettings() {
           disabled={!stats || !api.resetConflictStats}
           onClick={() => {
             setError('');
-            void api.resetConflictStats?.().then(setStats, () => setError('Could not reset the stats. Try again.'));
+            void api.resetConflictStats?.().then(setStats, () => setError('Could not reset the stats. Saved data may still be loading; try again in a moment.'));
           }}
         >
           Reset
