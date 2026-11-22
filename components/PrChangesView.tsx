@@ -18,8 +18,8 @@ import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLay
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
 import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
-import { noiseFilterOf } from '../lib/review-diff';
-import { useQuietSummary } from '../lib/use-semantic-noise';
+import type { QuietToggles } from '../lib/review-diff';
+import { useNoiseFilter, useQuietSummary } from '../lib/use-semantic-noise';
 import { anchorReader } from '../lib/quiet-changes';
 import { publishDiffAppearance } from '../lib/use-diff-appearance';
 import { QuietChangesChip } from './QuietChanges';
@@ -420,7 +420,7 @@ export function PrChangesView({
   );
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
   // Quiet changes (#396): what the reader hides, and each file's comparison as it lands, for the tree and progress.
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
+  const noiseFilter = useNoiseFilter(appearance);
   useSyntaxPrefetch(prefetchOwner, scopeFiles, (file) => progress.isFileViewed(file.key), codeSettings, noiseFilter);
   // Comparisons land for every view's files. This view renders again only when its own quiet files change: a string
   // of them is the store's snapshot, so other views' comparisons cost it a lookup per file and no render.
@@ -465,9 +465,9 @@ export function PrChangesView({
   const quietLeft = visible.filter((e) => quietFiles.has(e.key) && !progress.isFileViewed(viewKey(e)));
   const quietKinds = [...new Set(quietLeft.map((e) => quietFiles.get(e.key)))];
   const quietWord =
-    quietKinds.length !== 1 ? 'quiet' : quietKinds[0] === 'Reformatted' ? 'reformatted' : (quietKinds[0] ?? '').replace(/ only$/, '-only').replace(/ and comments$/, ' and comment').toLowerCase();
+    quietKinds.length !== 1 ? 'quiet' : quietKinds[0] === 'Reformatted' ? 'reformatted' : / only$/.test(quietKinds[0] ?? '') ? (quietKinds[0] ?? '').replace(/ only$/, '-only').toLowerCase() : 'quiet';
   const quietNote = quietLeft.length ? `${quietLeft.length} ${quietWord} ${quietLeft.length === 1 ? 'file' : 'files'}` : undefined;
-  const changeQuiet = (next: Pick<Preferences['diffAppearance'] & object, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>) => {
+  const changeQuiet = (next: QuietToggles) => {
     anchorReader();
     const diffAppearance = { ...appearance, ...next };
     publishDiffAppearance(diffAppearance);

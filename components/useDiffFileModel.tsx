@@ -35,7 +35,7 @@ import { changedSymbols } from '../lib/symbol-outline';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
 import type { MoveMark } from '../lib/moved-symbols-store';
-import { blockKey, fileNoise, hidden, noiseFilterOn, type FileNoise, type NoiseFilter, type NoiseKind } from '../lib/semantic-noise';
+import { blockKey, fileNoise, hidden, noiseFilterOn, patchHunks, type FileNoise, type NoiseFilter, type NoiseKind } from '../lib/semantic-noise';
 import { keepDiffLineInView } from '../lib/diff-layout';
 import { inspectionFiles } from '../lib/inspection-cache';
 import { traceStructure } from '../lib/structure-trace';
@@ -268,9 +268,13 @@ export function useDiffFileModel({
     enabled: parseable && (whole || afterMatches === true),
     priority: tier,
   });
-  // Formatting-only and comment-only changes (#396): compared in the worker once the after side agrees with the hunks,
-  // while the reader hides either. Added and deleted files have no other side to compare.
+  // Formatting-only, comment-only and import-only changes (#396): compared in the worker once the after side agrees with
+  // the hunks, while the reader hides any. Added and deleted files have no other side to compare.
   const noiseOn = noiseFilterOn(noiseFilter);
+  const importsRequest = useMemo(() => {
+    const groups = status === 'modified' ? patchHunks(patch) : undefined;
+    return groups && { path, patch: groups, before: partial ? beforeAll : undefined };
+  }, [status, patch, path, partial, beforeAll]);
   const noise = useSemanticNoise({
     fileKey,
     url: request?.url ?? '',
@@ -280,6 +284,9 @@ export function useDiffFileModel({
     enabled: noiseOn && structure && active && !wholeSide && afterMatches === true,
     priority: tier,
     whole: !partial,
+    // Imports read the patch as GitHub groups it, whatever this view's context; a topic's few hunks also need the old
+    // side, and until it is read (or when it is not text) they are compared without imports.
+    imports: importsRequest,
   });
   // Where the file is matters only while a side of it, or its comparison, waits: then it is watched, and a move
   // raises it.
@@ -304,7 +311,7 @@ export function useDiffFileModel({
       for (let i = 0; i < block.newCount; i++) lines.add(`a${block.newStart + i}`);
     }
     return lines.size ? lines : undefined;
-  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown]);
+  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseFilter.imports, noiseShown]);
   const diffNoise = useMemo((): DiffNoise | undefined => {
     if (!noiseOn) return undefined;
     const file = noise.blocks ? fileNoise(noise.blocks, noiseFilter) : undefined;
@@ -326,7 +333,7 @@ export function useDiffFileModel({
       file,
       fileHidden: !!file?.all && !noise.blocks?.some((block) => noiseShown.has(blockKey(block))),
     };
-  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown, revealKey]);
+  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseFilter.imports, noiseShown, revealKey]);
   // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
   // it is removed.
   const fileDefinitions = useMemo(

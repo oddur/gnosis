@@ -1,5 +1,6 @@
 import { contentHasDiffMarkers, parseDiffLines } from './diff-lines';
 import type { DiffHunk, FileMetadata } from './types';
+import { noiseFilterOn } from './semantic-noise';
 
 export interface DiffAppearance {
   contextLines?: number;
@@ -16,6 +17,11 @@ export interface DiffAppearance {
   /** Hides formatting too: equivalent tokens a formatter writes (quotes, trailing commas, optional parentheses…). */
   hideFormatting?: boolean;
   hideComments?: boolean;
+  /**
+   * Hides hunks that only add names from modules the file already imports, by Reduce noise's rule
+   * (lib/explanation-noise.ts). Off by default: it is the one kind that is not about layout or prose.
+   */
+  hideImports?: boolean;
 }
 export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
   contextLines: 3,
@@ -27,6 +33,7 @@ export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
   hideWhitespace: true,
   hideFormatting: true,
   hideComments: false,
+  hideImports: false,
 };
 
 /**
@@ -36,12 +43,13 @@ export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
  * prose a reviewer may need to check. Saved preferences from before formatting had its own toggle meant formatting
  * by "whitespace", so formatting follows that toggle until it is set.
  */
-export function noiseFilterOf(appearance?: Pick<DiffAppearance, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>) {
+export function noiseFilterOf(appearance?: QuietToggles) {
   const whitespace = appearance?.hideWhitespace ?? true;
   return {
     whitespace,
     formatting: appearance?.hideFormatting ?? whitespace,
     comments: appearance?.hideComments ?? false,
+    imports: appearance?.hideImports ?? false,
   };
 }
 
@@ -99,19 +107,20 @@ export const CODE_LINE_HEIGHT = 20;
 export const HUNK_SLICE_LIMIT = 300;
 export const HUNK_SLICE_SIZE = 200;
 
-export type QuietToggles = Pick<DiffAppearance, 'hideWhitespace' | 'hideFormatting' | 'hideComments'>;
+export type QuietToggles = Pick<DiffAppearance, 'hideWhitespace' | 'hideFormatting' | 'hideComments' | 'hideImports'>;
 /**
  * The quiet changes toggles after `w` (lib/quiet-changes.ts): all off when any is on; else the reader's last choice,
  * or the defaults.
  */
 export function toggledQuietChanges(appearance: DiffAppearance, last?: QuietToggles): QuietToggles {
   const filter = noiseFilterOf(appearance);
-  if (filter.whitespace || filter.formatting || filter.comments) return { hideWhitespace: false, hideFormatting: false, hideComments: false };
+  if (noiseFilterOn(filter)) return { hideWhitespace: false, hideFormatting: false, hideComments: false, hideImports: false };
   return (
     last ?? {
       hideWhitespace: DEFAULT_DIFF_APPEARANCE.hideWhitespace,
       hideFormatting: DEFAULT_DIFF_APPEARANCE.hideFormatting,
       hideComments: DEFAULT_DIFF_APPEARANCE.hideComments,
+      hideImports: DEFAULT_DIFF_APPEARANCE.hideImports,
     }
   );
 }

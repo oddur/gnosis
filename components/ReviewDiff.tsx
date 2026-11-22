@@ -5,7 +5,8 @@ import type { GitHubReviewThread } from '../lib/review-threads';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
-import { DEFAULT_DIFF_APPEARANCE, diffContextLines, noiseFilterOf, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import { useNoiseFilter } from '@/lib/use-semantic-noise';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
 import type { ElsewhereChange } from '@/lib/diff-gaps';
 import { resolveBlock } from '@/lib/slide-file-groups';
@@ -166,7 +167,7 @@ export function ReviewDiff({
     return { key: fileKey, snapshot, file };
   }, [fileKey, source?.previousPath, fileStatus, saved.patch]);
   // The same quiet changes as Changes (#396), from the same appearance.
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
+  const noiseFilter = useNoiseFilter(appearance);
   const model = useDiffFileModel({
     fileKey,
     revealKey,

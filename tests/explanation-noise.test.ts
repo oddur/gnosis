@@ -16,7 +16,12 @@ import {
   ruleNoise,
   savedNoiseLevel,
   toolReadComment,
+  withImportBlocks,
 } from '../lib/explanation-noise';
+import { blockKey, changeBlocks, patchHunks } from '../lib/semantic-noise';
+import { syntaxLanguage } from '../lib/syntax-scope';
+import { assertPerf, perfBudget } from './perf-budget';
+import { structuredPatch } from 'diff';
 import {
   DEFAULT_EXPLANATION_PREFERENCES,
   normalizeExplanationOptions,
@@ -138,6 +143,141 @@ void describe('rules: imports are cut only when they widen', () => {
     const literal = (extra: string[]) => text("import { alpha } from './x';", 'const example = `', ...extra, '`;', 'show(example, alpha);');
     assert.deepEqual(await both('src/a.ts', literal([]), literal(["import { beta } from './x';"])), [null, null]);
     assert.deepEqual(await both('src/new.ts', null as unknown as string, text("import { alpha } from './x';")), [null, null]);
+  });
+});
+
+/**
+ * Quiet changes in Changes and Explanation diffs (#396) take the same rule: the worker's comparison marks a patch
+ * hunk's blocks `imports` only where layer 1 cuts it as "import only". The view's hunks follow its context lines; the
+ * rule reads the patch at GitHub's 3. `pick` compares only those patch hunks, as a topic does, with the file's old text
+ * from the view. The answer is per patch hunk.
+ */
+async function quietImports(path: string, before: string, after: string, { pick, context = 3 }: { pick?: number[]; context?: number } = {}) {
+  const lines = (t: string) => t.replace(/\n$/, '').split('\n');
+  const prepared = prepareFixture(
+    { id: 'case', title: 'T', description: 'D', source: '', files: [{ path, before: lines(before), after: lines(after), hunks: [] }] },
+    false
+  );
+  const all = prepared.hunks.flatMap((h) => patchHunks(`${h.hunkHeader}\n${h.content}`) ?? []);
+  const patch = pick ? pick.map((i) => all[i]) : all;
+  const view = pick
+    ? patch
+    : structuredPatch('a', 'b', prepared.before[path], prepared.after[path], '', '', { context }).hunks.map((h) => ({
+        oldStart: h.oldLines === 0 ? h.oldStart + 1 : h.oldStart,
+        newStart: h.newLines === 0 ? h.newStart + 1 : h.newStart,
+        rows: h.lines.filter((l) => !l.startsWith('\\')).map((l) => ({ type: l[0] as ' ' | '+' | '-', text: l.slice(1) })),
+      }));
+  const language = syntaxLanguage(path);
+  assert.ok(language && all.length === prepared.hunks.length);
+  const result = await engine.noise(language, prepared.after[path], view, false, pick ? 'after' : 'both');
+  const blocks = await withImportBlocks(engine, language, { path, patch, before: pick ? prepared.before[path] : undefined }, result);
+  const kinds = new Map(blocks.map((block) => [blockKey(block), block.kind]));
+  return patch.map((hunk) => {
+    const found = changeBlocks([hunk]).map((block) => kinds.get(blockKey(block)));
+    return found.length && found.every((kind) => kind === 'imports') ? 'import only' : found.includes('imports') ? 'part' : null;
+  });
+}
+
+void describe('quiet changes: the same import rule as Reduce noise', () => {
+  const ts = (...extra: string[]) => text("import { alpha } from './x';", ...extra, '', 'run(alpha);');
+  const go = (extra: string) => text('package a', '', 'import (', '\t"fmt"', ...(extra ? [extra] : []), ')', '', 'func F() { fmt.Println() }');
+  const cases: [string, string, string][] = [
+    ['src/a.ts', ts(), ts("import { beta } from './x';")],
+    ['src/a.ts', text('import {', '  alpha,', "} from './x';", '', 'run(alpha);'), text('import {', '  alpha,', '  beta,', "} from './x';", '', 'run(alpha);')],
+    ['a.go', go(''), go('\t"strings"')],
+    ['src/a.rs', text('use crate::error::Result;', '', 'fn f() {}'), text('use crate::error::Result;', 'use crate::error::Failure;', '', 'fn f() {}')],
+    ['src/A.java', text('package p;', 'import a.b.Alpha;', '', 'class A {}'), text('package p;', 'import a.b.Alpha;', 'import a.b.Beta;', '', 'class A {}')],
+    ['src/a.ts', ts(), ts("import { beta } from './y';")],
+    ['src/a.ts', ts(), ts("import { z } from 'zod';")],
+    ['a.go', go(''), go('\t"github.com/acme/x"')],
+    ['src/a.rs', text('use crate::error::Result;', '', 'fn f() {}'), text('use crate::error::Result;', 'use other::Thing;', '', 'fn f() {}')],
+    ['src/a.ts', ts(), ts("import { beta as b } from './x';")],
+    ['src/a.ts', ts(), ts("import type { Beta } from './x';")],
+    ['src/index.ts', ts(), ts("import { beta } from './x';")],
+    ['m.py', text('from .safe import read', '', 'read()'), text('from .safe import read', 'from .safe import open', '', 'read()')],
+  ];
+  void test('Changes quiets exactly the hunks layer 1 cuts as "import only", at both levels', async () => {
+    for (const [path, before, after] of cases) {
+      const quiet = await quietImports(path, before, after);
+      const conservative = (await cuts(path, before, after, 'conservative')).map((reason) => (reason === 'import only' ? reason : null));
+      const aggressive = (await cuts(path, before, after, 'aggressive')).map((reason) => (reason === 'import only' ? reason : null));
+      assert.deepEqual(quiet, conservative, `${path}: ${after}`);
+      assert.deepEqual(quiet, aggressive, `${path}: ${after}`);
+    }
+    assert.deepEqual(await quietImports(...cases[0]), ['import only'], 'The rule does quiet a widening');
+  });
+  void test('an import of a module or package the file did not import is never quiet: it is a new dependency', async () => {
+    for (const line of ["import { z } from 'zod';", "import { beta } from './y';", "import gamma from 'gamma';"])
+      assert.deepEqual(await quietImports('src/a.ts', ts(), ts(line)), [null], line);
+    assert.deepEqual(await quietImports('a.go', go(''), go('\t"github.com/acme/x"')), [null]);
+    assert.deepEqual(await quietImports('src/A.java', text('package p;', 'import a.b.Alpha;', '', 'class A {}'), text('package p;', 'import a.b.Alpha;', 'import c.d.Gamma;', '', 'class A {}')), [null]);
+  });
+  void test('round 1 of #512: an import with a tool directive in or after it is never quiet, nor cut', async () => {
+    for (const line of [
+      "import { beta } from './x'; // eslint-disable-line no-unused-vars",
+      "import { beta } from './x'; // @ts-ignore",
+      "import { beta } from './x'; /* biome-ignore lint: reason */",
+      "import { beta } from './x'; // prettier-ignore",
+    ]) {
+      assert.deepEqual(await quietImports('src/a.ts', ts(), ts(line)), [null], line);
+      assert.deepEqual(await cuts('src/a.ts', ts(), ts(line)), [null], line);
+    }
+    const multi = (...names: string[]) => text('import {', '  alpha,', ...names, "} from './x';", '', 'run(alpha);');
+    assert.deepEqual(await quietImports('src/a.ts', multi(), multi('  beta, // eslint-disable-line')), [null], 'Inside a multi-line import');
+    assert.deepEqual(await quietImports('src/a.ts', multi(), multi('  beta, // a note')), ['import only'], 'A plain comment is still prose');
+  });
+  void test('round 1 of #512: a value import from a module the file imported only as types is a new runtime dependency', async () => {
+    const typed = (...extra: string[]) => text("import type { Alpha } from './x';", ...extra, '', 'let a: Alpha;');
+    assert.deepEqual(await quietImports('src/a.ts', typed(), typed("import { beta } from './x';")), [null]);
+    assert.deepEqual(await cuts('src/a.ts', typed(), typed("import { beta } from './x';")), [null]);
+    const inline = (...extra: string[]) => text("import { type Alpha } from './x';", ...extra, '', 'let a: Alpha;');
+    assert.deepEqual(await quietImports('src/a.ts', inline(), inline("import { beta } from './x';")), [null], 'Every specifier a type');
+    const mixed = (...extra: string[]) => text("import { type Alpha, gamma } from './x';", ...extra, '', 'let a: Alpha = gamma;');
+    assert.deepEqual(await quietImports('src/a.ts', mixed(), mixed("import { beta } from './x';")), ['import only'], 'A module that loads at run time');
+  });
+  void test('round 1 of #512: the rule reads GitHub’s hunks, so a view’s context lines never change what is quiet', async () => {
+    const filler = ['const one = 1;', 'const two = 2;', 'const three = 3;', 'const four = 4;'];
+    const before = text("import { alpha } from './x';", ...filler, 'run(alpha);');
+    const after = text("import { alpha } from './x';", "import { beta } from './x';", ...filler, 'run(alpha, beta);');
+    for (const context of [1, 3]) assert.deepEqual(await quietImports('src/a.ts', before, after, { context }), [null], `context ${context}`);
+    assert.deepEqual(await cuts('src/a.ts', before, after), [null], 'Reduce noise keeps it too');
+  });
+  void test('fails closed: a mixed hunk, a parse error, a removal stay code', async () => {
+    assert.deepEqual(await quietImports('src/a.ts', ts(), text("import { alpha } from './x';", "import { beta } from './x';", 'const extra = beta;', '', 'run(alpha);')), [null], 'An import with code beside it');
+    assert.deepEqual(await quietImports('src/a.ts', text("import { alpha } from './x';", '', 'run(alpha'), text("import { alpha } from './x';", "import { beta } from './x';", '', 'run(alpha')), [null], 'A file that does not parse');
+    assert.deepEqual(await quietImports('src/a.ts', ts("import { beta } from './x';"), ts()), [null], 'A removal');
+  });
+  void test('a topic’s few hunks read the file’s real old text: a name from a module another hunk adds stays shown', async () => {
+    const filler = Array.from({ length: 10 }, (_, i) => `// note ${i}`);
+    const before = text("import { alpha } from './x';", ...filler, '', 'run(alpha);');
+    // The first hunk imports a new package; the second takes another name from it.
+    const after = text("import { alpha } from './x';", "import { a } from 'pkg';", ...filler, "import { b } from 'pkg';", '', 'run(alpha);');
+    assert.deepEqual(await quietImports('src/a.ts', before, after), [null, null], 'Changes: both are a new package');
+    assert.deepEqual(await quietImports('src/a.ts', before, after, { pick: [1] }), [null], 'A topic of the second hunk alone');
+    const widened = text("import { alpha } from './x';", ...filler, "import { beta } from './x';", '', 'run(alpha);');
+    assert.deepEqual(await quietImports('src/a.ts', before, widened, { pick: [0] }), ['import only'], 'A topic quiets a real widening');
+  });
+  void test('perf: a large file with many import-only hunks stays instant', async () => {
+    const modules = Array.from({ length: 300 }, (_, i) => `./m${i}`);
+    const body = (i: number) => Array.from({ length: 6 }, (_, k) => `export const v${i}_${k} = use${i}(${k});`);
+    const before = text(...modules.flatMap((m, i) => [`import { use${i} } from '${m}';`, ...body(i)]));
+    const after = text(...modules.flatMap((m, i) => [`import { use${i} } from '${m}';`, `import { extra${i} } from '${m}';`, ...body(i)]));
+    assert.deepEqual(await quietImports('src/many.ts', before, after), modules.map(() => 'import only'), 'Every widening is quiet');
+    const hunks = patchHunks(structuredPatch('a', 'b', before, after, '', '', { context: 3 }).hunks.map((h) => [`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`, ...h.lines].join('\n')).join('\n')) ?? [];
+    assert.equal(hunks.length, 300);
+    // Both sides' import nodes come from the comparison's own trees: only the rule is added after it.
+    const t0 = performance.now();
+    const plain = await engine.noise('typescript', after, hunks);
+    const t1 = performance.now();
+    const result = await engine.noise('typescript', after, hunks, false, 'both');
+    const t2 = performance.now();
+    const blocks = await withImportBlocks(engine, 'typescript', { path: 'src/many.ts', patch: hunks }, result);
+    const t3 = performance.now();
+    assert.equal(blocks.filter((block) => block.kind === 'imports').length, plain.blocks.length);
+    assertPerf('quiet imports: 300 import-only hunks, the rule after the comparison', t3 - t2, perfBudget(25));
+    assertPerf('quiet imports: 300 import-only hunks, the comparison with import nodes', t2 - t1, perfBudget(800), {
+      detail: `the comparison alone took ${Math.round(t1 - t0)} ms`,
+    });
   });
 });
 

@@ -1,4 +1,4 @@
-import { changeBlocks, NOISE_MAX_CHARACTERS, patchHunks, type NoiseKind } from './semantic-noise';
+import { blockKey, changeBlocks, NOISE_MAX_CHARACTERS, patchHunks, type NoiseBlock, type NoiseKind } from './semantic-noise';
 import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
 import { importBindings, type ImportNode } from './import-nodes';
 import {
@@ -108,11 +108,13 @@ export function hunkLines(hunk: Pick<Hunk, 'hunkHeader' | 'content'>): Row[] {
  */
 const WIDENING: ReadonlySet<SyntaxLanguage> = new Set(['typescript', 'tsx', 'javascript', 'go', 'rust', 'java']);
 
-/** The cheap check before the syntax tree is read: a language the rule covers, and a hunk that only adds lines. */
-export function importCandidate(hunk: Hunk): boolean {
-  const language = syntaxLanguage(hunk.filePath);
-  if (!language || !WIDENING.has(language) || hunk.fileStatus !== 'modified') return false;
-  const rows = hunkLines(hunk);
+/**
+ * The cheap check before the syntax tree is read: a language the rule covers, and a hunk (`rows`, of a modified file)
+ * that only adds lines.
+ */
+export function importCandidate(path: string, rows: readonly Pick<Row, 'type' | 'text'>[]): boolean {
+  const language = syntaxLanguage(path);
+  if (!language || !WIDENING.has(language)) return false;
   return !rows.some((row) => row.type === '-') && rows.some((row) => row.type === '+' && !!row.text.trim());
 }
 
@@ -151,37 +153,63 @@ export interface FileImports {
 /** The path a Rust or Java binding sits in: everything before its last segment. */
 const parentOf = (source: string, separator: string) => source.slice(0, Math.max(0, source.lastIndexOf(separator)));
 
+/** What the old file imports and names, read once per file: a file's hunks each ask (Quiet changes asks for hundreds). */
+const oldFiles = new WeakMap<FileImports, { language: SyntaxLanguage; text: string; value: ReturnType<typeof readOldFile> }>();
+function oldFile(language: SyntaxLanguage, imports: FileImports, beforeText: string) {
+  const known = oldFiles.get(imports);
+  if (known && known.language === language && known.text === beforeText) return known.value;
+  const value = readOldFile(language, imports, beforeText);
+  oldFiles.set(imports, { language, text: beforeText, value });
+  return value;
+}
 /**
- * Whether `hunk` only widens imports the file already has, the one import change the rule can prove harmless: every
- * changed line is an addition lying alone in an import node, and each added binding is a plain name, new to the file
- * (no shadowing of an import, a global, a builtin or a local), from a module the file already imports. False
- * otherwise: removals, swaps, reorders, aliases, type-only imports, side effects, re-exports, entry files, Python, C#,
- * a file with no syntax tree.
+ * A TS/JS import that binds only types: `import type …`, or braces whose every specifier is `type X`. The module never
+ * loads at run time, so a value import from it is a new runtime dependency.
+ */
+function typeOnly(text: string): boolean {
+  const flat = text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^import\s+type\b/.test(flat)) return true;
+  const clause = /^import\s+(.*?)\s+from\s/.exec(flat)?.[1] ?? '';
+  const named = /^\{(.*)\}$/.exec(clause.trim())?.[1];
+  const specifiers = (named ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+  return specifiers.length > 0 && specifiers.every((part) => /^type\s/.test(part));
+}
+function readOldFile(language: SyntaxLanguage, imports: FileImports, beforeText: string) {
+  const script = language === 'typescript' || language === 'tsx' || language === 'javascript';
+  const oldBindings = imports.before.filter((node) => !script || !typeOnly(node.text)).map((node) => importBindings(language, node.text));
+  return {
+    oldModules: new Set(oldBindings.map((b) => b.module).filter((m): m is string => !!m)),
+    oldPairs: new Set(oldBindings.flatMap((b) => b.pairs.map(([local, source]) => `${local}\n${source}`))),
+    oldParents: new Set(oldBindings.flatMap((b) => b.pairs.map(([, source]) => parentOf(source, language === 'rust' ? '::' : '.')))),
+    words: new Set(beforeText.match(/[\p{L}_$][\p{L}\p{N}_$]*/gu) ?? []),
+  };
+}
+
+/**
+ * Whether a hunk of a modified file (`rows`, with their line numbers) only widens imports the file already has, the one
+ * import change the rule can prove harmless: every changed line is an addition lying alone in an import node, and each
+ * added binding is a plain name, new to the file (no shadowing of an import, a global, a builtin or a local), from a
+ * module the file already loads at run time. False otherwise: removals, swaps, reorders, aliases, type-only imports,
+ * side effects, re-exports, tool directives, entry files, Python, C#, a file with no syntax tree.
  */
 export function importOnlyHunk(
-  hunk: Hunk,
+  path: string,
+  rows: readonly Row[],
   imports: FileImports | undefined,
   beforeText: string | undefined
 ): boolean {
-  const language = syntaxLanguage(hunk.filePath);
-  if (!imports || !language || beforeText === undefined || !importCandidate(hunk) || isPackageEntry(hunk.filePath))
-    return false;
+  const language = syntaxLanguage(path);
+  if (!imports || !language || beforeText === undefined || !importCandidate(path, rows) || isPackageEntry(path)) return false;
   const script = language === 'typescript' || language === 'tsx' || language === 'javascript';
   const touched = new Set<ImportNode>();
-  for (const row of hunkLines(hunk)) {
+  for (const row of rows) {
     if (row.type !== '+' || !row.text.trim()) continue;
     const covering = imports.after.filter((node) => node.startRow <= row.newLine - 1 && row.newLine - 1 <= node.endRow);
     if (!covering.length || covering.some((node) => !node.alone || node.blocked)) return false;
     touched.add(covering.reduce((a, b) => (b.endRow - b.startRow < a.endRow - a.startRow ? b : a)));
   }
   if (!touched.size) return false;
-  const oldBindings = imports.before.map((node) => importBindings(language, node.text));
-  const oldModules = new Set(oldBindings.map((b) => b.module).filter((m): m is string => !!m));
-  const oldPairs = new Set(oldBindings.flatMap((b) => b.pairs.map(([local, source]) => `${local}\n${source}`)));
-  const oldParents = new Set(
-    oldBindings.flatMap((b) => b.pairs.map(([, source]) => parentOf(source, language === 'rust' ? '::' : '.')))
-  );
-  const words = new Set(beforeText.match(/[\p{L}_$][\p{L}\p{N}_$]*/gu) ?? []);
+  const { oldModules, oldPairs, oldParents, words } = oldFile(language, imports, beforeText);
   let added = 0;
   for (const node of touched) {
     const { module, pairs } = importBindings(language, node.text);
@@ -210,6 +238,67 @@ export function importOnlyHunk(
     }
   }
   return added > 0;
+}
+
+/** A hunk as the noise comparison reads it (lib/semantic-noise.ts): starts already moved past a side with no lines. */
+export interface RowHunk {
+  oldStart: number;
+  newStart: number;
+  rows: readonly { type: ' ' | '+' | '-'; text: string }[];
+}
+/** A RowHunk's rows with their line numbers on each side, as hunkLines gives a diff hunk's. */
+function numbered(hunk: RowHunk): Row[] {
+  let oldLine = hunk.oldStart,
+    newLine = hunk.newStart;
+  return hunk.rows.map((row): Row =>
+    row.type === '+'
+      ? { type: '+', text: row.text, newLine: newLine++ }
+      : row.type === '-'
+        ? { type: '-', text: row.text, oldLine: oldLine++ }
+        : { type: ' ', text: row.text, oldLine: oldLine++, newLine: newLine++ }
+  );
+}
+
+/** Whether any of a modified file's patch hunks passes the import pre-filter: only then are its import nodes read. */
+export const importCandidates = (path: string, patch: readonly RowHunk[]) => patch.some((hunk) => importCandidate(path, hunk.rows));
+
+/**
+ * Quiet changes' Imports (#396), by the rule above. The rule reads the file's patch hunks, as GitHub groups them and
+ * as Reduce noise reads them, never a view's, whose grouping follows its context lines. Each code block of `blocks`
+ * (any view's, of the same diff) that is a change block of an import-only patch hunk becomes `imports`. A file with no
+ * import nodes or no old text changes nothing.
+ */
+export function importBlocks(
+  path: string,
+  patch: readonly RowHunk[],
+  blocks: readonly NoiseBlock[],
+  imports: FileImports | undefined,
+  before: string | undefined
+): NoiseBlock[] {
+  if (!imports || before === undefined) return [...blocks];
+  const quiet = new Set(
+    patch.filter((hunk) => importOnlyHunk(path, numbered(hunk), imports, before)).flatMap((hunk) => changeBlocks([hunk]).map(blockKey))
+  );
+  return blocks.map((block) => (block.kind === 'code' && quiet.has(blockKey(block)) ? { ...block, kind: 'imports' } : block));
+}
+
+/**
+ * A noise comparison's blocks with the rule applied, as the syntax worker answers Changes and Explanation diffs. Whole
+ * hunks rebuild the old text, so its import nodes come from the comparison's trees. A topic's few hunks cannot: its
+ * old text comes from the view and is parsed here, and without it nothing changes.
+ */
+export async function withImportBlocks(
+  engine: { imports(language: SyntaxLanguage, text: string): Promise<ImportNode[] | undefined> },
+  language: SyntaxLanguage,
+  request: { path: string; patch: readonly RowHunk[]; before?: string },
+  result: { blocks: NoiseBlock[]; imports?: { before?: ImportNode[]; after: ImportNode[]; beforeText: string } }
+): Promise<NoiseBlock[]> {
+  const found = result.imports;
+  if (!found) return result.blocks;
+  if (request.before === undefined)
+    return importBlocks(request.path, request.patch, result.blocks, found.before && { before: found.before, after: found.after }, found.beforeText);
+  const before = await engine.imports(language, request.before).catch(() => undefined);
+  return importBlocks(request.path, request.patch, result.blocks, before && { before, after: found.after }, request.before);
 }
 
 // ── Rules: comments a tool reads ────────────────────────────────
@@ -294,7 +383,7 @@ export function noiseRequests(
     if (!language || newText === undefined || newText.length > NOISE_MAX_CHARACTERS || !enabled(language)) continue;
     const parsed = list.flatMap((hunk) => patchHunks(`${hunk.hunkHeader}\n${hunk.content}`)?.slice(0, 1) ?? []);
     if (parsed.length !== list.length) continue;
-    const imports = list.some((hunk) => importCandidate(hunk));
+    const imports = list.some((hunk) => hunk.fileStatus === 'modified' && importCandidate(hunk.filePath, hunkLines(hunk)));
     requests.push({ path, language, after: newText, hunks: parsed, ids: list.map((h) => h.id), imports });
   }
   return requests;
@@ -321,7 +410,7 @@ export function classifiedNoise(requests: readonly NoiseRequest[], answers: read
 export type ClassifiedNoise = ReturnType<typeof classifiedNoise>;
 /** The reason a hunk is quiet, or undefined when any of its blocks is code. */
 export function quietReason(kinds: readonly NoiseKind[] | undefined): string | undefined {
-  if (!kinds?.length || kinds.some((kind) => kind === 'code')) return undefined;
+  if (!kinds?.length || kinds.some((kind) => kind === 'code' || kind === 'imports')) return undefined;
   if (kinds.every((kind) => kind === 'whitespace')) return 'whitespace';
   if (kinds.every((kind) => kind === 'whitespace' || kind === 'formatting')) return 'formatting';
   if (kinds.every((kind) => kind === 'comments')) return 'comments only';
@@ -341,7 +430,8 @@ export function ruleNoise(
   const text = (files: Record<string, string>, path: string) => (Object.hasOwn(files, path) ? files[path] : undefined);
   for (const hunk of hunks) {
     // A widening names no new module, so it is never a new dependency: both levels cut it.
-    if (importOnlyHunk(hunk, classified.imports.get(hunk.filePath), text(before, hunk.filePath))) {
+    const file = classified.imports.get(hunk.filePath);
+    if (hunk.fileStatus === 'modified' && importOnlyHunk(hunk.filePath, hunkLines(hunk), file, text(before, hunk.filePath))) {
       cuts.set(hunk.id, 'import only');
       continue;
     }

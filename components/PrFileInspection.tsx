@@ -24,7 +24,8 @@ import {
 import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { useDiffLayout } from '../lib/use-diff-layout';
-import { diffContextLines, noiseFilterOf } from '../lib/review-diff';
+import { diffContextLines } from '../lib/review-diff';
+import { useNoiseFilter } from '../lib/use-semantic-noise';
 import { quietHeader } from '../lib/quiet-changes-header';
 import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
@@ -203,7 +204,7 @@ export function PrFileInspection({
   const expandable = entry.file.status !== 'added' && entry.file.status !== 'deleted' && !contents?.lfs;
   // Settings › Appearance › Code intelligence: a language that is off shows as a file without a grammar.
   const codeSettings = useMemo(() => codeIntelligenceSettings(prefs), [prefs.codeIntelligence]);
-  const noiseFilter = useMemo(() => noiseFilterOf(appearance), [appearance.hideWhitespace, appearance.hideFormatting, appearance.hideComments]);
+  const noiseFilter = useNoiseFilter(appearance);
   useEffect(() => applyCodeIntelligence(codeSettings), [codeSettings]);
   const scopeFile = useMemo(() => ({ key: activeKey, snapshot: entry.snapshot, file: entry.file }), [activeKey, entry.snapshot, entry.file]);
   // Gaps, reveals, scopes and structure loading are shared with Explanation topics (components/useDiffFileModel.tsx).
