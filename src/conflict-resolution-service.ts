@@ -26,14 +26,30 @@ import {
   withProposals,
   withResult,
 } from '../lib/conflict-carry';
-import { conflictCount } from '../lib/conflict-blocks';
+import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import {
+  MODEL_SYSTEM_PROMPT,
+  checkReplacement,
+  conflictProbe,
+  createLimiter,
+  isSecretPath,
+  modelContent,
+  modelInput,
+  modelProposal,
+  parseModelReply,
+  spliceModelProposal,
+  validateModelRequest,
+  type ConflictModelOutcome,
+  type ConflictModelReply,
+  type ConflictModelRequest,
+} from '../lib/conflict-model';
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
-import type { SyntaxLanguage } from '../lib/syntax-scope';
+import type { SyntaxDefinition, SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
@@ -104,6 +120,23 @@ interface Deps {
   moved?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<ConflictProposal | undefined>;
   /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
   disabledLanguages?: () => SyntaxLanguage[];
+  /**
+   * The selected model, asked about one conflict at a time (#445 items 6 and 7). Without it, nothing is asked. `paused`
+   * is the provider's pause notice, such as "Claude is paused until 14:00.", while model work must wait; `pauseFrom`
+   * records the pause a failure shows, and returns its notice.
+   */
+  model?: {
+    label: () => string;
+    paused: () => string | undefined;
+    generate: (request: { systemPrompt: string; content: string }, signal: AbortSignal) => Promise<string>;
+    pauseFrom: (error: unknown) => string | undefined;
+    /** Milliseconds one request may take: 180000. Tests change it. */
+    timeoutMs?: number;
+    /** Requests at once (MODEL_CONCURRENCY). Tests change it. */
+    concurrency?: number;
+  };
+  /** Tree-sitter definitions of a text, for the conflict's enclosing definition. Undefined: none known. */
+  definitions?: (path: string, text: string, disabled: SyntaxLanguage[]) => Promise<SyntaxDefinition[] | undefined>;
   /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
   backgroundDrafts?: number;
   /** Settings › Diagnostics › Conflict resolution stats (src/conflict-stats-store.ts). Counts only; it never throws. */
@@ -180,6 +213,16 @@ export function createConflictResolutionService(deps: Deps) {
       deps.storage.write(carryKey(account, id), files.length ? files : null);
   };
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
+  /** Model requests by conflict (`modelKey`), and the checked replies waiting for the workspace to use them. */
+  const modelRequests = new Map<string, AbortController>();
+  const modelResults = new Map<
+    string,
+    { fingerprint: string; reply: Extract<ConflictModelReply, { status: 'resolved' }>; text: string; by: string }
+  >();
+  const modelKey = (account: string, request: ConflictModelRequest) =>
+    JSON.stringify([account, request.id, request.path, request.index]);
+  let limiter: ReturnType<typeof createLimiter> | undefined;
+  const modelQueue = (cap?: number) => (limiter ??= createLimiter(cap));
   /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
   function withChoices(key: string, session: ConflictSession) {
@@ -1568,6 +1611,86 @@ export function createConflictResolutionService(deps: Deps) {
       maintenance = task.catch((error: unknown) => console.warn('[conflicts] Cache cleanup failed.', error));
       return task;
     },
+    /**
+     * Asks the selected model about one open conflict (#445 item 6), at most `concurrency` requests at once across every
+     * PR (item 7). Nothing is sent for a file that may hold secrets, while the provider is paused, or for a conflict that
+     * changed. The reply is read strictly; a replacement that passes waits here until the workspace puts it in the
+     * draft with a `model` request, which checks it. The draft is not changed here, so you can decide by hand meanwhile.
+     * `cancelModel`, or `signal`, stops the request.
+     */
+    async askModel(request: ConflictModelRequest, signal?: AbortSignal): Promise<ConflictModelOutcome> {
+      validateModelRequest(request);
+      const model = deps.model;
+      if (!model) return { status: 'skipped', reason: 'No model is set up.' };
+      const ctx = deps.context();
+      if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
+      const session = sessionFor(ctx, request.id);
+      const file = session.files.find((f) => f.path === request.path);
+      if (!file || file.unsupported) return { status: 'skipped', reason: 'This file can’t be resolved here.' };
+      if (isSecretPath(file.path))
+        return { status: 'skipped', reason: 'This file may hold secrets, so Gnosis doesn’t send it to a model.' };
+      if (session.status !== 'editing' || session.stale) return { status: 'skipped', reason: 'This draft is closed.' };
+      const probe = conflictProbe(file.original, request.index);
+      if (!probe) return { status: 'skipped', reason: 'This conflict changed.' };
+      const target = modelKey(ctx.account, request);
+      const fingerprint = hash(probe.block.raw);
+      modelRequests.get(target)?.abort(new Error('Asked again.'));
+      modelResults.delete(target);
+      const controller = new AbortController();
+      modelRequests.set(target, controller);
+      const forward = () => controller.abort(signal?.reason);
+      signal?.addEventListener('abort', forward, { once: true });
+      try {
+        return await modelQueue(model.concurrency).run(controller.signal, async (live): Promise<ConflictModelOutcome> => {
+          // A pause that started while this request waited skips it too.
+          const notice = model.paused();
+          if (notice) return { status: 'paused', notice };
+          const definitions = await (deps.definitions?.(file.path, probe.text, deps.disabledLanguages?.() ?? []) ??
+            Promise.resolve(undefined)).catch(() => undefined);
+          live.throwIfAborted();
+          const built = modelInput(session, file, request.index, definitions);
+          if ('reason' in built) return { status: 'skipped', reason: built.reason };
+          const timeout = AbortSignal.timeout(model.timeoutMs ?? 180_000);
+          let raw: string;
+          try {
+            raw = await model.generate(
+              { systemPrompt: MODEL_SYSTEM_PROMPT, content: modelContent(built.input) },
+              AbortSignal.any([live, timeout])
+            );
+          } catch (error) {
+            live.throwIfAborted();
+            if (timeout.aborted) return { status: 'failed', reason: `${model.label()} didn’t answer in time.` };
+            const paused = model.pauseFrom(error);
+            if (paused) return { status: 'paused', notice: paused };
+            console.warn('[conflicts] The model request failed.', error instanceof Error ? error.message : error);
+            return { status: 'failed', reason: `${model.label()} couldn’t propose a resolution.` };
+          }
+          live.throwIfAborted();
+          const reply = parseModelReply(raw);
+          if (!reply)
+            return { status: 'failed', reason: `${model.label()}’s reply couldn’t be read, so it wasn’t used.` };
+          if (reply.status === 'question') return { status: 'question', question: reply.question };
+          const checked = checkReplacement(probe.block, reply.replacement, built.input.scope);
+          if ('reason' in checked) return { status: 'failed', reason: `${checked.reason} It wasn’t used.` };
+          modelResults.set(target, { fingerprint, reply, text: checked.text, by: model.label() });
+          return { status: 'proposal' };
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return { status: 'cancelled' };
+        throw error;
+      } finally {
+        signal?.removeEventListener('abort', forward);
+        if (modelRequests.get(target) === controller) modelRequests.delete(target);
+      }
+    },
+    /** Stops the model request for one conflict, waiting or running, and drops a proposal not used yet. */
+    cancelModel(request: ConflictModelRequest) {
+      validateModelRequest(request);
+      const target = modelKey(deps.context().account, request);
+      modelRequests.get(target)?.abort(new Error('Cancelled.'));
+      modelRequests.delete(target);
+      modelResults.delete(target);
+    },
     async run(
       request: ConflictRequest,
       signal: AbortSignal,
@@ -1747,6 +1870,30 @@ export function createConflictResolutionService(deps: Deps) {
           file.result = request.contents;
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
+        } else if (request.kind === 'model') {
+          // The model's proposal for one conflict, into that conflict's span only, while it is still open. The checks
+          // below run on it; a model proposal is never Merged (lib/conflict-verify.ts).
+          const file = session.files.find((f) => f.path === request.path);
+          const target = modelKey(ctx.account, request);
+          const waiting = modelResults.get(target);
+          modelResults.delete(target);
+          const segment = file
+            ? parseConflicts(file.original).find((s) => s.kind === 'conflict' && s.index === request.index)
+            : undefined;
+          if (
+            !file ||
+            file.unsupported ||
+            isSecretPath(file.path) ||
+            !waiting ||
+            segment?.kind !== 'conflict' ||
+            hash(segment.block.raw) !== waiting.fingerprint
+          )
+            throw new Error('This conflict changed, so the proposal wasn’t used.');
+          const spliced = spliceModelProposal(file, request.index, modelProposal(waiting.reply, waiting.text, waiting.by));
+          if (!spliced) throw new Error('You already decided this conflict, so the proposal wasn’t used.');
+          file.result = spliced.result;
+          file.proposals = spliced.proposals;
+          file.resolved = false;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -1772,6 +1919,8 @@ export function createConflictResolutionService(deps: Deps) {
             }
             report(`Proposing a resolution for ${file.path}.`);
             if (request.engine === 'agent') {
+              if (isSecretPath(file.path))
+                throw new Error('This file may hold secrets, so Gnosis doesn’t send it to a model.');
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
                 throw new Error('This file is too large for agent context. Use the manual editor.');
               const result = await deps.suggest({ session, file, instructions: request.instructions ?? '' }, signal);
@@ -1927,7 +2076,7 @@ export function createConflictResolutionService(deps: Deps) {
         if (session.status !== 'published') {
           // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict
           // checks read (proposalKey includes it). Checks of an unchanged key are skipped.
-          if (request.kind === 'resolve' || request.kind === 'save')
+          if (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model')
             await check(
               session.files.filter((f) => !request.path || f.path === request.path),
               signal,

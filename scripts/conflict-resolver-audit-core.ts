@@ -23,7 +23,8 @@ import { casePlan, gitRunner, loadCases, root } from './conflict-lab-lib.mjs';
 import { generateMatrix } from './conflict-lab-generate.mjs';
 
 /** Who wrote a result: a resolver, or a rule the checks apply to a structural merge's proposal. */
-export type Resolver = 'mergiraf' | 'reformat' | 'same' | 'union' | 'rerere' | 'whole-file' | 'moved';
+/** `model` (lib/conflict-model.ts) is never Merged by construction, and the audit has no model to run: it has no row. */
+export type Resolver = 'mergiraf' | 'reformat' | 'same' | 'union' | 'rerere' | 'whole-file' | 'moved' | 'model';
 export const RESOLVERS: Resolver[] = ['mergiraf', 'reformat', 'same', 'union', 'rerere', 'whole-file', 'moved'];
 export type MutationKind =
   | 'drop-definition'

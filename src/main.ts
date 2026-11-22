@@ -140,6 +140,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
+  PROVIDERS,
   normalizeModelSelection,
 } from '../lib/models';
 import { buildExplanationSource, refineExplanationText } from '../lib/review-refinement';
@@ -160,6 +161,8 @@ import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/providers/shared';
 import { getProvider } from '../lib/provider';
+import { validateModelRequest } from '../lib/conflict-model';
+import { conflictPauseNotice, providerName, providerPause } from '../lib/provider-limits';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import { CHAT_CITATION_INSTRUCTION } from '../lib/chat-citations';
 import { keepChatPreferences, normalizeChatModels, normalizeChatPanelWidths, type ChatPreferencesPatch } from '../lib/chat-preferences';
@@ -4273,6 +4276,31 @@ const conflicts = createConflictResolutionService({
     return prActions.readMany(client, urls, true).map((read, i) => read.then(state => conflictPermissions(client, urls[i], state)));
   },
   mergiraf: () => path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? 'mergiraf/runtime' : 'resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf'),
+  // One conflict at a time (#445 items 6 and 7), with the provider, model and effort in Settings. A provider pause that
+  // stops briefings skips these too, and one these run into stops briefings.
+  model: {
+    // The model's name, as the workspace's Ask menu shows it; the provider's when the model is unknown.
+    label: () => {
+      const preferences = loadPreferences();
+      const models = PROVIDERS[preferences.provider === 'codex' ? 'codex' : 'claude'].models as readonly { id: string; label: string }[];
+      return models.find(m => m.id === preferences.model)?.label ?? providerName(preferences.provider);
+    },
+    paused: () => {
+      const pause = workbench.providerPause(loadPreferences().provider);
+      return pause && conflictPauseNotice(pause, Date.now());
+    },
+    generate: ({ systemPrompt, content }, signal) => {
+      const preferences = loadPreferences();
+      return getProvider(preferences.provider).generate({ model: preferences.model, effort: preferences.effort, thinking: true, isolated: true, signal, systemPrompt, content });
+    },
+    pauseFrom: (error) => {
+      const pause = providerPause(loadPreferences().provider, error, Date.now());
+      if (!pause) return undefined;
+      workbench.noteProviderPause(pause);
+      return conflictPauseNotice(pause, Date.now());
+    },
+  },
+  definitions: (file, text, disabled) => conflictChecks.definitions(file, text, disabled),
   suggest: async ({ session, file, instructions }, signal) => {
     const preferences = loadPreferences();
     const response = await getProvider(preferences.provider).generate({
@@ -4319,6 +4347,16 @@ ipcMain.on('conflict-stats-choice', (_event, value: unknown) => {
   if (choice) conflicts.countChoice(choice);
 });
 ipcMain.handle('conflict-stats', () => conflictStats.get());
+// One conflict's model request (#445 items 6 and 7): each answers on its own, so proposals arrive one by one.
+ipcMain.handle('conflict-model', async (_event, request: unknown) => {
+  validateModelRequest(request);
+  if (!getResolvedToken() || !cachedLogin) throw new Error('Connect GitHub before resolving conflicts.');
+  return conflicts.askModel(request);
+});
+ipcMain.handle('conflict-model-cancel', (_event, request: unknown) => {
+  validateModelRequest(request);
+  conflicts.cancelModel(request);
+});
 ipcMain.handle('conflict-stats-reset', () => conflictStats.reset());
 // The PR header's conflict line. Asking for it means you opened the PR, so its conflicts are prepared too.
 ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
@@ -4336,7 +4374,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   if (!cachedLogin) cachedLogin = await resolveGitHubLogin(token);
   const controller = new AbortController();
   const id = `pr-action:conflicts:${crypto.randomUUID()}`;
-  const tracked = !['save', 'discard', 'restack-save'].includes(request.kind);
+  const tracked = !['save', 'discard', 'restack-save', 'model'].includes(request.kind);
   if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
     // A background preparation of this PR finishes first, so opening reuses it.

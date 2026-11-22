@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Check, CheckCheck, ChevronsUpDown, CircleAlert, CircleHelp, Undo2 } from 'lucide-react';
+import { Bot, Check, CheckCheck, ChevronsUpDown, CircleAlert, CircleHelp, Undo2 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   applyChoices,
@@ -23,6 +23,7 @@ import {
   type ConflictLabels,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
+import type { ModelCard } from '../lib/conflict-model';
 import type { CompareWith } from '../lib/conflict-diff';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
@@ -37,7 +38,47 @@ export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict)
         : 'Combined both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
-  proposal.source === 'rerere' ? `Check · ${proposalWhat(proposal)}` : 'Check';
+  proposal.source === 'rerere'
+    ? `Check · ${proposalWhat(proposal)}`
+    : proposal.source === 'model'
+      ? `Check · Proposed by ${proposal.by ?? 'a model'}`
+      : 'Check';
+
+/** A conflict's model request while it has no proposal (lib/conflict-model.ts `ModelCard`). */
+function ModelLine({ card }: { card: ModelCard }) {
+  return (
+    <p className="conflict-model-line" data-model={card.status} role="status">
+      <Bot size={13} aria-hidden="true" />
+      {card.status === 'asking' ? (
+        <span>Asking {card.by} for a proposal… You can decide now.</span>
+      ) : card.status === 'question' ? (
+        <span>
+          {card.by} asks: {card.text}
+        </span>
+      ) : (
+        <span>{card.text}</span>
+      )}
+    </p>
+  );
+}
+/** What the model said each side meant, and how its proposal keeps both: its words, not a check. */
+function ModelIntents({ proposal, labels }: { proposal: ConflictProposal; labels: ConflictLabels }) {
+  if (proposal.source !== 'model' || !proposal.intents) return null;
+  return (
+    <dl className="conflict-model-intents" aria-label={`What ${proposal.by ?? 'the model'} says`}>
+      <dt>{labels.ours}</dt>
+      <dd>{proposal.intents.pr}</dd>
+      <dt>{labels.theirs}</dt>
+      <dd>{proposal.intents.main}</dd>
+      {proposal.note && (
+        <>
+          <dt>Proposal</dt>
+          <dd>{proposal.note}</dd>
+        </>
+      )}
+    </dl>
+  );
+}
 
 const baseOptions = {
   theme: { dark: 'pierre-dark', light: 'pierre-light' },
@@ -139,7 +180,10 @@ export function Block({
   verdict,
   note,
   compare = 'pr',
+  model,
 }: {
+  /** This conflict's model request while it has no proposal. */
+  model?: ModelCard;
   /** In the Conflicts view's diff (components/ConflictDiff.tsx): the diff shows the code, the card the decision. */
   inDiff?: boolean;
   /** What the diff around the card compares the result with (#445 item 9), so the legend names its sides right. */
@@ -208,7 +252,8 @@ export function Block({
     </Button>
   );
   if (choice === 'proposal' && proposal) {
-    const merged = !!verdict?.merged;
+    // A model proposal is never Merged, whatever a verdict says.
+    const merged = !!verdict?.merged && proposal.source !== 'model';
     const note = verdict?.note ?? 'Checking the result…';
     const what = proposalWhat(proposal, verdict);
     // Merged: one line, collapsed. Check: the proposal and both sides, with the Keep actions to override it.
@@ -254,6 +299,7 @@ export function Block({
           <span>{note}</span>
           {undo}
         </header>
+        <ModelIntents proposal={proposal} labels={labels} />
         {inDiff ? null : proposal.text ? (
           <CodeSnippet name={name} text={proposal.text} />
         ) : (
@@ -322,6 +368,7 @@ export function Block({
         <span>Line {block.line}</span>
         {note && <span className="conflict-block-note">{note}</span>}
       </header>
+      {model && <ModelLine card={model} />}
       {inDiff ? (
         // The diff above shows the two sides: against the PR, its lines removed and the base branch's added; against
         // main, the other way round. In both, the rows above name them. Neither is chosen.

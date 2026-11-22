@@ -37,6 +37,7 @@ import { ChangesDiff } from './ChangesDiff';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
+import type { ModelCard } from '../lib/conflict-model';
 import { Block, DiffColumns, WholeFile, useConflictChoices, type ConflictViewHandle } from './ConflictBlocks';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
@@ -467,7 +468,10 @@ export function ConflictDiff({
   picks,
   onPick,
   onChoice,
+  models,
 }: {
+  /** Each open conflict's model request, by index (#445 item 7). */
+  models?: Readonly<Record<number, ModelCard>>;
   name: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
   ours: string;
@@ -533,6 +537,7 @@ export function ConflictDiff({
         proposal={proposals?.[index]}
         verdict={blockVerdict(verdict, index)}
         note={note}
+        model={models?.[index]}
         onUndo={model.undoable ? () => choose(index, undefined) : undefined}
         compare={mode}
       />

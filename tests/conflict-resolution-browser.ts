@@ -1984,6 +1984,128 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
+    // The model, per conflict (#445 items 6 and 7), with a mocked provider that answers when the test says so. Each card
+    // shows both sides with a placeholder at once; proposals arrive one by one; your choice cancels a pending request;
+    // a provider pause says so. No model is called.
+    const modelOriginal =
+      'export function retryDelay(attempt: number) {\n<<<<<<< feature/retry\n  return Math.min(attempt * 200, 5000);\n||||||| ancestor\n  return attempt * 200;\n=======\n  return Math.max(100, attempt * 200);\n>>>>>>> main\n}\n<<<<<<< feature/retry\nexport const retries = 5;\n=======\nexport const retries = 3;\n>>>>>>> main\n';
+    const modelFile = {
+      path: 'src/retry.ts',
+      mode: '100644',
+      base: 'export function retryDelay(attempt: number) {\n  return attempt * 200;\n}\nexport const retries = 4;\n',
+      ours: 'export function retryDelay(attempt: number) {\n  return Math.min(attempt * 200, 5000);\n}\nexport const retries = 5;\n',
+      theirs: 'export function retryDelay(attempt: number) {\n  return Math.max(100, attempt * 200);\n}\nexport const retries = 3;\n',
+      original: modelOriginal,
+      result: modelOriginal,
+      resolved: false,
+      source: 'manual',
+    };
+    const modelSession = async () => {
+      await js(`(()=>{
+        Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],lastPush:undefined,files:[${JSON.stringify(modelFile)}]});
+        window.conflictCalls=[];window.modelAsks=[];window.modelCancels=[];window.modelAnswer={};
+      })()`);
+    };
+    await js(`(()=>{
+      window.electronAPI.conflictModel=req=>new Promise(resolve=>{window.modelAsks.push(req);window.modelAnswer[req.index]=resolve;});
+      window.electronAPI.cancelConflictModel=async req=>{window.modelCancels.push(req);window.modelAnswer[req.index]?.({status:'cancelled'});};
+      const inner=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        if(req.kind!=='model')return inner(req);
+        window.conflictCalls.push(req);const s=window.conflictFixture;
+        if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
+        const {spliceModelProposal}=await import('/lib/conflict-model.ts');
+        const f=s.files.find(f=>f.path===req.path);
+        const spliced=spliceModelProposal(f,req.index,{source:'model',text:'  return Math.min(Math.max(100, attempt * 200), 5000);\\n',by:'Claude',note:'Keeps the PR’s cap and main’s floor.',intents:{pr:'The PR caps the delay at 5 seconds.',main:'Main adds a 100 ms floor.'}});
+        if(!spliced)throw Error('You already decided this conflict, so the proposal wasn’t used.');
+        Object.assign(f,spliced,{resolved:false});s.version++;return {session:structuredClone(s)};
+      };
+    })()`);
+    const modelLine = (index: number) => js<string | null>(`${block(index)}?.querySelector('.conflict-model-line')?.dataset.model ?? null`);
+    await modelSession();
+    await open();
+    await wait('window.modelAsks.length===2');
+    assert.deepEqual(
+      await js('window.modelAsks.map(r=>[r.path,r.index])'),
+      [
+        ['src/retry.ts', 0],
+        ['src/retry.ts', 1],
+      ],
+      'Every open conflict is asked about at once'
+    );
+    await wait(`${block(0)}?.querySelector('.conflict-model-line[data-model=asking]') && ${block(1)}?.querySelector('.conflict-model-line[data-model=asking]')`);
+    // Both sides and the Keep actions are there while the model works: you can decide without waiting.
+    for (const index of [0, 1]) {
+      assert.equal(await js(`${block(index)}.dataset.state`), 'open');
+      assert.equal(
+        await js(`[...${block(index)}.querySelectorAll('.conflict-block-actions button')].every(b=>!b.disabled)`),
+        true
+      );
+      assert.match(await js<string>(`${block(index)}.querySelector('.conflict-model-line').textContent`), /^Asking .+ for a proposal… You can decide now\.$/);
+    }
+    assert.equal(await js("!!document.querySelector('.conflict-model-line svg.lucide-bot')"), true, 'AI uses the Bot icon');
+    await capture('model-asking');
+    // The first proposal arrives; the second conflict still waits.
+    await js(`window.modelAnswer[0]({status:'proposal'})`);
+    await wait(`${block(0)}?.dataset.bucket==='check'`);
+    assert.equal(await calls('model'), 1);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-bucket').textContent`), /Check · Proposed by Claude/);
+    assert.deepEqual(
+      await js(`[...${block(0)}.querySelectorAll('.conflict-model-intents dd')].map(d=>d.textContent)`),
+      ['The PR caps the delay at 5 seconds.', 'Main adds a 100 ms floor.', 'Keeps the PR’s cap and main’s floor.']
+    );
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check', 'A model proposal is never Merged');
+    assert.equal(await modelLine(1), 'asking');
+    await checksDone();
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check', 'Still Check after the checks');
+    await capture('model-one-arrived');
+    // Your choice on the second conflict cancels its request; its late answer is not used.
+    await js(`${block(1)}.focus()`);
+    await key('2');
+    await wait(`${block(1)}?.dataset.state==='kept'`);
+    await wait("window.modelCancels.some(r=>r.index===1)");
+    await js(`window.modelAnswer[1]({status:'proposal'})`);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await calls('model'), 1, 'A cancelled request’s proposal never reaches the draft');
+    assert.equal(await js(`${block(1)}.dataset.state`), 'kept');
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    assert.match(
+      await js<string>("window.conflictFixture.files[0].result"),
+      /return Math\.min\(Math\.max\(100, attempt \* 200\), 5000\);\n\}\nexport const retries = 3;\n$/
+    );
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+
+    // A question from the model leaves the conflict to decide, and says what it asked.
+    await modelSession();
+    await open();
+    await wait('window.modelAsks.length===2');
+    await js(`window.modelAnswer[0]({status:'question',question:'Should the floor apply before the cap?'})`);
+    await wait(`${block(0)}?.querySelector('.conflict-model-line[data-model=question]')`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-model-line').textContent`), /asks: Should the floor apply before the cap\?$/);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    // Closing cancels what is still running.
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await wait('window.modelCancels.some(r=>r.index===1)');
+
+    // A provider pause skips the model and says so, once, above the conflicts.
+    await modelSession();
+    await open();
+    await wait('window.modelAsks.length===2');
+    for (const index of [0, 1]) await js(`window.modelAnswer[${index}]({status:'paused',notice:'Claude is paused until 14:00.'})`);
+    await wait("document.querySelector('[data-conflict-model-notice]')");
+    assert.equal(
+      await js("document.querySelector('[data-conflict-model-notice]').textContent"),
+      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts.'
+    );
+    await wait(`!${block(0)}?.querySelector('.conflict-model-line') && !${block(1)}?.querySelector('.conflict-model-line')`);
+    assert.equal(await calls('model'), 0);
+    await captureAll('model-paused');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('window.electronAPI.conflictModel=undefined; window.electronAPI.cancelConflictModel=undefined');
+
     // Settings › Diagnostics › Conflict resolution stats shows the Merged undo count and rate, read-only, with Reset.
     const undone = await mergedUndone();
     assert.ok(undone >= 1);

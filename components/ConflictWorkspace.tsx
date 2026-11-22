@@ -6,6 +6,7 @@ import { ConflictDiff, ConflictFileDiff, ConflictResult } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
+  Bot,
   Check,
   CheckCheck,
   CircleAlert,
@@ -87,6 +88,7 @@ import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
+import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
@@ -610,6 +612,29 @@ export function ConflictWorkspace({
     return () => clearTimeout(timer);
   }, [contents, dirty, busy, session, saveState]);
 
+  // The model's proposals, one conflict at a time (#445 items 6 and 7). Each goes into the saved draft after your edits,
+  // never during a request of yours, and only into its own conflict; the service checks it there.
+  const models = useConflictModel({
+    session,
+    file,
+    contents,
+    label: model,
+    busy,
+    apply: (path, index) => {
+      if (pending.current) return Promise.reject(new ModelProposalWaits());
+      const task = persist().then(async (saved) => {
+        if (pending.current) throw new ModelProposalWaits();
+        const before = saved.files.find((f) => f.path === path)?.result;
+        const reply = await window.electronAPI.conflictResolution({ kind: 'model', id: saved.id, version: saved.version, path, index });
+        const after = reply.session.files.find((f) => f.path === path);
+        setSession(reply.session);
+        // Typing meanwhile wins: your next save keeps your text, and the proposal stays one choice away.
+        if (selectedRef.current === path && contentsRef.current === before && after) setContents(after.result);
+      });
+      saveChain.current = task.catch(() => {});
+      return task;
+    },
+  });
   async function run(
     build: (value: ConflictSession) => ConflictRequest,
     after: (reply: ConflictReply, request: ConflictRequest) => void
@@ -1145,6 +1170,12 @@ export function ConflictWorkspace({
             <p role="status" data-conflict-summary="">
               {summarySentence(summary)}
             </p>
+            {models.notice && (
+              <p className="conflict-model-notice" role="status" data-conflict-model-notice="">
+                <Bot size={13} aria-hidden="true" />
+                {models.notice} Gnosis didn’t ask it about these conflicts.
+              </p>
+            )}
             {session.lastPush && <LastPush session={session} push={session.lastPush} />}
             <div className="conflict-summary-tools">
               {session.files.some((f) => f.proposals) && (
@@ -1618,6 +1649,7 @@ export function ConflictWorkspace({
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
+                                models={models.cards(file.path)}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
                                 onChoice={(key, before, after, picked) => choiceStats(session.id, file.path, key, before, after, picked)}
