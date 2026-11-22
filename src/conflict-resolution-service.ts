@@ -50,11 +50,12 @@ import {
 } from '../lib/conflict-model';
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
-import { typeCheckKey, typeErrorNote, withTypeError, type Verdict } from '../lib/conflict-verify';
+import { typeCheckKey, type Verdict } from '../lib/conflict-verify';
 import {
   FROM_FORK,
   TYPE_CHECK_TIMEOUT,
   TypeCheckSkipped,
+  TypeCheckUnchecked,
   removeLeftovers,
   typeCheckMerge,
   type RunScript,
@@ -204,6 +205,9 @@ export function createConflictResolutionService(deps: Deps) {
   const waiters = new Map<string, (() => void)[]>();
   function release(key: string) {
     busy.delete(key);
+    // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
+    const queued = pendingTypeErrors.get(key);
+    if (queued) saveTypeErrors(key, queued);
     const waiting = waiters.get(key) ?? [];
     waiters.delete(key);
     for (const wake of waiting) wake();
@@ -340,23 +344,43 @@ export function createConflictResolutionService(deps: Deps) {
     pendingTypeErrors.delete(key);
     return session;
   }
-  /** Type check results that finished while a request held the draft: saved with its next write, as choices are. */
+  /**
+   * A type check's demotions that came while a request held the draft: saved with its next write, as choices are. Each
+   * entry is a whole run's list, so it replaces the one before; an empty list clears them (a pass, or the check off).
+   */
   const pendingTypeErrors = new Map<string, { path: string; key: string; note: string }[]>();
   /**
-   * Demotes the Merged proposals of each file with new type errors to Check, with the compiler's error: on the file, so
-   * the next check keeps it, and on its saved verdict. Only for the proposals the type check saw.
+   * The type check's demotions as an overlay on the files (`typeError`): the files with new errors get theirs, every
+   * other file loses its own. The checks' saved verdict is never changed; the view applies the overlay while the check
+   * is on. Only for the proposals the type check saw.
    */
   function applyTypeErrors(session: ConflictSession, files: readonly { path: string; key: string; note: string }[]) {
     let changed = false;
     if (session.status !== 'editing') return changed;
-    for (const typed of files) {
-      const file = session.files.find((f) => f.path === typed.path);
-      if (!file || typeCheckKey(file) !== typed.key || file.typeError?.note === typed.note) continue;
-      file.typeError = { key: typed.key, note: typed.note };
-      if (file.verdict) file.verdict.verdict = withTypeError(file.verdict.verdict, typed.note) ?? file.verdict.verdict;
-      changed = true;
+    for (const file of session.files) {
+      const typed = files.find((x) => x.path === file.path && x.key === typeCheckKey(file));
+      if (typed && file.typeError?.note !== typed.note) {
+        file.typeError = { key: typed.key, note: typed.note };
+        changed = true;
+      } else if (!typed && file.typeError) {
+        delete file.typeError;
+        changed = true;
+      }
     }
     return changed;
+  }
+  /** Saves a run's demotions on the draft now, or with the next write while a request holds it. */
+  function saveTypeErrors(key: string, files: { path: string; key: string; note: string }[], match?: (saved: ConflictSession) => boolean) {
+    if (busy.has(key)) {
+      pendingTypeErrors.set(key, files);
+      return;
+    }
+    pendingTypeErrors.delete(key);
+    const saved = deps.storage.read(key) as ConflictSession | undefined;
+    if (saved && (!match || match(saved)) && applyTypeErrors(saved, files)) {
+      deps.storage.write(key, saved);
+      void deps.storage.flush();
+    }
   }
   /** Each PR's type check (#445 item 24), by draft key: its status, and what it checked. Kept while the app runs. */
   interface TypeCheckRun {
@@ -413,6 +437,8 @@ export function createConflictResolutionService(deps: Deps) {
         typeChecks.delete(key);
         deps.typeCheckChanged?.(session.id);
       }
+      // The check is off: its demotions go with the next write.
+      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, []);
       return;
     }
     // The draft as it was prepared: the reply that carries `session` goes on without waiting for the check.
@@ -437,16 +463,11 @@ export function createConflictResolutionService(deps: Deps) {
         return;
       }
       entry.status = status;
-      if (status.state === 'errors' && status.files.length) {
-        if (busy.has(key)) pendingTypeErrors.set(key, [...(pendingTypeErrors.get(key) ?? []), ...status.files]);
-        else {
-          const saved = deps.storage.read(key) as ConflictSession | undefined;
-          if (saved && saved.id === session.id && saved.headSha === session.headSha && applyTypeErrors(saved, status.files)) {
-            deps.storage.write(key, saved);
-            void deps.storage.flush();
-          }
-        }
-      }
+      // A finished run decides each file: its new errors demote it, and a file without any is clear again.
+      if (status.state === 'errors' || status.state === 'passed')
+        saveTypeErrors(key, status.state === 'errors' ? status.files : [], (saved) =>
+          saved.id === session.id && saved.headSha === session.headSha
+        );
       deps.typeCheckChanged?.(session.id);
     };
     entry.done = (async (): Promise<ConflictTypeCheck> => {
@@ -470,6 +491,7 @@ export function createConflictResolutionService(deps: Deps) {
     })().then(finish, (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       if (controller.signal.aborted) finish({ state: 'cancelled' });
+      else if (error instanceof TypeCheckUnchecked) finish({ state: 'unchecked', reason: message });
       else if (error instanceof TypeCheckSkipped) finish({ state: 'skipped', reason: message });
       else finish({ state: 'skipped', reason: `couldn’t run: ${message.slice(0, 200)}` });
     });
@@ -1027,8 +1049,6 @@ export function createConflictResolutionService(deps: Deps) {
         Object.assign(file, back);
         verdict = verdict && file.proposals ? await deps.verify(file, disabled) : undefined;
       }
-      // New type errors in the file keep its proposals in Check while they are the ones the type check saw (#445 item 24).
-      verdict = withTypeError(verdict, typeErrorNote(file));
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
       changed = true;
@@ -2024,6 +2044,13 @@ export function createConflictResolutionService(deps: Deps) {
           const id = /([a-f0-9]{64})$/.exec(key)?.[1];
           if (id) deps.typeCheckChanged?.(id);
         }
+      // Turned off: every draft of a repository without the check loses its demotions, queued ones included.
+      for (const name of deps.storage.names?.() ?? []) {
+        if (!name.startsWith('conflict-draft:')) continue;
+        const saved = deps.storage.read(name) as ConflictSession | null | undefined;
+        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name)))
+          saveTypeErrors(name, []);
+      }
     },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
       for (const { account, id } of staleBackground(keep)) await dropBackground(account, id);

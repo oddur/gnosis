@@ -21,7 +21,8 @@ import {
   parseDiagnostics,
   type RunScript,
 } from '../src/conflict-type-check';
-import { blockBuckets, withTypeError } from '../lib/conflict-verify';
+import { blockBuckets, typeErrorNote, withTypeError } from '../lib/conflict-verify';
+import type { ConflictFile } from '../lib/conflict-resolution';
 import type { ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
 
@@ -189,6 +190,8 @@ async function eventuallyCleanedUp(sessionDir: string) {
   await cleanedUp(sessionDir);
 }
 const HANG = 'setInterval(() => {}, 1000);\n';
+/** A file's buckets as the view shows them while the check is on: the checks' verdict with the saved demotion. */
+const shown = (file: ConflictFile) => blockBuckets(file, file.result, withTypeError(file.verdict?.verdict, typeErrorNote(file)));
 
 void test('type check: a Merged proposal that breaks types is demoted to Check with the error; errors elsewhere are information', async (t) => {
   const linked = await clone(t);
@@ -213,12 +216,14 @@ void test('type check: a Merged proposal that breaks types is demoted to Check w
     'Only the conflicted file is demoted'
   );
   assert.match(status.files[0].note, /^The type check found a new error in this file: sample\.ts:2 TS2362 /);
-  // The saved draft carries it: the file's proposal is Check, with the compiler's error as its note.
+  // The saved draft carries it as an overlay: the file's proposal is Check, with the compiler's error as its note. The
+  // checks' own verdict is unchanged.
   const saved = f.saved().files.find((x) => x.path === 'sample.ts');
   assert.ok(saved?.verdict);
   assert.equal(saved.typeError?.note, status.files[0].note);
-  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict.verdict), ['check']);
-  assert.equal(saved.verdict.verdict.note, status.files[0].note);
+  assert.equal(saved.verdict.verdict.merged, true);
+  assert.deepEqual(shown(saved), ['check']);
+  assert.equal(withTypeError(saved.verdict.verdict, typeErrorNote(saved))?.note, status.files[0].note);
   // A later check of the same proposals, after a save, keeps it in Check.
   const { session } = await f.service.run(
     { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: saved.result, resolved: false, picks: [null, null] },
@@ -226,7 +231,7 @@ void test('type check: a Merged proposal that breaks types is demoted to Check w
   );
   const after = session.files.find((x) => x.path === 'sample.ts');
   assert.ok(after?.verdict);
-  assert.deepEqual(blockBuckets(after, after.result, after.verdict.verdict), ['check']);
+  assert.deepEqual(shown(after), ['check']);
   // The PR head was checked too, and both worktrees are gone.
   assert.equal(f.runs.length, 2);
   await cleanedUp(f.sessionDir);
@@ -441,6 +446,73 @@ void test('type check: paths are compared without the folder they were checked i
       .message,
     'In <clone>/node_modules/x.d.ts'
   );
+});
+
+void test('type check: demotions clear when the check is turned off, and when a later run passes (round 2, item 1)', async (t) => {
+  const linked = await clone(t);
+  const f = await fixture(t, { clone: linked });
+  assert.equal((await f.settled())?.state, 'errors');
+  assert.deepEqual(shown(f.saved().files[0]), ['check']);
+  // Off: the demotion goes, and the checks' verdict applies again.
+  f.live.clone = undefined;
+  f.service.typeCheckSettingsChanged();
+  assert.equal(f.saved().files[0].typeError, undefined);
+  assert.deepEqual(shown(f.saved().files[0]), ['merged']);
+  // On again, a demotion, then a run that passes: Merged again. The passing compiler lists the file and finds nothing.
+  f.live.clone = linked;
+  await f.open();
+  assert.equal((await f.settled())?.state, 'errors');
+  assert.deepEqual(shown(f.saved().files[0]), ['check']);
+  f.live.clone = await clone(t, {
+    tsc: "process.stdout.write(require('path').join(process.cwd(), 'sample.ts') + '\\n');\n",
+  });
+  f.service.typeCheckSettingsChanged();
+  assert.deepEqual(shown(f.saved().files[0]), ['check'], 'Still demoted until a run says otherwise');
+  await f.open();
+  const status = await f.settled();
+  assert.equal(status?.state, 'passed', JSON.stringify(status));
+  assert.equal(f.saved().files[0].typeError, undefined, 'A passing run clears the demotion');
+  assert.deepEqual(shown(f.saved().files[0]), ['merged']);
+});
+
+void test('type check: errors that finish while a request runs are dropped after opt-out (round 2, item 1)', async (t) => {
+  const f = await fixture(t, { clone: await clone(t) });
+  // A save holds the draft while the check finishes: its errors are queued for the next write.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let holding = true;
+  const flush = f.deps.storage.flush;
+  f.deps.storage.flush = async () => {
+    if (holding) await held;
+    return flush();
+  };
+  const saving = f.service.run(
+    { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: f.saved().files[0].result, resolved: false },
+    new AbortController().signal
+  );
+  assert.equal((await f.settled())?.state, 'errors');
+  f.live.clone = undefined;
+  f.service.typeCheckSettingsChanged();
+  holding = false;
+  release();
+  await saving;
+  assert.equal(f.saved().files[0].typeError, undefined, 'The queued demotion was dropped');
+  assert.deepEqual(shown(f.saved().files[0]), ['merged']);
+});
+
+void test('type check: an options error means it couldn’t check, never passed (round 2, item 2)', async (t) => {
+  const f = await fixture(t, {
+    clone: await clone(t),
+    tsconfig: JSON.stringify({
+      compilerOptions: { composite: true, emitDeclarationOnly: true, strict: true, types: [], lib: ['es2020'] },
+      include: ['*.ts'],
+    }),
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'unchecked', JSON.stringify(status));
+  assert.match(status.reason, /^TS5\d{3} in tsconfig\.json: /);
+  assert.equal(f.saved().files[0].typeError, undefined, 'Nothing is demoted');
+  await cleanedUp(f.sessionDir);
 });
 
 void test('type check: diagnostics, new errors and the checked text', () => {

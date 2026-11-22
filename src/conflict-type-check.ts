@@ -130,6 +130,18 @@ export const CRASHED = 'the type checker crashed';
 
 /** Thrown with a reason the status line shows as "skipped (reason)". */
 export class TypeCheckSkipped extends Error {}
+/**
+ * The compiler ran but did not check types: an options or project error, an error in a tsconfig file, or a syntax error.
+ * Shown as "couldn't check (reason)": never passed, and nothing is demoted.
+ */
+export class TypeCheckUnchecked extends Error {}
+/** A diagnostic after which the compiler may have skipped semantic checking. */
+export const blocksChecking = (d: TypeDiagnostic) =>
+  !d.file ||
+  /(^|\/)tsconfig[^/]*\.json$/i.test(d.file) ||
+  (/^TS[156]\d{3}$/.test(d.code) && !UNUSED.has(d.code));
+/** 6xxx codes that are ordinary type errors in a file (noUnusedLocals and noUnusedParameters), not options errors. */
+const UNUSED = new Set(['TS6133', 'TS6138', 'TS6192', 'TS6196', 'TS6198', 'TS6199', 'TS6205']);
 
 async function compile(
   run: RunScript,
@@ -159,8 +171,11 @@ async function compile(
   // output, is a compiler that didn't run as expected.
   if (result.code > 2) throw new TypeCheckSkipped(`couldn’t run: the type checker exited with ${result.code}`);
   if ((result.code === 0) !== (diagnostics.length === 0)) throw new TypeCheckSkipped(INCOMPLETE);
-  const project = diagnostics.find((d) => !d.file);
-  if (project) throw new TypeCheckSkipped(`couldn’t read the project: ${project.code} ${project.message}`.slice(0, 240));
+  const blocking = diagnostics.find(blocksChecking);
+  if (blocking)
+    throw new TypeCheckUnchecked(
+      `${blocking.code}${blocking.file ? ` in ${blocking.file}` : ''}: ${blocking.message}`.slice(0, 200)
+    );
   // The files the project checked: absolute paths in the worktree, outside node_modules.
   const own = result.stdout.split(/\r?\n/).filter((line) => {
     if (!path.isAbsolute(line)) return false;

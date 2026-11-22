@@ -211,6 +211,8 @@ export function typeCheckLine(status: ConflictTypeCheck) {
       return `Type check: ${status.count} new ${status.count === 1 ? 'error' : 'errors'}`;
     case 'skipped':
       return `Type check: skipped (${status.reason})`;
+    case 'unchecked':
+      return `Type check: couldn’t check (${status.reason})`;
     case 'cancelled':
       return 'Type check: stopped';
   }
@@ -528,11 +530,15 @@ export function ConflictWorkspace({
     };
   }, [sessionId, session?.version]);
   // New type errors in a file keep its Merged proposals in Check: saved on the file, or just found by the check.
+  // Only while the check is on (it has a status): a finished run's own result, else the demotion saved on the file.
   const typeNoteOf = (f: ConflictFile) =>
-    typeErrorNote(f) ??
-    (typeCheck?.state === 'errors'
-      ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
-      : undefined);
+    !typeCheck
+      ? undefined
+      : typeCheck.state === 'errors'
+        ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
+        : typeCheck.state === 'passed'
+          ? undefined
+          : typeErrorNote(f);
   const verdictOf = (f: ConflictFile) => {
     if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
       return withTypeError(f.verdict.verdict, typeNoteOf(f));

@@ -242,6 +242,8 @@ export type ConflictTypeCheck =
       files: { path: string; key: string; note: string }[];
     }
   | { state: 'skipped'; reason: string }
+  /** The compiler ran but did not check types, such as for an options or syntax error. Never passed. */
+  | { state: 'unchecked'; reason: string }
   | { state: 'cancelled' };
 export interface ConflictReply {
   session: ConflictSession;
