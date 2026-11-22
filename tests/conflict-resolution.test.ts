@@ -3165,3 +3165,59 @@ void test('an untouched Check proposal is never in the pushed text and never cou
   assert.deepEqual(session.files[0].picks, ['theirs']);
   assert.match(session.files[0].explanation ?? '', /already decided; that one keeps its text/);
 });
+
+void test('Edit whole file: the file becomes yours, Undo restores your choices, and Reset tells the conflicts apart (#503)', async (t) => {
+  const f = await fixture(t);
+  const id = f.session.id;
+  const [file] = f.session.files;
+  assert.ok(hasConflictMarkers(file.result));
+  validateConflictRequest({ kind: 'edit-file', id, version: 1, path: 'a', contents: 'x\n' });
+  validateConflictRequest({ kind: 'undo-edit-file', id, version: 1, path: 'a' });
+  assert.throws(() => validateConflictRequest({ kind: 'edit-file', id, version: 1, path: 'a', contents: 'x\0' }));
+  assert.throws(() => validateConflictRequest({ kind: 'edit-file', id, version: 1, path: 'a' }));
+  // Your Keep first: the PR's change.
+  let session = (
+    await f.run({ kind: 'save', id, version: f.session.version, path: 'sample.ts', contents: file.ours, resolved: false, picks: ['ours'] })
+  ).session;
+  const kept = session.files[0];
+  assert.deepEqual(kept.picks, ['ours']);
+  // An edit that changes nothing is no decision.
+  await assert.rejects(
+    f.run({ kind: 'edit-file', id, version: session.version, path: 'sample.ts', contents: kept.result }),
+    /Nothing in the file changed/
+  );
+  const edited = `import { two } from './two';\n${kept.result}`;
+  session = (await f.run({ kind: 'edit-file', id, version: session.version, path: 'sample.ts', contents: edited })).session;
+  let saved = session.files[0];
+  assert.equal(saved.result, edited);
+  assert.equal(saved.source, 'manual');
+  assert.equal(saved.resolved, false, 'It still needs Mark reviewed');
+  assert.equal(saved.picks, undefined, 'Your Keep is part of the whole file now');
+  assert.deepEqual(saved.wholeEdit, { result: kept.result, resolved: false, source: kept.source, picks: ['ours'] });
+  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict?.verdict), ['decided']);
+  // A second edit keeps the state before the first one, for Undo.
+  const again = `${edited}// checked\n`;
+  session = (await f.run({ kind: 'edit-file', id, version: session.version, path: 'sample.ts', contents: again })).session;
+  saved = session.files[0];
+  assert.equal(saved.wholeEdit?.result, kept.result);
+  // Mark reviewed saves the same draft: still your whole-file edit.
+  session = (await f.run({ kind: 'save', id, version: session.version, path: 'sample.ts', contents: again, resolved: true })).session;
+  assert.equal(session.files[0].resolved, true);
+  assert.ok(session.files[0].wholeEdit);
+  // Undo: your Keep and the draft before the edit are back.
+  session = (await f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts' })).session;
+  saved = session.files[0];
+  assert.equal(saved.result, kept.result);
+  assert.deepEqual(saved.picks, ['ours']);
+  assert.equal(saved.resolved, false);
+  assert.equal(saved.wholeEdit, undefined);
+  await assert.rejects(f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts' }), /no whole-file edit/);
+  // Reset file after an edit: the draft is Git's conflict again, and the conflict is told apart again (Decide).
+  session = (await f.run({ kind: 'edit-file', id, version: session.version, path: 'sample.ts', contents: edited })).session;
+  session = (
+    await f.run({ kind: 'save', id, version: session.version, path: 'sample.ts', contents: file.original, resolved: false })
+  ).session;
+  saved = session.files[0];
+  assert.equal(saved.wholeEdit, undefined);
+  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict?.verdict), ['decide']);
+});

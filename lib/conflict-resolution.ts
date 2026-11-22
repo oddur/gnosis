@@ -65,6 +65,22 @@ export interface ConflictFile {
    * inside a conflict. It stays until a finished run says otherwise, or the check is turned off (`typeErrorOf`).
    */
   typeError?: TypeErrorMark;
+  /**
+   * You edited the whole file (#503): its draft is your decision, every conflict in it included, while the draft is the
+   * text you saved (wholeEdited). Holds the file as it was before your first whole-file edit, which Undo restores. Only
+   * the service writes it, from its own copy of the draft; the renderer never sends it.
+   */
+  wholeEdit?: WholeFileEdit;
+}
+/** A file before your first whole-file edit (ConflictFile.wholeEdit): what Undo puts back. */
+export interface WholeFileEdit {
+  result: string;
+  resolved: boolean;
+  source: ConflictFile['source'];
+  explanation?: string;
+  resolverText?: string;
+  picks?: ConflictFile['picks'];
+  edits?: ConflictFile['edits'];
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -217,6 +233,13 @@ export type ConflictRequest =
    * checks it. Only the conflict's own span changes, and only while it is still open.
    */
   | { kind: 'model'; id: string; version: number; path: string; index: number }
+  /**
+   * Edit whole file (#503): `contents` becomes the draft and the whole file your decision, every conflict in it too. The
+   * service keeps the file as it was before your first whole-file edit, for `undo-edit-file`.
+   */
+  | { kind: 'edit-file'; id: string; version: number; path: string; contents: string }
+  /** Undo of Edit whole file: the file as it was before your first whole-file edit, your Keeps and edits included. */
+  | { kind: 'undo-edit-file'; id: string; version: number; path: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -328,7 +351,11 @@ function validEdits(value: unknown): boolean {
       (e.written === undefined ||
         (Array.isArray(e.written) &&
           e.written.length <= 100_000 &&
-          (e.written as unknown[]).every((line) => Number.isSafeInteger(line) && Number(line) >= 0)))
+          // Each index is one of the edit's own lines (#509): past them it would mark a line after the conflict.
+          ((lines) =>
+            (e.written as unknown[]).every((line) => Number.isSafeInteger(line) && Number(line) >= 0 && Number(line) < lines))(
+            e.text.split(/(?<=\n)/).filter(Boolean).length
+          )))
     );
   });
 }
@@ -365,6 +392,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     (r.edits === undefined || validEdits(r.edits))
   )
     return;
+  if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT)) return;
+  if (r.kind === 'undo-edit-file' && text('path', 4096)) return;
   if (
     r.kind === 'resolve' &&
     ['agent', 'mergiraf', 'whole-file'].includes(String(r.engine)) &&

@@ -56,6 +56,7 @@ import {
   typeErrorOf,
   unchosenConflicts,
   waitingHint,
+  wholeEdited,
   withTypeError,
   withoutUnchosen,
   type Verdict,
@@ -98,6 +99,11 @@ import {
 } from './conflict-object-store';
 
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+/** Requests that change a file's draft: its checks and the type check run again (#445 item 24, #503). */
+const changesDraft = (
+  request: ConflictRequest
+): request is Extract<ConflictRequest, { kind: 'resolve' | 'save' | 'model' | 'edit-file' | 'undo-edit-file' }> =>
+  ['resolve', 'save', 'model', 'edit-file', 'undo-edit-file'].includes(request.kind);
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
 /** Why background work stopped: a request of yours came for the same PR. */
@@ -2678,6 +2684,9 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('This file cannot be saved in the conflict editor.');
           if (request.resolved && hasConflictMarkers(request.contents))
             throw new Error('Remove the remaining conflict markers first.');
+          // Your whole-file edit (#503) lasts while the draft can't be split into its conflicts. Reset file and Start
+          // from Git's conflict return to one that can: the conflicts are told apart again, before any check of them.
+          if (file.wholeEdit && !wholeEdited(file, request.contents)) delete file.wholeEdit;
           if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {
             file.source = 'manual';
@@ -2696,6 +2705,50 @@ export function createConflictResolutionService(deps: Deps) {
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
           if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
+        } else if (request.kind === 'edit-file' || request.kind === 'undo-edit-file') {
+          const file = session.files.find((f) => f.path === request.path);
+          if (!file || file.unsupported) throw new Error('This file cannot be edited in the conflict editor.');
+          if (request.kind === 'undo-edit-file') {
+            // Undo of Edit whole file: the file as it was before your first whole-file edit, Keeps and edits included.
+            const before = file.wholeEdit;
+            if (!before) throw new Error('This file has no whole-file edit to undo.');
+            delete file.wholeEdit;
+            file.result = before.result;
+            file.resolved = before.resolved && !hasConflictMarkers(before.result);
+            file.source = before.source;
+            file.explanation = before.explanation;
+            file.picks = before.picks;
+            file.edits = before.edits;
+            if (before.resolverText === undefined) delete file.resolverText;
+            else file.resolverText = before.resolverText;
+          } else {
+            if (typeof request.contents !== 'string' || Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT)
+              throw new Error('This file is too large for the conflict editor.');
+            // Fail closed: an edit that changes nothing is no decision of yours.
+            if (request.contents === file.result) throw new Error('Nothing in the file changed, so nothing was saved.');
+            // The state before your first whole-file edit, from this draft, never from the renderer.
+            file.wholeEdit ??= {
+              result: file.result,
+              resolved: file.resolved,
+              source: file.source,
+              ...(file.explanation !== undefined ? { explanation: file.explanation } : {}),
+              ...(file.resolverText !== undefined ? { resolverText: file.resolverText } : {}),
+              ...(file.picks ? { picks: file.picks } : {}),
+              ...(file.edits ? { edits: file.edits } : {}),
+            };
+            // A line you type is never marked as the resolver's; the resolver's lines you left keep their mark.
+            if (
+              file.resolverText !== undefined &&
+              !holdsResolverLines(file.resolverText, file.ours, file.theirs, request.contents)
+            )
+              delete file.resolverText;
+            // The whole file is yours: your Keeps and edits per conflict are part of it now (Undo restores them).
+            file.result = request.contents;
+            file.resolved = false;
+            file.source = 'manual';
+            file.explanation = undefined;
+            file.picks = file.edits = undefined;
+          }
         } else if (request.kind === 'model') {
           // The model's proposal for one conflict, into that conflict's span only, while it is still open. The checks
           // below run on it; a model proposal is never Merged (lib/conflict-verify.ts).
@@ -2727,6 +2780,8 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('Invalid resolution request.');
           const files = session.files.filter((f) => !f.unsupported && f.path === request.path);
           if (!files.length) throw new Error('Select an unresolved text file.');
+          // A result that replaces your whole-file edit (#503) ends it: its Undo no longer applies.
+          const drafts = new Map(files.map((f) => [f, f.result]));
           for (const file of files) {
             if (request.engine === 'whole-file') {
               // "Use this result": the whole-file proposal preparation kept, structural merge's or the move rule's.
@@ -2813,6 +2868,7 @@ export function createConflictResolutionService(deps: Deps) {
               delete file.structuralNote;
             }
           }
+          for (const [file, draft] of drafts) if (file.wholeEdit && file.result !== draft) delete file.wholeEdit;
         } else {
           const digestOf = (tree: string) =>
             hash(`${session.id}:${session.version}:${tree}:${session.headSha}:${session.baseSha}`);
@@ -2895,7 +2951,7 @@ export function createConflictResolutionService(deps: Deps) {
         if (session.status !== 'published') {
           // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict
           // checks read (proposalKey includes it). Checks of an unchanged key are skipped.
-          if (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model')
+          if (changesDraft(request))
             await check(
               session.files.filter((f) => !request.path || f.path === request.path),
               signal,
@@ -2907,7 +2963,7 @@ export function createConflictResolutionService(deps: Deps) {
         session.version++;
         await persist(session);
         // A changed draft is type checked again once the changes stop (#445 item 24).
-        if (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model') draftChanged(ctx, session);
+        if (changesDraft(request)) draftChanged(ctx, session);
         return { session, ...(baseMoved ? { baseMoved } : {}) };
       } finally {
         release(key);

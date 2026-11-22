@@ -17,6 +17,7 @@ import {
   Copy,
   ExternalLink,
   Keyboard,
+  Pencil,
   RotateCcw,
   TriangleAlert,
 } from 'lucide-react';
@@ -34,12 +35,15 @@ import { ConflictUndo } from './ConflictUndo';
 import { undoAllowed, undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import { WrittenLegend, proposalWhat } from './ConflictCard';
+import { FileEditNote, FileEditor } from './ConflictFileEdit';
+import { diffThemeName } from '../lib/diff-worker-pool';
 import { useCodeOptions } from '../lib/use-code-options';
 import type { ConflictViewHandle } from './useConflictChoices';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import {
   conflictCount,
   conflictLabels,
+  savedBlockEdits,
   type BlockEdits,
   type BlockPicks,
   type ConflictLabels,
@@ -49,7 +53,9 @@ import {
   WRITTEN_BUDGET_MS,
   confirmCount,
   confirmGroups,
+  confirmEdited,
   confirmWritten,
+  editedNote,
   needsYou,
   patchNote,
   wholeNote,
@@ -75,7 +81,6 @@ import {
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
-  type SavedBlockEdit,
   type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
 import {
@@ -105,6 +110,7 @@ import {
   type Verdict,
   typeCheckFor,
   typeErrorOf,
+  wholeEdited,
   withTypeError,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
@@ -544,19 +550,7 @@ function ErrorPanel({
   );
 }
 
-/** In-place edits as the draft saves them (ConflictFile.edits): null for none, every field present. */
-function savedEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
-  return Array.from(edits ?? [], (edit) =>
-    edit
-      ? {
-          text: edit.text,
-          before: edit.before ?? null,
-          pick: edit.pick ?? null,
-          ...(edit.written?.length ? { written: [...edit.written] } : {}),
-        }
-      : null
-  );
-}
+const savedEdits = savedBlockEdits;
 /** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
 const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
 function savedPicks(f: ConflictFile): BlockPicks | undefined {
@@ -678,6 +672,9 @@ export function ConflictWorkspace({
   const mergedToggle = useRef<HTMLInputElement>(null);
   // The in-place editor is open with text you haven't saved: the confirmation waits for it (confirm).
   const editorDirty = useRef(false);
+  // Edit whole file (#503): the file whose draft is open in the editor, instead of its diff. While it is open, every
+  // step that would leave or review the draft waits (editorDirty).
+  const [fileEditor, setFileEditor] = useState('');
   // G in the confirmation: each press opens Merged for you and focuses it.
   const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
@@ -842,6 +839,7 @@ export function ConflictWorkspace({
     selectedRef.current = next?.path ?? '';
     setSelectedState(next?.path ?? '');
     setContents(next?.result ?? '');
+    setFileEditor('');
     setEpoch((n) => n + 1);
     focusIntent.current = true;
   }
@@ -1140,6 +1138,44 @@ export function ConflictWorkspace({
       return f ? { ...previous, [path]: { original: f.original, edits: [] } } : previous;
     });
   };
+  // Your Keeps and edits as the service saved them: after Edit whole file, which clears them, and its Undo, which puts
+  // them back (#503).
+  const forgetLocal = (path: string) => {
+    const without = <T,>(previous: Partial<Record<string, T>>) =>
+      Object.fromEntries(Object.entries(previous).filter(([key]) => key !== path)) as Partial<Record<string, T>>;
+    setPicks(without);
+    setEdits(without);
+  };
+  /** Edit whole file (#503): the draft on screen in the editor, in place of the diff. */
+  function editFile() {
+    if (!file || file.unsupported || !canEdit || editHeld()) return;
+    setHint('');
+    setFileEditor(file.path);
+  }
+  /** Saves your whole-file edit: the whole file is your decision, every conflict in it too. */
+  function saveFile(text: string) {
+    const path = selected;
+    void run(
+      (s) => ({ kind: 'edit-file', id: s.id, version: s.version, path, contents: text }),
+      (reply) => {
+        forgetLocal(path);
+        apply(reply, path);
+        setOutcome('The whole file is your decision now. Review it before you mark it reviewed.');
+      }
+    );
+  }
+  /** Undo of Edit whole file: the file as it was before your first whole-file edit. */
+  function undoFileEdit() {
+    const path = selected;
+    void run(
+      (s) => ({ kind: 'undo-edit-file', id: s.id, version: s.version, path }),
+      (reply) => {
+        forgetLocal(path);
+        apply(reply, path);
+        setOutcome('Your whole-file edit is undone. Your choices per conflict are back.');
+      }
+    );
+  }
   const editsFor = (f: ConflictFile, next: BlockEdits) =>
     setEdits((previous) => ({ ...previous, [f.path]: { original: f.original, edits: next } }));
   function resetTo(text: string) {
@@ -1621,6 +1657,21 @@ export function ConflictWorkspace({
                 all={models.waiting > 0 ? { count: models.waiting, onAsk: models.askAll } : undefined}
               />
             )}
+            {/* Edit whole file (#503) sits with the file's other ways to change its draft: no band of its own. */}
+            {editing && file && !file.unsupported && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!canEdit || fileEditor === file.path}
+                data-conflict-edit-file=""
+                aria-label="Edit whole file"
+                title="Edit lines outside the conflicts too. Saving makes the whole file your decision."
+                onClick={editFile}
+              >
+                <Pencil aria-hidden="true" />
+                <span className="conflict-tool-label">Edit whole file</span>
+              </Button>
+            )}
             {editing && <ResetMenu disabled={busy} items={resetItems} />}
             {summaryShown && (
               <span className="conflict-save-state" role="status">
@@ -2078,6 +2129,32 @@ export function ConflictWorkspace({
                         <LocalMerge session={session} reason={file.unsupported} />
                       ) : (
                         <>
+                          {fileEditor === file.path ? (
+                            <FileEditor
+                              key={`${selected}:${epoch}`}
+                              name={selected}
+                              initial={contents}
+                              theme={diffThemeName(preferences?.codeTheme)}
+                              disabled={!canEdit}
+                              onHeld={(held) => (editorDirty.current = held)}
+                              onSave={saveFile}
+                              onCancel={() => {
+                                setFileEditor('');
+                                focusIntent.current = true;
+                                setEpoch((n) => n + 1);
+                              }}
+                            />
+                          ) : (
+                          <>
+                          {wholeEdited(file, contents) && (
+                            <FileEditNote
+                              conflicts={conflictCount(file.original)}
+                              markers={markersRemain}
+                              disabled={!canEdit}
+                              onEdit={editFile}
+                              onUndo={undoFileEdit}
+                            />
+                          )}
                           {file.source !== 'manual' && !file.proposals && contents === file.result && (
                             <details className="conflict-proposal" open={!!file.explanation}>
                               <summary>
@@ -2147,6 +2224,8 @@ export function ConflictWorkspace({
                                 file={file}
                                 picks={picksOf(file)}
                               />
+                          )}
+                          </>
                           )}
                         </>
                       )}
@@ -2219,14 +2298,18 @@ function ConfirmFileDiff({
 }) {
   // The marked lines, computed as this file's diff mounts: opening the confirmation does no line diff (#445 item 10).
   const marked = useMemo(() => confirmWritten(part, markBudget()), [part]);
-  // Each conflict's lines, and every marked line, stay in view: a mark never sits in a hidden gap.
+  // The lines you changed with Edit whole file (#503), listed in its note: also computed as the diff mounts.
+  const edited = useMemo(() => confirmEdited(part), [part]);
+  // Each conflict's lines, every marked line and every line you changed with Edit whole file stay in view.
   const pins = useMemo(
     () => [
       ...part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
       ...lineRuns(new Set(marked)),
+      ...(edited && edited !== 'unknown' ? lineRuns(new Set(edited.lines)) : []),
     ],
-    [part.blocks, marked]
+    [part.blocks, marked, edited]
   );
+  const editedText = editedNote(edited);
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
       const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
@@ -2281,6 +2364,12 @@ function ConfirmFileDiff({
         <p className="conflict-confirm-note" data-confirm-how={part.whole}>
           <Check size={13} aria-hidden="true" />
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
+        </p>
+      )}
+      {editedText && (
+        <p className="conflict-confirm-note" data-confirm-edited="">
+          <Pencil size={13} aria-hidden="true" />
+          <span>{editedText}</span>
         </p>
       )}
       {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} by={saved && fileWriter(saved)} />}

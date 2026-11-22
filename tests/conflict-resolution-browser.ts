@@ -125,7 +125,11 @@ void app.whenReady().then(async () => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    const png = (await win.webContents.capturePage()).toPNG();
+    fs.writeFileSync(path.join(dir, `${name}.png`), png);
+    // GNOSIS_CONFLICT_SHOTS=<prefix> also prints the states whose name starts with it, for review on the host.
+    const prefix = process.env.GNOSIS_CONFLICT_SHOTS;
+    if (prefix && prefix !== '1' && name.startsWith(prefix)) console.log(`CONFLICTSHOT ${name} ${png.toString('base64')}`);
   };
   const resize = async (width: number, height: number) => {
     win.setSize(width, height);
@@ -217,6 +221,9 @@ void app.whenReady().then(async () => {
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
+        // Edit whole file (#503), as the service does it: the state before the first edit is kept for Undo.
+        if(req.kind==='edit-file'){const f=s.files.find(f=>f.path===req.path);if(req.contents===f.result)throw Error('Nothing in the file changed, so nothing was saved.');f.wholeEdit??={result:f.result,resolved:f.resolved,source:f.source,...(f.picks?{picks:f.picks}:{}),...(f.edits?{edits:f.edits}:{})};f.result=req.contents;f.resolved=false;f.source='manual';f.explanation=undefined;f.picks=undefined;f.edits=undefined;}
+        if(req.kind==='undo-edit-file'){const f=s.files.find(f=>f.path===req.path);const b=f.wholeEdit;if(!b)throw Error('This file has no whole-file edit to undo.');delete f.wholeEdit;Object.assign(f,{result:b.result,resolved:b.resolved,source:b.source,picks:b.picks,edits:b.edits});}
         if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='You used structural merge’s result for the whole file. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
         else if(req.kind==='resolve'){s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run. It differed on 2 conflicts already decided; those keep their text.';}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
@@ -557,6 +564,73 @@ void app.whenReady().then(async () => {
       false
     );
     await captureAll('file-resolved');
+
+    // Edit whole file (#503): the draft opens in the editor in place of the diff, for a line outside the conflicts.
+    // Save makes the whole file yours; Undo returns your Keeps; Escape changes nothing.
+    const keptDraft = await js<string>('window.conflictFixture.files[0].result');
+    const fileEditor =
+      "document.querySelector('[data-conflict-file-editor] diffs-container')?.shadowRoot?.querySelector('[contenteditable=true]')";
+    const fileSave = "document.querySelector('[data-conflict-file-save]')";
+    await js("document.querySelector('[data-conflict-edit-file]').click()");
+    await wait(`!!${fileEditor} && ${fileEditor}.getRootNode().activeElement===${fileEditor}`);
+    assert.equal(await js("!!document.querySelector('.conflict-block')"), false, 'The editor is in place of the diff');
+    assert.ok(await js<boolean>(`${fileSave}.disabled`), 'Save waits for a change: an untouched draft is no decision');
+    assert.ok(await js<boolean>("document.querySelector('[data-conflict-edit-file]').disabled"));
+    // Mark reviewed waits while the file is open in the editor.
+    await js("document.querySelector('[data-conflict-primary]').click()");
+    await wait("document.querySelector('.conflict-footer-status')?.textContent.includes('Save or cancel your edit first.')");
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
+    await js(`${fileEditor}.focus()`);
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '// Retries stay bounded.\n' });
+    await wait(`!${fileSave}.disabled`);
+    await captureAll('edit-whole-file-open');
+    await js(`${fileSave}.click()`);
+    await wait("!document.querySelector('[data-conflict-file-editor]') && !!document.querySelector('[data-conflict-file-edited]')");
+    const wholeEdit = await js<{ result: string; picks: unknown; source: string; before?: string }>(
+      '(({result,picks,source,wholeEdit})=>({result,picks,source,before:wholeEdit?.result}))(window.conflictFixture.files[0])'
+    );
+    assert.equal(wholeEdit.result, `// Retries stay bounded.\n${keptDraft}`);
+    assert.equal(wholeEdit.picks, undefined, 'Your Keeps are part of the whole file now');
+    assert.equal(wholeEdit.source, 'manual');
+    assert.equal(wholeEdit.before, keptDraft, 'The draft before the edit is kept for Undo');
+    assert.match(
+      await js<string>("document.querySelector('[data-conflict-file-edited]').textContent"),
+      /Edited by you · The whole file is your decision, its 2 conflicts included\./
+    );
+    assert.equal(await stage(), 'resolved');
+    assert.equal(await primary(), 'mark-reviewed');
+    await captureAll('edit-whole-file-saved');
+    // The push confirmation lists the file under You decided, with the lines you changed.
+    await click('Mark reviewed');
+    await wait('window.conflictFixture.files[0].resolved===true');
+    // The last file reviewed opens the confirmation on its own.
+    await wait(`!!document.querySelector('.conflict-confirm') || !!(${visibleButton('Review and push…')})`);
+    if (!(await js<boolean>("!!document.querySelector('.conflict-confirm')"))) await click('Review and push…');
+    await wait("!!document.querySelector('.conflict-confirm [data-confirm-edited]')");
+    assert.equal(
+      await js("document.querySelector('.conflict-confirm [data-confirm-edited]').textContent"),
+      'With Edit whole file you changed line 1.'
+    );
+    assert.equal(await js("document.querySelector('[data-confirm-file=\"src/retry.ts\"]')?.dataset.confirmWhole"), 'manual');
+    assert.deepEqual(Object.keys(await confirmGroupsShown()).sort(), ['decided', 'main']);
+    await captureAll('edit-whole-file-confirm');
+    await click('Back to files');
+    await wait("!!document.querySelector('[data-conflict-file-undo]')");
+    await js("document.querySelector('[data-conflict-file-undo]').click()");
+    await wait(`!document.querySelector('[data-conflict-file-edited]') && ${block(0)}?.dataset.state==='kept' && ${block(1)}?.dataset.state==='kept'`);
+    assert.equal(await js('window.conflictFixture.files[0].result'), keptDraft);
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
+    assert.equal(await js('window.conflictFixture.files[0].wholeEdit'), undefined);
+    // Escape closes only the editor and changes nothing.
+    const edits = await calls('edit-file');
+    await js("document.querySelector('[data-conflict-edit-file]').click()");
+    await wait(`!!${fileEditor} && ${fileEditor}.getRootNode().activeElement===${fileEditor}`);
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '// Not saved.\n' });
+    await key('Escape');
+    await wait(`!document.querySelector('[data-conflict-file-editor]') && ${block(0)}?.dataset.state==='kept'`);
+    assert.ok(await js("!!document.querySelector('.conflict-workspace')"), 'Escape in the editor closes only the editor');
+    assert.equal(await calls('edit-file'), edits);
+    assert.equal(await js('window.conflictFixture.files[0].result'), keptDraft);
 
     // The result is on screen in Compare with: PR, so Mark reviewed is the next step.
     assert.equal(await primary(), 'mark-reviewed');

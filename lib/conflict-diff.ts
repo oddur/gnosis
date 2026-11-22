@@ -308,7 +308,10 @@ export function conflictWritten(model: ConflictModel, proposals?: BlockProposals
     if (segment.kind !== 'conflict') continue;
     // Your edit keeps only the marks of the resolver's lines you left as they were (keptMarks); a typed line has none.
     const edit = model.choices[segment.index] === 'edit' ? model.edits?.[segment.index] : undefined;
-    if (edit?.written?.length) written.set(segment.index, [...edit.written]);
+    // Only indexes inside the edit's own lines: one past it would mark a line after the conflict (#509).
+    const editLines = edit?.written?.length ? textLines(edit.text).length : 0;
+    const kept = edit?.written?.filter((i) => i < editLines) ?? [];
+    if (kept.length) written.set(segment.index, kept);
     if (model.choices[segment.index] !== 'proposal') continue;
     const text = proposals?.[segment.index]?.text;
     if (text === undefined) continue;

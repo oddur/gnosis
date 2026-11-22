@@ -1192,12 +1192,26 @@ export const needsNoChoice = (proposal: ConflictProposal, verdict: Verdict | und
   proposal.source === 'rerere' || provenMerged(proposal, verdict, index);
 
 /**
+ * The file is your whole-file edit (#503) in `contents`: the draft you saved with Edit whole file, or one that changes it
+ * and still can't be split into the file's conflicts (a Keep on a conflict your edit left open). Reset file, Start from
+ * Git's conflict and Undo return to a draft that splits, and the conflicts are told apart again.
+ */
+export function wholeEdited(
+  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
+  contents: string
+) {
+  if (!file.wholeEdit || file.result === undefined) return false;
+  return contents === file.result || !blockResolutions(parseConflicts(file.original), contents);
+}
+
+/**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the
  * checks passed, else Check; `verdict` undefined means the checks are still running. A block you chose is Decided.
  * A draft edited by hand counts its remaining markers as Decide and the rest as Decided.
  */
 export function blockBuckets(
-  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'> &
+    Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
   contents: string,
   verdict: Verdict | undefined,
   /** Keep choices you made: one whose text equals the proposal is Decided, not the proposal (withPicks). */
@@ -1206,15 +1220,20 @@ export function blockBuckets(
   edits?: BlockEdits
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
+  const segments = parseConflicts(file.original);
+  const blocks = segments.filter((s) => s.kind === 'conflict');
+  // Your whole-file edit: every conflict is yours, Decide while a conflict marker is left in the draft.
+  if (wholeEdited(file, contents)) {
+    let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
+    return blocks.map(() => (open-- > 0 ? 'decide' : 'decided'));
+  }
   const picks = ownPicks(saved);
   // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
   // failed its checks leaves them to decide.
   if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
-    return parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? ['check' as const] : []));
-  const segments = parseConflicts(file.original);
+    return blocks.map(() => 'check' as const);
   const inferred = inferModelChoices(segments, contents, file.proposals, edits);
   const choices = inferred && withPicks(segments, inferred, file.proposals, picks);
-  const blocks = segments.filter((s) => s.kind === 'conflict');
   if (!choices) {
     const texts = blockResolutions(segments, contents);
     if (!texts) {
@@ -1260,7 +1279,8 @@ export function blockBuckets(
  * doesn't wait (`rerere`). Fail closed: the checks' Merged conflicts are the only proposals nobody has to choose.
  */
 export function unchosenConflicts(
-  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'> &
+    Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
   contents: string,
   verdict: Verdict | undefined,
   picks?: SavedPicks,

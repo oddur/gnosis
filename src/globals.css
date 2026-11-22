@@ -4249,6 +4249,14 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-block[data-state=editing] { border-color:color-mix(in srgb,var(--ring) 60%,var(--border));scroll-margin-top:calc(var(--diff-file-header-height,48px) + 56px); }
 .conflict-inline-editor { max-height:min(60vh,480px);overflow:auto;border-top:1px solid var(--border);font-size:var(--type-code,13px); }
 .conflict-inline-editor:focus-within { outline:2px solid var(--ring);outline-offset:-2px; }
+/* Edit whole file (#503): the draft in the editor in place of the diff, and one line over the diff once you saved it. */
+.conflict-file-edit { border:1px solid color-mix(in srgb,var(--ring) 60%,var(--border));border-radius:var(--radius-md);background:var(--card);overflow:hidden; }
+.conflict-file-editor { font-size:var(--type-code,13px); }
+.conflict-file-editor:focus-within { outline:2px solid var(--ring);outline-offset:-2px; }
+.conflict-file-edited { display:flex;align-items:center;gap:6px;padding:4px 8px 4px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--secondary);font-size:var(--type-caption); }
+.conflict-file-edited > svg { flex:none;color:var(--color-success); }
+.conflict-file-edited > span { flex:1;min-width:0;color:var(--muted-foreground); }
+.conflict-file-edited strong { color:var(--foreground); }
 
 .conflict-result-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:clip; }
 /* The Conflicts view's diff (#445 item 8) is Changes' file: each conflict's card sits under its lines. */
@@ -4427,6 +4435,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-body { display:flex;flex-direction:column; }
   .conflict-body > .conflict-files { display:none; }
   .conflict-file-picker { display:inline-flex; }
+  /* Edit whole file keeps its icon and name (aria-label, title): the band stays one row of tools. */
+  .conflict-heading-tools .conflict-tool-label { display:none; }
   .conflict-heading { padding:8px 12px;gap:6px 12px; }
   .conflict-file-pane { flex:1 1 auto; }
   /* The paused restack's code comes first: its plan is the count in the corner, its prose one line. A step that

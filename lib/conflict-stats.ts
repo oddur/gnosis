@@ -238,7 +238,7 @@ export function countOpened(
 /**
  * A pushed merge commit: the session, and each conflict pushed with its proposal provably unchanged: its block splits
  * cleanly out of the result, its text is the proposal's, and you did not pick a Keep for it. A file whose result
- * cannot be split counts nothing, except a whole-file proposal pushed exactly as proposed, whose conflicts count as
+ * cannot be split, or that you edited whole, counts nothing, except a whole-file proposal pushed exactly as proposed, whose conflicts count as
  * accepted in Check.
  */
 export function countPushed(session: ConflictSession): ConflictStatsEvent[] {
@@ -254,6 +254,8 @@ export function countPushed(session: ConflictSession): ConflictStatsEvent[] {
       for (const block of blocks) if (block) add('check');
       continue;
     }
+    // Your whole-file edit (#503) is yours as a whole: nothing in it was accepted as proposed.
+    if (file.wholeEdit) continue;
     const texts = blockResolutions(parseConflicts(file.original), file.result);
     if (!texts) continue;
     blocks.forEach((block, index) => {
