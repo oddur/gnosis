@@ -3,23 +3,20 @@ import { githubWriteError, WORKFLOW_PERMISSION_LABEL, WORKFLOW_PUSH_WARNING } fr
 
 /**
  * The one next action for the selected file. Each state has exactly one primary action, so the
- * footer never offers competing equal-weight buttons.
+ * footer never offers competing equal-weight buttons. The result is always in the Conflicts view's
+ * diff, so a file with no conflict left goes straight to Mark reviewed (#445 item 11).
  */
-export type ConflictFileAction = 'next-conflict' | 'review-result' | 'mark-reviewed' | 'next-file' | 'confirm' | 'none';
+export type ConflictFileAction = 'next-conflict' | 'mark-reviewed' | 'next-file' | 'confirm' | 'none';
 export function conflictFileAction(state: {
   stage: ConflictFileStage | undefined;
-  /** The current result has been shown next to the PR version. */
-  resultShown: boolean;
   /** Another file still needs resolving or review. */
   otherFilesPending: boolean;
   unsupported?: boolean;
-  /** Every conflict is Merged: its results are on screen, so Mark reviewed needs no separate Review result. */
-  merged?: boolean;
 }): ConflictFileAction {
   if (!state.stage) return 'none';
   if (state.unsupported) return state.otherFilesPending ? 'next-file' : 'none';
   if (state.stage === 'conflicted') return 'next-conflict';
-  if (state.stage === 'resolved') return state.resultShown || state.merged ? 'mark-reviewed' : 'review-result';
+  if (state.stage === 'resolved') return 'mark-reviewed';
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }
 

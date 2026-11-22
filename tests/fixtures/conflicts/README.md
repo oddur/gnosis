@@ -94,7 +94,7 @@ renderer, as in the app. Nothing touches the network, and nothing is pushed.
 For each case, `tests/conflict-gallery-browser.ts` waits until preparation and the checks settle. Then it checks that
 the buckets match the case's expectations, and that the buckets, the summary line, the file-list badge and the file's
 header badge agree. A Merged block or badge where the case expects `any-but-merged` fails the case. A few cases also go
-through J and K, Keep PR, main and both, Undo, Review result and Mark reviewed, up to the push confirmation.
+through J and K, Keep PR, main and both, Undo, an edit in place and Mark reviewed, up to the push confirmation.
 
 It writes to `/tmp/conflict-gallery` (set `GNOSIS_GALLERY_DIR` to change it):
 

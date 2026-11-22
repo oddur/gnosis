@@ -1,7 +1,6 @@
 import { LoadingIndicator } from './LoadingState';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { DiffLineAnnotation } from '@pierre/diffs';
-import { EditProvider } from '@pierre/diffs/react';
 import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
 import {
@@ -30,16 +29,15 @@ import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
 import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
-import {
-  ResultEditor,
-  WrittenLegend,
-  createEditor,
-  proposalWhat,
-  useCodeOptions,
-  type ConflictViewHandle,
-} from './ConflictBlocks';
+import { WrittenLegend, proposalWhat, useCodeOptions, type ConflictViewHandle } from './ConflictBlocks';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
-import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
+import {
+  conflictCount,
+  conflictLabels,
+  type BlockEdits,
+  type BlockPicks,
+  type ConflictLabels,
+} from '../lib/conflict-blocks';
 import { cardAnchors, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
   WRITTEN_BUDGET_MS,
@@ -71,6 +69,7 @@ import {
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
+  type SavedBlockEdit,
   type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
 import {
@@ -417,6 +416,19 @@ function ErrorPanel({
   );
 }
 
+/** In-place edits as the draft saves them (ConflictFile.edits): null for none, every field present. */
+function savedEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
+  return Array.from(edits ?? [], (edit) =>
+    edit
+      ? {
+          text: edit.text,
+          before: edit.before ?? null,
+          pick: edit.pick ?? null,
+          ...(edit.written?.length ? { written: [...edit.written] } : {}),
+        }
+      : null
+  );
+}
 /** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
 const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
 function savedPicks(f: ConflictFile): BlockPicks | undefined {
@@ -454,7 +466,6 @@ export function ConflictWorkspace({
     contentsRef.current = value;
     setContentsState(value);
   };
-  const [mode, setMode] = useState<'conflicts' | 'edit' | 'result'>('conflicts');
   const [epoch, setEpoch] = useState(0);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -488,20 +499,43 @@ export function ConflictWorkspace({
   };
   const picksRef = useRef(picksOf);
   picksRef.current = picksOf;
+  // Your in-place edits per file (#445 item 11), as your picks are: kept here as you edit, saved with the draft
+  // (ConflictFile.edits), and read from there after a reopen. A file whose conflict changed starts without them.
+  const [edits, setEdits] = useState<Partial<Record<string, { original: string; edits: BlockEdits }>>>({});
+  const editsOf = (f: ConflictFile): BlockEdits | undefined => {
+    const entry = edits[f.path];
+    return entry?.original === f.original ? entry.edits : f.edits;
+  };
+  const editsRef = useRef(editsOf);
+  editsRef.current = editsOf;
   /** The choices to save for a file, when they differ from the saved ones. */
   const picksToSave = (f: ConflictFile) => {
     const own = Array.from(picksRef.current(f) ?? [], (pick) => pick ?? null);
     return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.picks ?? []) ? undefined : own;
   };
+  /** The in-place edits to save for a file, when they differ from the saved ones. */
+  const editsToSave = (f: ConflictFile) => {
+    const own = savedEdits(editsRef.current(f));
+    return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.edits ?? []) ? undefined : own;
+  };
+  /** Your picks and edits for a save request, where they changed. */
+  const ownToSave = (f: ConflictFile) => {
+    const own = picksToSave(f);
+    const typed = editsToSave(f);
+    return { ...(own ? { picks: own } : {}), ...(typed ? { edits: typed } : {}) };
+  };
   // Each saved draft's buckets, per file: a Keep press or a check result recomputes only the file it changed.
   const bucketCache = useRef(
     new WeakMap<
       ConflictFile,
-      { verdict: Verdict | undefined; picks: BlockPicks | undefined; buckets: ConflictBucket[] }
+      {
+        verdict: Verdict | undefined;
+        picks: BlockPicks | undefined;
+        edits: BlockEdits | undefined;
+        buckets: ConflictBucket[];
+      }
     >()
   );
-  // The draft each file had when its result was last shown next to the PR. Mark reviewed needs it.
-  const [shown, setShown] = useState<Record<string, string>>({});
   const view = useRef<ConflictViewHandle>(null);
   const primary = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLElement>(null);
@@ -581,14 +615,16 @@ export function ConflictWorkspace({
         session?.files.map((f) => {
           const verdict = verdictOf(f);
           const own = picksOf(f);
+          const typed = editsOf(f);
           const cached = bucketCache.current.get(f);
-          if (cached && cached.verdict === verdict && cached.picks === own) return [f.path, cached.buckets];
-          const buckets = blockBuckets(f, f.result, verdict, own);
-          bucketCache.current.set(f, { verdict, picks: own, buckets });
+          if (cached && cached.verdict === verdict && cached.picks === own && cached.edits === typed)
+            return [f.path, cached.buckets];
+          const buckets = blockBuckets(f, f.result, verdict, own, typed);
+          bucketCache.current.set(f, { verdict, picks: own, edits: typed, buckets });
           return [f.path, buckets];
         })
       ),
-    [session?.files, verdicts, picks, typeCheck]
+    [session?.files, verdicts, picks, edits, typeCheck]
   );
   const fileStates = useMemo(
     () =>
@@ -596,7 +632,9 @@ export function ConflictWorkspace({
         const text = f.path === selected ? contents : f.result;
         const stage = conflictFileStage(f, text);
         const buckets =
-          text === f.result ? (savedBuckets.get(f.path) ?? []) : blockBuckets(f, text, verdictOf(f), picksOf(f));
+          text === f.result
+            ? (savedBuckets.get(f.path) ?? [])
+            : blockBuckets(f, text, verdictOf(f), picksOf(f), editsOf(f));
         return {
           file: f,
           stage,
@@ -606,7 +644,7 @@ export function ConflictWorkspace({
           status: fileStatus(f, text, stage, buckets),
         };
       }) ?? [],
-    [session, selected, contents, savedBuckets]
+    [session, selected, contents, savedBuckets, edits]
   );
   const summary = bucketSummary(
     fileStates.map((s) => summaryEntry(s.file, s.status, s.buckets, verdictOf(s.file), showMerged))
@@ -628,39 +666,34 @@ export function ConflictWorkspace({
   const [blocksShown, setBlocksShown] = useState('');
   const viewKey = `${selected}:${epoch}`;
   /** The file's one stop is the whole-file proposal. */
-  const proposalOnly = ready && mode === 'conflicts' && blocksShown !== viewKey;
-  const resultShown = !!file && shown[file.path] === contents;
+  const proposalOnly = ready && blocksShown !== viewKey;
+  // The result is always on screen, in the diff (PR shows it against the PR's version): Mark reviewed needs no separate
+  // step. The push confirmation shows the whole update once more before anything is pushed.
   const action = conflictFileAction({
     stage: fileStage,
-    resultShown,
     otherFilesPending: !!nextPending(selected),
     unsupported: !!file?.unsupported,
-    merged: !!selectedState && allMerged(selectedState.buckets),
   });
   const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
     [session?.headBranch, session?.baseBranch]
   );
-  const dirty = (!!file && (contents !== file.result || !!picksToSave(file))) || restackDirty;
+  const dirty =
+    (!!file && (contents !== file.result || !!picksToSave(file) || !!editsToSave(file))) || restackDirty;
 
-  function select(path: string, value: ConflictSession, nextMode?: typeof mode) {
+  function select(path: string, value: ConflictSession) {
     const next: ConflictFile | undefined = value.files.find((f) => f.path === path) ?? value.files.at(0);
     if (next?.path !== selectedRef.current) setOutcome('');
     selectedRef.current = next?.path ?? '';
     setSelectedState(next?.path ?? '');
     setContents(next?.result ?? '');
     setEpoch((n) => n + 1);
-    // A file with proposals opens on its conflicts, so you see what was merged and what to check.
-    setMode(
-      nextMode ??
-        (next && !next.unsupported && !next.proposals && !hasConflictMarkers(next.result) ? 'result' : 'conflicts')
-    );
     focusIntent.current = true;
   }
-  function apply(reply: ConflictReply, selection = selectedRef.current, nextMode?: typeof mode) {
+  function apply(reply: ConflictReply, selection = selectedRef.current) {
     setSession(reply.session);
-    select(selection, reply.session, nextMode);
+    select(selection, reply.session);
     setMessage((previous) => previous || `Merge ${reply.session.baseBranch} into ${reply.session.headBranch}`);
   }
   /** Saves the open draft and paused restack drafts. Saves run one at a time, in order. */
@@ -688,13 +721,13 @@ export function ConflictWorkspace({
       const path = selectedRef.current;
       const text = contentsRef.current;
       const current = value.files.find((f) => f.path === path);
-      const own = current && picksToSave(current);
+      const own = current ? ownToSave(current) : {};
       if (
         value.status === 'editing' &&
         !value.stale &&
         current &&
         !current.unsupported &&
-        (text !== current.result || own)
+        (text !== current.result || Object.keys(own).length > 0)
       ) {
         setSaveState('saving');
         value = (
@@ -705,7 +738,7 @@ export function ConflictWorkspace({
             path,
             contents: text,
             resolved: text === current.result && current.resolved,
-            ...(own ? { picks: own } : {}),
+            ...own,
           })
         ).session;
       }
@@ -736,6 +769,7 @@ export function ConflictWorkspace({
     session,
     file,
     contents,
+    edits: file ? editsOf(file) : undefined,
     label: model,
     busy,
     root,
@@ -799,10 +833,13 @@ export function ConflictWorkspace({
       });
       setPreview(undefined);
       setConfirming(false);
-      setShown({});
       // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
-      // carries them with the draft). Start over drops them.
-      if (!keep) setPicks({});
+      // carries them with the draft). Start over drops them. In-place edits stay only on files whose conflicts are the
+      // same (editsOf).
+      if (!keep) {
+        setPicks({});
+        setEdits({});
+      }
       // A merge prepared again: earlier model requests and their cards belong to the old one.
       if (restart) models.reset();
       apply(reply, selectedRef.current);
@@ -830,20 +867,20 @@ export function ConflictWorkspace({
   /** New base commits brought new conflicts: back to the files, on the first one that needs work. */
   function showNewConflicts(reply: ConflictReply) {
     setPicks({});
+    setEdits({});
     setPreview(undefined);
     setConfirming(false);
-    setShown({});
     const first = reply.session.files.find((f) => !f.resolved && !f.unsupported) ?? reply.session.files.at(0);
-    apply(reply, first?.path ?? selectedRef.current, 'conflicts');
+    apply(reply, first?.path ?? selectedRef.current);
   }
   /** Undo this update (#445 item 25) moved the branch back: the draft is editable again, with your choices. */
   function undone(next: ConflictSession) {
     setPicks({});
+    setEdits({});
     setPreview(undefined);
     setConfirming(false);
-    setShown({});
     setBaseNote('');
-    apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current, 'conflicts');
+    apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
   function confirm() {
@@ -873,19 +910,13 @@ export function ConflictWorkspace({
   }
   function markReviewed() {
     if (!file || markersRemain || file.unsupported) return;
-    // A Merged conflict's result is on screen already; anything you chose or edited is shown next to the PR first.
-    if (!resultShown && !(selectedState && allMerged(selectedState.buckets))) {
-      showResult();
-      setHint('Check the result next to the PR, then mark the file reviewed.');
-      return;
-    }
     const path = selected;
     let finished = false;
     void run(
       (s) => {
         const saved = s.files.find((f) => f.path === path);
-        const own = saved && picksToSave(saved);
-        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...(own ? { picks: own } : {}) };
+        const own = saved ? ownToSave(saved) : {};
+        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...own };
       },
       (reply) => {
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
@@ -919,29 +950,27 @@ export function ConflictWorkspace({
       next[index] = choice;
       return { ...previous, [f.path]: { original: f.original, picks: next } };
     });
-  // No choices, also over the saved ones: Reset and a suggestion start the file again.
-  const dropPicks = (path: string) =>
+  // No choices and no edits, also over the saved ones: Reset and a suggestion start the file again.
+  const dropPicks = (path: string) => {
     setPicks((previous) => {
       const f = sessionRef.current?.files.find((file) => file.path === path);
       return f ? { ...previous, [path]: { original: f.original, picks: [] } } : previous;
     });
+    setEdits((previous) => {
+      const f = sessionRef.current?.files.find((file) => file.path === path);
+      return f ? { ...previous, [path]: { original: f.original, edits: [] } } : previous;
+    });
+  };
+  const editsFor = (f: ConflictFile, next: BlockEdits) =>
+    setEdits((previous) => ({ ...previous, [f.path]: { original: f.original, edits: next } }));
   function resetTo(text: string) {
     if (file) dropPicks(file.path);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
     setOutcome('');
     setContents(text);
-    setMode('conflicts');
     setEpoch((n) => n + 1);
     focusIntent.current = true;
   }
-  function showResult() {
-    setMode('result');
-    setEpoch((n) => n + 1);
-  }
-  useEffect(() => {
-    if (mode === 'result' && file && !file.unsupported && !markersRemain)
-      setShown((previous) => (previous[file.path] === contents ? previous : { ...previous, [file.path]: contents }));
-  }, [mode, file, contents, markersRemain]);
   function chooseFile(path: string) {
     if (!sessionRef.current || pending.current || path === selected) return;
     void persist()
@@ -979,7 +1008,7 @@ export function ConflictWorkspace({
         // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
         if (current?.result !== before) dropPicks(path);
-        apply(reply, path, current && !hasConflictMarkers(current.result) ? 'result' : 'conflicts');
+        apply(reply, path);
       }
     );
   }
@@ -1007,10 +1036,10 @@ export function ConflictWorkspace({
     focusIntent.current = false;
     requestAnimationFrame(() => {
       if (session.status !== 'editing') return;
-      if (mode === 'conflicts' && view.current?.focusFirst()) return;
+      if (view.current?.focusFirst()) return;
       primary.current?.focus();
     });
-  }, [session, selected, epoch, confirming, mode]);
+  }, [session, selected, epoch, confirming]);
   const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
   const pushed = session ? undoTarget(session) : undefined;
   const reopened = !!session?.reopened;
@@ -1095,20 +1124,22 @@ export function ConflictWorkspace({
     }
     if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
+    // The in-place editor's card is yours while it is open: no key chooses, moves or marks from there (#445 item 11).
     if (
       origin.isContentEditable ||
-      origin.closest('input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu')
+      origin.closest(
+        'input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
+      )
     )
       return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {
-        if (mode !== 'conflicts') setMode('conflicts');
         if (!view.current?.move(key === 'j' ? 1 : -1)) primary.current?.focus();
         return true;
       }
       if (key === '1' || key === '2' || key === '3') {
-        if (mode !== 'conflicts' || !canEdit) return false;
+        if (!canEdit) return false;
         return !!view.current?.choose(key === '1' ? 'ours' : key === '2' ? 'theirs' : 'both');
       }
       if (key === 'm') {
@@ -1205,24 +1236,12 @@ export function ConflictWorkspace({
             {...common}
             disabled={busy}
             aria-keyshortcuts="J"
-            onClick={() => {
-              if (mode !== 'conflicts') {
-                setMode('conflicts');
-                focusIntent.current = true;
-                setEpoch((n) => n + 1);
-              } else view.current?.move(1);
-            }}
+            onClick={() => view.current?.move(1)}
           >
             Next conflict
             <kbd className="kbd" aria-hidden="true">
               J
             </kbd>
-          </Button>
-        );
-      case 'review-result':
-        return (
-          <Button {...common} disabled={busy} onClick={showResult}>
-            Review result
           </Button>
         );
       case 'mark-reviewed':
@@ -1725,28 +1744,6 @@ export function ConflictWorkspace({
                       </div>
                       {!file.unsupported && (
                         <div className="conflict-file-tools">
-                          <div className="conflict-modes" role="group" aria-label="View">
-                            {(['conflicts', 'edit', 'result'] as const).map((value) => (
-                              <Button
-                                key={value}
-                                size="sm"
-                                variant={mode === value ? 'secondary' : 'ghost'}
-                                disabled={busy}
-                                aria-pressed={mode === value}
-                                onClick={() => {
-                                  setMode(value);
-                                  setEpoch((n) => n + 1);
-                                  if (value === 'conflicts') focusIntent.current = true;
-                                }}
-                              >
-                                {value === 'conflicts'
-                                  ? 'Choose changes'
-                                  : value === 'edit'
-                                    ? 'Edit result'
-                                    : 'Review result'}
-                              </Button>
-                            ))}
-                          </div>
                           <ConflictSuggestMenu
                             disabled={!canEdit}
                             fileName={file.path.split('/').pop() ?? file.path}
@@ -1807,8 +1804,7 @@ export function ConflictWorkspace({
                               {file.explanation && <p>{file.explanation}</p>}
                             </details>
                           )}
-                          {mode === 'conflicts' ? (
-                            hasConflictMarkers(file.original) || markersRemain ? (
+                          {hasConflictMarkers(file.original) || markersRemain ? (
                               <ConflictDiff
                                 key={`${selected}:${epoch}`}
                                 handle={view}
@@ -1830,6 +1826,8 @@ export function ConflictWorkspace({
                                 models={models.cards(file)}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
+                                edits={editsOf(file)}
+                                onEdits={(next) => editsFor(file, next)}
                                 resolverText={resolverBaseline(file, contents)}
                                 onChoice={(key, before, after, picked) => choiceStats(session.id, file.path, key, before, after, picked)}
                                 wholeFile={
@@ -1858,32 +1856,6 @@ export function ConflictWorkspace({
                                 file={file}
                                 picks={picksOf(file)}
                               />
-                            )
-                          ) : mode === 'edit' ? (
-                            <EditProvider createEditor={createEditor}>
-                              <ResultEditor
-                                key={`${selected}:${epoch}`}
-                                name={selected}
-                                initial={contents}
-                                onChange={setContents}
-                              />
-                            </EditProvider>
-                          ) : markersRemain ? (
-                            <p className="conflict-side-empty">
-                              Resolve the remaining conflicts first. The result appears here when no conflict is left.
-                            </p>
-                          ) : (
-                            <ConflictResult
-                              name={selected}
-                              before={file.ours}
-                              after={contents}
-                              beforeLabel={labels.ours}
-                              afterLabel="Result after the merge"
-                              fileKey={diffKey}
-                              preferences={preferences}
-                              file={file}
-                              picks={picksOf(file)}
-                            />
                           )}
                         </>
                       )}

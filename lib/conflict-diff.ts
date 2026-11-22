@@ -3,9 +3,11 @@ import {
   applyChoices,
   chosenText,
   conflictModel,
+  editOpen,
   parseConflicts,
   pickText,
   textLines,
+  type BlockEdits,
   type BlockPicks,
   type BlockProposals,
   type ConflictModel,
@@ -51,13 +53,16 @@ export function conflictDiffText(
   return segmentsText(model.segments, (segment) => {
     const choice = model.choices[segment.index];
     const proposal = proposals?.[segment.index];
-    return choice === 'proposal' && proposal
-      ? proposal.text
-      : choice && choice !== 'proposal'
-        ? chosenText(segment.block, choice)
-        : against === 'ours'
-          ? segment.block.theirs
-          : segment.block.ours;
+    // Your edit shows as you wrote it, markers included: the draft holds that text.
+    return choice === 'edit'
+      ? pickText(segment, choice, proposals, model.edits)
+      : choice === 'proposal' && proposal
+        ? proposal.text
+        : choice && choice !== 'proposal'
+          ? chosenText(segment.block, choice)
+          : against === 'ours'
+            ? segment.block.theirs
+            : segment.block.ours;
   });
 }
 
@@ -140,7 +145,18 @@ export function conflictCompareRows(model: ConflictModel, proposals?: BlockPropo
     const { block, index } = segment;
     const choice = model.choices[index];
     const proposal = proposals?.[index];
-    const result = choice === 'proposal' ? proposal?.text : choice ? chosenText(block, choice) : undefined;
+    const edit = model.edits?.[index];
+    // An edit with a conflict marker left in it is not a result yet: its card says Decide.
+    const result =
+      choice === 'edit'
+        ? editOpen(edit)
+          ? undefined
+          : edit?.text
+        : choice === 'proposal'
+          ? proposal?.text
+          : choice
+            ? chosenText(block, choice)
+            : undefined;
     const rows: ConflictCompareRows = { index, base: block.base ?? '', ours: block.ours, theirs: block.theirs };
     if (result !== undefined) rows.result = result;
     return [rows];
@@ -289,13 +305,42 @@ function cautiousLines(lines: readonly string[], ours: string, theirs: string): 
 export function conflictWritten(model: ConflictModel, proposals?: BlockProposals): Map<number, number[]> {
   const written = new Map<number, number[]>();
   for (const segment of model.segments) {
-    if (segment.kind !== 'conflict' || model.choices[segment.index] !== 'proposal') continue;
+    if (segment.kind !== 'conflict') continue;
+    // Your edit keeps only the marks of the resolver's lines you left as they were (keptMarks); a typed line has none.
+    const edit = model.choices[segment.index] === 'edit' ? model.edits?.[segment.index] : undefined;
+    if (edit?.written?.length) written.set(segment.index, [...edit.written]);
+    if (model.choices[segment.index] !== 'proposal') continue;
     const text = proposals?.[segment.index]?.text;
     if (text === undefined) continue;
     const lines = writtenLines(text, segment.block.ours, segment.block.theirs);
     if (lines.length) written.set(segment.index, lines);
   }
   return written;
+}
+
+/**
+ * The marks an in-place edit keeps (#445 items 10 and 11): of `from`, the conflict's text you started from, its marked
+ * lines (0-based) that a line diff keeps unchanged in `to`, as 0-based indexes into `to`. A line you typed or changed is
+ * yours and never marked, even when it reads like one the resolver wrote. Without time for the diff, nothing is kept:
+ * the edit is yours.
+ */
+export function keptMarks(from: string, marked: readonly number[], to: string): number[] {
+  if (!marked.length) return [];
+  const own = new Set(marked);
+  const parts = diffArrays(textLines(from), textLines(to), { timeout: DIFF_MS });
+  if (!parts) return [];
+  const kept: number[] = [];
+  let a = 0,
+    b = 0;
+  for (const part of parts) {
+    if (part.added) b += part.count;
+    else if (part.removed) a += part.count;
+    else
+      for (let i = 0; i < part.count; i++, a++, b++) {
+        if (own.has(a)) kept.push(b);
+      }
+  }
+  return kept;
 }
 
 /** The shown text's line numbers of each conflict's written lines (conflictWritten), from its place in the text. */
@@ -338,11 +383,15 @@ export function draftWritten(
   contents: string,
   resolver: string | undefined,
   picks?: BlockPicks,
-  budget?: WrittenBudget
+  budget?: WrittenBudget,
+  /** Your in-place edits (#445 item 11): their typed lines are never marked. */
+  edits?: BlockEdits
 ): ReadonlySet<number> {
-  const model = conflictModel(file.original, contents, file.proposals, picks);
+  const model = conflictModel(file.original, contents, file.proposals, picks, edits);
   if (model.undoable) {
-    const { blocks } = segmentsText(model.segments, (s) => pickText(s, model.choices[s.index], file.proposals));
+    const { blocks } = segmentsText(model.segments, (s) =>
+      pickText(s, model.choices[s.index], file.proposals, model.edits)
+    );
     return shownWritten(blocks, conflictWritten(model, file.proposals));
   }
   if (resolver === undefined) return new Set();

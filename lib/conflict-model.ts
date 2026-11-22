@@ -1,9 +1,10 @@
 import {
   applyChoices,
-  inferChoices,
+  inferModelChoices,
   parseConflicts,
   textLines,
-  type BlockPick,
+  type EditTexts,
+  type ModelChoice,
   type ConflictBlock,
   type ConflictSegment,
 } from './conflict-blocks';
@@ -372,32 +373,34 @@ export function modelProposal(
 
 /**
  * The file with `proposal` in conflict `index` and nowhere else, or undefined when it can't go there: the draft was
- * edited by hand, the conflict is decided or has a proposal already. Every other conflict keeps exactly the text it has
+ * edited by hand outside its conflicts, the conflict is decided (a Keep, or your edit in place) or has a proposal
+ * already. Your edits of other conflicts stay as they are. Every other conflict keeps exactly the text it has
  * in the draft; the result is checked to differ from the draft only in that conflict.
  */
 export function spliceModelProposal(
-  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'picks'>,
+  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'picks' | 'edits'>,
   index: number,
   proposal: ConflictProposal
-): Pick<ConflictFile, 'result' | 'proposals'> | undefined {
+): (Pick<ConflictFile, 'result' | 'proposals'> & { resolver: string }) | undefined {
   if (proposal.source !== 'model' || hasConflictMarkers(proposal.text)) return undefined;
   const segments = parseConflicts(file.original);
   const conflicts = segments.filter((s): s is Conflict => s.kind === 'conflict');
   if (!conflicts.some((s) => s.index === index)) return undefined;
-  if (file.proposals?.[index] || file.picks?.[index]) return undefined;
-  const choices = inferChoices(segments, file.result, file.proposals);
+  if (file.proposals?.[index] || file.picks?.[index] || file.edits?.[index]) return undefined;
+  const edits = file.edits;
+  const choices = inferModelChoices(segments, file.result, file.proposals, edits);
   if (!choices || choices[index] !== undefined) return undefined;
   const proposals = conflicts.map((s) => file.proposals?.[s.index] ?? null);
   // The draft must be exactly its choices: then only the conflict's own span changes.
-  if (applyChoices(segments, choices, proposals) !== file.result) return undefined;
+  if (applyChoices(segments, choices, proposals, edits) !== file.result) return undefined;
   proposals[index] = proposal;
-  const next: (BlockPick | undefined)[] = [...choices];
+  const next: (ModelChoice | undefined)[] = [...choices];
   next[index] = 'proposal';
-  const result = applyChoices(segments, next, proposals);
+  const result = applyChoices(segments, next, proposals, edits);
   // Outside the conflict, byte for byte the draft: what comes before it and after it is unchanged.
   const at = conflicts.find((s) => s.index === index) as Conflict;
-  const before = applyChoices(segments.slice(0, segments.indexOf(at)), choices, proposals);
-  const after = applyChoices(segments.slice(segments.indexOf(at) + 1), choices, proposals);
+  const before = applyChoices(segments.slice(0, segments.indexOf(at)), choices, proposals, edits);
+  const after = applyChoices(segments.slice(segments.indexOf(at) + 1), choices, proposals, edits);
   if (
     !result.startsWith(before) ||
     !result.endsWith(after) ||
@@ -405,19 +408,28 @@ export function spliceModelProposal(
     file.result !== before + at.block.raw + after
   )
     return undefined;
-  return { result, proposals };
+  // The resolver's text: the draft with your edits of other conflicts left open, so no line you typed is ever its.
+  const resolver = applyChoices(
+    segments,
+    next.map((choice) => (choice === 'edit' ? undefined : choice)),
+    proposals
+  );
+  return { result, proposals, resolver };
 }
 
 /**
- * The conflicts to ask about in a draft: no proposal, no choice of yours, still open in the draft, in a text file that
- * may go to a model. A file behind a whole-file proposal is left to that proposal.
+ * The conflicts to ask about in a draft: no proposal, no choice or edit of yours, still open in the draft, in a text
+ * file that may go to a model. A file behind a whole-file proposal is left to that proposal. Your edit of one conflict
+ * leaves the others askable.
  */
 export function modelTargets(
-  file: Pick<ConflictFile, 'path' | 'original' | 'result' | 'proposals' | 'picks' | 'unsupported' | 'wholeFile'>
+  file: Pick<ConflictFile, 'path' | 'original' | 'result' | 'proposals' | 'picks' | 'unsupported' | 'wholeFile'> & {
+    edits?: EditTexts;
+  }
 ): number[] {
   if (file.unsupported || file.wholeFile || isSecretPath(file.path)) return [];
   const segments = parseConflicts(file.original);
-  const choices = inferChoices(segments, file.result, file.proposals);
+  const choices = inferModelChoices(segments, file.result, file.proposals, file.edits);
   if (!choices) return [];
   return segments.flatMap((s) =>
     s.kind === 'conflict' && !file.proposals?.[s.index] && !file.picks?.[s.index] && choices[s.index] === undefined
@@ -426,10 +438,18 @@ export function modelTargets(
   );
 }
 
-/** The conflicts still open in `contents`, by index; undefined when the draft was edited by hand. */
-export function openConflicts(original: string, contents: string, proposals?: ConflictFile['proposals']) {
+/**
+ * The conflicts still open in `contents`, by index; undefined when the draft was edited by hand outside its conflicts.
+ * A conflict you edited in place (`edits`) is decided, not open.
+ */
+export function openConflicts(
+  original: string,
+  contents: string,
+  proposals?: ConflictFile['proposals'],
+  edits?: EditTexts
+) {
   const segments = parseConflicts(original);
-  const choices = inferChoices(segments, contents, proposals);
+  const choices = inferModelChoices(segments, contents, proposals, edits);
   if (!choices) return undefined;
   return new Set(segments.flatMap((s) => (s.kind === 'conflict' && choices[s.index] === undefined ? [s.index] : [])));
 }

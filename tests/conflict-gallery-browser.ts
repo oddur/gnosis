@@ -113,7 +113,7 @@ const READ = `(() => {
     })),
     blocks: [...ws.querySelectorAll('.conflict-view .conflict-block')]
       .filter((b) => Number(b.dataset.conflictIndex) >= 0)
-      .map((b) => b.dataset.bucket ?? (b.dataset.state === 'open' ? 'decide' : b.dataset.state === 'kept' ? 'decided' : b.dataset.state)),
+      .map((b) => b.dataset.bucket ?? (b.dataset.state === 'open' ? 'decide' : b.dataset.state === 'kept' || b.dataset.state === 'edited' ? 'decided' : b.dataset.state)),
     header: {
       status: ws.querySelector('.conflict-file-title [data-status]')?.dataset.status ?? null,
       text: text(ws.querySelector('.conflict-file-title [data-status]')),
@@ -580,6 +580,34 @@ void app.whenReady().then(async () => {
           );
         }
 
+        // Edit in place (#445 item 11): Edit opens the conflict's lines in an editor under them, in the diff. Type a line,
+        // save, and Undo returns the conflict to the choice the edit replaced.
+        const editable = await js<string | null>(`${first(':has([data-conflict-edit])')}?.dataset.conflictIndex ?? null`);
+        if (editable !== null) {
+          const card = `document.querySelector('.conflict-view .conflict-block[data-conflict-index="${editable}"]')`;
+          const was = await js<string>(`${card}.dataset.state + ' ' + (${card}.dataset.bucket ?? '')`);
+          const draft = await js<string>("document.querySelector('.conflict-save-state')?.textContent ?? ''");
+          await js(`${card}.querySelector('[data-conflict-edit]').click()`);
+          const editor = `document.querySelector('.conflict-view [data-conflict-inline-edit="${editable}"] diffs-container')?.shadowRoot?.querySelector('[contenteditable=true]')`;
+          await until(`!!${editor} && ${editor}.getRootNode().activeElement === ${editor}`, 'the in-place editor to take focus');
+          await shot('inline-edit', `conflict ${editable} was ${was.trim()}`);
+          await shot('inline-edit-dark', undefined, true);
+          await contents.insertText('// edited in place\n');
+          await until(`!(${button('Save edit')})?.disabled`, 'Save edit to turn on');
+          await shot('inline-edit-typed');
+          await click('Save edit');
+          await until(`${card}?.dataset.state === 'edited'`, 'the conflict to read as your edit');
+          await settle();
+          const edited = await js<string>(`${card}.innerText.split('\\n').slice(0, 2).join(' ')`);
+          if (!/Edited by you/.test(edited)) problems.push(`After Save edit the card reads ${edited}`);
+          await shot('inline-edited', edited);
+          await shot('inline-edited-dark', undefined, true);
+          await js(`[...${card}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo').click()`);
+          await until(`${card}?.dataset.state + ' ' + (${card}?.dataset.bucket ?? '') === ${JSON.stringify(was)}`, 'Undo to restore the choice');
+          await settle();
+          await shot('inline-edit-undo', `${was.trim()} again · ${draft}`);
+        } else steps.push({ label: 'inline-edit', shot: '', note: 'No card offers Edit' });
+
         // Review each file and mark it reviewed, up to the push confirmation.
         for (let files = 0; files < 10 && !(await js("!!document.querySelector('.conflict-confirm')")); files++) {
           // Whatever is still open keeps the PR's side.
@@ -592,9 +620,9 @@ void app.whenReady().then(async () => {
             await settle();
             await shot('use-this-result');
           }
-          await click('Review result', "document.querySelector('.conflict-modes')");
+          // The result is in the diff: Compare with PR shows it against the PR's version.
           await settle();
-          await shot('review-result', (await read()).footer ?? '');
+          await shot('resolved', (await read()).footer ?? '');
           const label = (await has('Mark reviewed & next file')) ? 'Mark reviewed & next file' : 'Mark reviewed';
           await click(label);
           await settle();

@@ -29,6 +29,7 @@ import {
 import { blockVerdict, type Verdict } from '../lib/conflict-verify';
 import {
   shortBranch,
+  type BlockEdits,
   type BlockPick,
   type BlockPicks,
   type ConflictLabels,
@@ -46,6 +47,7 @@ import type { ModelCard } from '../lib/conflict-model';
 import {
   Block,
   DiffColumns,
+  InlineEdit,
   WholeFile,
   WrittenLegend,
   useConflictChoices,
@@ -495,9 +497,17 @@ export function ConflictDiff({
   resolverText,
   onChoice,
   models,
+  edits,
+  onEdits,
 }: {
   /** Each open conflict's model request, by index (#445 item 7). */
   models?: Readonly<Record<number, ModelCard>>;
+  /**
+   * Your in-place edits (#445 item 11), kept by the view so Undo survives switching files. With `onEdits`, each card has
+   * Edit: the conflict's lines open in an editor under them, and Save changes that conflict's span only.
+   */
+  edits?: BlockEdits;
+  onEdits?: (edits: BlockEdits) => void;
   name: string;
   /**
    * The text a resolver wrote for this file (resolverBaseline): where the draft's conflicts can't be told apart, its
@@ -529,7 +539,7 @@ export function ConflictDiff({
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
-  const { root, model, total, choose } = useConflictChoices({
+  const { root, model, total, choose, undo, editStart, saveEdit } = useConflictChoices({
     onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
@@ -541,7 +551,20 @@ export function ConflictDiff({
     handle,
     onAllResolved,
     verdict,
+    edits,
+    onEdits,
   });
+  // The conflict open in the in-place editor, and what you typed in it: kept here, not in the draft, until you save.
+  const [editing, setEditing] = useState<number>();
+  const typed = useRef(new Map<number, string>());
+  const closeEditor = (index: number) => {
+    typed.current.delete(index);
+    setEditing(undefined);
+    // Focus returns to the conflict's card once it is back.
+    requestAnimationFrame(() =>
+      root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)?.focus({ preventScroll: true })
+    );
+  };
   const hideBlocks = !!wholeFile && !wholeFile.shown && (!verdict || !!verdict.passed);
   const [compare, setCompare] = useCompareWith();
   // Both with no conflict left to show (a draft edited past its conflicts) is not offered, and the view shows PR: the
@@ -556,8 +579,43 @@ export function ConflictDiff({
   const card = (index: number) => {
     const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
     if (segment?.kind !== 'conflict') return null;
+    const start = editing === index ? editStart(index) : '';
     return (
       <Block
+        edit={model.edits?.[index] ?? undefined}
+        // Only a draft that is exactly its choices can be edited conflict by conflict.
+        onEdit={
+          onEdits && model.undoable
+            ? () => {
+                typed.current.delete(index);
+                setEditing(index);
+              }
+            : undefined
+        }
+        editor={
+          editing === index ? (
+            <InlineEdit
+              name={name}
+              index={index}
+              theme={diffThemeName(preferences?.codeTheme)}
+              start={start}
+              initial={typed.current.get(index) ?? start}
+              hint={
+                model.choices[index] === undefined
+                  ? `It starts with both sides: ${labels.ours}, then ${labels.theirs}.`
+                  : undefined
+              }
+              disabled={disabled}
+              onType={(text) => typed.current.set(index, text)}
+              onSave={(text) => {
+                const saved = saveEdit(index, text);
+                if (saved) closeEditor(index);
+                return saved;
+              }}
+              onCancel={() => closeEditor(index)}
+            />
+          ) : undefined
+        }
         key={`block-${index}`}
         inDiff
         name={name}
@@ -573,7 +631,7 @@ export function ConflictDiff({
         verdict={blockVerdict(verdict, index)}
         note={note}
         model={models?.[index]}
-        onUndo={model.undoable ? () => choose(index, undefined) : undefined}
+        onUndo={model.undoable ? () => undo(index) : undefined}
         compare={mode}
         written={written.get(index)?.length ?? 0}
       />
@@ -758,7 +816,7 @@ function CompareDiff({
   );
 }
 
-/** The result next to the PR's version, in the shared diff, with named columns (Review result). */
+/** The result next to the PR's version, in the shared diff, with named columns: a file whose conflict Git wrote no markers for. */
 export function ConflictResult({
   name,
   before,

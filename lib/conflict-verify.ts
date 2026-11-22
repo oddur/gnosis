@@ -2,11 +2,13 @@ import { diffArrays } from 'diff';
 import { blockResolutions } from './conflict-carry';
 import {
   conflictCount,
+  editOpen,
   identifierPattern,
-  inferChoices,
+  inferModelChoices,
   parseConflicts,
   textLines,
   withPicks,
+  type BlockEdits,
   type BlockPicks,
   type ConflictSegment,
 } from './conflict-blocks';
@@ -1178,7 +1180,9 @@ export function blockBuckets(
   contents: string,
   verdict: Verdict | undefined,
   /** Keep choices you made: one whose text equals the proposal is Decided, not the proposal (withPicks). */
-  picks?: BlockPicks
+  picks?: BlockPicks,
+  /** Your in-place edits (#445 item 11): Decided, or Decide while a conflict marker is left in one. */
+  edits?: BlockEdits
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
   // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
@@ -1186,7 +1190,7 @@ export function blockBuckets(
   if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
     return parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? ['check' as const] : []));
   const segments = parseConflicts(file.original);
-  const inferred = inferChoices(segments, contents, file.proposals);
+  const inferred = inferModelChoices(segments, contents, file.proposals, edits);
   const choices = inferred && withPicks(segments, inferred, file.proposals, picks);
   const blocks = segments.filter((s) => s.kind === 'conflict');
   if (!choices) {
@@ -1211,6 +1215,7 @@ export function blockBuckets(
       return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged
         ? 'merged'
         : 'check';
+    if (pick === 'edit') return editOpen(edits?.[s.index]) ? 'decide' : 'decided';
     return pick ? 'decided' : 'decide';
   });
 }
@@ -1258,9 +1263,8 @@ export function fileStatus(
   return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
 }
 /**
- * Every conflict in the file is Merged, with nothing you chose or edited beside it. Only then are its results all on
- * screen already: Mark reviewed needs no Review result first, and with "Show me every merged conflict" off the file is
- * reviewed for you. The primary action, Mark reviewed, the summary and the automatic review all use it.
+ * Every conflict in the file is Merged, with nothing you chose or edited beside it. Only then, with "Show me every
+ * merged conflict" off, is the file reviewed for you. The summary and the automatic review use it.
  */
 export const allMerged = (buckets: readonly ConflictBucket[]) =>
   buckets.length > 0 && buckets.every((bucket) => bucket === 'merged');

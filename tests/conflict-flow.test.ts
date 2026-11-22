@@ -9,16 +9,14 @@ import {
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
 
-void test('each file state has one next action; Mark reviewed waits for the result to be shown', () => {
+void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
-  assert.equal(conflictFileAction({ ...base, stage: 'conflicted', resultShown: true }), 'next-conflict');
-  assert.equal(conflictFileAction({ ...base, stage: 'resolved', resultShown: false }), 'review-result');
-  assert.equal(conflictFileAction({ ...base, stage: 'resolved', resultShown: true }), 'mark-reviewed');
-  assert.equal(conflictFileAction({ ...base, stage: 'reviewed', resultShown: true }), 'next-file');
-  assert.equal(conflictFileAction({ stage: 'reviewed', resultShown: true, otherFilesPending: false }), 'confirm');
-  assert.equal(conflictFileAction({ stage: undefined, resultShown: false, otherFilesPending: false }), 'none');
-  // Every conflict Merged: the results are on screen, so the next step is Mark reviewed, not Review result.
-  assert.equal(conflictFileAction({ ...base, stage: 'resolved', resultShown: false, merged: true }), 'mark-reviewed');
+  assert.equal(conflictFileAction({ ...base, stage: 'conflicted' }), 'next-conflict');
+  assert.equal(conflictFileAction({ ...base, stage: 'resolved' }), 'mark-reviewed');
+  assert.equal(conflictFileAction({ ...base, stage: 'reviewed' }), 'next-file');
+  assert.equal(conflictFileAction({ stage: 'reviewed', otherFilesPending: false }), 'confirm');
+  assert.equal(conflictFileAction({ stage: undefined, otherFilesPending: false }), 'none');
+  assert.equal(conflictFileAction({ ...base, stage: 'conflicted', unsupported: true }), 'next-file');
 });
 
 void test('errors use plain copy and keep the raw output for Details', () => {
