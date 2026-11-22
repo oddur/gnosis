@@ -17,14 +17,21 @@ import {
   NOT_SUPPORTED,
   TIMED_OUT,
   checkedText,
+  conflictLines,
   newErrors,
   parseDiagnostics,
+  rootStripper,
+  sortedUnions,
   type RunScript,
 } from '../src/conflict-type-check';
-import { blockBuckets, typeErrorNote, withTypeError } from '../lib/conflict-verify';
+import { blockBuckets, typeCheckFor, typeCheckKey, typeErrorOf, withTypeError } from '../lib/conflict-verify';
+import { conflictHeader } from '../lib/conflict-header';
 import type { ConflictFile } from '../lib/conflict-resolution';
 import type { ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
+import { preparedBuckets } from '../lib/conflict-stats';
+import { applyChoices, parseConflicts } from '../lib/conflict-blocks';
+import { assertPerf } from './perf-budget';
 
 const exec = promisify(execFile);
 const TSCONFIG = JSON.stringify({
@@ -76,6 +83,8 @@ async function fixture(
     files?: Record<string, [string, string, string]>;
     timeout?: number;
     run?: RunScript;
+    /** Milliseconds before a changed draft is checked again. */
+    delay?: number;
   } = {}
 ) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-type-check-'));
@@ -144,6 +153,7 @@ async function fixture(
     verify: () => Promise.resolve({ merged: true, note: 'Passed.' }),
     typeCheckClone: (repo: string) => (repo === 'test/repo' ? live.clone : undefined),
     typeCheckTimeout: options.timeout,
+    typeCheckDelay: options.delay ?? 20,
     runScript: ((script, args, o) => {
       runs.push(script);
       return (options.run ?? realRun)(script, args, o);
@@ -190,10 +200,11 @@ async function eventuallyCleanedUp(sessionDir: string) {
   await cleanedUp(sessionDir);
 }
 const HANG = 'setInterval(() => {}, 1000);\n';
-/** A file's buckets as the view shows them while the check is on: the checks' verdict with the saved demotion. */
-const shown = (file: ConflictFile) => blockBuckets(file, file.result, withTypeError(file.verdict?.verdict, typeErrorNote(file)));
+/** A file's buckets as the view shows them: the checks' verdict with the type check's demotion (`typeErrorOf`). */
+const shown = (file: ConflictFile, status?: ConflictTypeCheck | null) =>
+  blockBuckets(file, file.result, withTypeError(file.verdict?.verdict, typeErrorOf(file, status)));
 
-void test('type check: a Merged proposal that breaks types is demoted to Check with the error; errors elsewhere are information', async (t) => {
+void test('type check: a new error demotes the Merged proposals, with the first error as the note', async (t) => {
   const linked = await clone(t);
   const f = await fixture(t, {
     clone: linked,
@@ -213,17 +224,17 @@ void test('type check: a Merged proposal that breaks types is demoted to Check w
   assert.deepEqual(
     status.files.map((x) => x.path),
     ['sample.ts'],
-    'Only the conflicted file is demoted'
+    'Every conflicted file is demoted'
   );
-  assert.match(status.files[0].note, /^The type check found a new error in this file: sample\.ts:2 TS2362 /);
+  assert.equal(status.files[0].note, 'The type check found 2 new errors, the first in sample.ts:2 (TS2362).');
   // The saved draft carries it as an overlay: the file's proposal is Check, with the compiler's error as its note. The
   // checks' own verdict is unchanged.
   const saved = f.saved().files.find((x) => x.path === 'sample.ts');
   assert.ok(saved?.verdict);
-  assert.equal(saved.typeError?.note, status.files[0].note);
+  assert.deepEqual(saved.typeError, { key: status.files[0].key, note: status.files[0].note });
   assert.equal(saved.verdict.verdict.merged, true);
   assert.deepEqual(shown(saved), ['check']);
-  assert.equal(withTypeError(saved.verdict.verdict, typeErrorNote(saved))?.note, status.files[0].note);
+  assert.equal(withTypeError(saved.verdict.verdict, typeErrorOf(saved, status))?.note, status.files[0].note);
   // A later check of the same proposals, after a save, keeps it in Check.
   const { session } = await f.service.run(
     { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: saved.result, resolved: false, picks: [null, null] },
@@ -232,8 +243,8 @@ void test('type check: a Merged proposal that breaks types is demoted to Check w
   const after = session.files.find((x) => x.path === 'sample.ts');
   assert.ok(after?.verdict);
   assert.deepEqual(shown(after), ['check']);
-  // The PR head was checked too, and both worktrees are gone.
-  assert.equal(f.runs.length, 2);
+  // The PR head and the base were checked too, and every worktree is gone.
+  assert.equal(f.runs.length, 3);
   await cleanedUp(f.sessionDir);
   // The shallow cache checked out the files it needed, and your clone is as it was.
   await fs.stat(path.join(f.sessionDir, 'gnosis-objects.json'));
@@ -242,7 +253,7 @@ void test('type check: a Merged proposal that breaks types is demoted to Check w
   // A reopen of the same draft keeps the result and runs nothing again.
   await f.service.run({ kind: 'open', url: f.state.url }, new AbortController().signal);
   assert.equal(f.service.typeCheck(f.session.id)?.state, 'errors');
-  assert.equal(f.runs.length, 2);
+  assert.equal(f.runs.length, 3);
 });
 
 void test('type check: errors the PR head already has do not demote', async (t) => {
@@ -260,7 +271,7 @@ void test('type check: errors the PR head already has do not demote', async (t) 
     },
   });
   const status = await f.settled();
-  assert.deepEqual(status, { state: 'passed', preExisting: 2 });
+  assert.deepEqual(status, { state: 'passed', preExisting: 2, checked: { 'sample.ts': typeCheckKey(f.saved().files[0]) } });
   const saved = f.saved().files.find((x) => x.path === 'sample.ts');
   assert.ok(saved?.verdict);
   assert.equal(saved.typeError, undefined);
@@ -379,7 +390,7 @@ void test('type check: a skipped check runs again on the next open (item 6)', as
   await installCompiler(linked);
   await f.open();
   assert.equal((await f.settled())?.state, 'errors');
-  assert.equal(f.runs.length, 2);
+  assert.equal(f.runs.length, 2, 'The merge and the head: the only error is inside the conflict');
 });
 
 void test('type check: turning the setting off, or another clone, stops the check at once (item 7)', async (t) => {
@@ -538,8 +549,317 @@ void test('type check: diagnostics, new errors and the checked text', () => {
   );
   // Only Merged proposals are demoted; Check stays as it was.
   assert.deepEqual(
-    withTypeError({ merged: false, note: 'File', blocks: [{ merged: true, note: 'ok' }, { merged: false, note: 'no' }] }, 'Types'),
+    withTypeError({ merged: false, note: 'File', blocks: [{ merged: true, note: 'ok' }, { merged: false, note: 'no' }] }, { note: 'Types' }),
     { merged: false, note: 'File', blocks: [{ merged: false, note: 'Types' }, { merged: false, note: 'no' }] }
   );
-  assert.deepEqual(withTypeError({ merged: false, note: 'no' }, 'Types'), { merged: false, note: 'no' });
+  assert.deepEqual(withTypeError({ merged: false, note: 'no' }, { note: 'Types' }), { merged: false, note: 'no' });
+});
+
+/** sample.ts with two conflicts: the `limit` one, and both sides adding a line at the end. `use` adds main's use of
+ * `limit` as a number between them, outside every conflict. */
+function twoConflicts(use = false): Record<string, [string, string, string]> {
+  const filler = Array.from({ length: 10 }, (_, i) =>
+    use && i === 5 ? 'export const f5: number = limit * 5;\n' : `export const f${i} = ${i};\n`
+  ).join('');
+  const plain = Array.from({ length: 10 }, (_, i) => `export const f${i} = ${i};\n`).join('');
+  return {
+    'sample.ts': [
+      SAMPLE.base + plain + 'export const z = 0;\n',
+      SAMPLE.ours + plain + 'export const z = 0;\nexport const fromPr = 1;\n',
+      SAMPLE.theirs + filler + 'export const z = 0;\nexport const fromMain = 2;\n',
+    ],
+  };
+}
+
+void test('type check: an error in a file without conflicts demotes the Merged proposal that caused it (#505 round 2, 3)', async (t) => {
+  const f = await fixture(t, {
+    clone: await clone(t),
+    files: {
+      // The PR makes `limit` a string; main's line in the conflict is type-correct, but main's use.ts uses `limit` as a
+      // number. The Merged proposal in sample.ts causes an error in use.ts only.
+      'sample.ts': [
+        SAMPLE.base,
+        SAMPLE.ours,
+        'export const limit: number = 1;\nexport const label = `${limit}`;\nexport const b = 2;\n',
+      ],
+      'use.ts': ['export const n = 1;\n', 'export const n = 1;\n', "import { limit } from './sample';\nexport const n: number = limit;\n"],
+    },
+  });
+  const saved = f.saved().files.find((x) => x.path === 'sample.ts');
+  assert.ok(saved?.verdict);
+  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict.verdict), ['merged'], 'Merged before the type check');
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.deepEqual(status.errors.map((line) => line.split(' ')[0]), ['use.ts:2']);
+  assert.equal(status.files[0].note, 'The type check found a new error in use.ts:2 (TS2322).');
+  const after = f.saved().files.find((x) => x.path === 'sample.ts');
+  assert.ok(after);
+  assert.deepEqual(shown(after, status), ['check']);
+  assert.deepEqual(shown(after), ['check'], 'Saved on the draft too');
+  assert.deepEqual(preparedBuckets(after, []), ['check'], 'The stats read it too');
+  // The header reads it the same way: no Review and push….
+  const header = conflictHeader(f.saved().files, [], false, status);
+  assert.equal(header.state === 'ready' && header.merged, false);
+});
+void test('type check: a changed draft is checked again once the changes stop; the demotion holds until that run finishes (#499)', async (t) => {
+  // The compiler waits for the test once the draft is fixed, so the run can be seen while it runs.
+  const gate: { hold?: Promise<void> } = {};
+  const f = await fixture(t, {
+    clone: await clone(t),
+    files: twoConflicts(true),
+    run: async (script, args, o) => {
+      await gate.hold;
+      return realRun(script, args, o);
+    },
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.equal(status.files[0].note, 'The type check found 2 new errors, the first in sample.ts:2 (TS2362).');
+  assert.deepEqual(shown(f.saved().files[0]), ['check', 'check']);
+  assert.equal(f.runs.length, 3);
+  // Keep the PR's `limit` and drop main's use of it in the conflict: one error is left, outside the conflicts.
+  let release!: () => void;
+  gate.hold = new Promise((resolve) => (release = resolve));
+  const file = f.saved().files[0];
+  const fixed = applyChoices(parseConflicts(file.original), ['ours', 'proposal'], file.proposals);
+  const { session } = await f.service.run(
+    { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: fixed, resolved: false, picks: ['ours', null] },
+    new AbortController().signal
+  );
+  assert.notEqual(typeCheckKey(session.files[0]), status.files[0].key, 'The draft is part of the key');
+  // Waiting for the changes to stop: the saved demotion holds, and the old result reads as waiting.
+  assert.equal(f.service.typeCheck(f.session.id)?.state, 'waiting');
+  assert.equal(typeCheckFor(status, session.files)?.state, 'waiting');
+  assert.deepEqual(shown(session.files[0], f.service.typeCheck(f.session.id)), ['decided', 'check']);
+  await f.started(4);
+  assert.equal(f.service.typeCheck(f.session.id)?.state, 'running', 'A changed draft is checked again');
+  release();
+  const again = await f.settled();
+  assert.ok(again?.state === 'errors', JSON.stringify(again));
+  assert.equal(again.count, 1);
+  assert.equal(again.files[0].key, typeCheckKey(f.saved().files[0]));
+  assert.deepEqual(shown(f.saved().files[0], again), ['decided', 'check']);
+  // Main's use goes too: the run passes, and the demotion goes.
+  const clean = fixed.replace('export const f5: number = limit * 5;\n', 'export const f5 = 5;\n');
+  await f.service.run(
+    { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: clean, resolved: false },
+    new AbortController().signal
+  );
+  await f.started(7);
+  assert.equal((await f.settled())?.state, 'passed');
+  assert.equal(f.saved().files[0].typeError, undefined);
+  await cleanedUp(f.sessionDir);
+});
+void test('type check: errors the base already has are not new (#499)', async (t) => {
+  const f = await fixture(t, {
+    clone: await clone(t),
+    // Main imports a module that isn't there, such as generated code that isn't built. The PR head doesn't have it.
+    files: { 'gen.ts': ['export const g = 1;\n', 'export const g = 1;\n', "import { x } from './missing';\nexport const g = x;\n"] },
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.equal(status.count, 1, status.errors.join('\n'));
+  assert.equal(status.preExisting, 1);
+  assert.ok(!status.errors.some((line) => line.includes('TS2307')), status.errors.join('\n'));
+  assert.equal(f.runs.length, 3, 'The merge, the PR head and the base');
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: unions in another order are the same error (#499)', () => {
+  assert.equal(
+    sortedUnions(`Type '"b" | "a" | Array<string | number>' is not assignable to type '(x: B | A) => void | C'.`),
+    `Type '"a" | "b" | Array<string | number>' is not assignable to type '(x: B | A) => void | C'.`
+  );
+  const error = (message: string) => ({ file: 'a.ts', line: 1, code: 'TS2322', message });
+  assert.deepEqual(newErrors([error(`Type '"b" | "a"' is wrong.`)], [error(`Type '"a" | "b"' is wrong.`)]), []);
+  // Each baseline on its own: an error both have once is one known error.
+  assert.equal(newErrors([error('x'), error('x')], [error('x')], [error('x')]).length, 1);
+});
+
+void test('type check: each conflict’s lines in the checked draft (#499)', () => {
+  const original = 'a\n<<<<<<< pr\nb\n=======\nc\n>>>>>>> main\nd\n<<<<<<< pr\ne\n=======\nf\n>>>>>>> main\ng\n';
+  const proposals = [{ source: 'union' as const, text: 'b\nc\n' }, null];
+  // The first holds its proposal (two lines), the second is open and checked with the PR's side.
+  const draft = 'a\nb\nc\nd\n<<<<<<< pr\ne\n=======\nf\n>>>>>>> main\ng\n';
+  assert.deepEqual(conflictLines({ original, proposals, result: draft }), [[2, 3], [5, 5]]);
+  // Edited by hand: nothing can be traced to a conflict.
+  assert.equal(conflictLines({ original, proposals, result: 'a\nb\nc\nd\nhand\ng\n' }), undefined);
+});
+
+void test('type check: the key is remembered per file object while its inputs are the same (#499)', () => {
+  let reads = 0;
+  const file = {
+    original: 'a\n',
+    get proposals() {
+      reads++;
+      return undefined;
+    },
+    result: 'a\n',
+  };
+  const key = typeCheckKey(file);
+  reads = 0;
+  assert.equal(typeCheckKey(file), key);
+  assert.equal(reads, 1, 'Only compared, not hashed again');
+  file.result = 'b\n';
+  assert.notEqual(typeCheckKey(file), key, 'A changed draft is a new key');
+});
+
+void test('type check: the root stripper orders the roots once and strips like withoutRoots (#499)', () => {
+  const roots: [string, string][] = [['/tmp/w', ''], ['/tmp/w/inner', ''], ['/clone', '<clone>']];
+  const strip = rootStripper(roots);
+  assert.equal(strip('/tmp/w/inner/a.ts'), 'a.ts');
+  assert.equal(strip('/clone/node_modules/x.d.ts'), '<clone>/node_modules/x.d.ts');
+  assert.equal(strip('elsewhere/a.ts'), 'elsewhere/a.ts');
+  const lines = Array.from({ length: 50_000 }, (_, i) => `/tmp/w/src/file${i}.ts`);
+  const started = performance.now();
+  const stripped = lines.map(strip);
+  assertPerf('type check: strip 50k --listFiles lines', performance.now() - started, 200);
+  assert.equal(stripped[49_999], 'src/file49999.ts');
+});
+
+void test('type check: before its status is read, the view shows the saved demotion; a result for another draft reads as waiting (#499)', () => {
+  const file = { path: 'a.ts', original: 'a\n', result: 'a\n', typeError: { key: 'old', note: 'Saved.' } };
+  const other = { path: 'b.ts', original: 'b\n', result: 'b\n' };
+  const files = [file, other];
+  const checked = { 'a.ts': typeCheckKey(file), 'b.ts': typeCheckKey(other) };
+  const errors: ConflictTypeCheck = { state: 'errors', checked, count: 1, preExisting: 0, errors: [], files: [{ path: 'a.ts', key: checked['a.ts'], note: 'Run.' }] };
+  const of = (status: ConflictTypeCheck | null | undefined) => typeErrorOf(file, typeCheckFor(status, files));
+  assert.equal(of(undefined)?.note, 'Saved.', 'Not read yet: no flash to Merged');
+  assert.equal(of({ state: 'running' })?.note, 'Saved.');
+  assert.equal(of({ state: 'waiting' })?.note, 'Saved.');
+  assert.equal(of(errors)?.note, 'Run.');
+  assert.equal(of({ state: 'passed', preExisting: 0, checked }), undefined);
+  // Another file's draft changed since: the whole result is for another draft.
+  const stale = { ...checked, 'b.ts': 'older' };
+  assert.deepEqual(typeCheckFor({ state: 'passed', preExisting: 0, checked: stale }, files), { state: 'waiting' });
+  assert.equal(of({ state: 'passed', preExisting: 0, checked: stale })?.note, 'Saved.');
+  assert.equal(of({ ...errors, checked: stale })?.note, 'Saved.');
+  assert.equal(of({ state: 'passed', preExisting: 0 })?.note, 'Saved.', 'A result that doesn’t say what it checked');
+  assert.equal(of(null), undefined, 'Off');
+});
+void test('type check: a late result for an earlier draft never clears the demotion after a flip back (#505 round 2, 1)', async (t) => {
+  const gate: { hold?: Promise<void> } = {};
+  const f = await fixture(t, {
+    clone: await clone(t),
+    files: twoConflicts(true),
+    delay: 0,
+    run: async (script, args, o) => {
+      await gate.hold;
+      return realRun(script, args, o);
+    },
+  });
+  // D0: errors, both Merged conflicts in Check.
+  assert.equal((await f.settled())?.state, 'errors');
+  const d0 = f.saved().files[0].result;
+  assert.deepEqual(shown(f.saved().files[0]), ['check', 'check']);
+  // D1 fixes every error; its run R1 waits in the compiler.
+  let release!: () => void;
+  gate.hold = new Promise((resolve) => (release = resolve));
+  const file = f.saved().files[0];
+  const d1 = applyChoices(parseConflicts(file.original), ['ours', 'proposal'], file.proposals).replace(
+    'export const f5: number = limit * 5;\n',
+    'export const f5 = 5;\n'
+  );
+  const save = (contents: string) =>
+    f.service.run(
+      { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents, resolved: false },
+      new AbortController().signal
+    );
+  await save(d1);
+  await f.started(4);
+  // D2 flips back to D0 while R1 still runs, and R1 finishes while D2's save holds the draft.
+  f.deps.typeCheckDelay = 60_000;
+  let flushed!: () => void;
+  const held = new Promise<void>((resolve) => (flushed = resolve));
+  const flush = f.deps.storage.flush;
+  f.deps.storage.flush = async () => {
+    await held;
+    return flush();
+  };
+  const saving = save(d0);
+  release();
+  assert.equal((await f.settled())?.state, 'passed', 'R1 passed, for D1');
+  flushed();
+  await saving;
+  f.deps.storage.flush = flush;
+  // R1's pass is for D1, not D2: dropped. D2 keeps its demotion, and the status waits for D2's own run.
+  assert.ok(f.saved().files[0].typeError, 'D2 keeps its demotion');
+  const status = f.service.typeCheck(f.session.id);
+  assert.equal(status?.state, 'waiting');
+  assert.deepEqual(shown(f.saved().files[0], typeCheckFor(status, f.saved().files)), ['check', 'check']);
+  f.service.cancelTypeCheck(f.session.id);
+  assert.equal(f.service.typeCheck(f.session.id)?.state, 'cancelled', 'Stop works while waiting');
+});
+void test('type check: a base that can’t be checked leaves the errors the head comparison found (#505 review, 2)', async (t) => {
+  let calls = 0;
+  const f = await fixture(t, {
+    clone: await clone(t),
+    // Main's use of `limit` in a file without conflicts: an error outside the conflicts, so the base is checked.
+    files: {
+      'use.ts': ['export const n = 1;\n', 'export const n = 1;\n', "import { limit } from './sample';\nexport const n: number = limit;\n"],
+    },
+    run: async (script, args, o) =>
+      // The merge and the head run; the base's output is cut off.
+      ++calls <= 2 ? realRun(script, args, o) : { code: 2, stdout: 'sample.ts(1,1): error TS1005: Cut', stderr: '' },
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.equal(calls, 3);
+  assert.deepEqual(shown(f.saved().files[0]), ['check']);
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: the base never excuses an error inside a conflict (#505 review, 4)', async (t) => {
+  const f = await fixture(t, {
+    clone: await clone(t),
+    files: {
+      // Main adds a broken line where the PR adds its own: the union keeps both, so the conflict holds main's error.
+      'sample.ts': [
+        'export const z = 0;\n',
+        'export const z = 0;\nexport const fromPr = 1;\n',
+        "export const z = 0;\nexport const fromMain: number = 'x';\n",
+      ],
+    },
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.ok(status.errors.some((line) => line.startsWith('sample.ts:') && line.includes('TS2322')), status.errors.join('\n'));
+  assert.equal(f.runs.length, 2, 'No base run: nothing outside the conflicts to excuse');
+});
+
+void test('type check: the dialog and the header read the same status (#505 review, 5)', async (t) => {
+  const f = await fixture(t);
+  // Off: null for both.
+  assert.equal(f.service.typeCheckStatus(f.session.id), null);
+  assert.equal(f.service.typeCheckStatus(f.session.id, 'test/repo'), null);
+  // On, but not run since the app started: undefined, so the saved demotions apply.
+  f.live.clone = '/somewhere';
+  assert.equal(f.service.typeCheckStatus(f.session.id), undefined);
+  assert.equal(f.service.typeCheckStatus(f.session.id, 'test/repo'), undefined);
+});
+
+void test('type check: saves in a row start one run, after the changes stop (#505 review, 6)', async (t) => {
+  const f = await fixture(t, { clone: await clone(t), delay: 300 });
+  assert.equal((await f.settled())?.state, 'errors');
+  const first = f.runs.length;
+  const file = f.saved().files[0];
+  for (const choice of ['ours', 'theirs', 'ours'] as const) {
+    await f.service.run(
+      {
+        kind: 'save',
+        id: f.session.id,
+        version: f.saved().version,
+        path: 'sample.ts',
+        contents: applyChoices(parseConflicts(file.original), [choice], file.proposals),
+        resolved: false,
+        picks: [choice],
+      },
+      new AbortController().signal
+    );
+    assert.notEqual(f.service.typeCheck(f.session.id)?.state, 'running', 'Not on every save');
+  }
+  await f.started(first + 1);
+  const status = await f.settled();
+  assert.equal(status?.state, 'passed', JSON.stringify(status));
+  assert.equal(f.runs.length, first + 1, 'One run, for the last draft');
 });

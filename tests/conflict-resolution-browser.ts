@@ -1425,36 +1425,42 @@ void app.whenReady().then(async () => {
     await click('Stop');
     assert.equal(await js('window.typeCheckCancels'), 1, 'Stop cancels the check');
     await typeCheckShows({ state: 'cancelled' }, 'Type check: stopped');
-    await typeCheckShows({ state: 'passed', preExisting: 0 }, 'Type check: passed');
+    const keyOf = (f: (typeof counted)[number]) => typeCheckKey(f as Parameters<typeof typeCheckKey>[0]);
+    const checked = Object.fromEntries(counted.map((f) => [(f as unknown as { path: string }).path, keyOf(f)]));
+    await typeCheckShows({ state: 'passed', preExisting: 0, checked }, 'Type check: passed');
+    // A pass for an earlier draft is never shown as passed for this one; nor while your changes settle.
+    await typeCheckShows({ state: 'passed', preExisting: 0, checked: { ...checked, 'src/imports.ts': 'earlier' } }, 'Type check: waiting for your changes');
+    await typeCheckShows({ state: 'waiting' }, 'Type check: waiting for your changes');
     await typeCheckShows(
       { state: 'skipped', reason: 'dependencies aren’t installed in your clone' },
       'Type check: skipped (dependencies aren’t installed in your clone)'
     );
-    // New errors: the one in src/imports.ts keeps its Merged conflict in Check, with the compiler's error. The one in
-    // a file without conflicts is information only.
-    const typeNote = "The type check found a new error in this file: src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.";
+    // New errors: the compiler checks the whole program, so every Merged conflict in the PR is Check, with the first
+    // error as the note. A result for this draft only: every file's key is the one it checked.
+    const typeNote = 'The type check found 2 new errors, the first in src/imports.ts:3 (TS2305).';
     await typeCheckShows(
       {
         state: 'errors',
         count: 2,
         preExisting: 1,
         errors: ["src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.", "src/use.ts:1 TS2322 Type 'string' is not assignable to type 'number'."],
-        files: [{ path: 'src/imports.ts', key: typeCheckKey(counted[1] as Parameters<typeof typeCheckKey>[0]), note: typeNote }],
+        checked,
+        files: counted.map((f) => ({ path: (f as unknown as { path: string }).path, key: keyOf(f), note: typeNote })),
       },
       'Type check: 2 new errors'
     );
     await wait(
-      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'"
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 4 need you: 3 to check, 1 to decide.'"
     );
     assert.deepEqual(
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
-      ['1 to decide1 to check', '1 to check', '1 merged']
+      ['1 to decide1 to check', '1 to check', '1 to check']
     );
     await js("document.querySelector('.conflict-type-check-detail').focus()");
     await wait("document.querySelector('.conflict-type-check-errors')?.textContent.includes('src/use.ts:1 TS2322')");
     assert.match(
       await js<string>("document.querySelector('.conflict-type-check-errors').textContent"),
-      /keep its merged conflicts in Check\. Errors elsewhere are for your information\..*Not counted: 1 error the PR already has\./
+      /Any new error keeps every merged conflict in Check: an error in one file can come from a conflict in another\..*Not counted: 1 error the PR or its base already has\./
     );
     await captureAll('type-check-errors');
     await js(`${block(0)}.focus()`);

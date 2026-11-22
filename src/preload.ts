@@ -449,7 +449,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
   // The opt-in type check of a prepared merge (#445 item 24).
-  conflictTypeCheck: (id: string): Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null> =>
+  conflictTypeCheck: (id: string): Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null | undefined> =>
     ipcRenderer.invoke('conflict-type-check', id),
   cancelConflictTypeCheck: (id: string): Promise<void> => ipcRenderer.invoke('conflict-type-check-cancel', id),
   onConflictTypeCheckChanged: (callback: (id: string) => void) => {
