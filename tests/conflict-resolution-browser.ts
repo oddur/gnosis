@@ -861,7 +861,29 @@ void app.whenReady().then(async () => {
       1,
       'The merged conflict shows as Merged, in the same view as the main resolution'
     );
+    // The paused file is in the Conflicts view's diff (#445 item 11): Changes' file header, Compare with named for a
+    // restack, and no Edit result mode.
+    const paused = "document.querySelector('.restack-conflict-file')";
+    assert.equal(await js(`!!${paused}.querySelector('.conflict-diff-view .changes-file-header')`), true);
+    assert.deepEqual(
+      await js(`[...${paused}.querySelectorAll('.conflict-compare [data-compare]')].map(b=>b.textContent)`),
+      ['Parent', 'This PR', 'both']
+    );
+    assert.equal(await exists('Edit result'), false);
     await captureAll('restack-paused');
+    // Edit in place in a pause too: the draft takes your text in that conflict, and Undo opens it again.
+    await editInline(0, '// replayed by hand\n', paused);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='edited'`);
+    await wait("window.conflictFixture.restack.blocked.files[0].result.includes('// replayed by hand')");
+    assert.equal(
+      await js(`${paused}.querySelectorAll('.conflict-block[data-bucket=merged]').length`),
+      1,
+      'The Merged conflict keeps its proposal'
+    );
+    await captureAll('restack-inline-edited');
+    await js(`[...${paused}.querySelector('.conflict-block[data-conflict-index="0"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='open'`);
+    await wait("!window.conflictFixture.restack.blocked.files[0].result.includes('// replayed by hand')");
     await js(
       "document.querySelector('.restack-conflict-file .conflict-block[data-state=open] [data-choice=theirs]').click()"
     );

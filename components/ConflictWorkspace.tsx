@@ -1391,6 +1391,7 @@ export function ConflictWorkspace({
                 session={session}
                 busy={busy}
                 options={options}
+                preferences={preferences}
                 error={failedKind?.startsWith('restack-') ? error : undefined}
                 failedKind={failedKind === 'open' ? undefined : failedKind}
                 onRecheck={() => void load()}
