@@ -1726,9 +1726,10 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
     assert.equal(await activeBlock(), '1', 'Undo keeps focus on the conflict');
     assert.equal(await js(`${block(1)}.querySelector('[data-choice=proposal]').getAttribute('aria-keyshortcuts')`), 'A');
-    // A uses the proposal, and focus moves to the next conflict that needs you: past the last, back to the first.
+    // A is Use the proposal (#507): your choice, Decided, never Merged. Focus moves to the next conflict that needs
+    // you: past the last, back to the first.
     await key('a');
-    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    await wait(`${block(1)}?.dataset.bucket==='decided'`);
     assert.equal(await activeBlock(), '0');
     // U right after A undoes that A, not the conflict focus moved to.
     await key('u');
@@ -1743,29 +1744,36 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-compare [data-compare=main]')?.getAttribute('aria-pressed')==='true'");
     assert.equal(await activeBlock(), null, 'V moves focus to the switch');
     await key('a');
-    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    await wait(`${block(1)}?.dataset.bucket==='decided'`);
     assert.equal(await js(`${block(0)}.dataset.state`), 'open', 'A did not act on the first conflict');
     assert.doesNotMatch(await footerSays(), /no proposal/);
+    await wait(`document.activeElement===${block(0)}`);
     // V cycles on: both, then back to PR.
     for (const mode of ['both', 'pr']) {
       await key('v');
       await wait(`document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'`);
     }
-    // Keep one side on the first; focus returns to the Check proposal.
+    // Keep one side on the first: nothing else needs you, so the next action has focus.
     await key('1');
     await wait(`${block(0)}?.dataset.state==='kept'`);
-    await wait(`document.activeElement===${block(1)}`);
-    // G moves focus to its switch; U still undoes the card you were on.
+    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
+    // G moves focus to its switch; U still undoes the card you were on last.
     await key('g');
     await wait("document.activeElement?.type==='checkbox'");
     await key('u');
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'decided');
+    // Open conflict 2 again; keep the first, and A on conflict 2 with nothing else to decide sends focus to the next
+    // action.
+    await js(`${block(1)}.focus()`);
+    await key('u');
     await wait(`${block(1)}?.dataset.state==='open'`);
-    assert.equal(await js(`${block(0)}.dataset.state`), 'kept');
-    // A there, with nothing else to decide: focus goes to the next action. A never makes a proposal Merged.
-    await wait(`document.activeElement===${block(1)}`);
+    await js(`${block(0)}.focus()`);
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept' && document.activeElement===${block(1)}`);
     await key('a');
     await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
-    assert.equal(await js(`${block(1)}.dataset.bucket`), 'check', 'Accept never makes a proposal Merged');
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'decided', 'Accept never makes a proposal Merged');
     // U on a kept conflict opens it again.
     await js(`${block(0)}.focus()`);
     await key('u');
@@ -1802,7 +1810,7 @@ void app.whenReady().then(async () => {
     await key('g');
     assert.equal(await js(`${showMergedInput}.checked`), true, 'G never turns it off');
     await key('j');
-    assert.equal(await activeBlock(), '1', 'Keys work from the switch');
+    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
     // An unsaved edit in place holds M, Mark reviewed and a file switch: the text stays, and the hint says why.
     await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
     await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
