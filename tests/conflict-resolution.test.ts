@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
-import { restackWorktreePath } from '../src/conflict-restack';
+import { replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, validateConflictRequest, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
@@ -305,13 +305,18 @@ void test('restack replays only each PR’s commits and publishes all branches a
     [1, 1]
   );
   assert.match(session.restack.branches[0].patch, /answer = 3/);
+  // Clean replays had no Check or Decide (#445 item 21): neither update needs its tick, but a tick is still accepted.
+  assert.deepEqual(
+    session.restack.branches.map((b) => b.review),
+    [false, false]
+  );
   await assert.rejects(
     f.run({
       kind: 'restack-publish',
       id: session.id,
       version: session.version,
       previewToken: session.restack.token,
-      reviewed: [],
+      reviewed: [f.urls[0], f.urls[0]],
     }),
     /Review every/
   );
@@ -1962,4 +1967,233 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
   );
   assert.equal(file.wholeFile, undefined);
   assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+});
+
+const ACCOUNT =
+  'class Account:\n    def __init__(self, owner, balance=0):\n        self.owner = owner\n        self.balance = balance\n\n    def deposit(self, amount):\n        self.balance += amount\n';
+const WITHDRAW = '\n    def withdraw(self, amount):\n        self.balance -= amount\n';
+const STATEMENT = '\n    def statement(self):\n        return f"{self.owner}: {self.balance}"\n';
+/**
+ * A 3-PR stack for the restack pipeline (#445 item 21): PR 1 (feature) resolved and pushed, PR 2 (child) changes
+ * `file` as `child` where main changed it as `main`, and PR 3 (tip) adds a file of its own. The service checks proposals
+ * as the app does, in tree-sitter.
+ */
+async function pipelineStack(t: TestContext, file: { name: string; base: string; main: string; child: string }) {
+  const f = await fixture(t, false, undefined, [{ name: file.name, base: file.base, ours: file.base, theirs: file.main }]);
+  Object.assign(f.deps, {
+    verify: (checked: ConflictFile, off: SyntaxLanguage[]) => conflictChecker(movedEngine, off)(checked),
+    moved: (checked: ConflictFile, off: SyntaxLanguage[]) => moveProposer(movedEngine, off)(checked),
+  });
+  const remote = f.deps.remote();
+  await f.git('checkout', '-b', 'child', f.state.headSha);
+  await fs.writeFile(path.join(remote, file.name), file.child);
+  await f.git('commit', '-am', 'child change');
+  await f.git('checkout', '-b', 'tip');
+  await fs.writeFile(path.join(remote, 'tip.txt'), 'tip change\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'tip change');
+  await f.git('checkout', 'main');
+  const service = createConflictResolutionService(f.deps);
+  const signal = new AbortController().signal;
+  let session = (await service.run({ kind: 'open', url: f.state.url, restart: true }, signal)).session;
+  session = (
+    await service.run(
+      {
+        kind: 'save',
+        id: session.id,
+        version: session.version,
+        path: 'sample.ts',
+        contents: 'export const answer = 3;\n',
+        resolved: true,
+      },
+      signal
+    )
+  ).session;
+  const preview = (await service.run({ kind: 'preview', id: session.id, version: session.version }, signal)).preview;
+  assert.ok(preview);
+  session = (
+    await service.run(
+      { kind: 'publish', id: session.id, version: session.version, previewToken: preview.token, message: 'Resolve root' },
+      signal
+    )
+  ).session;
+  const urls = ['https://github.com/test/repo/pull/2', 'https://github.com/test/repo/pull/3'];
+  const read = async (url: string) => {
+    const index = [f.state.url, ...urls].indexOf(url);
+    assert.ok(index >= 0);
+    const branch = ['feature', 'child', 'tip'][index],
+      baseBranch = ['main', 'feature', 'child'][index];
+    return {
+      ...f.state,
+      url,
+      title: branch,
+      headBranch: branch,
+      baseBranch,
+      headSha: await f.git('rev-parse', branch),
+      baseSha: await f.git('rev-parse', baseBranch),
+    };
+  };
+  const restacking = createConflictResolutionService({ ...f.deps, read, dependents: () => urls });
+  return {
+    ...f,
+    session,
+    urls,
+    run: (r: Parameters<typeof restacking.run>[0]) => restacking.run(r, new AbortController().signal),
+  };
+}
+const nativeMergirafMissing = async (t: TestContext) => {
+  if (await fs.stat(nativeMergiraf).catch(() => undefined)) return false;
+  t.skip('Needs the Mergiraf binary: npm run prepare:mergiraf.');
+  return true;
+};
+void test('a paused replay runs the pipeline: a PR whose conflicts the checks merge needs no Reviewed tick (#445)', async (t) => {
+  if (await nativeMergirafMissing(t)) return;
+  const f = await pipelineStack(t, { name: 'account.py', base: ACCOUNT, main: ACCOUNT + STATEMENT, child: ACCOUNT + WITHDRAW });
+  const child = await f.git('rev-parse', 'child');
+  let { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'prepared', 'Nothing stops for you: both added methods are Merged');
+  assert.deepEqual(
+    session.restack.branches.map(({ merged, yours, reused, review }) => ({ merged, yours, reused, review })),
+    [
+      { merged: 1, yours: 0, reused: 0, review: false },
+      { merged: 0, yours: 0, reused: 0, review: false },
+    ],
+    'PR 2 is Merged by the checks and PR 3 replays cleanly: neither needs a tick'
+  );
+  assert.equal(await f.git('rev-parse', 'child'), child, 'Preparation must not push');
+  // The checks' result is not remembered as yours: Prepare again merges it again, rather than reusing it.
+  session = (await f.run({ kind: 'restack-prepare', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.branches[0].reused, 0);
+  assert.equal(session.restack.branches[0].merged, 1);
+  await assert.rejects(
+    f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: ['https://github.com/test/repo/pull/9'],
+    }),
+    /Review every/,
+    'Only updates in the plan can be ticked'
+  );
+  session = (
+    await f.run({ kind: 'restack-publish', id: session.id, version: session.version, previewToken: session.restack.token, reviewed: [] })
+  ).session;
+  assert.equal(session.restack?.status, 'published');
+  assert.equal(await f.git('show', 'tip:account.py'), (ACCOUNT + STATEMENT + WITHDRAW).trimEnd());
+  assert.equal(await f.git('show', 'tip:tip.txt'), 'tip change');
+});
+void test('a replayed conflict the checks leave in Check pauses the restack, and its PR needs its tick (#445)', async (t) => {
+  if (await nativeMergirafMissing(t)) return;
+  const imports = (extra: string) => `import { a } from './a';\n${extra}\nexport const x = a;\n`;
+  const f = await pipelineStack(t, {
+    name: 'imports.ts',
+    base: imports(''),
+    main: imports("import { b } from './b';\n"),
+    child: imports("import { c } from './c';\n"),
+  });
+  let { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'blocked');
+  const [file] = session.restack.blocked?.files ?? [];
+  assert.equal(file.path, 'imports.ts');
+  assert.ok(file.proposals?.[0], 'Structural merge proposed both imports');
+  assert.deepEqual(replayBuckets(file), ['check'], 'Order can matter for imports: Check, never Merged');
+  assert.equal(file.result, imports("import { b } from './b';\nimport { c } from './c';\n"));
+  session = (
+    await f.run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'imports.ts',
+      contents: file.result,
+      resolved: true,
+    })
+  ).session;
+  session = (await f.run({ kind: 'restack-continue', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.status, 'prepared');
+  assert.deepEqual(
+    session.restack.branches.map(({ yours, review }) => ({ yours, review })),
+    [
+      { yours: 1, review: true },
+      { yours: 0, review: false },
+    ]
+  );
+  await assert.rejects(
+    f.run({ kind: 'restack-publish', id: session.id, version: session.version, previewToken: session.restack.token, reviewed: [] }),
+    /Review every/
+  );
+  session = (
+    await f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: [f.urls[0]],
+    })
+  ).session;
+  assert.equal(session.restack?.status, 'published');
+  assert.equal(await f.git('show', 'tip:imports.ts'), file.result.trimEnd());
+});
+void test('your choice in a paused replay carries to the same conflict after Prepare again, as yours (#445)', async (t) => {
+  const f = await stackedFixture(t, true);
+  let session = (await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version })).session;
+  assert.equal(session.restack?.status, 'blocked');
+  session = (
+    await f.run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 5;\n',
+      resolved: true,
+      picks: [null],
+    })
+  ).session;
+  // Prepare again replaces the paused plan: Git's rerere has not recorded the choice, the carry has.
+  session = (await f.run({ kind: 'restack-prepare', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.status, 'prepared', 'The carried choice settles the conflict: nothing stops');
+  assert.deepEqual(
+    session.restack.branches.map(({ merged, yours, reused, review }) => ({ merged, yours, reused, review })),
+    [
+      { merged: 0, yours: 1, reused: 0, review: true },
+      { merged: 0, yours: 0, reused: 0, review: false },
+    ],
+    'A carried choice is yours, never Merged: its PR needs its tick'
+  );
+  await assert.rejects(
+    f.run({ kind: 'restack-publish', id: session.id, version: session.version, previewToken: session.restack.token, reviewed: [] }),
+    /Review every/
+  );
+  session = (
+    await f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: [f.urls[0]],
+    })
+  ).session;
+  assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
+});
+void test('replay buckets fail closed: only an unchanged, checked proposal is Merged', () => {
+  const original = '<<<<<<< HEAD\na\n||||||| base\nx\n=======\nb\n>>>>>>> pr\n';
+  const file: ConflictFile = {
+    path: 'f.ts',
+    mode: '100644',
+    base: 'x\n',
+    ours: 'a\n',
+    theirs: 'b\n',
+    original,
+    result: 'a\nb\n',
+    resolved: false,
+    source: 'mergiraf',
+    proposals: [{ source: 'union', text: 'a\nb\n' }],
+  };
+  assert.deepEqual(replayBuckets(file), ['check'], 'No verdict yet');
+  const merged = { ...file, verdict: { key: '', verdict: { merged: true, note: '', blocks: [{ merged: true, note: '' }] } } };
+  assert.deepEqual(replayBuckets(merged), ['merged']);
+  assert.deepEqual(replayBuckets({ ...merged, result: 'b\na\n' }), ['decide'], 'A text the pipeline did not write');
+  assert.deepEqual(replayBuckets({ ...merged, result: original }), ['decide']);
+  assert.deepEqual(replayBuckets(merged, [0]), ['yours'], 'Carried is yours, even where a proposal passed');
+  assert.deepEqual(replayBuckets({ ...merged, unsupported: 'binary' }), ['decide']);
 });

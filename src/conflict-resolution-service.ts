@@ -1530,8 +1530,20 @@ export function createConflictResolutionService(deps: Deps) {
             remote,
             signal,
             report,
+            // The main merge's pipeline for each paused commit (#445 item 21): the same steps, not a copy of them.
+            propose: async (files: ConflictFile[], branches: { head: string; base: string }) => {
+              await mergeStructurally(ctx, id, branches, files, signal, report);
+            },
+            check: async (files: ConflictFile[]) => {
+              await check(files, signal, report);
+            },
           };
           if (request.kind === 'restack-prepare') {
+            // Your reviewed choices in the plan this one replaces carry to the same conflicts in the new one.
+            const carry = [
+              ...(session.restack?.carry ?? []),
+              ...(session.restack?.blocked?.files.filter((file) => file.resolved) ?? []),
+            ];
             if (session.restack?.status === 'blocked')
               await git(
                 ctx,
@@ -1553,7 +1565,7 @@ export function createConflictResolutionService(deps: Deps) {
             session.dependents = deps.dependents?.(session.url) ?? [];
             await memory.record(memoryScope(session), session.files, signal);
             session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
-              prepareRestack(session, session.dependents ?? [], restackDeps)
+              prepareRestack(session, session.dependents ?? [], { ...restackDeps, carry })
             );
           } else if (request.kind === 'restack-save') {
             const file = session.restack?.blocked?.files.find((file) => file.path === request.path);
@@ -1568,6 +1580,7 @@ export function createConflictResolutionService(deps: Deps) {
               throw new Error('Remove the remaining conflict markers first.');
             file.result = request.contents;
             file.resolved = request.resolved;
+            if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
@@ -1575,10 +1588,15 @@ export function createConflictResolutionService(deps: Deps) {
               prepareRestack(session, session.dependents ?? [], restackDeps, true)
             );
           } else {
+            // Every update that needs its tick has it. An update whose replay the checks merged whole needs none.
+            const urls = session.restack?.branches.map((branch) => branch.url) ?? [];
             if (
               !session.restack ||
-              session.restack.branches.some((branch) => !request.reviewed.includes(branch.url)) ||
-              new Set(request.reviewed).size !== session.restack.branches.length
+              session.restack.branches.some(
+                (branch) => branch.review !== false && !request.reviewed.includes(branch.url)
+              ) ||
+              new Set(request.reviewed).size !== request.reviewed.length ||
+              request.reviewed.some((url) => !urls.includes(url))
             )
               throw new Error('Review every dependent PR update before pushing.');
             await publishRestack(session, request.previewToken, restackDeps);

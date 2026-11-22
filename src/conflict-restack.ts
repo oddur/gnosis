@@ -9,6 +9,9 @@ import {
   type ConflictFile,
 } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
+import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import { blockResolutions, carryFile, type CarriedFile } from '../lib/conflict-carry';
+import { blockVerdict } from '../lib/conflict-verify';
 
 type Git = (
   args: string[],
@@ -25,6 +28,70 @@ interface Deps {
   remote: (repo: string) => string;
   signal: AbortSignal;
   report: (text: string) => void;
+  /**
+   * The main merge's preparation for a paused commit's files (src/conflict-resolution-service.ts `mergeStructurally`):
+   * structural merge, unions, same-change and move proposals. `branches` names the sides: the updated parent, then
+   * the PR. Without it, every paused file waits for you, as before #445 item 21.
+   */
+  propose?: (files: ConflictFile[], branches: { head: string; base: string }) => Promise<void>;
+  /** The main merge's checks of those proposals (`check`, in the main-process worker). */
+  check?: (files: ConflictFile[]) => Promise<void>;
+  /** Your earlier choices a fresh plan starts with (`RestackPlan.carry`), such as those of the plan it replaces. */
+  carry?: ConflictFile[];
+}
+/** How a replayed conflict was resolved: by the checks (`merged`), by you (`yours`: carried), or still open. */
+export type ReplayBucket = 'merged' | 'yours' | 'check' | 'decide';
+/**
+ * Each conflict of a replayed file after the pipeline, read from its draft. Fail closed: a conflict is Merged only when
+ * the draft holds its proposal unchanged and the checks merged it, and `yours` only when your earlier choice for the
+ * same conflict was carried to it. Anything else is Check or Decide, and the replay stops for you.
+ */
+export function replayBuckets(file: ConflictFile, carried: readonly number[] = []): ReplayBucket[] {
+  if (file.unsupported) return ['decide'];
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, file.result);
+  const verdict = file.verdict?.verdict;
+  const blocks = segments.filter((segment) => segment.kind === 'conflict');
+  if (!blocks.length) return ['decide'];
+  return blocks.map((segment) => {
+    const text = texts?.[segment.index];
+    if (text === undefined || hasConflictMarkers(text)) return 'decide';
+    if (carried.includes(segment.index)) return 'yours';
+    const proposal = file.proposals?.[segment.index];
+    if (!proposal || proposal.text !== text) return 'decide';
+    return blockVerdict(verdict, segment.index)?.merged === true ? 'merged' : 'check';
+  });
+}
+/** What `carry` keeps of a file you resolved: enough for carryFile to match its conflicts and reuse their text. */
+function carried(file: ConflictFile): ConflictFile {
+  return {
+    path: file.path,
+    mode: '',
+    base: '',
+    ours: '',
+    theirs: '',
+    original: file.original,
+    result: file.result,
+    resolved: true,
+    source: 'manual',
+    ...(file.picks ? { picks: file.picks } : {}),
+  };
+}
+/** The newest carried files, at most 50 and 4 MB, one per conflict. */
+export function carryList(files: ConflictFile[]): ConflictFile[] {
+  const kept: ConflictFile[] = [];
+  const seen = new Set<string>();
+  let bytes = 0;
+  for (const file of [...files].reverse()) {
+    if (file.unsupported || !file.resolved || hasConflictMarkers(file.result)) continue;
+    const key = `${file.path}\0${file.original}`;
+    const size = Buffer.byteLength(file.original + file.result);
+    if (seen.has(key) || kept.length >= 50 || bytes + size > 4 * 1024 * 1024) continue;
+    seen.add(key);
+    bytes += size;
+    kept.unshift(carried(file));
+  }
+  return kept;
 }
 /**
  * Every read at once, through `readMany` when there is one, and all of them settled before any check runs, so no read
@@ -111,6 +178,7 @@ export async function prepareRestack(
     rootSha: root.headSha,
     expected,
     branches: [],
+    ...(deps.carry?.length ? { carry: carryList(deps.carry) } : {}),
   };
   const worktree = await restackWorktreePath(deps.directory, plan.token);
   let keepWorktree = resume;
@@ -125,6 +193,9 @@ export async function prepareRestack(
         'rerere.autoupdate=false',
         '-c',
         'core.autocrlf=false',
+        // The ancestor's lines in each conflict, as the main merge writes them: the checks and the rules need them.
+        '-c',
+        'merge.conflictStyle=diff3',
         '-c',
         `user.name=${session.account}`,
         '-c',
@@ -135,6 +206,69 @@ export async function prepareRestack(
       allowed,
       signal
     );
+  /**
+   * The main merge's pipeline on a paused commit's text conflicts: structural merge with unions, same-change and move
+   * proposals, then your earlier choices for the same conflicts, then the checks. A file whose every conflict is Merged
+   * or yours is written and staged; the others are left for you, with their proposals and verdicts.
+   */
+  async function settle(files: ConflictFile[], branches: { head: string; base: string }) {
+    let merged = 0;
+    let yours = 0;
+    const work = files.filter((file) => !file.unsupported);
+    if (!deps.propose || !work.length) return { left: files, merged, yours };
+    await deps.propose(work, branches);
+    deps.signal.throwIfAborted();
+    const sources = [
+      ...[...(plan.carry ?? [])].reverse(),
+      ...session.files.filter((file) => file.resolved && !file.unsupported && !hasConflictMarkers(file.result)),
+    ];
+    const carriedBlocks = new Map<ConflictFile, number[]>();
+    for (const [index, file] of work.entries()) {
+      let best: CarriedFile | undefined;
+      for (const source of sources) {
+        if (source.path !== file.path) continue;
+        const attempt = carryFile(source, file, false);
+        if (attempt.reused > (best?.reused ?? 0)) best = attempt;
+      }
+      const blocks = best?.carried;
+      if (!best || !blocks?.length) continue;
+      // A carried conflict is yours: it has no proposal, so neither the checks nor the view can call it Merged.
+      const proposals = best.file.proposals?.map((proposal, i) => (blocks.includes(i) ? null : proposal));
+      const next: ConflictFile = { ...best.file, proposals };
+      if (!proposals?.some(Boolean)) delete next.proposals;
+      delete next.verdict;
+      work[index] = next;
+      carriedBlocks.set(next, blocks);
+    }
+    await deps.check?.(work);
+    deps.signal.throwIfAborted();
+    const done = new Set<string>();
+    for (const file of work) {
+      const buckets = replayBuckets(file, carriedBlocks.get(file));
+      if (hasConflictMarkers(file.result) || !buckets.every((bucket) => bucket === 'merged' || bucket === 'yours'))
+        continue;
+      await fs.writeFile(path.resolve(worktree, file.path), file.result);
+      await git(['add', '--', file.path]);
+      done.add(file.path);
+      merged += buckets.filter((bucket) => bucket === 'merged').length;
+      yours += buckets.filter((bucket) => bucket === 'yours').length;
+    }
+    if (done.size) await forgetRerere(done);
+    const byPath = new Map(work.map((file) => [file.path, file]));
+    const left = files.filter((file) => !done.has(file.path)).map((file) => byPath.get(file.path) ?? file);
+    return { left, merged, yours };
+  }
+  /**
+   * Git rerere records a staged result when the commit is made, and would offer it later as a resolution you reviewed.
+   * These are the checks' results, so their entries leave the merge's rerere list first.
+   */
+  async function forgetRerere(paths: Set<string>) {
+    const file = path.resolve(worktree, await text(git, ['rev-parse', '--git-path', 'MERGE_RR']));
+    const entries = await fs.readFile(file, 'utf8').catch(() => undefined);
+    if (entries === undefined) return;
+    const kept = entries.split('\0').filter((entry) => entry && !paths.has(entry.slice(entry.indexOf('\t') + 1)));
+    await fs.writeFile(file, kept.map((entry) => entry + '\0').join(''));
+  }
   try {
     deps.report('Preparing a private worktree for the dependent PRs. Git may fetch file contents.');
     if (!resume) await deps.git(['worktree', 'add', '--detach', worktree, root.headSha]);
@@ -161,6 +295,10 @@ export async function prepareRestack(
       if (commits > 500)
         throw new Error(`${state.headBranch} has more than 500 commits to replay. Restack it locally.`);
       let reused = resume ? (plan.blocked?.reused ?? 0) : 0;
+      // A PR whose replay paused had a Check or Decide: you reviewed its files, and its update needs its tick too.
+      const review = resume;
+      let merged = resume ? (plan.blocked?.merged ?? 0) : 0;
+      let yours = resume ? (plan.blocked?.yours ?? 0) : 0;
       let result;
       if (resume) {
         const files = plan.blocked?.files ?? [];
@@ -169,6 +307,8 @@ export async function prepareRestack(
           files.some((file) => !file.resolved || file.unsupported || hasConflictMarkers(file.result))
         )
           throw new Error('Resolve and review every paused file before continuing the restack.');
+        for (const file of files) yours += Math.max(conflictCount(file.original), 1);
+        plan.carry = carryList([...(plan.carry ?? []), ...files]);
         for (const file of files) {
           const absolute = path.resolve(worktree, file.path);
           const real = await fs.realpath(absolute);
@@ -267,16 +407,21 @@ export async function prepareRestack(
           throw new Error(
             'The paused conflicts exceed the 8 MB editor limit. Resolve this stack with a local Git tool.'
           );
-        if (unresolved.length) {
+        const settled = await settle(unresolved, { head: state.baseBranch, base: state.headBranch });
+        merged += settled.merged;
+        yours += settled.yours;
+        if (settled.left.length) {
           plan.status = 'blocked';
           plan.blocked = {
             url: state.url,
             title: state.title,
             reason:
               'The restack is paused on a new conflict. Edit and review each result below, then continue. No dependent branches have been pushed.',
-            paths: unresolved.map((file) => file.path),
-            files: unresolved,
+            paths: settled.left.map((file) => file.path),
+            files: settled.left,
             reused,
+            merged,
+            yours,
           };
           keepWorktree = true;
           return plan;
@@ -311,6 +456,10 @@ export async function prepareRestack(
         newSha,
         commits,
         reused,
+        merged,
+        yours,
+        // Only a replay without a conflict, or whose every conflict the checks merged, needs no tick.
+        review: review || reused > 0 || yours > 0,
         patch,
         files,
       });

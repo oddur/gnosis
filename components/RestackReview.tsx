@@ -2,16 +2,17 @@ import { LoadingIndicator } from './LoadingState';
 import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { CodeView, EditProvider } from '@pierre/diffs/react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, CheckCheck } from 'lucide-react';
 import { Button } from './ui/button';
 import { ConflictView, ResultEditor, createEditor } from './ConflictBlocks';
-import { conflictLabels } from '../lib/conflict-blocks';
+import { conflictLabels, type BlockPick } from '../lib/conflict-blocks';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
 import { hasConflictMarkers, type ConflictRequest, type ConflictSession } from '../lib/conflict-resolution';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 export function RestackReview({
   session,
@@ -32,7 +33,12 @@ export function RestackReview({
   onPrepare: () => void;
   onPublish: (token: string, reviewed: string[]) => void;
   onContinue: () => void;
-  onSave: (path: string, contents: string, resolved: boolean) => void;
+  onSave: (
+    path: string,
+    contents: string,
+    resolved: boolean,
+    picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[]
+  ) => void;
   onDrafts: (drafts: Record<string, string>) => void;
   /** Reads the branches again. Used after a failed push, which is never resent automatically. */
   onRecheck?: () => void;
@@ -44,9 +50,13 @@ export function RestackReview({
 }) {
   const plan = session.restack;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // Your Keep choices per paused file, so one whose text equals the proposal reads as yours, not Merged.
+  const [picks, setPicks] = useState<Partial<Record<string, (BlockPick | undefined)[]>>>({});
+  const [wholeShown, setWholeShown] = useState<Partial<Record<string, boolean>>>({});
   useEffect(() => {
     setDrafts({});
     onDrafts({});
+    setPicks({});
   }, [session.version]);
   const [review, setReview] = useState<{ token: string; urls: string[] }>({ token: '', urls: [] });
   const [confirming, setConfirming] = useState('');
@@ -65,6 +75,9 @@ export function RestackReview({
   const paused = useRef(new Set<string>());
   if (plan?.status === 'blocked') paused.current.add(plan.token);
   const reviewed = review.token === plan?.token ? review.urls : [];
+  // An update whose replay the checks merged whole, or replayed without a conflict, needs no tick (#445 item 21).
+  const needsReview = plan?.branches.filter((branch) => branch.review !== false) ?? [];
+  const allReviewed = needsReview.every((branch) => reviewed.includes(branch.url));
   const published = plan?.status === 'published';
   const count = session.dependents?.length ?? 0;
   const running = busy && !error;
@@ -117,12 +130,12 @@ export function RestackReview({
         : step.id === 'review'
           ? {
               onContinue: () => plan && setConfirming(plan.token),
-              continueDisabled: !plan || reviewed.length !== plan.branches.length,
+              continueDisabled: !plan || !allReviewed,
             }
           : {
               onContinue: () => plan && onPublish(plan.token, reviewed),
               continueLabel: running ? 'Updating branches…' : `Push ${plan?.branches.length ?? 0} PR updates`,
-              continueDisabled: !plan || reviewed.length !== plan.branches.length || failedKind === 'restack-publish',
+              continueDisabled: !plan || !allReviewed || failedKind === 'restack-publish',
             };
   return (
     <StepCard
@@ -154,9 +167,11 @@ export function RestackReview({
       retryLabel={failureStep === 'push' ? 'Check again' : 'Retry'}
       status={
         step.id === 'review' && plan
-          ? reviewed.length === plan.branches.length
-            ? `All ${plan.branches.length} PR updates reviewed · Nothing pushed yet`
-            : `${reviewed.length} of ${plan.branches.length} PR updates reviewed · Mark each update reviewed to continue`
+          ? !needsReview.length
+            ? `No update needs review: the checks merged every conflict · Nothing pushed yet`
+            : allReviewed
+              ? `${needsReview.length === plan.branches.length ? 'All ' : ''}${plural(needsReview.length, 'PR update')} reviewed · Nothing pushed yet`
+              : `${needsReview.filter((branch) => reviewed.includes(branch.url)).length} of ${plural(needsReview.length, 'PR update')} reviewed · Mark each update reviewed to continue`
           : step.id === 'resolve' && !blockedReady
             ? 'Mark each file reviewed to continue the restack'
             : undefined
@@ -183,6 +198,9 @@ export function RestackReview({
               setDrafts(next);
               onDrafts(next);
             };
+            const filePicks = picks[file.path] ?? file.picks?.map((pick) => pick ?? undefined);
+            const whole = file.wholeFile;
+            const savedPicks = filePicks && Array.from(filePicks, (pick) => pick ?? null);
             return (
               <div className="restack-conflict-file" key={file.path}>
                 <h4>
@@ -224,6 +242,24 @@ export function RestackReview({
                         labels={labels}
                         disabled={busy}
                         onChange={update}
+                        proposals={file.proposals}
+                        verdict={file.verdict?.verdict}
+                        note={file.structuralNote}
+                        picks={filePicks}
+                        onPick={(index, choice) => {
+                          const next = [...(filePicks ?? [])];
+                          next[index] = choice;
+                          setPicks({ ...picks, [file.path]: next });
+                        }}
+                        wholeFile={
+                          whole && {
+                            proposal: whole,
+                            ours: file.ours,
+                            onUse: () => update(whole.text),
+                            shown: wholeShown[file.path] === true,
+                            onShow: () => setWholeShown({ ...wholeShown, [file.path]: true }),
+                          }
+                        }
                       />
                     )}
                     <div className="restack-conflict-actions">
@@ -240,7 +276,7 @@ export function RestackReview({
                         size="sm"
                         variant="outline"
                         disabled={busy || markers || (file.resolved && !dirty)}
-                        onClick={() => onSave(file.path, value, true)}
+                        onClick={() => onSave(file.path, value, true, savedPicks)}
                       >
                         Mark reviewed
                       </Button>
@@ -267,6 +303,7 @@ export function RestackReview({
           </div>
           {plan.branches.map((branch, index) => {
             const open = expanded[branch.url] ?? index === 0;
+            const merged = branch.review === false;
             return (
               <section className="restack-branch" key={branch.url} aria-label={`PR #${prNumber(branch.url)} update`}>
                 <div className="restack-branch-header">
@@ -282,22 +319,29 @@ export function RestackReview({
                       #{prNumber(branch.url)} {branch.title}
                     </span>
                   </button>
-                  <label className="restack-reviewed">
-                    <input
-                      type="checkbox"
-                      checked={reviewed.includes(branch.url)}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setReview({
-                          token: plan.token,
-                          urls: event.target.checked
-                            ? [...reviewed, branch.url]
-                            : reviewed.filter((url) => url !== branch.url),
-                        })
-                      }
-                    />
-                    Reviewed
-                  </label>
+                  {merged ? (
+                    <span className="restack-merged conflict-bucket" data-bucket="merged">
+                      <CheckCheck size={13} aria-hidden="true" />
+                      {branch.merged ? 'Merged and checked · No review needed' : 'Replayed cleanly · No review needed'}
+                    </span>
+                  ) : (
+                    <label className="restack-reviewed">
+                      <input
+                        type="checkbox"
+                        checked={reviewed.includes(branch.url)}
+                        disabled={busy}
+                        onChange={(event) =>
+                          setReview({
+                            token: plan.token,
+                            urls: event.target.checked
+                              ? [...reviewed, branch.url]
+                              : reviewed.filter((url) => url !== branch.url),
+                          })
+                        }
+                      />
+                      Reviewed
+                    </label>
+                  )}
                 </div>
                 {open && (
                   <>
@@ -309,6 +353,8 @@ export function RestackReview({
                       {branch.reused
                         ? ` · ${branch.reused} remembered file ${branch.reused === 1 ? 'resolution' : 'resolutions'} reused`
                         : ''}
+                      {branch.merged ? ` · ${plural(branch.merged, 'conflict')} merged and checked` : ''}
+                      {branch.yours ? ` · ${plural(branch.yours, 'conflict')} resolved by you` : ''}
                     </p>
                     <p className="restack-revisions">
                       <code>{branch.oldSha.slice(0, 7)}</code> → <code>{branch.newSha.slice(0, 7)}</code>

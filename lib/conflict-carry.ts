@@ -147,6 +147,8 @@ export interface CarriedFile {
   open: number;
   /** False when the earlier draft could not be matched block by block. */
   mapped: boolean;
+  /** The blocks of `next` that reuse the user's earlier result, by index. */
+  carried?: number[];
 }
 
 /**
@@ -171,6 +173,7 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
   }
   let reused = 0;
   let open = 0;
+  const carriedBlocks: number[] = [];
   const picks: NonNullable<ConflictFile['picks']> = [];
   const result = segments
     .map((segment) => {
@@ -183,11 +186,18 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
         return next.proposals?.[segment.index]?.text ?? segment.block.raw;
       }
       reused++;
+      carriedBlocks.push(segment.index);
       return carried.text;
     })
     .join('');
   const file = withResult(old, next, result, keepReview && open === 0 && old.resolved);
-  return { file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file, reused, open, mapped: true };
+  return {
+    file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file,
+    reused,
+    open,
+    mapped: true,
+    carried: carriedBlocks,
+  };
 }
 
 /** The fresh merge with an earlier result. Source and explanation stay when the user's result carried over. */
