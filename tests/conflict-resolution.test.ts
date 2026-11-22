@@ -14,6 +14,8 @@ import { createConflictMemory } from '../src/conflict-rerere';
 import {
   hasConflictMarkers,
   conflictFileStage,
+  fileDraftKey,
+  FILE_DRAFT_CHANGED,
   validateConflictRequest,
   type ConflictFile,
   type ConflictSession,
@@ -255,6 +257,71 @@ void test('drafts survive service restart; stale revisions and accounts cannot p
   await assert.rejects(run({ kind: 'preview', id: saved.id, version: saved.version }), /PR branch has new commits/);
   f.context.account = 'different';
   await assert.rejects(run({ kind: 'preview', id: saved.id, version: saved.version }), /Open this PR/);
+});
+void test('a save from an earlier version goes on while its file is unchanged, waits for an open, and refuses a changed file', async (t) => {
+  const other = {
+    name: 'other.ts',
+    base: 'export const other = 0;\n',
+    ours: 'export const other = 1;\n',
+    theirs: 'export const other = 2;\n',
+  };
+  const f = await fixture(t, false, undefined, [other]);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  // A draft whose files structural merge never ran on (out of time in a large PR, an older build): every open runs it
+  // and bumps the version, as the main process's checks do.
+  const untried = () => {
+    const stored = structuredClone(f.deps.storage.read(key)) as ConflictSession;
+    for (const file of stored.files) delete file.structuralRan;
+    f.deps.storage.write(key, stored);
+  };
+  untried();
+  // The view you type in holds the draft as it opened it.
+  const yours = f.session;
+  const sample = yours.files.find((file) => file.path === 'sample.ts');
+  assert.ok(sample);
+  // Another view of the PR opens it meanwhile (a remount, another tab) while your autosave is sent: the save waits for
+  // the open, never fails as busy, and lands on the draft the open left.
+  let letRead = () => {};
+  const gate = new Promise<void>((resolve) => (letRead = resolve));
+  const service = createConflictResolutionService({ ...f.deps, read: async () => (await gate, { ...f.state }) });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const opening = run({ kind: 'open', url: f.state.url });
+  await new Promise((resolve) => setImmediate(resolve));
+  const save = {
+    kind: 'save' as const,
+    id: yours.id,
+    version: yours.version,
+    path: 'sample.ts',
+    contents: 'export const answer = 3;\n',
+    resolved: false,
+    base: fileDraftKey(sample),
+  };
+  const saving = run(save);
+  letRead();
+  const [opened, saved] = await Promise.all([opening, saving]);
+  assert.ok(opened.session.version > yours.version, 'the open moved the draft on');
+  assert.equal(saved.session.version, opened.session.version + 1);
+  assert.equal(saved.session.files.find((file) => file.path === 'sample.ts')?.result, save.contents);
+  // The open's own work on the other file stays.
+  assert.equal(
+    JSON.stringify(saved.session.files.find((file) => file.path === 'other.ts')?.structuralRan),
+    JSON.stringify(opened.session.files.find((file) => file.path === 'other.ts')?.structuralRan)
+  );
+  // Without the file it started from, an earlier version is refused, as before.
+  await assert.rejects(run({ ...save, base: undefined }), /saved resolution changed/);
+  // The other view changes the same file: your save from the earlier draft is refused, and its text stays.
+  const theirs = (
+    await run({ ...save, version: saved.session.version, contents: 'export const answer = 4;\n', base: undefined })
+  ).session;
+  await assert.rejects(run({ ...save, contents: 'export const answer = 5;\n' }), (error: Error) => error.message === FILE_DRAFT_CHANGED);
+  const stored = f.deps.storage.read(key) as ConflictSession;
+  assert.equal(stored.version, theirs.version);
+  assert.equal(stored.files.find((file) => file.path === 'sample.ts')?.result, 'export const answer = 4;\n');
+  // Started again from the saved draft, the same edit goes through.
+  const again = stored.files.find((file) => file.path === 'sample.ts');
+  assert.ok(again);
+  const kept = await run({ ...save, version: stored.version, contents: 'export const answer = 5;\n', base: fileDraftKey(again) });
+  assert.equal(kept.session.files.find((file) => file.path === 'sample.ts')?.result, 'export const answer = 5;\n');
 });
 void test('unsupported conflicts and leftover markers cannot be marked resolved', async (t) => {
   const f = await fixture(t, true);

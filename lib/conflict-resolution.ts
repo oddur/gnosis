@@ -202,6 +202,11 @@ export type ConflictRequest =
       picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
       /** Your in-place edits per block (`ConflictFile.edits`); absent leaves the saved ones. */
       edits?: (SavedBlockEdit | null)[];
+      /**
+       * The file as your edit started from it (`fileDraftKey`). A draft that another writer moved on since `version`
+       * still takes the save while this file is the same; when the file changed too, the save is refused.
+       */
+      base?: string;
     }
   | {
       kind: 'resolve';
@@ -290,6 +295,28 @@ export interface SavedBlockEdit {
   written?: number[];
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A save refused because the file it edits changed underneath it. The renderer matches it to offer the recovery. */
+export const FILE_DRAFT_CHANGED = 'This file’s saved draft changed while you edited it, so your edit wasn’t saved.';
+/**
+ * The parts of a file a save builds on: Git's conflict, the draft, its proposals and your choices and edits. Two
+ * 32-bit FNV-1a hashes with the length, over the same JSON in the renderer and the main process. The checks' verdicts
+ * and the type check's demotions are not in it: the service checks a save against its own, whatever the renderer saw.
+ */
+export function fileDraftKey(
+  file: Pick<ConflictFile, 'path' | 'original' | 'result' | 'proposals' | 'picks' | 'edits'>
+) {
+  const { path, original, result, proposals, picks, edits } = file;
+  const text = JSON.stringify([path, original, result, proposals ?? null, picks ?? null, edits ?? null]);
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995);
+    b ^= b >>> 15;
+  }
+  return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${text.length.toString(36)}`;
+}
 /** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
 const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
 const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
@@ -362,7 +389,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     typeof r.resolved === 'boolean' &&
     (r.picks === undefined ||
       (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
-    (r.edits === undefined || validEdits(r.edits))
+    (r.edits === undefined || validEdits(r.edits)) &&
+    (r.base === undefined || (r.kind === 'save' && text('base', 64)))
   )
     return;
   if (

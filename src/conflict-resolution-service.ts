@@ -4,6 +4,8 @@ import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
+  FILE_DRAFT_CHANGED,
+  fileDraftKey,
   hasConflictMarkers,
   validateConflictRequest,
   type ConflictFile,
@@ -605,6 +607,18 @@ export function createConflictResolutionService(deps: Deps) {
       else if (error instanceof TypeCheckSkipped) finish({ state: 'skipped', reason: message });
       else finish({ state: 'skipped', reason: `couldn’t run: ${message.slice(0, 200)}` });
     });
+  }
+  /**
+   * A save sent from an earlier version of the draft: another writer (an open in another view, its checks, a save of
+   * another file) moved the draft on meanwhile. It goes on from the draft as it is now while the file it edits is the
+   * one the edit started from (`base`). When that file changed too, the save is refused and nothing is overwritten.
+   */
+  function rebases(request: ConflictRequest, session: ConflictSession) {
+    if (request.kind !== 'save' || request.base === undefined || request.version > session.version) return false;
+    if (session.status !== 'editing') return false;
+    const file = session.files.find((f) => f.path === request.path);
+    if (!file || fileDraftKey(file) !== request.base) throw new Error(FILE_DRAFT_CHANGED);
+    return true;
   }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
@@ -2512,9 +2526,14 @@ export function createConflictResolutionService(deps: Deps) {
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
       // Background work on this PR stops for you; only another request of yours makes this one wait.
-      // A background run that took the lock while this waited gives way too.
-      do await yieldToYou(key);
-      while (backgroundWork.has(key));
+      // A background run that took the lock while this waited gives way too. A save waits for the request before it
+      // (an open from another view of the PR, say) and then goes on from the draft that request left.
+      for (;;) {
+        do await yieldToYou(key);
+        while (backgroundWork.has(key));
+        if (!busy.has(key) || request.kind !== 'save') break;
+        await freed(key, signal);
+      }
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
       try {
@@ -2546,7 +2565,7 @@ export function createConflictResolutionService(deps: Deps) {
           return { session };
         }
         const session = sessionFor(ctx, id);
-        if (request.version !== session.version)
+        if (request.version !== session.version && !rebases(request, session))
           throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
         if (
           request.kind === 'restack-prepare' ||

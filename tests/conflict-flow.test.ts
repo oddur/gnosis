@@ -8,6 +8,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
+import { FILE_DRAFT_CHANGED } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -77,6 +78,16 @@ void test('errors use plain copy and keep the raw output for Details', () => {
     describeConflictError('Select an unresolved text file.', { stage: 'other' }).title,
     'Select an unresolved text file.'
   );
+  // A draft another view saved since: say so, and offer the saved draft, never "reopen" alone.
+  for (const message of [
+    "Error invoking remote method 'conflict-resolution': Error: The saved resolution changed. Reopen the workspace before continuing.",
+    FILE_DRAFT_CHANGED,
+  ]) {
+    const copy = describeConflictError(message, { stage: 'other' });
+    assert.equal(copy.title, 'This draft changed in another view.');
+    assert.equal(copy.recovery, 'reload');
+    assert.doesNotMatch(copy.body, /Reopen/);
+  }
 });
 
 void test('local merge commands quote every name, and refuse names a shell could run', () => {

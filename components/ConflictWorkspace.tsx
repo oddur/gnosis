@@ -68,6 +68,8 @@ import {
 import { workbenchStore } from '../lib/workbench-store';
 import type { ActivityTask } from '../lib/activity';
 import {
+  FILE_DRAFT_CHANGED,
+  fileDraftKey,
   hasConflictMarkers,
   conflictFileStage,
   type ConflictFile,
@@ -512,6 +514,18 @@ function useElapsed(running: boolean, after: number) {
   return late;
 }
 
+/**
+ * An edit the service refused because its file's saved draft changed underneath it (FILE_DRAFT_CHANGED), by draft ID.
+ * Kept outside the view, so a view that leaves before you choose offers the same choice when it opens again.
+ */
+interface HeldEdit {
+  id: string;
+  path: string;
+  text: string;
+}
+const heldEdits = new Map<string, HeldEdit>();
+const draftChanged = (error: unknown) => error instanceof Error && error.message.includes(FILE_DRAFT_CHANGED);
+
 function ErrorPanel({
   copy,
   actions,
@@ -599,6 +613,8 @@ export function ConflictWorkspace({
   const pending = useRef(false);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'failed'>('idle');
+  // Your edit the service refused: the footer asks which draft of the file to keep. Nothing saves meanwhile.
+  const [held, setHeld] = useState<HeldEdit>();
   const [error, setError] = useState('');
   const [failedKind, setFailedKind] = useState<ConflictRequest['kind'] | 'open'>();
   // GitHub refuses a push that changes workflow files from a sign-in without `workflow`. The sign-in it refused, so
@@ -884,17 +900,28 @@ export function ConflictWorkspace({
         (text !== current.result || Object.keys(own).length > 0)
       ) {
         setSaveState('saving');
-        value = (
-          await window.electronAPI.conflictResolution({
-            kind: 'save',
-            id: value.id,
-            version: value.version,
-            path,
-            contents: text,
-            resolved: text === current.result && current.resolved,
-            ...own,
-          })
-        ).session;
+        try {
+          value = (
+            await window.electronAPI.conflictResolution({
+              kind: 'save',
+              id: value.id,
+              version: value.version,
+              path,
+              contents: text,
+              resolved: text === current.result && current.resolved,
+              // Another writer may have moved the draft on: the save still lands while this file is as you saw it.
+              base: fileDraftKey(current),
+              ...own,
+            })
+          ).session;
+        } catch (e) {
+          if (draftChanged(e)) {
+            const edit = { id: value.id, path, text };
+            heldEdits.set(value.id, edit);
+            setHeld(edit);
+          }
+          throw e;
+        }
       }
       if (value !== sessionRef.current) setSession(value);
       setSaveState('idle');
@@ -906,7 +933,7 @@ export function ConflictWorkspace({
   }
   // Drafts save on their own; there is no Save button.
   useEffect(() => {
-    if (!dirty || busy || !session || session.stale) return;
+    if (!dirty || busy || !session || session.stale || held) return;
     // A failed save retries on its own, a little later.
     const timer = setTimeout(
       () => {
@@ -915,7 +942,7 @@ export function ConflictWorkspace({
       saveState === 'failed' ? 3000 : 600
     );
     return () => clearTimeout(timer);
-  }, [contents, dirty, busy, session, saveState]);
+  }, [contents, dirty, busy, session, saveState, held]);
 
   // The model's proposals, one conflict at a time (#445 items 6 and 7). Each goes into the saved draft after your edits,
   // never during a request of yours, and only into its own conflict; the service checks it there.
@@ -970,8 +997,11 @@ export function ConflictWorkspace({
       setBusy(false);
     }
   }
-  /** `keep` carries over resolutions whose conflicts did not change; Start over drops them. */
-  async function load(restart = false, keep = false) {
+  /**
+   * `keep` carries over resolutions whose conflicts did not change; Start over drops them. `mine`: your refused edit,
+   * put back on the saved draft read now, with your choices, so the next save keeps it.
+   */
+  async function load(restart = false, keep = false, mine?: HeldEdit) {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
@@ -990,13 +1020,24 @@ export function ConflictWorkspace({
       // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
       // carries them with the draft). Start over drops them. In-place edits stay only on files whose conflicts are the
       // same (editsOf).
-      if (!keep) {
+      if (!keep && !mine) {
         setPicks({});
         setEdits({});
       }
       // A merge prepared again: earlier model requests and their cards belong to the old one.
       if (restart) models.reset();
-      apply(reply, selectedRef.current);
+      if (restart) heldEdits.delete(reply.session.id);
+      // An edit refused before this view opened: the same choice again, with your text on screen.
+      const waiting = mine ?? heldEdits.get(reply.session.id);
+      const kept =
+        waiting && reply.session.files.some((f) => f.path === waiting.path && (mine || f.result !== waiting.text))
+          ? waiting
+          : undefined;
+      if (waiting && !kept) heldEdits.delete(waiting.id);
+      apply(reply, kept?.path ?? selectedRef.current);
+      if (kept) setContents(kept.text);
+      setHeld(mine ? undefined : kept);
+      setSaveState('idle');
       setResetPrompt(false);
       setOutcome('');
       setBaseNote('');
@@ -1093,7 +1134,8 @@ export function ConflictWorkspace({
       (s) => {
         const saved = s.files.find((f) => f.path === path);
         const own = saved ? ownToSave(saved) : {};
-        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...own };
+        const base = saved ? { base: fileDraftKey(saved) } : {};
+        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...base, ...own };
       },
       (reply) => {
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
@@ -1114,7 +1156,15 @@ export function ConflictWorkspace({
     if (!ready) return;
     const { path, result } = ready.file;
     void run(
-      (v) => ({ kind: 'save', id: v.id, version: v.version, path, contents: result, resolved: true }),
+      (v) => ({
+        kind: 'save',
+        id: v.id,
+        version: v.version,
+        path,
+        contents: result,
+        resolved: true,
+        base: fileDraftKey(ready.file),
+      }),
       (reply) => setSession(reply.session)
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
@@ -1197,6 +1247,14 @@ export function ConflictWorkspace({
       }
     );
   }
+  /** Your refused edit: put it on the saved draft as it is now, or use the saved draft. Never overwritten unasked. */
+  function settleHeld(keep: boolean) {
+    const edit = held;
+    if (!edit || pending.current) return;
+    const text = selectedRef.current === edit.path ? contentsRef.current : edit.text;
+    heldEdits.delete(edit.id);
+    void load(false, false, keep ? { ...edit, text } : undefined);
+  }
   async function close() {
     // Long operations continue in Activity; their inputs were saved before starting.
     if (pending.current || !session || !dirty) {
@@ -1248,9 +1306,9 @@ export function ConflictWorkspace({
   const shortcutsActive = !!session && editing && !busy && !session.stale;
   // Browser checks wait on this (lib/test-settled.ts): opened or failed, nothing running or saving, every check done.
   // A failed save, a failed open and a stale session are settled too: the screen says what went wrong.
-  const committed = useRef({ session, busy, error, dirty, saveState, verdictOf });
+  const committed = useRef({ session, busy, error, dirty, saveState, verdictOf, held });
   useEffect(() => {
-    committed.current = { session, busy, error, dirty, saveState, verdictOf };
+    committed.current = { session, busy, error, dirty, saveState, verdictOf, held };
   });
   // Notifications sit above the footer while it shows, so they never cover its controls.
   const footer = useRef<HTMLElement>(null);
@@ -1273,12 +1331,22 @@ export function ConflictWorkspace({
     () => () => {
       if (committed.current.dirty && !pending.current)
         void persist().catch((e: unknown) =>
-          toast.add({
-            type: 'error',
-            title: `Gnosis couldn’t save your conflict draft for ${committed.current.session?.title ?? url}`,
-            description: `${e instanceof Error ? e.message : String(e)} Your last changes may be lost. Open the Conflicts tab again and check the draft before you push.`,
-            timeout: 0,
-          })
+          toast.add(
+            draftChanged(e)
+              ? {
+                  type: 'error',
+                  title: `Your last edit in ${committed.current.session?.title ?? url} isn’t saved yet`,
+                  description:
+                    'Its file’s saved draft changed in another view while you edited it, so Gnosis kept the saved draft. Open Resolve conflicts on the PR to keep your edit or the saved draft.',
+                  timeout: 0,
+                }
+              : {
+                  type: 'error',
+                  title: `Gnosis couldn’t save your conflict draft for ${committed.current.session?.title ?? url}`,
+                  description: `${e instanceof Error ? e.message : String(e)} Your last changes may be lost. Open the Conflicts tab again and check the draft before you push.`,
+                  timeout: 0,
+                }
+          )
         );
     },
     []
@@ -1289,7 +1357,7 @@ export function ConflictWorkspace({
         const now = committed.current;
         if (!now.session) return now.error ? true : 'opening';
         if (now.busy) return 'working';
-        if (now.session.stale || now.saveState === 'failed') return true;
+        if (now.session.stale || now.saveState === 'failed' || now.held) return true;
         if (now.dirty || now.saveState === 'saving') return 'saving';
         if (now.session.files.some((f) => (f.proposals || f.wholeFile) && !now.verdictOf(f)))
           return 'checking proposals';
@@ -1438,6 +1506,10 @@ export function ConflictWorkspace({
     ) : copy.recovery === 'check-again' ? (
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void load()}>
         Check again
+      </Button>
+    ) : copy.recovery === 'reload' ? (
+      <Button size="sm" disabled={busy} onClick={() => void load()}>
+        Load the saved draft
       </Button>
     ) : copy.recovery === 'retry' ? (
       <Button size="sm" disabled={busy} onClick={() => void load()}>
@@ -1618,11 +1690,13 @@ export function ConflictWorkspace({
             {editing && <ResetMenu disabled={busy} items={resetItems} />}
             {summaryShown && (
               <span className="conflict-save-state" role="status">
-                {saveState === 'failed'
-                  ? 'Couldn’t save · retrying'
-                  : dirty || saveState === 'saving'
-                    ? 'Saving…'
-                    : 'Saved'}
+                {held
+                  ? 'Not saved'
+                  : saveState === 'failed'
+                    ? 'Couldn’t save · retrying'
+                    : dirty || saveState === 'saving'
+                      ? 'Saving…'
+                      : 'Saved'}
               </span>
             )}
             {summaryShown && (
@@ -2159,6 +2233,19 @@ export function ConflictWorkspace({
                     Load latest changes
                   </Button>
                 </>
+              ) : held ? (
+                <>
+                  <span className="conflict-footer-status" role="alert" data-conflict-held="">
+                    Your edit to {held.path.split('/').pop()} isn’t saved: this file’s saved draft changed in another view
+                    while you edited it. Keep your edit, or use the saved draft.
+                  </span>
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => settleHeld(false)}>
+                    Use the saved draft
+                  </Button>
+                  <Button size="sm" disabled={busy} onClick={() => settleHeld(true)}>
+                    Keep my edit
+                  </Button>
+                </>
               ) : resetPrompt ? (
                 <>
                   <span className="conflict-footer-status">
@@ -2185,7 +2272,9 @@ export function ConflictWorkspace({
                     </span>
                   )}
                   {/* The error names Load latest changes, so the footer offers it in place of the file action. */}
-                  {error && errorCopy?.recovery === 'load-latest' ? recover(errorCopy) : primaryButton}
+                  {error && (errorCopy?.recovery === 'load-latest' || errorCopy?.recovery === 'reload')
+                    ? recover(errorCopy)
+                    : primaryButton}
                 </>
               )}
             </footer>
