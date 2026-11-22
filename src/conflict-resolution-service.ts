@@ -74,7 +74,14 @@ import {
 import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { hasUnion } from '../lib/conflict-flow';
-import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
+import {
+  carryStatsBlocks,
+  countOpened,
+  countPushed,
+  markChoice,
+  type ConflictChoice,
+  type ConflictStatsEvent,
+} from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
 import type { SyntaxDefinition, SyntaxLanguage } from '../lib/syntax-scope';
@@ -173,7 +180,11 @@ interface Deps {
   /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
   backgroundDrafts?: number;
   /** Settings › Diagnostics › Conflict resolution stats (src/conflict-stats-store.ts). Counts only; it never throws. */
-  stats?: { record(events: readonly ConflictStatsEvent[]): void };
+  stats?: {
+    record(events: readonly ConflictStatsEvent[]): void;
+    /** The stats' epoch (lib/conflict-stats.ts `ConflictStats.epoch`). Throws while saved data is loading. */
+    epoch?(): number;
+  };
   /**
    * Repository settings' "Allow undoing a conflict update with a force push", for the PR's repository. Without it, or
    * false, Undo this update is refused (#445 item 25).
@@ -232,6 +243,8 @@ export function createConflictResolutionService(deps: Deps) {
     // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
     const queued = pendingTypeErrors.get(key);
     if (queued) saveTypeErrors(key, queued);
+    // Choices made while the holder had the draft are counted now, with their flags, after its last write.
+    if (pendingChoices.has(key)) saveChoices(key);
     const waiting = waiters.get(key) ?? [];
     waiters.delete(key);
     for (const wake of waiting) wake();
@@ -379,11 +392,30 @@ export function createConflictResolutionService(deps: Deps) {
     const waiting = unchosenOf(file, request);
     if (waiting.length) throw new Error(waitingHint(file, request.contents, waiting.length));
   };
-  /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
+  /**
+   * Undo and re-choice made while a request held the draft (`countChoice`). Each is counted and flagged on the draft
+   * only once the lock is free (`release`), after the holder's last write, so a flag is never lost to a write that
+   * didn't have it, and a choice that never got its flag never counted.
+   */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
-  function withChoices(key: string, session: ConflictSession) {
-    for (const choice of pendingChoices.get(key) ?? []) markChoice(session, choice);
+  const statsEpoch = () => deps.stats?.epoch?.() ?? 0;
+  /** Counts the choices and saves their flags on the draft, while nobody holds its lock. Never throws. */
+  function saveChoices(key: string, choices = pendingChoices.get(key) ?? []) {
     pendingChoices.delete(key);
+    uncounted(() => {
+      const ctx = deps.context();
+      const saved = ctx.account && key.startsWith(storageKey(ctx.account, ''))
+        ? (deps.storage.read(key) as ConflictSession | undefined)
+        : undefined;
+      if (!saved) return;
+      const epoch = statsEpoch();
+      const events = choices.flatMap((choice) => markChoice(saved, choice, epoch) ?? []);
+      if (!events.length) return;
+      write(key, saved);
+      deps.stats?.record(events);
+    });
+  }
+  function withTypeErrors(key: string, session: ConflictSession) {
     const typed = pendingTypeErrors.get(key);
     if (typed) applyTypeErrors(session, typed);
     pendingTypeErrors.delete(key);
@@ -608,7 +640,7 @@ export function createConflictResolutionService(deps: Deps) {
   }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    write(key, withChoices(key, session));
+    write(key, withTypeErrors(key, session));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -1477,8 +1509,6 @@ export function createConflictResolutionService(deps: Deps) {
           file.structuralNote = old.structuralNote;
         }
         file.structuralRan = old.structuralRan;
-        // The same conflicts: they were counted as shown already (lib/conflict-stats.ts).
-        if (old.statsBlocks) file.statsBlocks = old.statsBlocks;
         if (old.proposals) {
           file.proposals = old.proposals;
           file.result = withProposals(file.original, old.proposals);
@@ -1495,6 +1525,9 @@ export function createConflictResolutionService(deps: Deps) {
         signal,
         report
       );
+      // Each conflict that is the same as before keeps its counted block, flags included (lib/conflict-stats.ts).
+      const epoch = deps.stats ? uncounted(statsEpoch) : undefined;
+      if (epoch !== undefined) for (const file of fresh) carryStatsBlocks(file, before.get(file.path), epoch);
       const carried = await carryFiles(await directory(ctx.account, session.id), previous, fresh, true, signal);
       session.baseSha = live.baseSha;
       session.tree = prepared.tree;
@@ -1515,7 +1548,12 @@ export function createConflictResolutionService(deps: Deps) {
     signal: AbortSignal,
     report: (text: string) => void,
     /** Prepared in the background (src/conflict-precompute.ts): hears the number of conflicted files once known. */
-    background?: (files: number) => void
+    background?: (files: number) => void,
+    /**
+     * Hears the saved draft the open read, before anything replaces it: not a copy, so only to read the files' stats
+     * blocks (`countOpened`).
+     */
+    read?: (saved: ConflictSession | undefined) => void
   ) {
     const state = await deps.read(url);
     signal.throwIfAborted();
@@ -1532,6 +1570,7 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    read?.(saved);
     // A pending undo (#445 item 25) is settled only when you open the PR, from the remote. Background work never
     // replaces or settles it.
     if (saved?.status === 'published' && saved.undoing) {
@@ -2308,24 +2347,12 @@ export function createConflictResolutionService(deps: Deps) {
      */
     countChoice(choice: ConflictChoice) {
       if (!deps.stats) return;
-      uncounted(() => {
-        const ctx = deps.context();
-        if (!ctx.account) return;
-        const key = storageKey(ctx.account, choice.id);
-        const saved = deps.storage.read(key) as ConflictSession | undefined;
-        if (!saved) return;
-        const pending = pendingChoices.get(key) ?? [];
-        for (const earlier of pending) markChoice(saved, earlier);
-        const event = markChoice(saved, choice);
-        if (!event) return;
-        deps.stats?.record([event]);
-        // A request holds the draft and will write its own copy: the flag goes with that write.
-        if (busy.has(key)) pendingChoices.set(key, [...pending, choice]);
-        else {
-          pendingChoices.delete(key);
-          write(key, saved);
-        }
-      });
+      const account = deps.context().account;
+      if (!account) return;
+      const key = storageKey(account, choice.id);
+      // A request holds the draft and will write its own copy: the choice waits for the lock (`release`).
+      if (busy.has(key)) pendingChoices.set(key, [...(pendingChoices.get(key) ?? []), choice]);
+      else saveChoices(key, [choice]);
     },
     /** The PR's type check (#445 item 24), for the connected account. Undefined: off, or not run for this draft. */
     typeCheck(id: string): ConflictTypeCheck | undefined {
@@ -2521,22 +2548,39 @@ export function createConflictResolutionService(deps: Deps) {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
         if (request.kind === 'open') {
-          // The draft before a fresh merge replaces it: Load latest reuses its counted conflicts.
-          const before = deps.stats && request.restart ? (deps.storage.read(key) as ConflictSession | undefined) : undefined;
-          const session = await open(ctx, request.url, !!request.restart, !!request.keep, signal, report);
+          // The draft before a fresh merge replaces it, as the open read it: Load latest reuses its counted conflicts.
+          let before: ConflictSession | undefined;
+          const session = await open(
+            ctx,
+            request.url,
+            !!request.restart,
+            !!request.keep,
+            signal,
+            report,
+            undefined,
+            deps.stats && request.restart ? (saved) => (before = saved) : undefined
+          );
           // A draft prepared in the background becomes yours once you open it: it is no longer replaced or evicted.
           const stored = deps.storage.read(key) as ConflictSession | undefined;
           // The conflicts you see now count as shown, once per conflict (lib/conflict-stats.ts).
           const counted =
             deps.stats && stored?.id === session.id && stored.version === session.version && !session.stale
-              ? uncounted(() => countOpened(before, stored, { restart: !!request.restart, keep: !!request.keep }, deps.disabledLanguages?.() ?? []))
+              ? uncounted(() =>
+                  countOpened(
+                    before,
+                    stored,
+                    { restart: !!request.restart, keep: !!request.keep },
+                    deps.disabledLanguages?.() ?? [],
+                    statsEpoch()
+                  )
+                )
               : undefined;
           if (stored?.background) {
             delete stored.background;
             await persist(stored);
           } else if (stored && counted?.changed) {
             // Saved with the next write; the open never waits for it.
-            write(key, withChoices(key, stored));
+            write(key, withTypeErrors(key, stored));
           }
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);
@@ -2890,7 +2934,7 @@ export function createConflictResolutionService(deps: Deps) {
           );
           session.status = 'published';
           session.commitSha = sha;
-          if (deps.stats) deps.stats.record(uncounted(() => countPushed(session)) ?? []);
+          if (deps.stats) deps.stats.record(uncounted(() => countPushed(session, statsEpoch())) ?? []);
         }
         if (session.status !== 'published') {
           // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict

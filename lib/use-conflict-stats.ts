@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { choiceEvent } from './conflict-stats';
+import { choiceEvent, type StatsBlockRef } from './conflict-stats';
 import type { BlockPick } from './conflict-blocks';
 
 /**
@@ -11,15 +11,15 @@ export function useConflictChoiceStats() {
     (
       id: string,
       path: string,
-      key: string | undefined,
+      block: StatsBlockRef | undefined,
       before: BlockPick | undefined,
       after: BlockPick | undefined,
       picked: BlockPick | undefined
     ) => {
       const count = choiceEvent(before, after, picked);
-      if (!count || !key) return;
+      if (!count || !block) return;
       try {
-        window.electronAPI.recordConflictChoice?.({ id, path, key, count });
+        window.electronAPI.recordConflictChoice?.({ id, path, key: block.key, index: block.index, count });
       } catch {
         // A count never stops the choice.
       }

@@ -214,6 +214,51 @@ void test('conflict stats: an open counts its conflicts once, Start over counts,
   const saved = JSON.stringify(f.deps.storage.read(CONFLICT_STATS_NAME));
   for (const secret of ['sample', 'answer', 'tester', 'github.com', 'feature']) assert.equal(saved.includes(secret), false);
 });
+void test('conflict stats: a choice made while Load latest holds the draft counts once, with its flag (#490 2)', async (t) => {
+  const f = await fixture(t);
+  const store = createConflictStatsStore(f.deps.storage);
+  const service = createConflictResolutionService({ ...f.deps, stats: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const session = (await run({ kind: 'open', url: f.state.url })).session;
+  const key = blockFingerprints(session.files[0].original)[0];
+  const choice = { id: session.id, path: 'sample.ts', key, index: 0, count: 'rechosen' as const };
+  // Load latest takes the lock; the choice arrives while it prepares the merge again.
+  let reached = () => {};
+  const reading = new Promise<void>((resolve) => (reached = resolve));
+  const loading = createConflictResolutionService({
+    ...f.deps,
+    stats: store,
+    read: () => {
+      reached();
+      return f.deps.read();
+    },
+  });
+  const latest = loading.run({ kind: 'open', url: f.state.url, restart: true, keep: true }, new AbortController().signal);
+  await reading;
+  loading.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 0, 'Counted only once its flag can be saved');
+  await latest;
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+  const draft = f.deps.storage.read(`conflict-draft:tester:${session.id}`) as ConflictSession;
+  assert.equal(draft.files[0].statsBlocks?.[0]?.rechosen, true, 'The flag is on the draft Load latest saved');
+  // So the same conflict never counts twice.
+  loading.countChoice(choice);
+  service.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+});
+void test('conflict stats: Start over and Load latest read the draft no more often than without stats (#490 7)', async (t) => {
+  const f = await fixture(t);
+  for (const keep of [false, true]) {
+    const reads = async (stats: boolean) => {
+      let n = 0;
+      const storage = { ...f.deps.storage, read: (key: string) => (n++, f.deps.storage.read(key)) };
+      const service = createConflictResolutionService({ ...f.deps, storage, ...(stats ? { stats: createConflictStatsStore(f.deps.storage) } : {}) });
+      await service.run({ kind: 'open', url: f.state.url, restart: true, keep }, new AbortController().signal);
+      return n;
+    };
+    assert.equal(await reads(true), await reads(false), keep ? 'Load latest' : 'Start over');
+  }
+});
 void test('conflict stats: a plain open reads the draft no more often than without stats (item 7)', async (t) => {
   const f = await fixture(t);
   const reads = async (stats: boolean) => {

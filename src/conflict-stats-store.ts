@@ -1,8 +1,8 @@
 import type { StateStorage } from './app-data-store';
 import {
   applyConflictStats,
-  emptyConflictStats,
   normalizeConflictStats,
+  resetConflictStats,
   type ConflictStats,
   type ConflictStatsEvent,
 } from '../lib/conflict-stats';
@@ -42,10 +42,14 @@ export function createConflictStatsStore(storage: Pick<StateStorage, 'read' | 'w
         console.warn('[conflicts] Could not count:', error instanceof Error ? error.message : String(error));
       }
     },
-    /** Refused while saved data is loading: Reset never writes zeros over counts it has not read. */
+    /** The current epoch (`ConflictStats.epoch`): throws while saved data is loading, so nothing counts then. */
+    epoch: (): number => load().epoch ?? 0,
+    /**
+     * Refused while saved data is loading: Reset never writes zeros over counts it has not read. The next epoch starts,
+     * so the conflicts drafts counted before count nothing more.
+     */
     reset(): ConflictStats {
-      load();
-      return save(emptyConflictStats());
+      return save(resetConflictStats(load()));
     },
   };
 }
