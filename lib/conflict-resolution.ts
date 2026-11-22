@@ -33,6 +33,11 @@ export interface ConflictFile {
    * the lines the resolver wrote that neither side had stay marked, and lines you typed never are.
    */
   resolverText?: string;
+  /**
+   * Conflicts whose text was a model's proposal before main moved or the merge was prepared again
+   * (lib/conflict-carry.ts): they are open again, and their cards say to ask again. By block index of `original`.
+   */
+  modelStale?: number[];
   /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
   structuralNote?: string;
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */

@@ -630,6 +630,7 @@ export function ConflictWorkspace({
     contents,
     label: model,
     busy,
+    root,
     apply: (path, index) => {
       if (pending.current) return Promise.reject(new ModelProposalWaits());
       const task = persist().then(async (saved) => {
@@ -694,6 +695,8 @@ export function ConflictWorkspace({
       // Load latest changes keeps your resolutions, and your choices on the conflicts that did not change (the service
       // carries them with the draft). Start over drops them.
       if (!keep) setPicks({});
+      // A merge prepared again: earlier model requests and their cards belong to the old one.
+      if (restart) models.reset();
       apply(reply, selectedRef.current);
       setResetPrompt(false);
       setOutcome('');
@@ -1158,6 +1161,7 @@ export function ConflictWorkspace({
     <section
       ref={root}
       className="conflict-workspace"
+      data-model-answers={models.handled}
       data-conflict-url={url}
       data-conflict-id={session?.id}
       tabIndex={-1}
@@ -1669,7 +1673,7 @@ export function ConflictWorkspace({
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
-                                models={models.cards(file.path)}
+                                models={models.cards(file)}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
                                 resolverText={resolverBaseline(file, contents)}

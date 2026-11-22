@@ -24,6 +24,8 @@ import {
   type ConflictModelInput,
 } from '../lib/conflict-model';
 import { conflictPauseNotice } from '../lib/provider-limits';
+import { carryFile } from '../lib/conflict-carry';
+import { MODEL_STALE, createProposalQueue, modelInput } from '../lib/conflict-model';
 
 /** Asking the model per conflict (#445 items 6 and 7), with a mocked provider: no model is ever called. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -64,6 +66,7 @@ const conflictFile = (overrides: Partial<ConflictFile> = {}): ConflictFile => ({
   ...overrides,
 });
 const ID = 'a'.repeat(64);
+const PAUSE_UNTIL = Date.UTC(2026, 10, 22, 13, 0);
 const sessionWith = (files: ConflictFile[]): ConflictSession => ({
   id: ID,
   account: 'tester',
@@ -85,11 +88,11 @@ const sessionWith = (files: ConflictFile[]): ConflictSession => ({
 function fixture(
   files: ConflictFile[],
   reply: (content: ConflictModelInput, signal: AbortSignal) => Promise<string> | string,
-  options: { paused?: () => string | undefined; concurrency?: number } = {}
+  options: { paused?: () => string | undefined; concurrency?: number; session?: Partial<ConflictSession> } = {}
 ) {
   const data = new Map<string, unknown>();
   const context = { account: 'tester', token: 'not-a-real-token' };
-  data.set(`conflict-draft:tester:${ID}`, sessionWith(files));
+  data.set(`conflict-draft:tester:${ID}`, { ...sessionWith(files), ...options.session });
   const calls: { systemPrompt: string; content: ConflictModelInput; signal: AbortSignal }[] = [];
   const pauses: unknown[] = [];
   const parsed: string[] = [];
@@ -111,7 +114,10 @@ function fixture(
     },
     model: {
       label: () => 'Claude',
-      paused: options.paused ?? (() => undefined),
+      paused: () => {
+        const notice = options.paused?.();
+        return notice === undefined ? undefined : { notice, until: PAUSE_UNTIL };
+      },
       generate: async ({ systemPrompt, content }, signal) => {
         const input = JSON.parse(content) as ConflictModelInput;
         calls.push({ systemPrompt, content: input, signal });
@@ -119,7 +125,7 @@ function fixture(
       },
       pauseFrom: (error) => {
         pauses.push(error);
-        return /usage limit/.test(String(error)) ? 'Claude is paused until 14:00.' : undefined;
+        return /usage limit/.test(String(error)) ? { notice: 'Claude is paused until 14:00.', until: PAUSE_UNTIL } : undefined;
       },
       concurrency: options.concurrency ?? 4,
     },
@@ -408,6 +414,7 @@ test('a provider pause skips the model and says so', async () => {
   assert.deepEqual(await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 }), {
     status: 'paused',
     notice: 'Claude is paused until 14:00.',
+    until: PAUSE_UNTIL,
   });
   assert.equal(f.calls.length, 0, 'No request while the provider is paused');
 
@@ -420,6 +427,7 @@ test('a provider pause skips the model and says so', async () => {
   assert.deepEqual(await g.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 }), {
     status: 'paused',
     notice: 'Claude is paused until 14:00.',
+    until: PAUSE_UNTIL,
   });
   assert.equal(g.pauses.length, 1);
   assert.equal((await g.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 })).status, 'paused');
@@ -602,4 +610,140 @@ test('the whole-file Ask refuses a file whose text looks like a secret', async (
     f.service.run({ kind: 'resolve', id: ID, version: 1, engine: 'agent', path: 'src/settings.ts' }, new AbortController().signal),
     /may hold secrets/
   );
+});
+
+test('secret text in its common forms is refused (round 3, item 1)', () => {
+  // The reviewer's eight forms.
+  for (const text of [
+    '  "db_password": "s3cr3tP@ss",',
+    "config.api_key => 'abcd1234efgh'",
+    'export const STRIPE_SECRET_KEY = process.env.X ?? "whsec_12345678";',
+    "  clientSecret: 'abcdef123456',",
+    'DATABASE_URL=postgres://app:pa55word@db.internal:5432/app',
+    "fetch(url, { headers: { Authorization: 'Bearer abcdefghijklmnopqrstuvwxyz' } })",
+    'const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlX2hlcmU";',
+    "SECRET_KEY = 'django-insecure-abc'",
+  ])
+    assert.equal(hasSecretText(text), true, text);
+  // More: prefixes and suffixes, `=>`, unquoted YAML, a private key setting, an access key, an auth header.
+  for (const text of [
+    'MY_APP_PWD=hunter22',
+    'privateKey: "abc123def456"',
+    'aws.access_key = AKIAEXAMPLE123',
+    '  auth_header: basic-xyz123',
+    'https://user:token@github.com/org/repo.git',
+    'Authorization: Basic dXNlcjpwYXNz',
+  ])
+    assert.equal(hasSecretText(text), true, text);
+  // When in doubt, refuse: an ordinary line that names a token is refused too, and that is acceptable.
+  assert.equal(hasSecretText('const token = getToken();'), true);
+  // Ordinary code without such names still goes.
+  for (const text of [
+    'export const retries = 5;',
+    'return Math.min(attempt * 200, 5000);',
+    'const url = "https://example.com/docs";',
+    'if (a === b) return c;',
+  ])
+    assert.equal(hasSecretText(text), false, text);
+});
+
+test('a title or branch name that looks like a secret is not sent (round 3, item 2)', async () => {
+  const session = {
+    title: 'Rotate creds: password=hunter2hunter2',
+    headBranch: 'fix/token=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+    baseBranch: 'main',
+  };
+  const built = modelInput(session, conflictFile(), 0, undefined);
+  assert.ok('input' in built);
+  assert.equal(built.input.title, '(title hidden)');
+  assert.deepEqual(built.input.branches, { pr: '(branch hidden)', main: 'main' });
+  // Through the service: nothing of the title reaches the model.
+  const f = fixture([conflictFile()], () => resolved(), { session });
+  await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  const sent = JSON.stringify(f.calls[0].content);
+  assert.equal(sent.includes('hunter2'), false);
+  assert.equal(sent.includes('ghp_'), false);
+  assert.equal(f.calls[0].content.title, '(title hidden)');
+});
+
+test('a model’s text never carries over as your decision (round 3, item 3)', () => {
+  const proposal = { source: 'model' as const, text: both, by: 'Claude' };
+  const spliced = spliceModelProposal(conflictFile(), 0, proposal);
+  assert.ok(spliced);
+  const old = conflictFile({ ...spliced });
+  // main moved; the same conflict comes back in a fresh merge.
+  const next = conflictFile();
+  const carried = carryFile(old, next, true);
+  assert.equal(carried.file.result, original, 'Open again, with Git’s markers');
+  assert.deepEqual(carried.file.modelStale, [0]);
+  assert.equal(carried.reused, 0);
+  assert.equal(carried.open, 1);
+  assert.equal(carried.file.picks, undefined);
+  assert.equal(MODEL_STALE, 'The model’s proposal was from before main moved; ask again.');
+  // Your own Keep over the model's proposal is yours, and carries.
+  const kept = `export function settings() {\n  const x = 1;\n  const y = 20;\n  return x + y;\n}\n`;
+  const yours = carryFile(conflictFile({ result: kept, proposals: spliced.proposals, picks: ['theirs'] }), next, true);
+  assert.equal(yours.file.result, kept);
+  assert.equal(yours.file.modelStale, undefined);
+  assert.deepEqual(yours.file.picks, ['theirs']);
+  // So is your edit of it.
+  const edited = `export function settings() {\n  const x = 10;\n  const y = 21;\n  return x + y;\n}\n`;
+  const edit = carryFile(conflictFile({ result: edited, proposals: spliced.proposals }), next, true);
+  assert.equal(edit.file.result, edited);
+  assert.equal(edit.file.modelStale, undefined);
+});
+
+test('requests running or waiting count toward the cap (round 3, item 5)', async () => {
+  const { MODEL_CONFLICTS_PER_SESSION } = await import('../lib/conflict-model');
+  const count = MODEL_CONFLICTS_PER_SESSION + 2;
+  const many = Array.from({ length: count }, (_, i) => `<<<<<<< a\nexport const v${i} = 1;\n=======\nexport const v${i} = 2;\n>>>>>>> b\n`).join('');
+  const releases: (() => void)[] = [];
+  const f = fixture(
+    [conflictFile({ path: 'src/many.ts', original: many, result: many, base: '', ours: '', theirs: '' })],
+    () =>
+      new Promise<string>((resolve) =>
+        releases.push(() => resolve(JSON.stringify({ status: 'question', question: 'Which value?' })))
+      )
+  );
+  // All at once: none has answered when the last ones are asked.
+  const asked = Array.from({ length: count }, (_, index) => f.service.askModel({ id: ID, path: 'src/many.ts', index }));
+  const last = await Promise.race([asked[count - 1], new Promise((r) => setImmediate(() => r('waiting')))]);
+  assert.match((last as { reason?: string }).reason ?? '', /at most/, 'Over the cap at request time, with none answered');
+  while (releases.length < 4) await new Promise((r) => setImmediate(r));
+  while (releases.length) {
+    releases.splice(0).forEach((release) => release());
+    await new Promise((r) => setImmediate(r));
+  }
+  const outcomes = await Promise.all(asked);
+  assert.equal(outcomes.filter((o) => o.status === 'question').length, MODEL_CONFLICTS_PER_SESSION);
+  assert.equal(outcomes.filter((o) => o.status === 'skipped').length, 2);
+  assert.equal(f.calls.length, MODEL_CONFLICTS_PER_SESSION);
+});
+
+test('a failed request can be asked again; an answer can’t (round 3, item 6)', async () => {
+  let fail = true;
+  const f = fixture([conflictFile()], () => {
+    if (fail) throw new Error('socket hang up');
+    return JSON.stringify({ status: 'question', question: 'Which?' });
+  });
+  assert.equal((await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 })).status, 'failed');
+  fail = false;
+  assert.equal((await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 })).status, 'question');
+  assert.equal((await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 })).status, 'question');
+  assert.equal(f.calls.length, 2, 'The failure was retried; the answer was not asked for again');
+});
+
+test('a refused proposal leaves the queue with its reason (round 3, item 8)', async () => {
+  const refusals: string[] = [];
+  const queue = createProposalQueue<{ key: string }>({
+    apply: async (entry) => {
+      if (entry.key === 'a') throw new Error('This conflict changed, so the proposal wasn’t used.');
+    },
+    busy: () => false,
+    done: (_entry, refused) => refusals.push(refused ? String((refused.reason as Error).message) : 'used'),
+  });
+  queue.push({ key: 'a' });
+  queue.push({ key: 'b' });
+  while (queue.entries.length) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(refusals, ['This conflict changed, so the proposal wasn’t used.', 'used']);
 });

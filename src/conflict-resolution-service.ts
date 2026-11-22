@@ -132,9 +132,9 @@ interface Deps {
    */
   model?: {
     label: () => string;
-    paused: () => string | undefined;
+    paused: () => { notice: string; until: number } | undefined;
     generate: (request: { systemPrompt: string; content: string }, signal: AbortSignal) => Promise<string>;
-    pauseFrom: (error: unknown) => string | undefined;
+    pauseFrom: (error: unknown) => { notice: string; until: number } | undefined;
     /** Milliseconds one request may take: 180000. Tests change it. */
     timeoutMs?: number;
     /** Requests at once (MODEL_CONCURRENCY). Tests change it. */
@@ -255,10 +255,12 @@ export function createConflictResolutionService(deps: Deps) {
   const modelQueue = (cap?: number) => (limiter ??= createLimiter(cap));
   /**
    * What each prepared draft was told, by conflict: each conflict is asked about once per draft (its PR head and base),
-   * at most MODEL_CONFLICTS_PER_SESSION of them, so reopening the view never asks again. A cancelled or paused request
-   * isn't recorded, so it can be asked again.
+   * at most MODEL_CONFLICTS_PER_SESSION of them, so reopening the view never asks again. Only an answer counts: a
+   * proposal or a question. A cancelled, paused or failed request (a timeout, a network error) can be asked again.
    */
   const modelAsked = new Map<string, Map<string, ConflictModelOutcome>>();
+  /** Conflicts with a request running or waiting, per draft: they count toward the cap too. */
+  const modelPending = new Map<string, Set<string>>();
   const draftKey = (account: string, session: ConflictSession) =>
     JSON.stringify([account, session.id, session.headSha, session.baseSha]);
   /** Tree-sitter definitions per file text, for every conflict of a file in one batch. */
@@ -282,7 +284,7 @@ export function createConflictResolutionService(deps: Deps) {
    */
   const modelRefusal = (session: ConflictSession, file: ConflictFile | undefined, index: number) => {
     if (!file || file.unsupported) return 'This file can’t be resolved here.';
-    if (isSecretPath(file.path)) return SECRET_FILE;
+    if (isSecretPath(file.path) || hasSecretText(file.path)) return SECRET_FILE;
     if (session.status !== 'editing' || session.stale) return 'This draft is closed.';
     if (file.wholeFile) return 'This file has a whole-file proposal. Use it or decide the conflicts yourself.';
     const probe = conflictProbe(file.original, index);
@@ -1068,7 +1070,16 @@ export function createConflictResolutionService(deps: Deps) {
       signal.throwIfAborted();
       const old = byPath.get(next.path);
       let result = carryFile(old, next, keepReview);
-      if (!result.mapped && old && !old.unsupported && !next.unsupported && !hasConflictMarkers(old.result)) {
+      // A text merge can't tell a model's proposal from your text: a draft with one starts again from the fresh merge.
+      const modelText = !!old?.proposals?.some((proposal) => proposal?.source === 'model');
+      if (
+        !result.mapped &&
+        old &&
+        !modelText &&
+        !old.unsupported &&
+        !next.unsupported &&
+        !hasConflictMarkers(old.result)
+      ) {
         const merged = await mergeText(
           dir,
           old.result,
@@ -1088,7 +1099,8 @@ export function createConflictResolutionService(deps: Deps) {
         }
       }
       // Nothing carried over: keep the fresh merge, with any remembered resolution.
-      const file = result.reused ? result.file : { ...next, resolved: false };
+      const stale = result.file.modelStale;
+      const file = result.reused ? result.file : { ...next, resolved: false, ...(stale ? { modelStale: stale } : {}) };
       carried.push(file);
       if (!file.resolved) {
         reopened.push(file.path);
@@ -1841,8 +1853,18 @@ export function createConflictResolutionService(deps: Deps) {
       const conflict = JSON.stringify([request.path, fingerprint]);
       const earlier = asked.get(conflict);
       if (earlier && (earlier.status !== 'proposal' || modelResults.has(target))) return earlier;
-      if (!earlier && asked.size >= MODEL_CONFLICTS_PER_SESSION)
-        return { status: 'skipped', reason: `Gnosis asks about at most ${MODEL_CONFLICTS_PER_SESSION} conflicts in one PR.` };
+      const pending = modelPending.get(draft) ?? new Set<string>();
+      modelPending.set(draft, pending);
+      // Requests running or waiting count toward the cap, at request time and again when the request starts.
+      const capped = () =>
+        !asked.has(conflict) &&
+        asked.size + [...pending].filter((other) => other !== conflict).length >= MODEL_CONFLICTS_PER_SESSION;
+      const CAPPED: ConflictModelOutcome = {
+        status: 'skipped',
+        reason: `Gnosis asks about at most ${MODEL_CONFLICTS_PER_SESSION} conflicts in one PR.`,
+      };
+      if (capped()) return CAPPED;
+      pending.add(conflict);
       modelRequests.get(target)?.abort(new Error('Asked again.'));
       modelResults.delete(target);
       const controller = new AbortController();
@@ -1851,9 +1873,10 @@ export function createConflictResolutionService(deps: Deps) {
       signal?.addEventListener('abort', forward, { once: true });
       try {
         const outcome = await modelQueue(model.concurrency).run(controller.signal, async (live): Promise<ConflictModelOutcome> => {
+          if (capped()) return CAPPED;
           // A pause that started while this request waited skips it too.
-          const notice = model.paused();
-          if (notice) return { status: 'paused', notice };
+          const pause = model.paused();
+          if (pause) return { status: 'paused', ...pause };
           const definitions = await definitionsFor(file.path, probe.text);
           live.throwIfAborted();
           const built = modelInput(session, file, request.index, definitions);
@@ -1869,7 +1892,7 @@ export function createConflictResolutionService(deps: Deps) {
             live.throwIfAborted();
             if (timeout.aborted) return { status: 'failed', reason: `${model.label()} didn’t answer in time.` };
             const paused = model.pauseFrom(error);
-            if (paused) return { status: 'paused', notice: paused };
+            if (paused) return { status: 'paused', ...paused };
             console.warn('[conflicts] The model request failed.', error instanceof Error ? error.message : error);
             return { status: 'failed', reason: `${model.label()} couldn’t propose a resolution.` };
           }
@@ -1883,14 +1906,17 @@ export function createConflictResolutionService(deps: Deps) {
           modelResults.set(target, { fingerprint, reply, text: checked.text, by: model.label() });
           return { status: 'proposal' };
         });
-        if (outcome.status !== 'paused' && outcome.status !== 'cancelled') asked.set(conflict, outcome);
+        if (outcome.status === 'proposal' || outcome.status === 'question') asked.set(conflict, outcome);
         return outcome;
       } catch (error) {
         if (controller.signal.aborted) return { status: 'cancelled' };
         throw error;
       } finally {
         signal?.removeEventListener('abort', forward);
-        if (modelRequests.get(target) === controller) modelRequests.delete(target);
+        if (modelRequests.get(target) === controller) {
+          modelRequests.delete(target);
+          pending.delete(conflict);
+        }
       }
     },
     /** Stops the model request for one conflict, waiting or running, and drops a proposal not used yet. */

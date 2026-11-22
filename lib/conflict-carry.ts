@@ -155,7 +155,15 @@ export interface CarriedFile {
 }
 
 /** An earlier draft's resolved blocks by their conflict text, as carryFile reads them. Compute it once per draft. */
-export type CarrySource = Map<string, { text: string; pick: NonNullable<ConflictFile['picks']>[number] }[]>;
+export type CarrySource = Map<
+  string,
+  {
+    text: string;
+    pick: NonNullable<ConflictFile['picks']>[number];
+    /** The text is a model's proposal you didn't choose a side over (lib/conflict-model.ts): never carried as yours. */
+    model?: boolean;
+  }[]
+>;
 export function carrySource(old: ConflictFile): CarrySource | undefined {
   const oldSegments = parseConflicts(old.original);
   const resolutions = blockResolutions(oldSegments, old.result);
@@ -166,7 +174,11 @@ export function carrySource(old: ConflictFile): CarrySource | undefined {
     const text = resolutions[segment.index];
     if (text === undefined || hasConflictMarkers(text)) continue;
     const key = blockKey(segment);
-    available.set(key, [...(available.get(key) ?? []), { text, pick: old.picks?.[segment.index] ?? null }]);
+    const pick = old.picks?.[segment.index] ?? null;
+    const proposal = old.proposals?.[segment.index];
+    // A model's text you didn't replace with a Keep or an edit of yours is the model's, not your decision.
+    const model = proposal?.source === 'model' && text === proposal.text && pick !== 'ours' && pick !== 'theirs' && pick !== 'both';
+    available.set(key, [...(available.get(key) ?? []), { text, pick, ...(model ? { model } : {}) }]);
   }
   return available;
 }
@@ -195,10 +207,19 @@ export function carryFile(
   const carriedBlocks: number[] = [];
   const texts: (string | undefined)[] = [];
   const picks: NonNullable<ConflictFile['picks']> = [];
+  /** Conflicts whose earlier text was a model's proposal: open again, with Git's markers, to ask again. */
+  const modelStale: number[] = [];
   const result = segments
     .map((segment) => {
       if (segment.kind === 'text') return segment.text;
       const carried = available.get(blockKey(segment))?.shift();
+      if (carried?.model) {
+        // Fail closed: the model answered about the conflict before main moved. It never becomes your decision.
+        picks[segment.index] = null;
+        modelStale.push(segment.index);
+        open++;
+        return segment.block.raw;
+      }
       picks[segment.index] = carried?.pick ?? null;
       if (carried === undefined) {
         // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
@@ -211,7 +232,8 @@ export function carryFile(
       return carried.text;
     })
     .join('');
-  const file = withResult(old, next, result, keepReview && open === 0 && old.resolved);
+  const carriedFile = withResult(old, next, result, keepReview && open === 0 && old.resolved);
+  const file = modelStale.length ? { ...carriedFile, modelStale } : carriedFile;
   return {
     file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file,
     reused,

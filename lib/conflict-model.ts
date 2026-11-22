@@ -18,6 +18,8 @@ import { enclosingDefinition, type SyntaxDefinition } from './syntax-scope';
  * (lib/conflict-verify.ts) run on it like any other proposal. A model proposal is never Merged.
  */
 
+/** A conflict whose model proposal was carried past a base move: it is open again (lib/conflict-carry.ts). */
+export const MODEL_STALE = 'The model’s proposal was from before main moved; ask again.';
 /** Model requests that run at once, across every PR. */
 export const MODEL_CONCURRENCY = 4;
 /** Conflicts asked about in one session; the rest are yours to decide. */
@@ -58,7 +60,8 @@ export type ConflictModelReply =
 export type ConflictModelOutcome =
   | { status: 'proposal' }
   | { status: 'question'; question: string }
-  | { status: 'paused'; notice: string }
+  /** `until`: epoch ms when the pause ends. */
+  | { status: 'paused'; notice: string; until?: number }
   | { status: 'skipped'; reason: string }
   | { status: 'failed'; reason: string }
   | { status: 'cancelled' };
@@ -123,8 +126,17 @@ const SECRET_TEXT = new RegExp(
     /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/,
     /\bAIza[0-9A-Za-z_-]{35}\b/,
     /\bglpat-[A-Za-z0-9_-]{20,}/,
-    // A secret assigned to a name, in code or configuration.
-    /(?:password|passwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*['"]?[^\s'"]{8,}/,
+    // A secret assigned to a name, in code or configuration: quoted or not, with prefixes and suffixes, by `:`, `=` or
+    // `=>`. Ordinary lines such as `token = getToken()` match too, and are refused.
+    /["']?[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?key|access[_-]?key|auth)[\w.-]*["']?\s*(?:=>|:|=)\s*["']?[^\s"',;]{6,}/,
+    // A URL with a user and a password.
+    /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/,
+    // Bearer tokens, Authorization headers and JSON Web Tokens.
+    /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/,
+    /\bAuthorization\s*["']?\s*[:=]/,
+    /\beyJ[\w-]+\.[\w-]+\.[\w-]+/,
+    // Django's SECRET_KEY, however it is assigned.
+    /\bSECRET_KEY\b/,
   ]
     .map((pattern) => pattern.source)
     .join('|'),
@@ -209,7 +221,7 @@ export function modelInput(
   index: number,
   definitions: readonly SyntaxDefinition[] | undefined
 ): { input: ConflictModelInput } | { reason: string } {
-  if (isSecretPath(file.path))
+  if (isSecretPath(file.path) || hasSecretText(file.path))
     return { reason: 'This file may hold secrets, so Gnosis doesn’t send it to a model.' };
   const probe = conflictProbe(file.original, index);
   if (!probe) return { reason: 'This conflict changed.' };
@@ -218,9 +230,13 @@ export function modelInput(
     return { reason: 'This conflict is too large to send to a model.' };
   const scope = conflictScope(probe, definitions);
   const input: ConflictModelInput = {
-    title: session.title.slice(0, 300),
+    // The title and branch names are text the author wrote: one that looks like a secret is not sent.
+    title: hasSecretText(session.title) ? '(title hidden)' : session.title.slice(0, 300),
     path: file.path,
-    branches: { pr: session.headBranch, main: session.baseBranch },
+    branches: {
+      pr: hasSecretText(session.headBranch) ? '(branch hidden)' : session.headBranch,
+      main: hasSecretText(session.baseBranch) ? '(branch hidden)' : session.baseBranch,
+    },
     conflict: { pr: block.ours, main: block.theirs, ancestor: block.base ?? null },
     scope,
   };
@@ -485,8 +501,8 @@ export class ModelProposalWaits extends Error {}
 export function createProposalQueue<T extends { key: string }>(options: {
   apply: (entry: T) => Promise<void>;
   busy: () => boolean;
-  /** An entry left the queue: applied, refused, or removed. */
-  done?: (entry: T) => void;
+  /** An entry left the queue: applied, removed, or refused (`refused`, the reason the proposal wasn’t used). */
+  done?: (entry: T, refused?: { reason: unknown }) => void;
 }) {
   let entries: T[] = [];
   let flushing = false;
@@ -496,13 +512,17 @@ export function createProposalQueue<T extends { key: string }>(options: {
     try {
       while (entries.length && !options.busy()) {
         const next = entries[0];
+        let refused: { reason: unknown } | undefined;
         try {
           await options.apply(next);
         } catch (error) {
           if (error instanceof ModelProposalWaits) break;
+          refused = { reason: error };
         }
+        // Removed meanwhile (your own choice): `remove` already said so.
+        const still = entries.includes(next);
         entries = entries.filter((entry) => entry.key !== next.key);
-        options.done?.(next);
+        if (still) options.done?.(next, refused);
       }
     } finally {
       flushing = false;

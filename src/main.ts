@@ -4290,7 +4290,7 @@ const conflicts = createConflictResolutionService({
     },
     paused: () => {
       const pause = workbench.providerPause(loadPreferences().provider);
-      return pause && conflictPauseNotice(pause, Date.now());
+      return pause && { notice: conflictPauseNotice(pause, Date.now()), until: pause.until };
     },
     generate: ({ systemPrompt, content }, signal) => {
       const preferences = loadPreferences();
@@ -4300,7 +4300,7 @@ const conflicts = createConflictResolutionService({
       const pause = providerPause(loadPreferences().provider, error, Date.now());
       if (!pause) return undefined;
       workbench.noteProviderPause(pause);
-      return conflictPauseNotice(pause, Date.now());
+      return { notice: conflictPauseNotice(pause, Date.now()), until: pause.until };
     },
   },
   definitions: (file, text, disabled) => conflictChecks.definitions(file, text, disabled),
