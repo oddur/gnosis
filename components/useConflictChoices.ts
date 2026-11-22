@@ -107,6 +107,8 @@ export function useConflictChoices({
     choice: ConflictModel['choices'][number];
     pick: BlockPick | undefined;
     edit: BlockEdit | null | undefined;
+    /** The conflict A sent focus to: focus arriving anywhere else in the view is a move of yours. */
+    target?: number;
   }>(undefined);
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
@@ -146,6 +148,10 @@ export function useConflictChoices({
       const index = card?.getAttribute('data-conflict-index');
       focused = card && index ? { index, card } : undefined;
       if (index && Number(index) >= 0) lastCard.current = Number(index);
+      // The accepted card taking focus back as it mounts again isn't a move of yours; keys and clicks end it already.
+      const at = index ? Number(index) : undefined;
+      if (lastAccept.current && at !== lastAccept.current.target && at !== lastAccept.current.index)
+        lastAccept.current = undefined;
     };
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget) focused = undefined;
@@ -280,6 +286,7 @@ export function useConflictChoices({
   }, [model]);
   function focusAfterAccept(from: number) {
     const next = nextNeedingYou(openBlocks().map(indexOf).filter((index) => index >= 0), from, accepted.current);
+    if (lastAccept.current) lastAccept.current.target = next;
     if (next === undefined) onAllResolved?.();
     else reveal(root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${next}"]`));
   }
