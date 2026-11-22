@@ -1224,10 +1224,14 @@ export function createConflictResolutionService(deps: Deps) {
     // replaces or settles it.
     if (saved?.status === 'published' && saved.undoing) {
       if (background) return saved;
+      const settled = await settleUndo(ctx, saved, signal);
       // Landed: the remote is at the previous head even while GitHub's read still shows the merge commit.
-      if (await settleUndo(ctx, saved, signal)) return { ...saved, stale: false };
-      if (saved.undoing) return saved;
+      if (settled === 'landed') return { ...saved, stale: false };
+      // Unsettled: the draft stays as it is until you start over from the current head (below) or discard it.
+      if (settled !== 'not-landed' && !restart) return { ...saved, undoUnsettled: settled };
     }
+    // Starting over from an unsettled undo: its draft is yours to carry onto the fresh preparation. Nothing is pushed.
+    const unsettled = !!restart && saved?.status === 'published' && !!saved.undoing;
     // A background draft counts only for the revisions it was prepared on. Your own draft, or a push still to restack,
     // is never replaced in the background.
     const current = !!saved && revisionChange(saved, state) === 'none';
@@ -1363,7 +1367,7 @@ export function createConflictResolutionService(deps: Deps) {
     );
     const { tree } = prepared;
     // Load latest changes keeps the resolutions whose conflicts did not change. New PR commits need a fresh review.
-    if (keep && saved?.status === 'editing' && saved.files.length)
+    if (keep && (saved?.status === 'editing' || unsettled) && saved?.files.length)
       files = (
         await carryFiles(
           await directory(ctx.account, id),
@@ -1441,10 +1445,6 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('The saved resolution no longer matches its revisions. Reopen the workspace and start again.');
   }
   /**
-   * Restack walks history. A shallow or removed cache fetches it first, as the full path always did. `tip` is the
-   * commit whose history is fetched: the pushed merge commit, or, for a dry run before the push, the PR head.
-   */
-  /**
    * The PR's private cache, set up again after startup cleanup removed it: a bare repository with the PR and base
    * repositories as promisor remotes, so trees arrive without their blobs.
    */
@@ -1464,37 +1464,50 @@ export function createConflictResolutionService(deps: Deps) {
     }
     return dir;
   }
-  /** The PR branch's commit on the remote now: GitHub's PR read can lag a push. */
-  async function liveHead(ctx: Context, session: ConflictSession, signal: AbortSignal) {
-    await ensureCache(ctx, session, signal);
-    return (
-      await git(ctx, session.id, ['ls-remote', remote(session.headRepo), `refs/heads/${session.headBranch}`], signal)
-    ).stdout
-      .toString()
-      .trim()
-      .split(/\s/)[0];
+  /**
+   * The PR branch's commit on the remote now: GitHub's PR read can lag a push. `dir` is the cache `ensureCache` set up.
+   * Only the line for exactly `refs/heads/<branch>` counts: ls-remote matches the pattern as a ref suffix too.
+   */
+  async function liveHead(ctx: Context, session: ConflictSession, dir: string, signal: AbortSignal) {
+    const ref = `refs/heads/${session.headBranch}`;
+    const output = (
+      await git(ctx, session.id, ['ls-remote', remote(session.headRepo), ref], signal, undefined, [0], { cwd: dir })
+    ).stdout.toString();
+    for (const line of output.split('\n')) {
+      const [sha, name] = line.trim().split(/\s+/);
+      if (name === ref) return sha;
+    }
+    return '';
   }
   /**
    * An undo whose reply or status write was lost (#445 item 25), settled from the remote, never from GitHub's lagging
    * PR read: at the previous head it landed, at the merge commit it never did. Anywhere else, or if the remote can't be
-   * read, the draft stays as it is with `undoing` set, and the workspace says so. True when the undo landed.
+   * read, the draft stays as it is with `undoing` set, and the workspace says which of the two it was.
    */
-  async function settleUndo(ctx: Context, session: ConflictSession, signal: AbortSignal) {
-    let live: string | undefined;
+  async function settleUndo(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal
+  ): Promise<'landed' | 'not-landed' | NonNullable<ConflictSession['undoUnsettled']>> {
+    let live: string;
     try {
-      live = await liveHead(ctx, session, signal);
+      live = await liveHead(ctx, session, await ensureCache(ctx, session, signal), signal);
     } catch (error) {
       if (signal.aborted || accountChanged(error)) throw error;
       console.warn('[conflicts] Could not read the branch to settle an undo.', error);
-      return false;
+      return 'unread';
     }
     if (live === session.headSha) await undone(ctx, session);
     else if (live === session.commitSha) delete session.undoing;
-    else return false;
+    else return 'elsewhere';
     session.version++;
     await persist(session);
-    return session.status === 'editing';
+    return session.status === 'editing' ? 'landed' : 'not-landed';
   }
+  /**
+   * Restack walks history. A shallow or removed cache fetches it first, as the full path always did. `tip` is the
+   * commit whose history is fetched: the pushed merge commit, or, for a dry run before the push, the PR head.
+   */
   async function restoreHistory(
     ctx: Context,
     session: ConflictSession,
@@ -1569,7 +1582,7 @@ export function createConflictResolutionService(deps: Deps) {
     report('Checking that the merge commit is still the PR head.');
     // The pushed commits must be here, so the push sends nothing: the remote already has the previous head. Startup
     // cleanup may have removed this PR's cache since the push.
-    await ensureCache(ctx, session, signal);
+    const dir = await ensureCache(ctx, session, signal);
     const present = async (sha: string) =>
       (await git(ctx, session.id, ['cat-file', '-e', `${sha}^{commit}`], signal, undefined, [0, 1, 128], { lazyFetch: false }))
         .code === 0;
@@ -1580,7 +1593,8 @@ export function createConflictResolutionService(deps: Deps) {
         ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', '--depth=2', 'pr', commitSha],
         signal
       );
-    const live = await liveHead(ctx, session, signal);
+    // The remote's branch is the only head check: GitHub's PR read can lag a push either way.
+    const live = await liveHead(ctx, session, dir, signal);
     // A retry after a lost reply: the earlier undo landed. Finish it rather than call it someone else's push.
     if (session.undoing && live === headSha) {
       await undone(ctx, session);
@@ -1593,8 +1607,8 @@ export function createConflictResolutionService(deps: Deps) {
     if (state.state !== 'OPEN') throw new Error(UNDO_CLOSED);
     if (state.account !== ctx.account || state.archived || !state.canUpdateBranch)
       throw new Error('You cannot update this PR branch with the connected account. Nothing was changed.');
-    if (state.headRepo !== session.headRepo || state.headBranch !== session.headBranch || state.headSha !== commitSha)
-      throw new Error(UNDO_MOVED);
+    // GitHub answers for the PR's identity and open state only.
+    if (state.headRepo !== session.headRepo || state.headBranch !== session.headBranch) throw new Error(UNDO_MOVED);
     assertAccount(ctx);
     // Saved before the network write, so a reopen can finish an undo whose reply was lost. The version stays: a
     // refused undo leaves the draft as the renderer has it.
@@ -2252,6 +2266,11 @@ export function createConflictResolutionService(deps: Deps) {
           await undoPublish(ctx, session, signal, report);
           session.version++;
           await persist(session);
+          return { session };
+        }
+        // A draft whose undo is unsettled can be discarded: that only removes it here.
+        if (request.kind === 'discard' && session.undoing) {
+          await drop(ctx.account, id);
           return { session };
         }
         if (session.status !== 'editing')

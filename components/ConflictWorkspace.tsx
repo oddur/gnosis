@@ -28,7 +28,7 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
-import { undoTarget, UNDO_UNSETTLED } from '../lib/conflict-undo';
+import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import {
   ResultEditor,
@@ -1328,9 +1328,27 @@ export function ConflictWorkspace({
                     <li>Checks restarting on GitHub</li>
                   </ul>
                   {session.undoing && (
-                    <p role="status" data-conflict-undo-unsettled="">
-                      {UNDO_UNSETTLED}
-                    </p>
+                    <div className="conflict-undo-unsettled" data-conflict-undo-unsettled={session.undoUnsettled ?? ''}>
+                      <p role="status">{unsettledUndoCopy(session.undoUnsettled, session.headBranch)}</p>
+                      <div className="conflict-outcome-actions">
+                        <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
+                          Keep my resolutions and start over
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(
+                              (s) => ({ kind: 'discard', id: s.id, version: s.version }),
+                              () => onClose()
+                            )
+                          }
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                    </div>
                   )}
                   <p className="conflict-outcome-undo">
                     To undo, reset {session.headBranch} to <CommitBadge sha={session.headSha} repo={session.headRepo} />

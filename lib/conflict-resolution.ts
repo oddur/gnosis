@@ -118,6 +118,11 @@ export interface ConflictSession {
    * finishes an undo whose reply or status write was lost.
    */
   undoing?: boolean;
+  /**
+   * Why a pending undo could not be settled when the workspace opened: the branch couldn't be read, or it is at
+   * another commit. Never saved.
+   */
+  undoUnsettled?: 'unread' | 'elsewhere';
 }
 export interface RestackPlan {
   token: string;

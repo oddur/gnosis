@@ -3247,6 +3247,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* Undo this update (#445 item 25): a quiet text action after the header line or the outcome; the dialog asks first. */
 .conflict-undo-action { padding:0; border:0; background:none; color:var(--primary); font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 .conflict-undo-action:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:2px; }
+.conflict-undo-unsettled { display:flex; flex-direction:column; gap:8px; margin-block:8px; max-width:72ch; }
 .pr-action-error { color:var(--destructive); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
 .pr-action-error button,.pr-action-error a { text-decoration:underline; text-underline-offset:3px; margin-inline-end:12px; }
 .pr-update-menu { z-index:60; width:min(340px,calc(100vw - 24px)); padding:4px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:5px; }

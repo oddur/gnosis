@@ -96,14 +96,14 @@ While your merge commit is still the head of the PR branch, the PR header says "
 
 When it is on, **Undo this update** opens a confirmation. The confirmation names the branch and says that the undo rewrites the branch's history. Cancel has focus. Enter alone never pushes, and Enter or Space on the push button does nothing. Select the button, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus.
 
-Gnosis then reads the PR from GitHub and the branch from the remote, and pushes the previous head back with `git push --force-with-lease=<branch>:<merge commit> <previous head>:<branch>`. It uses the same sign-in and push path as the update. The undo is refused, and nothing changes, when:
+Gnosis then reads the branch from the remote, which is the only head it trusts, and the PR from GitHub, for whether it is still open. It pushes the previous head back with `git push --force-with-lease=<branch>:<merge commit> <previous head>:<branch>`. It uses the same sign-in and push path as the update. The undo is refused, and nothing changes, when:
 
 - someone pushed to the branch after the merge commit, or CI added a commit. The lease refuses this too, if the commit arrives during the undo.
 - the PR is merged or closed.
 - a restack of the dependent PRs is prepared, paused or pushed: it builds on the merge commit. Undo for a restack is not supported.
 - GitHub refuses the force push, for example on a protected branch. Gnosis shows GitHub's message.
 
-After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again, or select **Undo this update** again: Gnosis reads the branch on the remote, not GitHub's PR, which can lag. At the previous commit, the undo landed and Gnosis finishes it. At the merge commit, it never did. Anywhere else, the workspace says so and keeps your draft as it is. Background preparation never replaces a draft while an undo is unsettled.
+After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again, or select **Undo this update** again: Gnosis reads the branch on the remote, not GitHub's PR, which can lag. At the previous commit, the undo landed and Gnosis finishes it. At the merge commit, it never did. If Gnosis can't read the branch, or the branch is at another commit, the workspace says which, keeps your draft and offers no undo. **Keep my resolutions and start over** prepares the merge again on the branch as it is now and carries your choices over; **Discard** removes the draft. Neither pushes anything. Background preparation never replaces a draft while an undo is unsettled.
 
 To undo by hand, without a force push, revert the merge commit on the PR branch. This keeps the history:
 

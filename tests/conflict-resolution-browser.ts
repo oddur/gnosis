@@ -696,6 +696,26 @@ void app.whenReady().then(async () => {
     await open();
     await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
 
+    // An undo Gnosis couldn't settle: it says what it knows and offers a way out, with no undo action.
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js("Object.assign(window.conflictFixture,{undoing:true,undoUnsettled:'elsewhere'})");
+    await open();
+    await wait("!!document.querySelector('[data-conflict-undo-unsettled=elsewhere]')");
+    assert.match(
+      await js<string>("document.querySelector('[data-conflict-undo-unsettled]').innerText"),
+      /feature\/retry is at another commit, neither the merge commit nor the commit before it/
+    );
+    assert.ok(await exists('Keep my resolutions and start over'));
+    assert.ok(await exists('Discard'));
+    assert.equal(await js("!!document.querySelector('.conflict-outcome [data-conflict-undo]')"), false);
+    await captureAll('undo-unsettled');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('delete window.conflictFixture.undoing; delete window.conflictFixture.undoUnsettled');
+    await open();
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
+
     // Restacking is a separate, explicit preview-and-push flow after the root resolution.
     await js(`(()=>{
       window.conflictFixture.dependents=['https://github.com/klang/engine/pull/121','https://github.com/klang/engine/pull/122'];

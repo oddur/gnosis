@@ -14,9 +14,19 @@ export const UNDO_RESTACKED =
   'Dependent PRs were restacked onto this merge commit, so Gnosis can’t undo it. Nothing was changed.';
 export const UNDO_CLOSED = 'This PR is merged or closed, so Gnosis can’t undo the update. Nothing was changed.';
 export const UNDO_MOVED = 'New commits are on the PR branch after the merge commit.';
-/** An interrupted undo whose branch is at neither commit: Gnosis keeps the draft as it was and asks you to look. */
-export const UNDO_UNSETTLED =
-  'Gnosis couldn’t tell whether the last undo reached GitHub: the branch is at neither the merge commit nor the commit before it. Your draft is kept. Check the branch on GitHub.';
+/**
+ * An interrupted undo Gnosis could not settle: it says which check failed, only what it knows. Nothing is pushed from
+ * here; you start over from the current head with your resolutions, or discard the draft.
+ */
+export function unsettledUndoCopy(reason: 'unread' | 'elsewhere' | undefined, branch: string) {
+  const why =
+    reason === 'unread'
+      ? `Gnosis couldn’t read ${branch} to see whether the last undo reached GitHub.`
+      : reason === 'elsewhere'
+        ? `${branch} is at another commit, neither the merge commit nor the commit before it, so Gnosis can’t tell whether the last undo reached GitHub.`
+        : 'Gnosis couldn’t tell whether the last undo reached GitHub.';
+  return `${why} Your draft is kept, and nothing more is pushed. Start over from the branch as it is now, with your resolutions, or discard the draft.`;
+}
 
 /** A pushed update while its merge commit is the PR head (the service's `pushed`): what Undo this update needs. */
 export interface PushedUpdate {
