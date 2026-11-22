@@ -138,6 +138,37 @@ void test('a union is never Merged: it is a ready proposal in Check, with a note
   assert.match(rust.verdict.note, /different fields here/);
 });
 
+void test('a union of classes, or of class fields, in a language that runs them in order gets the order note (#462)', async () => {
+  const cls = (name: string) => `export class ${name} {\n  static made = Date.now();\n}\n\n`;
+  const py = (name: string) => `class ${name}:\n    made = time.time()\n\n\n`;
+  const unions = await Promise.all([
+    check(conflict('src/models.ts', [cls('Alpha'), [cls('Beta'), '', cls('Gamma')], cls('Omega')])),
+    check(conflict('src/models.js', [cls('Alpha'), [cls('Beta'), '', cls('Gamma')], cls('Omega')])),
+    check(conflict('models.py', [`import time\n\n\n${py('Alpha')}`, [py('Beta'), '', py('Gamma')], py('Omega')])),
+    check(
+      conflict('src/options.ts', [
+        'export class Options {\n  width = 1;\n',
+        ['  depth = this.width * 2;\n', '', '  weight = this.width * 3;\n'],
+        '}\n',
+      ])
+    ),
+  ]);
+  for (const union of unions) {
+    assert.deepEqual(union.buckets, ['check']);
+    assert.match(union.verdict.note, new RegExp(`^Both sides added different (definitions|fields) here\\..*${order}$`));
+  }
+  // Java defines its classes before any code runs: their order still doesn't matter.
+  const java = await check(
+    conflict('src/Shapes.java', [
+      'package lab;\n\n',
+      ['class Square {}\n', '', 'class Circle {}\n'],
+      'class Point {}\n',
+    ])
+  );
+  assert.deepEqual(java.buckets, ['check']);
+  assert.match(java.verdict.note, new RegExp(doesnt));
+});
+
 void test('traps stay in Check: a catch-all arm, names both sides added, attributes, ordered lists, duplicate keys', async () => {
   const traps = [
     conflict('src/status.rs', [

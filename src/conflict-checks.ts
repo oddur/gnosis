@@ -176,6 +176,8 @@ interface Job {
   /** The worker's answer, or undefined when it failed, ran out of time or stopped. */
   resolve: (response: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
+  /** Stops listening to the request's AbortSignal. */
+  release?: () => void;
 }
 const jobLabel = (request: CheckRequest) =>
   request.kind === 'noise'
@@ -225,7 +227,9 @@ export async function noiseAnswer(
 /**
  * The worker that runs the checks, started on the first check and stopped after a minute without one, so its grammars
  * leave memory. One job at a time. A job that runs over 30 seconds, counted from when it starts, answers undefined;
- * the worker restarts for the jobs after it.
+ * the worker restarts for the jobs after it. So does a running job whose request is cancelled (#464): the next job
+ * doesn't wait for a file nobody reads; a cancelled job that hasn't started never runs. A cancelled job answers
+ * undefined, never a verdict.
  */
 export function createConflictCheckWorker(
   script: string,
@@ -249,6 +253,7 @@ export function createConflictCheckWorker(
   const finish = (job: Job, response: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
     clearTimeout(job.timer);
+    job.release?.();
     current = undefined;
     job.resolve(response);
     if (restart) terminate();
@@ -297,36 +302,65 @@ export function createConflictCheckWorker(
       finish(job, undefined, true);
     }
   }
-  const run = (request: CheckRequest) =>
+  const run = (request: CheckRequest, signal?: AbortSignal) =>
     new Promise<CheckResponse | undefined>((resolve) => {
-      queue.push({ request, resolve });
+      if (signal?.aborted) {
+        resolve(undefined);
+        return;
+      }
+      const job: Job = { request, resolve };
+      if (signal) {
+        const cancel = () => {
+          const at = queue.indexOf(job);
+          if (current === job) finish(job, undefined, true);
+          else if (at >= 0) {
+            queue.splice(at, 1);
+            job.release?.();
+            resolve(undefined);
+          }
+        };
+        signal.addEventListener('abort', cancel, { once: true });
+        job.release = () => signal.removeEventListener('abort', cancel);
+      }
+      queue.push(job);
       pump();
     });
   /** A conflict file's job: its check, or the move rule's proposal. */
-  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved') => {
+  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved', signal?: AbortSignal) => {
     if (disposed) return Promise.resolve(undefined);
     const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-    return run({
-      id: ++serial,
-      ...(kind === 'moved' ? { kind } : {}),
-      file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-      disabled,
-    });
+    return run(
+      {
+        id: ++serial,
+        ...(kind === 'moved' ? { kind } : {}),
+        file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+        disabled,
+      },
+      signal
+    );
   };
   return {
-    async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
-      const response = await ask(file, disabled, 'check');
+    async check(
+      file: CheckedFile,
+      disabled: SyntaxLanguage[] = [],
+      signal?: AbortSignal
+    ): Promise<Verdict | undefined> {
+      const response = await ask(file, disabled, 'check', signal);
       return response && 'verdict' in response ? response.verdict : undefined;
     },
     /** A text's definitions (definitionsOf), in the same worker, one job at a time with the checks. */
-    async definitions(path: string, text: string, disabled: SyntaxLanguage[] = []) {
+    async definitions(path: string, text: string, disabled: SyntaxLanguage[] = [], signal?: AbortSignal) {
       if (disposed) return undefined;
-      const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled });
+      const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled }, signal);
       return response && 'definitions' in response ? response.definitions : undefined;
     },
     /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
-    async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
-      const response = await ask(file, disabled, 'moved');
+    async moved(
+      file: CheckedFile,
+      disabled: SyntaxLanguage[] = [],
+      signal?: AbortSignal
+    ): Promise<ConflictProposal | undefined> {
+      const response = await ask(file, disabled, 'moved', signal);
       return response && 'proposal' in response ? response.proposal : undefined;
     },
     /**
@@ -338,7 +372,10 @@ export function createConflictCheckWorker(
       const answers: (NoiseAnswer | null)[] = files.map(() => null);
       for (const [index, { language, after, hunks, imports }] of files.entries()) {
         if (disposed || signal?.aborted) break;
-        const response = await run({ id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] });
+        const response = await run(
+          { id: ++serial, kind: 'noise', files: [{ language, after, hunks, imports }] },
+          signal
+        );
         if (!response || !('noise' in response) || response.noise.length !== 1) break;
         answers[index] = response.noise[0];
       }
@@ -350,6 +387,7 @@ export function createConflictCheckWorker(
       terminate();
       for (const job of [...(current ? [current] : []), ...queue.splice(0)]) {
         clearTimeout(job.timer);
+        job.release?.();
         job.resolve(undefined);
       }
       current = undefined;

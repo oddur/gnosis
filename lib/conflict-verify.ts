@@ -553,15 +553,15 @@ export async function verifyProposals(
       }
       if (note) fail(s.index, note);
     }
-    // A union is never Merged. Its note comes from the syntax nodes each side added; an earlier failure on the block wins.
-    unions.forEach(({ index, own }, k) => {
-      if (!own) return;
+    // A union is never Merged. Its note comes from the syntax nodes each side added, when they were read; an earlier
+    // failure on the block wins.
+    for (const s of proposed) {
+      if (proposals[s.index]?.source !== 'union') continue;
+      const k = unions.findIndex((u) => u.index === s.index && u.own);
       // A union set aside for a parse error was not in the text these units came from.
-      const units = probe.regions.has(index) ? result.units : undefined;
-      fail(index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
-    });
-    for (const s of proposed)
-      if (proposals[s.index]?.source === 'union') fail(s.index, unionNote(language, undefined, undefined));
+      const units = k >= 0 && probe.regions.has(s.index) ? result.units : undefined;
+      fail(s.index, unionNote(language, units?.[2 * k], units?.[2 * k + 1]));
+    }
     for (const [index, note] of [
       ...danglingNames(file, segments),
       ...duplicateMembers(segments, proposals),
@@ -1080,19 +1080,26 @@ export const CHECKS_VERSION = 10;
 const proposalKeys = new WeakMap<object, string>();
 /**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
- * check result counts only for the proposals it checked, beside the choices it checked them with.
+ * check result counts only for the proposals it checked, beside the choices it checked them with. When given, the path
+ * and the three versions the checks read count too (#464), so a verdict never outlives a file whose sides changed.
  */
 export function proposalKey(
-  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'> & Partial<Pick<ConflictFile, 'result'>>
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'> &
+    Partial<Pick<ConflictFile, 'result' | 'path' | 'base' | 'ours' | 'theirs'>>
 ) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
     const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
+    const sides = [file.path, file.base, file.ours, file.theirs];
     const text = [
       file.original,
       ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
       // The draft matters only to per-conflict checks; a whole-file check ignores it.
       `\u0002${file.wholeFile ? '' : (file.result ?? '')}`,
+      // Without them (typeCheckKey), the key is the one it always was.
+      ...(sides.some((side) => side !== undefined)
+        ? [`\u0003${sides.map((side) => side ?? '\u0004').join('\u0003')}`]
+        : []),
     ].join('\u0000');
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
@@ -1149,7 +1156,9 @@ export function blockBuckets(
     const pick = choices[s.index];
     // A model proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
     if (pick === 'proposal')
-      return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
+      return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged
+        ? 'merged'
+        : 'check';
     return pick ? 'decided' : 'decide';
   });
 }
