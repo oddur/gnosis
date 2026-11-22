@@ -68,7 +68,7 @@ export function conflictHeader(
     // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
     const saved = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
     const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
-    const buckets = blockBuckets(f, f.result, verdict);
+    const buckets = blockBuckets(f, f.result, verdict, undefined, f.edits);
     const stage = conflictFileStage(f);
     const merged = allMerged(buckets);
     // The dialog's own next step for the file. Only a reviewed file, or an all-Merged one that "Show me every merged

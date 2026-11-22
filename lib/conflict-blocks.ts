@@ -32,14 +32,19 @@ export type BlockProposals = readonly ({ text: string } | null | undefined)[];
  */
 export interface BlockEdit {
   text: string;
-  /** The conflict's state before your first edit of it: Undo returns to it. */
-  before: BlockPick | undefined;
+  /** The conflict's state before your first edit of it: Undo returns to it. Null, as saved, is undefined. */
+  before: BlockPick | null | undefined;
   /** Your pick before the edit, restored with `before`. */
-  pick: BlockPick | undefined;
+  pick: BlockPick | null | undefined;
   written?: readonly number[];
 }
-/** Your in-place edits by block index. They are kept while the view is open; the draft itself is what is saved. */
-export type BlockEdits = readonly (BlockEdit | undefined)[];
+/**
+ * Your in-place edits by block index. The view keeps them as you edit, and they are saved with the draft
+ * (`ConflictFile.edits`), as your picks are.
+ */
+export type BlockEdits = readonly (BlockEdit | null | undefined)[];
+/** Only the texts of your edits: what the choices read and the draft holds. */
+export type EditTexts = readonly ({ text: string } | null | undefined)[];
 /** A block's state in the view: a pick, or your edit of it. */
 export type ModelChoice = BlockPick | 'edit';
 
@@ -126,7 +131,7 @@ export const pickText = (
   segment: Extract<ConflictSegment, { kind: 'conflict' }>,
   pick: ModelChoice | undefined,
   proposals?: BlockProposals,
-  edits?: BlockEdits
+  edits?: EditTexts
 ) =>
   pick === 'edit'
     ? (edits?.[segment.index]?.text ?? segment.block.raw)
@@ -141,7 +146,7 @@ export function applyChoices(
   segments: readonly ConflictSegment[],
   choices: readonly (ModelChoice | undefined)[],
   proposals?: BlockProposals,
-  edits?: BlockEdits
+  edits?: EditTexts
 ) {
   return segments
     .map((segment) =>
@@ -170,7 +175,7 @@ export function inferModelChoices(
   segments: readonly ConflictSegment[],
   contents: string,
   proposals?: BlockProposals,
-  edits?: BlockEdits
+  edits?: EditTexts
 ): (ModelChoice | undefined)[] | undefined {
   // Options with the same text are one option: the proposal comes first, so one that equals a side is still the
   // proposal that was checked.
@@ -293,7 +298,7 @@ export function conflictModel(
 }
 
 /** An edit that still holds a conflict marker: its conflict stays open, in Decide (#445 item 11). */
-export const editOpen = (edit: BlockEdit | undefined) => !!edit && hasConflictMarkers(edit.text);
+export const editOpen = (edit: { text: string } | null | undefined) => !!edit && hasConflictMarkers(edit.text);
 
 /** Where conflict `index` sits in the draft, as character offsets: its text is `contents.slice(start, end)`. */
 export interface ConflictSpan {
@@ -337,12 +342,13 @@ export function onlyInSpan(contents: string, next: string, span: ConflictSpan): 
 
 /**
  * Your text for one conflict as the draft writes it: the file's line endings, and a final line break where the
- * conflict's text had one, so the line after the conflict never joins your last line.
+ * conflict's text had one or where text follows the conflict (`followed`), so the line after the conflict never joins
+ * your last line, even when the conflict had no lines (a Keep of an empty side).
  */
-export function editText(block: ConflictBlock, current: string, typed: string): string {
+export function editText(block: ConflictBlock, current: string, typed: string, followed = true): string {
   const eol = /\r\n/.test(block.ours + block.theirs + current) ? '\r\n' : '\n';
   const text = typed.replace(/\r?\n/g, eol);
-  return text && current.endsWith('\n') && !text.endsWith('\n') ? text + eol : text;
+  return text && !text.endsWith('\n') && (followed || current.endsWith('\n')) ? text + eol : text;
 }
 
 /**
@@ -357,17 +363,18 @@ export function editConflict(
   typed: string,
   proposals?: BlockProposals,
   picks?: BlockPicks
-): { contents: string; edits: (BlockEdit | undefined)[]; edit: BlockEdit } | undefined {
+): { contents: string; edits: (BlockEdit | null | undefined)[]; edit: BlockEdit } | undefined {
   const span = conflictSpan(model, contents, index, proposals);
   const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
   if (!span || segment?.kind !== 'conflict') return undefined;
-  const text = editText(segment.block, contents.slice(span.start, span.end), typed);
+  const text = editText(segment.block, contents.slice(span.start, span.end), typed, span.end < contents.length);
   const next = contents.slice(0, span.start) + text + contents.slice(span.end);
-  if (!onlyInSpan(contents, next, span)) return undefined;
+  // Built from the text around the span, so this can't fail: an assert, in case the code above ever changes.
+  if (!onlyInSpan(contents, next, span)) throw new Error('An edit changed text outside its conflict.');
   const choice = model.choices[index];
   const previous = choice === 'edit' ? model.edits?.[index] : undefined;
   // Only the edits the draft still reads are kept.
-  const edits: (BlockEdit | undefined)[] = [];
+  const edits: (BlockEdit | null | undefined)[] = [];
   for (const s of model.segments)
     if (s.kind === 'conflict' && model.choices[s.index] === 'edit') edits[s.index] = model.edits?.[s.index];
   // A second edit of the same conflict keeps what the first one replaced: Undo goes back past both.

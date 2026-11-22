@@ -183,7 +183,7 @@ void app.whenReady().then(async () => {
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
-        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
         if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
         else if(req.kind==='resolve'){s.files[0].result=s.files[0].resolverText='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
@@ -413,6 +413,20 @@ void app.whenReady().then(async () => {
       false
     );
     await captureAll('inline-edited');
+    // The edit is saved with the draft, as picks are: after a reopen the card still says so, with Undo and Edit.
+    assert.deepEqual(
+      await js('window.conflictFixture.files[0].edits?.map(e=>e&&[e.before,e.pick])'),
+      [[null, null]]
+    );
+    const reopen = async (state: string) => {
+      await click('Close');
+      await wait("!document.querySelector('.conflict-workspace')");
+      await open();
+      await wait(`${block(0)}?.dataset.state===${JSON.stringify(state)}`);
+    };
+    await reopen('edited');
+    assert.ok(await js(`!!${block(0)}.querySelector('[data-conflict-edit]')`), 'Edit is still there');
+    assert.equal(await js(`${block(1)}?.dataset.state`), 'kept', 'The other conflict keeps its Keep');
     // Undo returns the conflict to Decide, as it was before the edit.
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
@@ -427,6 +441,10 @@ void app.whenReady().then(async () => {
     await key('m');
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
     await captureAll('inline-edit-markers');
+    // Reopened, an edit with a marker is still a Decide card with its Undo: the file never gets stuck.
+    await reopen('open');
+    assert.ok(await js(`${block(0)}.hasAttribute('data-edited')`));
+    assert.equal(await stage(), 'conflicted');
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open' && !${block(0)}?.hasAttribute('data-edited')`);
     // Cancel (Escape) leaves the draft as it was, and the workspace stays open.

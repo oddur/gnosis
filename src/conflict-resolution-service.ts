@@ -2467,6 +2467,7 @@ export function createConflictResolutionService(deps: Deps) {
             file.result = request.contents;
             file.resolved = request.resolved;
             if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
+            if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
@@ -2545,6 +2546,7 @@ export function createConflictResolutionService(deps: Deps) {
           file.result = request.contents;
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
+          if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
         } else if (request.kind === 'model') {
           // The model's proposal for one conflict, into that conflict's span only, while it is still open. The checks
           // below run on it; a model proposal is never Merged (lib/conflict-verify.ts).
@@ -2566,8 +2568,8 @@ export function createConflictResolutionService(deps: Deps) {
           file.proposals = spliced.proposals;
           file.resolved = false;
           // The draft a resolver wrote now holds the model's lines too: lines neither side had are marked (#445 item 10).
-          // The draft derives only from its conflicts' choices (spliceModelProposal), so no line you typed is in it.
-          file.resolverText = spliced.result;
+          // Its text leaves your in-place edits out (spliceModelProposal), so no line you typed is ever taken for it.
+          file.resolverText = spliced.resolver;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -2578,7 +2580,7 @@ export function createConflictResolutionService(deps: Deps) {
               // "Use this result": the whole-file proposal preparation kept, structural merge's or the move rule's.
               const proposal = file.wholeFile;
               if (!proposal || hasConflictMarkers(proposal.text)) throw new Error('This file has no whole-file proposal.');
-              if (proposal.text !== file.result) file.picks = undefined;
+              if (proposal.text !== file.result) file.picks = file.edits = undefined;
               file.result = proposal.text;
               file.resolverText = proposal.text;
               file.explanation =
@@ -2607,7 +2609,7 @@ export function createConflictResolutionService(deps: Deps) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
                 // Your Keep choices were for the draft this replaces.
-                if (result.contents !== file.result) file.picks = undefined;
+                if (result.contents !== file.result) file.picks = file.edits = undefined;
                 file.result = result.contents;
                 file.resolverText = result.contents;
               }
@@ -2640,7 +2642,7 @@ export function createConflictResolutionService(deps: Deps) {
                   continue;
                 }
               }
-              if (output !== file.result) file.picks = undefined;
+              if (output !== file.result) file.picks = file.edits = undefined;
               file.result = output;
               file.resolverText = output;
               file.explanation = hasConflictMarkers(file.result)
