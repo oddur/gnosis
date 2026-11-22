@@ -42,7 +42,8 @@ function conflictTop(card: HTMLElement): Element | undefined {
 }
 /**
  * Focuses a card and scrolls so its conflict's lines show with it, under the pinned file and hunk headers (#445
- * distill): J lands on a decision with both sides on screen. When they don't fit together, the lines' top comes first.
+ * distill): J lands on a decision with both sides on screen. When they don't fit together, the card is in view, with as
+ * many of the conflict's lines above it as fit.
  */
 function revealElement(element: HTMLElement | null | undefined) {
   if (!element) return;
@@ -54,15 +55,26 @@ function revealElement(element: HTMLElement | null | undefined) {
     element.scrollIntoView({ block: 'nearest', behavior });
     return;
   }
-  const header = element.closest('.conflict-diff-file')?.querySelector('.changes-file-header');
-  // The file header pins at the scroller's top, a hunk header under it.
-  const pinned = (header?.getBoundingClientRect().height ?? 48) + 40;
+  // The file header pins at the scroller's top, and the hunk header under it: both measured.
+  const file = element.closest('.conflict-diff-file');
+  const pinned =
+    (file?.querySelector('.changes-file-header')?.getBoundingClientRect().height ?? 0) +
+    (file?.querySelector('.diff-gap')?.getBoundingClientRect().height ?? 0);
   const view = scroller.getBoundingClientRect();
   const from = view.top + pinned;
   const to = view.bottom - 8;
   const first = top.getBoundingClientRect().top;
-  const last = element.getBoundingClientRect().bottom;
-  const delta = first < from || last - first > to - from ? first - from : last > to ? last - to : 0;
+  const card = element.getBoundingClientRect();
+  const delta =
+    card.bottom - first <= to - from
+      ? first < from
+        ? first - from
+        : card.bottom > to
+          ? card.bottom - to
+          : 0
+      : card.height <= to - from
+        ? card.bottom - to
+        : card.top - from;
   if (Math.abs(delta) > 1) scroller.scrollBy({ top: delta, behavior });
 }
 

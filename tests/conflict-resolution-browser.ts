@@ -843,7 +843,7 @@ void app.whenReady().then(async () => {
           window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[{url:s.dependents[0],headSha:'a'.repeat(40),baseSha:'b'.repeat(40),headBranch:'feature/retry-121',baseBranch:'feature/retry'}],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,merged:i?0:2,yours:i?1:0,review:!!i,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
         }
         if(req.kind==='restack-save'){window.conflictCalls.push(req);const f=s.restack.blocked.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;if(f.verdict&&window.restackVerdictKey)f.verdict.key=window.restackVerdictKey(f);s.version++;return {session:structuredClone(s)};}
-        if(req.kind==='restack-continue'){window.conflictCalls.push(req);if(window.nextPause){s.restack.blocked=window.nextPause;window.nextPause=undefined;}else{s.restack.status='prepared';s.restack.blocked=undefined;}s.version++;return {session:structuredClone(s)};}
+        if(req.kind==='restack-continue'){window.conflictCalls.push(req);if(window.failContinue){const m=window.failContinue;window.failContinue=undefined;throw Error(m);}if(window.nextPause){s.restack.blocked=window.nextPause;window.nextPause=undefined;}else{s.restack.status='prepared';s.restack.blocked=undefined;}s.version++;return {session:structuredClone(s)};}
         if(req.kind==='restack-publish'){window.conflictCalls.push(req);s.restack.status='published';s.version++;return {session:structuredClone(s)};}
         return original(req);
       };
@@ -1010,7 +1010,17 @@ void app.whenReady().then(async () => {
     await click('Use this result');
     await wait(`!${paused}.querySelector('.conflict-whole-file')`);
     await click('Mark reviewed');
+    // A failed Continue keeps its error and Retry in view below 900px, where the plan's other rows step aside.
+    await js("window.failContinue='GitHub did not answer.'");
+    await resize(760, 800);
+    await wait('innerWidth<=760');
     await click('Continue restack');
+    await wait("[...document.querySelectorAll('.restack-review .step-list-error')].some(e=>e.checkVisibility())");
+    assert.equal(await js(`(${visibleButton('Retry')})?.checkVisibility() ?? false`), true, 'Retry shows at 760px');
+    await capture('restack-continue-failed-narrow');
+    await resize(1280, 900);
+    await wait('innerWidth>=1280');
+    await click('Retry');
     await wait("!document.querySelector('.restack-blocked')");
     await click('Close');
 
@@ -1037,12 +1047,20 @@ void app.whenReady().then(async () => {
     await resize(760, 800);
     await capture('narrow');
     assert.ok(await footerFits(), 'Footer buttons fit at 760 × 800');
+    // Below 900px the file list is the picker, with the open file's status, for one file too.
+    assert.equal(
+      await js("document.querySelector('[data-conflict-file-picker]')?.checkVisibility() && !!document.querySelector('[data-conflict-file-picker] [data-status]')"),
+      true
+    );
+    assert.equal(await js("document.querySelector('nav.conflict-files').checkVisibility()"), false);
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await js('window.conflictFixture.stale=false;window.conflictFixture.staleReason=undefined');
     await click('Load latest changes');
     await wait("window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).keep===true");
     await click('Start over with latest code…');
     await wait("document.querySelector('.conflict-footer')?.textContent.includes('Cancel')");
+    // Cancel has focus once the Reset menu has closed: Enter never starts over.
+    await wait("document.activeElement?.closest('.conflict-footer') && document.activeElement.textContent.trim()==='Cancel'");
     await capture('start-over-narrow');
     await click('Cancel');
     await resize(1280, 900);
