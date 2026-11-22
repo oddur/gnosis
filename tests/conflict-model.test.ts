@@ -92,6 +92,7 @@ function fixture(
   data.set(`conflict-draft:tester:${ID}`, sessionWith(files));
   const calls: { systemPrompt: string; content: ConflictModelInput; signal: AbortSignal }[] = [];
   const pauses: unknown[] = [];
+  const parsed: string[] = [];
   const service = createConflictResolutionService({
     storage: {
       read: (key: string) => structuredClone(data.get(key)),
@@ -104,7 +105,10 @@ function fixture(
     mergiraf: () => '/nonexistent',
     suggest: () => Promise.reject(new Error('Not used.')),
     verify: (file) => conflictChecker(engine)(file),
-    definitions: (file, text, disabled) => definitionsOf(engine, file, text, disabled),
+    definitions: (file, text, disabled) => {
+      parsed.push(file);
+      return definitionsOf(engine, file, text, disabled);
+    },
     model: {
       label: () => 'Claude',
       paused: options.paused ?? (() => undefined),
@@ -123,7 +127,7 @@ function fixture(
   const saved = () => data.get(`conflict-draft:tester:${ID}`) as ConflictSession;
   const run = (request: { kind: 'model'; path: string; index: number }) =>
     service.run({ ...request, id: ID, version: saved().version }, new AbortController().signal);
-  return { service, calls, pauses, saved, run };
+  return { service, calls, pauses, parsed, saved, run, data };
 }
 
 test('the request holds the conflict’s three texts, its enclosing definition and the PR title, and nothing else', async () => {
@@ -174,6 +178,18 @@ test('files that match secret patterns never go to a model', async () => {
     'app/credentials.json',
     'ops/db-password.txt',
     '.npmrc',
+    '.envrc',
+    'worker/.dev.vars',
+    'auth.json',
+    '.yarnrc.yml',
+    'config/database.yml',
+    'android/gradle.properties',
+    '.terraformrc',
+    'firebase/my-app-firebase-adminsdk-abc12.json',
+    'credentials',
+    'aws/credentials.prod',
+    'release/app.keystore',
+    'release/upload.jks',
   ])
     assert.equal(isSecretPath(name), true, name);
   for (const name of ['src/settings.ts', 'README.md', 'lib/environment.ts', 'src/tokenizer.ts'])
@@ -181,6 +197,28 @@ test('files that match secret patterns never go to a model', async () => {
   assert.equal(hasSecretText('const key = "AKIAABCDEFGHIJKLMNOP";'), true);
   assert.equal(hasSecretText('-----BEGIN RSA PRIVATE KEY-----'), true);
   assert.equal(hasSecretText('const x = 10;'), false);
+  for (const text of [
+    'const stripe = "sk_live_abcdefghij0123456789";',
+    'const restricted = "rk_live_abcdefghij0123456789";',
+    'const stripeTest = "sk_test_abcdefghij0123456789";',
+    '-----BEGIN PGP PRIVATE KEY BLOCK-----',
+    '-----BEGIN OPENSSH PRIVATE KEY-----',
+    '-----BEGIN PRIVATE KEY-----',
+    '//registry.npmjs.org/:_authToken=npm_abcdefghijklmnopqrstuvwxyz0123456789',
+    'const hook = "https://hooks.slack.com/services/T000/B000/XXXX";',
+    'const key = "ASIAABCDEFGHIJKLMNOP";',
+    'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG',
+    'SENDGRID=SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123',
+    'const google = "ya29.a0AfH6SMBabcdefghijklmnopqrstuvwxyz";',
+    'password: "hunter2hunter2"',
+    'DB_PASSWD=correcthorse',
+    'secret = "abcdefgh123"',
+    'GITHUB_TOKEN=abcdefgh12345',
+    'api_key: abcdefgh12345',
+    'apiKey = "abcdefgh12345"',
+    "client_secret: 'abcdefgh12345'",
+  ])
+    assert.equal(hasSecretText(text), true, text);
 
   const secret = conflictFile({ path: 'config/.env.production' });
   const keyed = conflictFile({
@@ -464,4 +502,102 @@ test('model requests are validated at the IPC boundary', () => {
     assert.throws(() => validateModelRequest(bad));
   assert.doesNotThrow(() => validateConflictRequest({ kind: 'model', id: ID, version: 1, path: 'src/a.ts', index: 0 }));
   assert.throws(() => validateConflictRequest({ kind: 'model', id: ID, version: 1, path: 'src/a.ts', index: -1 }));
+});
+
+test('a proposal applied while another is cancelled keeps the rest of the queue', async () => {
+  const { createProposalQueue, ModelProposalWaits } = await import('../lib/conflict-model');
+  const applied: string[] = [];
+  let release: () => void = () => {};
+  let busy = false;
+  const queue = createProposalQueue<{ key: string }>({
+    apply: async (entry) => {
+      if (busy) throw new ModelProposalWaits();
+      if (entry.key === 'a') await new Promise<void>((resolve) => (release = resolve));
+      applied.push(entry.key);
+    },
+    busy: () => false,
+  });
+  queue.push({ key: 'a' });
+  queue.push({ key: 'b' });
+  queue.push({ key: 'c' });
+  // You decide "a" while its proposal is going in: it leaves the queue, and "b" and "c" stay.
+  queue.remove('a');
+  release();
+  await queue.flush();
+  while (queue.entries.length) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(applied, ['a', 'b', 'c']);
+  // A request of yours holds the draft: the proposal waits, and goes in afterwards.
+  busy = true;
+  queue.push({ key: 'd' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(queue.entries.map((e) => e.key), ['d']);
+  busy = false;
+  await queue.flush();
+  assert.deepEqual(applied, ['a', 'b', 'c', 'd']);
+});
+
+test('the main process refuses what the renderer should not have asked for', async () => {
+  const wholeFile = conflictFile({ wholeFile: { source: 'mergiraf', text: `export function settings() {\n${both}  return x + y;\n}\n` } });
+  const decided = conflictFile({
+    path: 'src/decided.ts',
+    result: `export function settings() {\n  const x = 10;\n  const y = 2;\n  return x + y;\n}\n`,
+  });
+  const keyed = conflictFile({ path: 'src/keyed.ts', original: original.replace('const y = 20;', 'const password = "hunter2hunter2";') });
+  keyed.result = keyed.original;
+  const f = fixture([wholeFile, decided, keyed], () => resolved());
+  assert.match((await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 }) as { reason: string }).reason, /whole-file proposal/);
+  assert.match((await f.service.askModel({ id: ID, path: 'src/decided.ts', index: 0 }) as { reason: string }).reason, /already decided/);
+  assert.match((await f.service.askModel({ id: ID, path: 'src/keyed.ts', index: 0 }) as { reason: string }).reason, /key or a token/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('a decided conflict refuses a waiting proposal, checked against the saved draft', async () => {
+  const f = fixture([conflictFile()], () => resolved());
+  await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  // A draft decided outside the workspace's own checks (another window, say).
+  const session = f.saved();
+  session.files[0].picks = ['theirs'];
+  f.data.set(`conflict-draft:tester:${ID}`, session);
+  await assert.rejects(f.run({ kind: 'model', path: 'src/settings.ts', index: 0 }), /already decided/);
+});
+
+test('each conflict is asked about once per draft, and a file’s definitions are parsed once', async () => {
+  const two = `${original}<<<<<<< feature/retry\nexport const a = 1;\n=======\nexport const a = 2;\n>>>>>>> main\n`;
+  const f = fixture([conflictFile({ original: two, result: two })], () => JSON.stringify({ status: 'question', question: 'Which?' }));
+  for (const index of [0, 1]) assert.equal((await f.service.askModel({ id: ID, path: 'src/settings.ts', index })).status, 'question');
+  assert.deepEqual(f.parsed, ['src/settings.ts'], 'One parse for both conflicts');
+  // Reopening the view asks again: the earlier answer comes back, without a request.
+  assert.deepEqual(await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 }), { status: 'question', question: 'Which?' });
+  assert.equal(f.calls.length, 2);
+  // A cancelled request isn't an answer: it can be asked again.
+  const g = fixture([conflictFile()], (_input, signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('stopped')))));
+  const asked = g.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  while (!g.calls.length) await new Promise((r) => setImmediate(r));
+  g.service.cancelModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  assert.equal((await asked).status, 'cancelled');
+  void g.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  while (g.calls.length < 2) await new Promise((r) => setImmediate(r));
+  g.service.cancelModel({ id: ID, path: 'src/settings.ts', index: 0 });
+});
+
+test('at most MODEL_CONFLICTS_PER_SESSION conflicts are asked about in one draft', async () => {
+  const { MODEL_CONFLICTS_PER_SESSION } = await import('../lib/conflict-model');
+  const count = MODEL_CONFLICTS_PER_SESSION + 2;
+  const many = Array.from({ length: count }, (_, i) => `<<<<<<< a\nexport const v${i} = 1;\n=======\nexport const v${i} = 2;\n>>>>>>> b\n`).join('');
+  const f = fixture([conflictFile({ path: 'src/many.ts', original: many, result: many, base: '', ours: '', theirs: '' })], () =>
+    JSON.stringify({ status: 'question', question: 'Which value?' })
+  );
+  const outcomes = [];
+  for (let index = 0; index < count; index++) outcomes.push(await f.service.askModel({ id: ID, path: 'src/many.ts', index }));
+  assert.equal(f.calls.length, MODEL_CONFLICTS_PER_SESSION);
+  assert.match((outcomes.at(-1) as { reason: string }).reason, /at most/);
+});
+
+test('the whole-file Ask refuses a file whose text looks like a secret', async () => {
+  const keyed = conflictFile({ ours: ours.replace('x = 10', 'x = "sk_live_abcdefghij0123456789"') });
+  const f = fixture([keyed], () => resolved());
+  await assert.rejects(
+    f.service.run({ kind: 'resolve', id: ID, version: 1, engine: 'agent', path: 'src/settings.ts' }, new AbortController().signal),
+    /may hold secrets/
+  );
 });

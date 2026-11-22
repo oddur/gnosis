@@ -96,13 +96,40 @@ export function validateModelRequest(value: unknown): asserts value is ConflictM
 }
 
 const SECRET_NAMES =
-  /^(?:\.env(?:\..*)?|.*\.env|\.npmrc|\.pypirc|\.netrc|_netrc|\.git-credentials|\.htpasswd|\.pgpass|\.dockercfg|\.dockerconfigjson|credentials(?:\..*)?|secrets?(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|known_hosts|authorized_keys|kubeconfig|.*\.tfstate(?:\.backup)?|.*\.tfvars(?:\.json)?|service[-_]?account.*\.json)$/i;
+  /^(?:\.env(?:\..*)?|.*\.env|\.envrc|\.dev\.vars|auth\.json|\.yarnrc\.yml|gradle\.properties|\.terraformrc|.*-adminsdk.*\.json|credentials.*|\.npmrc|\.pypirc|\.netrc|_netrc|\.git-credentials|\.htpasswd|\.pgpass|\.dockercfg|\.dockerconfigjson|secrets?(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|known_hosts|authorized_keys|kubeconfig|.*\.tfstate(?:\.backup)?|.*\.tfvars(?:\.json)?|service[-_]?account.*\.json)$/i;
 const SECRET_EXTENSIONS = /\.(?:pem|key|crt|cer|der|p8|p12|pfx|jks|keystore|asc|gpg|pgp|ovpn|kdbx|keychain|mobileprovision)$/i;
 const SECRET_WORDS = /secret|credential|passw(?:or)?d|private[-_.]?key|api[-_.]?key|(?:access|auth)[-_.]?token/i;
 const SECRET_DIRECTORIES = /^(?:\.ssh|\.aws|\.gnupg|\.docker|\.kube|secrets?)$/i;
-/** Text that looks like a key or a token. Such a conflict is never sent, whatever its path. */
-const SECRET_TEXT =
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{35}\b|\bglpat-[A-Za-z0-9_-]{20,}/;
+/** Whole paths that hold secrets by convention. */
+const SECRET_PATHS = /(?:^|\/)config\/database\.ya?ml$/i;
+/**
+ * Text that looks like a key, a token or a secret assigned to a name. Such a conflict is never sent, whatever its path.
+ * When in doubt it refuses: a false match only means you decide that conflict yourself.
+ */
+const SECRET_TEXT = new RegExp(
+  [
+    // Any private key block: PEM, OpenSSH, PGP.
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----/,
+    /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/,
+    /aws_secret_access_key\s*[:=]/,
+    /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}/,
+    /\bnpm_[A-Za-z0-9]{30,}/,
+    /hooks\.slack\.com\/services\//,
+    /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/,
+    /\bya29\.[A-Za-z0-9_-]{20,}/,
+    /\bgh[pousr]_[A-Za-z0-9]{30,}/,
+    /\bgithub_pat_[A-Za-z0-9_]{20,}/,
+    /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+    /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/,
+    /\bAIza[0-9A-Za-z_-]{35}\b/,
+    /\bglpat-[A-Za-z0-9_-]{20,}/,
+    // A secret assigned to a name, in code or configuration.
+    /(?:password|passwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*['"]?[^\s'"]{8,}/,
+  ]
+    .map((pattern) => pattern.source)
+    .join('|'),
+  'i'
+);
 
 /**
  * A path that may hold secrets: environment files, keys and certificates, credential stores, Terraform state, and any
@@ -116,6 +143,7 @@ export function isSecretPath(path: string): boolean {
     SECRET_NAMES.test(name) ||
     SECRET_EXTENSIONS.test(name) ||
     SECRET_WORDS.test(name) ||
+    SECRET_PATHS.test(parts.join('/')) ||
     parts.slice(0, -1).some((part) => SECRET_DIRECTORIES.test(part))
   );
 }
@@ -442,5 +470,61 @@ export function createLimiter(cap = MODEL_CONCURRENCY) {
         pump();
       });
     },
+  };
+}
+
+/** A request of yours holds the draft: a proposal waits until it is done. */
+export class ModelProposalWaits extends Error {}
+
+/**
+ * The proposals waiting to go into the draft, applied one at a time, in order, and never while `busy`. An entry leaves
+ * by its key once applied, so an entry removed meanwhile (`remove`, your own choice) never takes another one with it.
+ * `apply` rejecting with ModelProposalWaits keeps the entry for the next `flush`; any other rejection means the
+ * proposal wasn't used.
+ */
+export function createProposalQueue<T extends { key: string }>(options: {
+  apply: (entry: T) => Promise<void>;
+  busy: () => boolean;
+  /** An entry left the queue: applied, refused, or removed. */
+  done?: (entry: T) => void;
+}) {
+  let entries: T[] = [];
+  let flushing = false;
+  async function flush() {
+    if (flushing) return;
+    flushing = true;
+    try {
+      while (entries.length && !options.busy()) {
+        const next = entries[0];
+        try {
+          await options.apply(next);
+        } catch (error) {
+          if (error instanceof ModelProposalWaits) break;
+        }
+        entries = entries.filter((entry) => entry.key !== next.key);
+        options.done?.(next);
+      }
+    } finally {
+      flushing = false;
+    }
+  }
+  return {
+    get entries(): readonly T[] {
+      return entries;
+    },
+    push(entry: T) {
+      entries.push(entry);
+      void flush();
+    },
+    remove(key: string) {
+      const found = entries.find((entry) => entry.key === key);
+      entries = entries.filter((entry) => entry.key !== key);
+      if (found) options.done?.(found);
+      return found;
+    },
+    clear() {
+      entries = [];
+    },
+    flush,
   };
 }

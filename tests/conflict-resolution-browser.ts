@@ -1984,9 +1984,9 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
-    // The model, per conflict (#445 items 6 and 7), with a mocked provider that answers when the test says so. Each card
-    // shows both sides with a placeholder at once; proposals arrive one by one; your choice cancels a pending request;
-    // a provider pause says so. No model is called.
+    // The model, per conflict (#445 items 6 and 7), with a mocked provider that answers when the test says so. Nothing is
+    // sent until you ask; then each card shows both sides with a placeholder; proposals arrive one by one; your choice
+    // cancels a pending request; a provider pause says so. No model is called.
     const modelOriginal =
       'export function retryDelay(attempt: number) {\n<<<<<<< feature/retry\n  return Math.min(attempt * 200, 5000);\n||||||| ancestor\n  return attempt * 200;\n=======\n  return Math.max(100, attempt * 200);\n>>>>>>> main\n}\n<<<<<<< feature/retry\nexport const retries = 5;\n=======\nexport const retries = 3;\n>>>>>>> main\n';
     const modelFile = {
@@ -2021,10 +2021,26 @@ void app.whenReady().then(async () => {
         Object.assign(f,spliced,{resolved:false});s.version++;return {session:structuredClone(s)};
       };
     })()`);
+    const askModel = async () => {
+      await wait("document.querySelector('[data-conflict-ask-model]')");
+      await js("document.querySelector('[data-conflict-ask-model]').click()");
+    };
     const modelLine = (index: number) => js<string | null>(`${block(index)}?.querySelector('.conflict-model-line')?.dataset.model ?? null`);
     await modelSession();
     await open();
+    await wait("document.querySelector('[data-conflict-ask-model]')");
+    assert.match(
+      await js<string>("document.querySelector('[data-conflict-ask-model]').textContent"),
+      /^Ask .+ about 2 conflicts$/
+    );
+    assert.equal(await js("!!document.querySelector('[data-conflict-ask-model] svg.lucide-bot')"), true, 'AI uses the Bot icon');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await js('window.modelAsks.length'), 0, 'Nothing is sent until you ask');
+    assert.equal(await js("!!document.querySelector('.conflict-model-line')"), false);
+    await capture('model-offer');
+    await askModel();
     await wait('window.modelAsks.length===2');
+    await wait("!document.querySelector('[data-conflict-ask-model]')");
     assert.deepEqual(
       await js('window.modelAsks.map(r=>[r.path,r.index])'),
       [
@@ -2079,6 +2095,7 @@ void app.whenReady().then(async () => {
     // A question from the model leaves the conflict to decide, and says what it asked.
     await modelSession();
     await open();
+    await askModel();
     await wait('window.modelAsks.length===2');
     await js(`window.modelAnswer[0]({status:'question',question:'Should the floor apply before the cap?'})`);
     await wait(`${block(0)}?.querySelector('.conflict-model-line[data-model=question]')`);
@@ -2092,6 +2109,7 @@ void app.whenReady().then(async () => {
     // A provider pause skips the model and says so, once, above the conflicts.
     await modelSession();
     await open();
+    await askModel();
     await wait('window.modelAsks.length===2');
     for (const index of [0, 1]) await js(`window.modelAnswer[${index}]({status:'paused',notice:'Claude is paused until 14:00.'})`);
     await wait("document.querySelector('[data-conflict-model-notice]')");

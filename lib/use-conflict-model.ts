@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   MODEL_CONFLICTS_PER_SESSION,
+  createProposalQueue,
   modelTargets,
   openConflicts,
   type ConflictModelOutcome,
@@ -8,18 +9,18 @@ import {
   type ModelCard,
 } from './conflict-model';
 import type { ConflictFile, ConflictSession } from './conflict-resolution';
-import { blockFingerprints } from './conflict-stats';
 
-/** A request of yours holds the draft: the proposal waits until it is done. */
-export class ModelProposalWaits extends Error {}
+export { ModelProposalWaits } from './conflict-model';
 
 const cardKey = (path: string, index: number) => JSON.stringify([path, index]);
+type Entry = ConflictModelRequest & { key: string };
 
 /**
- * The workspace's model requests (#445 items 6 and 7): every open conflict without a proposal is asked about once, in
- * parallel (the main process runs a few at a time), and each card shows a placeholder until its answer arrives. A
- * proposal goes into the draft through `apply`, one at a time and never during a request of yours. Your own choice on a
- * conflict cancels its request; closing the view cancels them all. A provider pause skips the model and says so.
+ * The workspace's model requests (#445 items 6 and 7). Nothing is sent until you choose "Ask <model> about N
+ * conflicts": then every open conflict without a proposal is asked about, in parallel (the main process runs a few at a
+ * time and asks each conflict once per draft), and each card shows a placeholder until its answer arrives. A proposal
+ * goes into the draft through `apply`, one at a time and never during a request of yours. Your own choice on a conflict
+ * cancels its request; closing the view cancels them all. A provider pause skips the model and says so.
  */
 export function useConflictModel({
   session,
@@ -42,114 +43,105 @@ export function useConflictModel({
 }) {
   const [cards, setCards] = useState<Record<string, ModelCard>>({});
   const [notice, setNotice] = useState('');
-  /** Each conflict asked about, with its fingerprint: asked once. */
-  const asked = useRef(new Map<string, string>());
   /** Requests still running, by card. */
   const live = useRef(new Map<string, ConflictModelRequest>());
-  const queue = useRef<ConflictModelRequest[]>([]);
-  const flushing = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const applyRef = useRef(apply);
   applyRef.current = apply;
-  const labelRef = useRef(label);
-  labelRef.current = label;
   const drop = (key: string) =>
     setCards((previous) =>
       key in previous ? Object.fromEntries(Object.entries(previous).filter(([k]) => k !== key)) : previous
     );
+  const queue = useRef(
+    createProposalQueue<Entry>({
+      apply: (entry) => applyRef.current(entry.path, entry.index),
+      busy: () => busyRef.current,
+      done: (entry) => drop(entry.key),
+    })
+  ).current;
   const cancel = (key: string) => {
-    const request = live.current.get(key) ?? queue.current.find((q) => cardKey(q.path, q.index) === key);
+    const request = live.current.get(key) ?? queue.entries.find((entry) => entry.key === key);
     live.current.delete(key);
-    queue.current = queue.current.filter((q) => cardKey(q.path, q.index) !== key);
+    queue.remove(key);
     if (request) void window.electronAPI.cancelConflictModel?.(request).catch(() => {});
     drop(key);
   };
-  async function flush() {
-    if (flushing.current) return;
-    flushing.current = true;
-    try {
-      while (queue.current.length && !busyRef.current) {
-        const next = queue.current[0];
-        const key = cardKey(next.path, next.index);
-        try {
-          await applyRef.current(next.path, next.index);
-        } catch (error) {
-          if (error instanceof ModelProposalWaits) break;
-          // The conflict changed or you decided it: the proposal is not used.
-        }
-        queue.current.shift();
-        drop(key);
-      }
-    } finally {
-      flushing.current = false;
-    }
-  }
   useEffect(() => {
-    if (!busy) void flush();
+    if (!busy) void queue.flush();
   }, [busy]);
 
-  // Ask about every open conflict without a proposal, once.
-  useEffect(() => {
+  // Each file's conflicts to ask about, once per file version and draft: a keystroke re-reads only the open file.
+  const targetCache = useRef(new WeakMap<ConflictFile, { draft: string; targets: number[] }>());
+  const targetsOf = (f: ConflictFile, draft: string) => {
+    const hit = targetCache.current.get(f);
+    if (hit?.draft === draft) return hit.targets;
+    const targets = modelTargets({ ...f, result: draft });
+    targetCache.current.set(f, { draft, targets });
+    return targets;
+  };
+  const open = !!window.electronAPI.conflictModel && session?.status === 'editing' && !session.stale;
+  const waiting = useMemo(() => {
+    if (!open) return [];
+    return session.files.flatMap((f) =>
+      targetsOf(f, f.path === file?.path ? contents : f.result)
+        .filter((index) => !(cardKey(f.path, index) in cards))
+        .map((index) => ({ path: f.path, index }))
+    );
+  }, [open, session, file, contents, cards]);
+
+  /** Asks about every conflict that waits: the one click that sends anything. */
+  function askAll() {
     const ask = window.electronAPI.conflictModel;
-    if (!ask || !session || session.status !== 'editing' || session.stale) return;
+    if (!ask || !session) return;
     const id = session.id;
-    for (const f of session.files) {
-      // The open file's draft on screen: a choice not saved yet is already yours.
-      const draft = f.path === file?.path ? { ...f, result: contents } : f;
-      const keys = blockFingerprints(f.original);
-      for (const index of modelTargets(draft)) {
-        const key = cardKey(f.path, index);
-        if (asked.current.get(key) === keys[index]) continue;
-        if (asked.current.size >= MODEL_CONFLICTS_PER_SESSION) return;
-        asked.current.set(key, keys[index]);
-        const request = { id, path: f.path, index };
-        live.current.set(key, request);
-        setCards((previous) => ({ ...previous, [key]: { status: 'asking', by: labelRef.current } }));
-        void ask(request).then(
-          (outcome: ConflictModelOutcome | undefined) => {
-            // Cancelled meanwhile, by your choice or a new request for the same conflict.
-            if (live.current.get(key) !== request) return;
-            live.current.delete(key);
-            if (!outcome || typeof outcome !== 'object') {
-              drop(key);
-              return;
-            }
-            if (outcome.status === 'proposal') {
-              queue.current.push(request);
-              void flush();
-              return;
-            }
-            if (outcome.status === 'paused') setNotice(outcome.notice);
-            if (outcome.status === 'question' || outcome.status === 'failed' || outcome.status === 'skipped')
-              setCards((previous) => ({
-                ...previous,
-                [key]: {
-                  status: outcome.status,
-                  by: labelRef.current,
-                  text: outcome.status === 'question' ? outcome.question : outcome.reason,
-                } as ModelCard,
-              }));
-            else drop(key);
-          },
-          () => {
-            if (live.current.get(key) !== request) return;
-            live.current.delete(key);
+    for (const { path, index } of waiting.slice(0, MODEL_CONFLICTS_PER_SESSION)) {
+      const key = cardKey(path, index);
+      const request = { id, path, index };
+      live.current.set(key, request);
+      setCards((previous) => ({ ...previous, [key]: { status: 'asking', by: label } }));
+      void ask(request).then(
+        (outcome: ConflictModelOutcome | undefined) => {
+          // Cancelled meanwhile, by your choice or by closing the view.
+          if (live.current.get(key) !== request) return;
+          live.current.delete(key);
+          if (!outcome || typeof outcome !== 'object') {
+            drop(key);
+            return;
+          }
+          if (outcome.status === 'proposal') {
+            queue.push({ ...request, key });
+            return;
+          }
+          if (outcome.status === 'paused') setNotice(outcome.notice);
+          if (outcome.status === 'question' || outcome.status === 'failed' || outcome.status === 'skipped')
             setCards((previous) => ({
               ...previous,
-              [key]: { status: 'failed', by: labelRef.current, text: `Couldn’t ask ${labelRef.current} about this conflict.` },
+              [key]: {
+                status: outcome.status,
+                by: label,
+                text: outcome.status === 'question' ? outcome.question : outcome.reason,
+              } as ModelCard,
             }));
-          }
-        );
-      }
+          else drop(key);
+        },
+        () => {
+          if (live.current.get(key) !== request) return;
+          live.current.delete(key);
+          setCards((previous) => ({
+            ...previous,
+            [key]: { status: 'failed', by: label, text: `Couldn’t ask ${label} about this conflict.` },
+          }));
+        }
+      );
     }
-  }, [session]);
+  }
 
-  // Your choice on a conflict cancels its request, and a proposal waiting for it.
+  // Your choice on a conflict cancels its request, and a proposal waiting for it. Nothing to read when nothing waits.
   useEffect(() => {
-    if (!file) return;
+    if (!file || (!live.current.size && !queue.entries.length)) return;
     const open = openConflicts(file.original, contents, file.proposals);
-    for (const [key, request] of [...live.current, ...queue.current.map((q) => [cardKey(q.path, q.index), q] as const)])
+    for (const [key, request] of [...live.current, ...queue.entries.map((entry) => [entry.key, entry] as const)])
       if (request.path === file.path && !open?.has(request.index)) cancel(key);
   }, [file, contents]);
 
@@ -157,7 +149,7 @@ export function useConflictModel({
   useEffect(
     () => () => {
       for (const key of [...live.current.keys()]) cancel(key);
-      queue.current = [];
+      queue.clear();
     },
     []
   );
@@ -174,5 +166,8 @@ export function useConflictModel({
   return {
     cards: (path: string): Readonly<Record<number, ModelCard>> | undefined => byFile[path],
     notice,
+    /** Conflicts "Ask <model>" would send, at most MODEL_CONFLICTS_PER_SESSION. */
+    waiting: Math.min(waiting.length, MODEL_CONFLICTS_PER_SESSION),
+    askAll,
   };
 }

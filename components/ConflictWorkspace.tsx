@@ -1178,6 +1178,13 @@ export function ConflictWorkspace({
             )}
             {session.lastPush && <LastPush session={session} push={session.lastPush} />}
             <div className="conflict-summary-tools">
+              {/* Nothing goes to the model until you ask (#445 item 7). The cards show both sides meanwhile. */}
+              {models.waiting > 0 && (
+                <Button size="sm" variant="outline" data-conflict-ask-model="" onClick={models.askAll}>
+                  <Bot aria-hidden="true" />
+                  Ask {model} about {models.waiting} {models.waiting === 1 ? 'conflict' : 'conflicts'}
+                </Button>
+              )}
               {session.files.some((f) => f.proposals) && (
                 <label>
                   <input

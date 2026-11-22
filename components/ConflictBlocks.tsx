@@ -29,7 +29,9 @@ import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../l
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
 export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
-  proposal.source === 'rerere'
+  proposal.source === 'model'
+    ? `Proposed by ${proposal.by ?? 'a model'}`
+    : proposal.source === 'rerere'
     ? 'Same as you resolved before'
     : proposal.source === 'union'
       ? 'Kept both sides’ additions'
@@ -41,7 +43,7 @@ const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere'
     ? `Check · ${proposalWhat(proposal)}`
     : proposal.source === 'model'
-      ? `Check · Proposed by ${proposal.by ?? 'a model'}`
+      ? `Check · ${proposalWhat(proposal)}`
       : 'Check';
 
 /** A conflict's model request while it has no proposal (lib/conflict-model.ts `ModelCard`). */
