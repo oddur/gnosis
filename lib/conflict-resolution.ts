@@ -23,6 +23,12 @@ export interface ConflictFile {
    */
   picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
   /**
+   * Your in-place edits per block of `original` (#445 item 11), saved with the draft as `picks` are, so an edited
+   * conflict keeps its card, Undo and Edit after a reopen. Each holds the text you saved for the conflict, the choice
+   * and pick it replaced (Undo restores them) and the resolver's lines you left as they were (`written`).
+   */
+  edits?: (SavedBlockEdit | null)[];
+  /**
    * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
    * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
    */
@@ -53,6 +59,11 @@ export interface ConflictFile {
    * that is present was counted as shown; null is one not counted yet.
    */
   statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
+  /**
+   * New type errors the opt-in type check found in this file (#445 item 24), for the proposals it checked
+   * (`typeCheckKey`). While the key matches, every Merged proposal in the file is Check with this note.
+   */
+  typeError?: { key: string; note: string };
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -188,6 +199,8 @@ export type ConflictRequest =
       resolved: boolean;
       /** Your Keep choices per block (`ConflictFile.picks`); absent leaves the saved ones. */
       picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
+      /** Your in-place edits per block (`ConflictFile.edits`); absent leaves the saved ones. */
+      edits?: (SavedBlockEdit | null)[];
     }
   | {
       kind: 'resolve';
@@ -219,6 +232,8 @@ export type ConflictRequest =
       resolved: boolean;
       /** Your Keep choices per block, as for `save`. */
       picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
+      /** Your in-place edits per block, as for `save`. */
+      edits?: (SavedBlockEdit | null)[];
     }
   | { kind: 'restack-publish'; id: string; version: number; previewToken: string; reviewed: string[] };
 /**
@@ -232,10 +247,37 @@ export interface BaseMove {
   /** Files with new conflicts. */
   files: string[];
 }
+/**
+ * The opt-in type check of a prepared merge (#445 item 24): the PR's TypeScript compiler, from your linked clone, run on
+ * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
+ * fingerprint each was checked with (`typeCheckKey`).
+ */
+export type ConflictTypeCheck =
+  | { state: 'running' }
+  | { state: 'passed'; preExisting: number }
+  | {
+      state: 'errors';
+      count: number;
+      preExisting: number;
+      /** The first new errors, one line each: "path:line TS1234 message". */
+      errors: string[];
+      files: { path: string; key: string; note: string }[];
+    }
+  | { state: 'skipped'; reason: string }
+  /** The compiler ran but did not check types, such as for an options or syntax error. Never passed. */
+  | { state: 'unchecked'; reason: string }
+  | { state: 'cancelled' };
 export interface ConflictReply {
   session: ConflictSession;
   preview?: { patch: string; token: string; validation: string; files: import('@pierre/diffs').FileDiffMetadata[] };
   baseMoved?: BaseMove;
+}
+/** A conflict you edited in place, as the draft saves it (ConflictFile.edits). */
+export interface SavedBlockEdit {
+  text: string;
+  before: 'ours' | 'theirs' | 'both' | 'proposal' | null;
+  pick: 'ours' | 'theirs' | 'both' | 'proposal' | null;
+  written?: number[];
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 /** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
@@ -256,6 +298,30 @@ export function conflictFileStage(
   return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
 
+const isPick = (pick: unknown) =>
+  pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
+/** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */
+function validEdits(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 10_000) return false;
+  // Every edit's text is part of the draft, so together they fit in one file.
+  let total = 0;
+  return (value as unknown[]).every((edit) => {
+    if (edit === null) return true;
+    if (!edit || typeof edit !== 'object') return false;
+    const e = edit as Record<string, unknown>;
+    return (
+      Object.keys(e).every((key) => ['text', 'before', 'pick', 'written'].includes(key)) &&
+      typeof e.text === 'string' &&
+      (total += e.text.length) <= CONFLICT_FILE_LIMIT &&
+      isPick(e.before) &&
+      isPick(e.pick) &&
+      (e.written === undefined ||
+        (Array.isArray(e.written) &&
+          e.written.length <= 100_000 &&
+          (e.written as unknown[]).every((line) => Number.isSafeInteger(line) && Number(line) >= 0)))
+    );
+  });
+}
 /** IPC is an untyped boundary even when renderer callers use TypeScript. */
 export function validateConflictRequest(value: unknown): asserts value is ConflictRequest {
   if (!value || typeof value !== 'object') throw new Error('Invalid conflict operation.');
@@ -285,9 +351,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     text('contents', CONFLICT_FILE_LIMIT) &&
     typeof r.resolved === 'boolean' &&
     (r.picks === undefined ||
-      (Array.isArray(r.picks) &&
-        r.picks.length <= 10_000 &&
-        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal')))
+      (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
+    (r.edits === undefined || validEdits(r.edits))
   )
     return;
   if (

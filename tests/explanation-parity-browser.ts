@@ -298,7 +298,6 @@ void app.whenReady().then(async () => {
     await checkJump('Changes', changesRow, 'Go to function flush', 'flush(): number {', true);
     await js('document.activeElement?.blur()');
 
-
     // ── A stale topic diff refreshes by itself, through the same model as Changes ──
     // The topic's first read of src/scope.ts (both sides) disagrees with its saved hunks on the line it explains. The PR's changes
     // refresh once at the view tier, the file reads again, and the topic then shows as in Changes. Queue preparation

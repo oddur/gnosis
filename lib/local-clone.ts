@@ -8,6 +8,11 @@ export interface LocalCloneEntry {
   repo: string;
   path: string;
   remote: string;
+  /**
+   * Resolve conflicts may run the TypeScript compiler installed in this clone on a merge result (#445 item 24). Off
+   * unless set; choosing another folder turns it off again.
+   */
+  typeCheck?: boolean;
 }
 export interface LocalCloneStatus extends LocalCloneEntry {
   reads: number;
@@ -476,11 +481,11 @@ export function normalizeLocalClones(value: unknown): LocalCloneEntry[] {
   const entries = new Map<string, LocalCloneEntry>();
   for (const item of value as unknown[]) {
     if (!item || typeof item !== 'object') continue;
-    const { repo, path: directory, remote } = item as Record<string, unknown>;
+    const { repo, path: directory, remote, typeCheck } = item as Record<string, unknown>;
     if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo)) continue;
     if (typeof directory !== 'string' || !path.isAbsolute(directory)) continue;
     if (typeof remote !== 'string' || !/^[\w./-]+$/.test(remote) || remote.startsWith('-')) continue;
-    entries.set(repo.toLowerCase(), { repo, path: directory, remote });
+    entries.set(repo.toLowerCase(), { repo, path: directory, remote, ...(typeCheck === true ? { typeCheck } : {}) });
   }
   return [...entries.values()];
 }
@@ -521,7 +526,10 @@ export function createLocalClones(options: { interactiveFetchWaitMs?: number; no
         const existing = previous.get(key);
         clones.set(
           key,
-          existing && existing.clone.entry.path === entry.path && existing.clone.entry.remote === entry.remote
+          existing &&
+            existing.clone.entry.path === entry.path &&
+            existing.clone.entry.remote === entry.remote &&
+            existing.clone.entry.typeCheck === entry.typeCheck
             ? existing
             : { clone: new LocalClone(entry, options), reads: 0, fallbacks: 0 }
         );

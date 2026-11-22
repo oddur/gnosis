@@ -3,6 +3,7 @@ import { EditProvider, File } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
 import { Bot, Check, CheckCheck, CircleAlert, CircleHelp, Pencil, Undo2 } from 'lucide-react';
 import { Button } from './ui/button';
+import { useCodeOptions } from '../lib/use-code-options';
 import {
   editOpen,
   type BlockChoice,
@@ -77,22 +78,6 @@ function ModelIntents({ proposal, labels }: { proposal: ConflictProposal; labels
       )}
     </dl>
   );
-}
-
-const baseOptions = {
-  theme: { dark: 'pierre-dark', light: 'pierre-light' },
-  overflow: 'wrap',
-  expandUnchanged: false,
-} as const;
-/** Pierre options that follow the app theme. */
-export function useCodeOptions() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
-  useEffect(() => {
-    const observer = new MutationObserver(() => setDark(document.documentElement.classList.contains('dark')));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
-  }, []);
-  return useMemo(() => ({ ...baseOptions, themeType: dark ? ('dark' as const) : ('light' as const) }), [dark]);
 }
 
 const SNIPPET_CSS =
@@ -303,6 +288,19 @@ export function ConflictCard({
       </section>
     );
   }
+  // Undo of your edit: back to the choice it replaced.
+  const undoEdit = onUndo && (
+    <Button
+      size="xs"
+      variant="ghost"
+      disabled={disabled}
+      onClick={onUndo}
+      aria-label={`Undo your edit of conflict ${index + 1}`}
+    >
+      <Undo2 aria-hidden="true" />
+      Undo
+    </Button>
+  );
   // Your edit, with a conflict marker left in it: the conflict is still open, in Decide (#445 item 11).
   if (choice === 'edit' && editOpen(edit))
     return (
@@ -321,18 +319,7 @@ export function ConflictCard({
             Decide
           </span>
           <span>Your edit still has a conflict marker. Remove it, or choose a side.</span>
-          {onUndo && (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={onUndo}
-              aria-label={`Undo your edit of conflict ${index + 1}`}
-            >
-              <Undo2 aria-hidden="true" />
-              Undo
-            </Button>
-          )}
+          {undoEdit}
         </header>
         {actions}
       </section>
@@ -349,21 +336,8 @@ export function ConflictCard({
         <div className="conflict-kept">
           <Pencil size={14} aria-hidden="true" />
           <span>Edited by you</span>
-          {onUndo && (
-            <>
-              <span aria-hidden="true">·</span>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={disabled}
-                onClick={onUndo}
-                aria-label={`Undo your edit of conflict ${index + 1}`}
-              >
-                <Undo2 aria-hidden="true" />
-                Undo
-              </Button>
-            </>
-          )}
+          {undoEdit && <span aria-hidden="true">·</span>}
+          {undoEdit}
           {editButton}
         </div>
         {writtenNote}
@@ -462,7 +436,7 @@ export function WrittenLegend({ count }: { count: number }) {
 }
 
 /**
- * The in-place editor for one conflict (#445 item 11): the conflict's lines only, in the editor Edit result used. Save
+ * The in-place editor for one conflict (#445 item 11): the conflict's lines only, in Pierre's editor. Save
  * puts your text into that conflict's span and nowhere else; Cancel, or Escape, leaves the draft as it was. Cmd+Enter
  * (Ctrl+Enter) saves.
  */

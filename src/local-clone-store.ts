@@ -31,6 +31,15 @@ export function createLocalCloneStore(file: () => string) {
         );
       return save(normalizeLocalClones([...load(), match]));
     },
+    /** Resolve conflicts' type check with this clone's compiler (#445 item 24). Only a linked clone can opt in. */
+    setTypeCheck(repo: string, on: boolean) {
+      const entries = load();
+      const entry = entries.find((value) => value.repo.toLowerCase() === repo.toLowerCase());
+      if (!entry) throw new Error('Link a local clone first.');
+      if (on) entry.typeCheck = true;
+      else delete entry.typeCheck;
+      return save(entries);
+    },
     disconnect(repo: string) {
       return save(load().filter((entry) => entry.repo.toLowerCase() !== repo.toLowerCase()));
     },

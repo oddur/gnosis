@@ -160,6 +160,8 @@ export type CarrySource = Map<
   {
     text: string;
     pick: NonNullable<ConflictFile['picks']>[number];
+    /** Your in-place edit of the block, when the text is that edit's: carried with it, so its card keeps Undo. */
+    edit?: NonNullable<ConflictFile['edits']>[number];
     /** The text is a model's proposal you didn't choose a side over (lib/conflict-model.ts): never carried as yours. */
     model?: boolean;
   }[]
@@ -178,7 +180,11 @@ export function carrySource(old: ConflictFile): CarrySource | undefined {
     const proposal = old.proposals?.[segment.index];
     // A model's text you didn't replace with a Keep or an edit of yours is the model's, not your decision.
     const model = proposal?.source === 'model' && text === proposal.text && pick !== 'ours' && pick !== 'theirs' && pick !== 'both';
-    available.set(key, [...(available.get(key) ?? []), { text, pick, ...(model ? { model } : {}) }]);
+    const edit = old.edits?.[segment.index];
+    available.set(key, [
+      ...(available.get(key) ?? []),
+      { text, pick, ...(model ? { model } : {}), ...(edit && edit.text === text ? { edit } : {}) },
+    ]);
   }
   return available;
 }
@@ -207,6 +213,7 @@ export function carryFile(
   const carriedBlocks: number[] = [];
   const texts: (string | undefined)[] = [];
   const picks: NonNullable<ConflictFile['picks']> = [];
+  const edits: NonNullable<ConflictFile['edits']> = [];
   /** Conflicts whose earlier text was a model's proposal: open again, with Git's markers, to ask again. */
   const modelStale: number[] = [];
   const result = segments
@@ -221,6 +228,7 @@ export function carryFile(
         return segment.block.raw;
       }
       picks[segment.index] = carried?.pick ?? null;
+      edits[segment.index] = carried?.edit ?? null;
       if (carried === undefined) {
         // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
         open++;
@@ -233,7 +241,8 @@ export function carryFile(
     })
     .join('');
   const carriedFile = withResult(old, next, result, keepReview && open === 0 && old.resolved);
-  const file = modelStale.length ? { ...carriedFile, modelStale } : carriedFile;
+  const stale = modelStale.length ? { ...carriedFile, modelStale } : carriedFile;
+  const file = edits.some(Boolean) ? { ...stale, edits: Array.from(edits, (edit) => edit ?? null) } : stale;
   return {
     file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file,
     reused,

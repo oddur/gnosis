@@ -29,7 +29,8 @@ import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
 import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
-import { WrittenLegend, proposalWhat, useCodeOptions } from './ConflictCard';
+import { WrittenLegend, proposalWhat } from './ConflictCard';
+import { useCodeOptions } from '../lib/use-code-options';
 import type { ConflictViewHandle } from './useConflictChoices';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import {
@@ -70,6 +71,8 @@ import {
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
+  type SavedBlockEdit,
+  type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
 import {
   conflictPushNeedsWorkflow,
@@ -93,6 +96,9 @@ import {
   verifyWholeFile,
   type ConflictBucket,
   type Verdict,
+  typeCheckKey,
+  typeErrorNote,
+  withTypeError,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
@@ -194,6 +200,78 @@ function KeyboardHelp() {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  );
+}
+
+/** The type check's one line (#445 item 24), "Type check: …". */
+export function typeCheckLine(status: ConflictTypeCheck) {
+  switch (status.state) {
+    case 'running':
+      return 'Type check: running…';
+    case 'passed':
+      return 'Type check: passed';
+    case 'errors':
+      return `Type check: ${status.count} new ${status.count === 1 ? 'error' : 'errors'}`;
+    case 'skipped':
+      return `Type check: skipped (${status.reason})`;
+    case 'unchecked':
+      return `Type check: couldn’t check (${status.reason})`;
+    case 'cancelled':
+      return 'Type check: stopped';
+  }
+}
+
+/**
+ * The opt-in type check's status in the summary row (#445 item 24). New errors list on hover or focus: those in a
+ * conflicted file keep its proposals in Check, the rest are for your information. A running check can be stopped.
+ */
+function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop: () => void }) {
+  const line = typeCheckLine(status);
+  const detail =
+    status.state === 'errors'
+      ? status.errors
+      : status.state === 'passed' && status.preExisting
+        ? []
+        : undefined;
+  const already =
+    (status.state === 'errors' || status.state === 'passed') && status.preExisting
+      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR already has.`
+      : undefined;
+  return (
+    <span className="conflict-type-check" role="status" data-type-check={status.state}>
+      {detail ? (
+        <TooltipProvider delayDuration={350}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="conflict-type-check-detail">
+                {line}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="conflict-type-check-errors">
+              {status.state === 'errors' && (
+                <>
+                  <p>Errors in a conflicted file keep its merged conflicts in Check. Errors elsewhere are for your information.</p>
+                  <ul>
+                    {detail.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                  {status.count > detail.length && <p>{status.count - detail.length} more not shown.</p>}
+                </>
+              )}
+              {already && <p>{already}</p>}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : (
+        line
+      )}
+      {status.state === 'running' && (
+        <Button size="xs" variant="ghost" onClick={onStop}>
+          Stop
+        </Button>
+      )}
+    </span>
   );
 }
 
@@ -338,6 +416,19 @@ function ErrorPanel({
   );
 }
 
+/** In-place edits as the draft saves them (ConflictFile.edits): null for none, every field present. */
+function savedEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
+  return Array.from(edits ?? [], (edit) =>
+    edit
+      ? {
+          text: edit.text,
+          before: edit.before ?? null,
+          pick: edit.pick ?? null,
+          ...(edit.written?.length ? { written: [...edit.written] } : {}),
+        }
+      : null
+  );
+}
 /** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
 const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
 function savedPicks(f: ConflictFile): BlockPicks | undefined {
@@ -408,17 +499,30 @@ export function ConflictWorkspace({
   };
   const picksRef = useRef(picksOf);
   picksRef.current = picksOf;
-  // Your in-place edits per file (#445 item 11), so an edited conflict keeps its card and its Undo while the view is
-  // open. The draft holds the text; a file whose conflict changed starts without them.
+  // Your in-place edits per file (#445 item 11), as your picks are: kept here as you edit, saved with the draft
+  // (ConflictFile.edits), and read from there after a reopen. A file whose conflict changed starts without them.
   const [edits, setEdits] = useState<Partial<Record<string, { original: string; edits: BlockEdits }>>>({});
   const editsOf = (f: ConflictFile): BlockEdits | undefined => {
     const entry = edits[f.path];
-    return entry?.original === f.original ? entry.edits : undefined;
+    return entry?.original === f.original ? entry.edits : f.edits;
   };
+  const editsRef = useRef(editsOf);
+  editsRef.current = editsOf;
   /** The choices to save for a file, when they differ from the saved ones. */
   const picksToSave = (f: ConflictFile) => {
     const own = Array.from(picksRef.current(f) ?? [], (pick) => pick ?? null);
     return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.picks ?? []) ? undefined : own;
+  };
+  /** The in-place edits to save for a file, when they differ from the saved ones. */
+  const editsToSave = (f: ConflictFile) => {
+    const own = savedEdits(editsRef.current(f));
+    return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.edits ?? []) ? undefined : own;
+  };
+  /** Your picks and edits for a save request, where they changed. */
+  const ownToSave = (f: ConflictFile) => {
+    const own = picksToSave(f);
+    const typed = editsToSave(f);
+    return { ...(own ? { picks: own } : {}), ...(typed ? { edits: typed } : {}) };
   };
   // Each saved draft's buckets, per file: a Keep press or a check result recomputes only the file it changed.
   const bucketCache = useRef(
@@ -444,10 +548,40 @@ export function ConflictWorkspace({
   const checking = useRef(new Map<string, string>());
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
+  // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
+  const [typeCheck, setTypeCheck] = useState<ConflictTypeCheck | null>(null);
+  const sessionId = session?.id;
+  useEffect(() => {
+    setTypeCheck(null);
+    if (!sessionId) return;
+    let active = true;
+    const refresh = () =>
+      void window.electronAPI.conflictTypeCheck(sessionId).then(
+        (value) => active && setTypeCheck(value),
+        () => {}
+      );
+    refresh();
+    const off = window.electronAPI.onConflictTypeCheckChanged((id) => id === sessionId && refresh());
+    return () => {
+      active = false;
+      off();
+    };
+  }, [sessionId, session?.version]);
+  // New type errors in a file keep its Merged proposals in Check: saved on the file, or just found by the check.
+  // Only while the check is on (it has a status): a finished run's own result, else the demotion saved on the file.
+  const typeNoteOf = (f: ConflictFile) =>
+    !typeCheck
+      ? undefined
+      : typeCheck.state === 'errors'
+        ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
+        : typeCheck.state === 'passed'
+          ? undefined
+          : typeErrorNote(f);
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence()))) return f.verdict.verdict;
+    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
+      return withTypeError(f.verdict.verdict, typeNoteOf(f));
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
-    return entry?.key === proposalKey(f) ? entry.verdict : undefined;
+    return entry?.key === proposalKey(f) ? withTypeError(entry.verdict, typeNoteOf(f)) : undefined;
   };
   useEffect(() => {
     for (const f of session?.files ?? []) {
@@ -492,7 +626,7 @@ export function ConflictWorkspace({
           return [f.path, buckets];
         })
       ),
-    [session?.files, verdicts, picks, edits]
+    [session?.files, verdicts, picks, edits, typeCheck]
   );
   const fileStates = useMemo(
     () =>
@@ -547,7 +681,8 @@ export function ConflictWorkspace({
     () => conflictLabels('merge', { head: session?.headBranch ?? 'PR', base: session?.baseBranch ?? 'base' }),
     [session?.headBranch, session?.baseBranch]
   );
-  const dirty = (!!file && (contents !== file.result || !!picksToSave(file))) || restackDirty;
+  const dirty =
+    (!!file && (contents !== file.result || !!picksToSave(file) || !!editsToSave(file))) || restackDirty;
 
   function select(path: string, value: ConflictSession) {
     const next: ConflictFile | undefined = value.files.find((f) => f.path === path) ?? value.files.at(0);
@@ -588,13 +723,13 @@ export function ConflictWorkspace({
       const path = selectedRef.current;
       const text = contentsRef.current;
       const current = value.files.find((f) => f.path === path);
-      const own = current && picksToSave(current);
+      const own = current ? ownToSave(current) : {};
       if (
         value.status === 'editing' &&
         !value.stale &&
         current &&
         !current.unsupported &&
-        (text !== current.result || own)
+        (text !== current.result || Object.keys(own).length > 0)
       ) {
         setSaveState('saving');
         value = (
@@ -605,7 +740,7 @@ export function ConflictWorkspace({
             path,
             contents: text,
             resolved: text === current.result && current.resolved,
-            ...(own ? { picks: own } : {}),
+            ...own,
           })
         ).session;
       }
@@ -636,6 +771,7 @@ export function ConflictWorkspace({
     session,
     file,
     contents,
+    edits: file ? editsOf(file) : undefined,
     label: model,
     busy,
     root,
@@ -781,8 +917,8 @@ export function ConflictWorkspace({
     void run(
       (s) => {
         const saved = s.files.find((f) => f.path === path);
-        const own = saved && picksToSave(saved);
-        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...(own ? { picks: own } : {}) };
+        const own = saved ? ownToSave(saved) : {};
+        return { kind: 'save', id: s.id, version: s.version, path, contents, resolved: true, ...own };
       },
       (reply) => {
         const states = reply.session.files.map((f) => ({ file: f, stage: conflictFileStage(f) }));
@@ -822,7 +958,10 @@ export function ConflictWorkspace({
       const f = sessionRef.current?.files.find((file) => file.path === path);
       return f ? { ...previous, [path]: { original: f.original, picks: [] } } : previous;
     });
-    setEdits((previous) => (previous[path] ? { ...previous, [path]: undefined } : previous));
+    setEdits((previous) => {
+      const f = sessionRef.current?.files.find((file) => file.path === path);
+      return f ? { ...previous, [path]: { original: f.original, edits: [] } } : previous;
+    });
   };
   const editsFor = (f: ConflictFile, next: BlockEdits) =>
     setEdits((previous) => ({ ...previous, [f.path]: { original: f.original, edits: next } }));
@@ -1213,6 +1352,12 @@ export function ConflictWorkspace({
                   Show me every merged conflict
                 </label>
               )}
+              {typeCheck && (
+                <TypeCheckStatus
+                  status={typeCheck}
+                  onStop={() => void window.electronAPI.cancelConflictTypeCheck(session.id)}
+                />
+              )}
               <span className="conflict-save-state" role="status">
                 {saveState === 'failed'
                   ? 'Couldn’t save · retrying'
@@ -1411,7 +1556,7 @@ export function ConflictWorkspace({
                     (reply) => apply(reply)
                   )
                 }
-                onSave={(path, text, resolved, picks) =>
+                onSave={(path, text, resolved, picks, edits) =>
                   void run(
                     (s) => ({
                       kind: 'restack-save',
@@ -1421,6 +1566,7 @@ export function ConflictWorkspace({
                       contents: text,
                       resolved,
                       picks,
+                      edits,
                     }),
                     (reply) => apply(reply)
                   )

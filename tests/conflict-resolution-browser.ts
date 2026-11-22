@@ -2,6 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workben
 import { perfBudget, withinPerf } from './perf-budget';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { typeCheckKey } from '../lib/conflict-verify';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -173,11 +174,16 @@ void app.whenReady().then(async () => {
       const original='export function retryDelay(attempt: number) {\\n<<<<<<< feature/retry\\n  return Math.min(attempt * 200, 5000);\\n||||||| ancestor\\n  return attempt * 200;\\n=======\\n  return Math.max(100, attempt * 200);\\n>>>>>>> main\\n}\\n<<<<<<< feature/retry\\nexport const retries = 5;\\n=======\\nexport const retries = 3;\\n>>>>>>> main\\n';
       window.conflictFixture={id:'a'.repeat(64),account:'oddur',url:'https://github.com/klang/engine/pull/120',title:'Bound retry delays',headRepo:'klang/engine',baseRepo:'klang/engine',headBranch:'feature/retry',baseBranch:'main',headSha:'a'.repeat(40),baseSha:'b'.repeat(40),tree:'c'.repeat(40),version:1,status:'editing',files:[{path:'src/retry.ts',mode:'100644',base:'export function retryDelay(attempt: number) {\\n  return attempt * 200;\\n}\\nexport const retries = 4;\\n',ours:'export function retryDelay(attempt: number) {\\n  return Math.min(attempt * 200, 5000);\\n}\\nexport const retries = 5;\\n',theirs:'export function retryDelay(attempt: number) {\\n  return Math.max(100, attempt * 200);\\n}\\nexport const retries = 3;\\n',original,result:original,resolved:false,source:'manual'}]};
       window.conflictCalls=[];
+      // The opt-in type check (#445 item 24): off until a step sets a status and tells the view it changed.
+      window.typeCheckState=null;window.typeCheckListeners=[];window.typeCheckCancels=0;
+      window.electronAPI.conflictTypeCheck=async()=>window.typeCheckState;
+      window.electronAPI.cancelConflictTypeCheck=async()=>{window.typeCheckCancels++;};
+      window.electronAPI.onConflictTypeCheckChanged=cb=>{window.typeCheckListeners.push(cb);return()=>{window.typeCheckListeners=window.typeCheckListeners.filter(x=>x!==cb);};};
       window.electronAPI.conflictResolution=async req=>{
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
-        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
         if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
         else if(req.kind==='resolve'){s.files[0].result=s.files[0].resolverText='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
@@ -407,6 +413,20 @@ void app.whenReady().then(async () => {
       false
     );
     await captureAll('inline-edited');
+    // The edit is saved with the draft, as picks are: after a reopen the card still says so, with Undo and Edit.
+    assert.deepEqual(
+      await js('window.conflictFixture.files[0].edits?.map(e=>e&&[e.before,e.pick])'),
+      [[null, null]]
+    );
+    const reopen = async (state: string) => {
+      await click('Close');
+      await wait("!document.querySelector('.conflict-workspace')");
+      await open();
+      await wait(`${block(0)}?.dataset.state===${JSON.stringify(state)}`);
+    };
+    await reopen('edited');
+    assert.ok(await js(`!!${block(0)}.querySelector('[data-conflict-edit]')`), 'Edit is still there');
+    assert.equal(await js(`${block(1)}?.dataset.state`), 'kept', 'The other conflict keeps its Keep');
     // Undo returns the conflict to Decide, as it was before the edit.
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
@@ -421,6 +441,10 @@ void app.whenReady().then(async () => {
     await key('m');
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
     await captureAll('inline-edit-markers');
+    // Reopened, an edit with a marker is still a Decide card with its Undo: the file never gets stuck.
+    await reopen('open');
+    assert.ok(await js(`${block(0)}.hasAttribute('data-edited')`));
+    assert.equal(await stage(), 'conflicted');
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open' && !${block(0)}?.hasAttribute('data-edited')`);
     // Cancel (Escape) leaves the draft as it was, and the workspace stays open.
@@ -766,7 +790,7 @@ void app.whenReady().then(async () => {
           window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[{url:s.dependents[0],headSha:'a'.repeat(40),baseSha:'b'.repeat(40),headBranch:'feature/retry-121',baseBranch:'feature/retry'}],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,merged:i?0:2,yours:i?1:0,review:!!i,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
         }
         if(req.kind==='restack-save'){window.conflictCalls.push(req);const f=s.restack.blocked.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;s.version++;return {session:structuredClone(s)};}
-        if(req.kind==='restack-continue'){window.conflictCalls.push(req);s.restack.status='prepared';s.restack.blocked=undefined;s.version++;return {session:structuredClone(s)};}
+        if(req.kind==='restack-continue'){window.conflictCalls.push(req);if(window.nextPause){s.restack.blocked=window.nextPause;window.nextPause=undefined;}else{s.restack.status='prepared';s.restack.blocked=undefined;}s.version++;return {session:structuredClone(s)};}
         if(req.kind==='restack-publish'){window.conflictCalls.push(req);s.restack.status='published';s.version++;return {session:structuredClone(s)};}
         return original(req);
       };
@@ -888,12 +912,44 @@ void app.whenReady().then(async () => {
       "document.querySelector('.restack-conflict-file .conflict-block[data-state=open] [data-choice=theirs]').click()"
     );
     await wait("!document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
+    // Reset file returns the paused file to what the replay proposed, as in the main workspace.
+    await js(`${paused}.querySelector('[data-restack-reset]').click()`);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='open' && !${paused}.querySelector('[data-restack-reset]')`);
+    await js(`${paused}.querySelector('.conflict-block[data-state=open] [data-choice=theirs]').click()`);
+    await wait("!document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
+    // The pause scrolls in a diff scroller: its file and hunk headers pin as in the Conflicts view.
+    assert.equal(await js("document.querySelector('.restack-review > .step-card-body')?.hasAttribute('data-diff-scroller')"), true);
     // Closing must save an unreviewed paused draft; it must not lose it or publish.
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
     assert.doesNotMatch(await js<string>('window.conflictFixture.restack.blocked.files[0].result'), /<{7}/);
     assert.equal(await js('window.conflictFixture.restack.blocked.files[0].resolved'), false);
     await open();
+    // An edit left open and unsaved belongs to this pause. Continue pauses again on the same path in the next commit,
+    // with a whole-file proposal: the editor is closed there and the earlier text is gone.
+    await wait(`!!document.querySelector('.restack-conflict-file .conflict-block[data-conflict-index="0"] [data-conflict-edit]')`);
+    await js(`${paused}.querySelector('.conflict-block[data-conflict-index="0"] [data-conflict-edit]').click()`);
+    const pausedEditor = inlineEditor(0, paused);
+    await wait(`!!${pausedEditor} && ${pausedEditor}.getRootNode().activeElement===${pausedEditor}`);
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '// stale, never saved\n' });
+    await wait(`!${paused}.querySelector('[data-conflict-edit-save]').disabled`);
+    await click('Mark reviewed');
+    await wait('window.conflictFixture.restack.blocked.files[0].resolved===true');
+    await js(`(()=>{const s=window.conflictFixture,f=s.restack.blocked.files[0];
+      window.nextPause={...s.restack.blocked,commit:'f'.repeat(40),reason:'The restack is paused on the next commit.',files:[{...f,result:f.original,resolved:false,proposals:undefined,verdict:undefined,picks:undefined,edits:undefined,wholeFile:{source:'mergiraf',text:f.theirs}}]};})()`);
+    await click('Continue restack');
+    await wait("document.querySelector('.restack-blocked p')?.textContent==='The restack is paused on the next commit.'");
+    await wait(`!!${paused}.querySelector('.conflict-whole-file')`);
+    assert.equal(await js("!!document.querySelector('[data-conflict-inline-edit]')"), false, 'No editor carries into the next pause');
+    assert.doesNotMatch(await js<string>('window.conflictFixture.restack.blocked.files[0].result'), /stale, never saved/);
+    // After Use this result the file has no cards: Reset file brings the proposal and its conflicts back.
+    await click('Use this result');
+    await wait(`!${paused}.querySelector('.conflict-whole-file') && !!${paused}.querySelector('[data-restack-reset]')`);
+    await captureAll('restack-whole-file-used');
+    await js(`${paused}.querySelector('[data-restack-reset]').click()`);
+    await wait(`!!${paused}.querySelector('.conflict-whole-file')`);
+    await click('Use this result');
+    await wait(`!${paused}.querySelector('.conflict-whole-file')`);
     await click('Mark reviewed');
     await click('Continue restack');
     await wait("!document.querySelector('.restack-blocked')");
@@ -1348,6 +1404,62 @@ void app.whenReady().then(async () => {
       await js<string>(`${block(1)}.querySelector('.conflict-block-header').textContent`),
       /^Conflict 2 of 2Checkexport function four\(\) \{ from main is missing from the result\./
     );
+    // The opt-in type check (#445 item 24): one line in the summary for each state. Off, there is none.
+    assert.equal(await js("!!document.querySelector('.conflict-type-check')"), false, 'Off by default: no line');
+    const typeCheckShows = async (state: unknown, line: string | null) => {
+      await js(
+        `(()=>{window.typeCheckState=${JSON.stringify(state)};for(const cb of window.typeCheckListeners)cb(window.conflictFixture.id);})()`
+      );
+      await wait(
+        line === null
+          ? "!document.querySelector('.conflict-type-check')"
+          : `document.querySelector('.conflict-type-check')?.firstChild?.textContent===${JSON.stringify(line)}`
+      );
+    };
+    await typeCheckShows({ state: 'running' }, 'Type check: running…');
+    await captureAll('type-check-running');
+    await click('Stop');
+    assert.equal(await js('window.typeCheckCancels'), 1, 'Stop cancels the check');
+    await typeCheckShows({ state: 'cancelled' }, 'Type check: stopped');
+    await typeCheckShows({ state: 'passed', preExisting: 0 }, 'Type check: passed');
+    await typeCheckShows(
+      { state: 'skipped', reason: 'dependencies aren’t installed in your clone' },
+      'Type check: skipped (dependencies aren’t installed in your clone)'
+    );
+    // New errors: the one in src/imports.ts keeps its Merged conflict in Check, with the compiler's error. The one in
+    // a file without conflicts is information only.
+    const typeNote = "The type check found a new error in this file: src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.";
+    await typeCheckShows(
+      {
+        state: 'errors',
+        count: 2,
+        preExisting: 1,
+        errors: ["src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.", "src/use.ts:1 TS2322 Type 'string' is not assignable to type 'number'."],
+        files: [{ path: 'src/imports.ts', key: typeCheckKey(counted[1] as Parameters<typeof typeCheckKey>[0]), note: typeNote }],
+      },
+      'Type check: 2 new errors'
+    );
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'"
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
+      ['1 to decide1 to check', '1 to check', '1 merged']
+    );
+    await js("document.querySelector('.conflict-type-check-detail').focus()");
+    await wait("document.querySelector('.conflict-type-check-errors')?.textContent.includes('src/use.ts:1 TS2322')");
+    assert.match(
+      await js<string>("document.querySelector('.conflict-type-check-errors').textContent"),
+      /keep its merged conflicts in Check\. Errors elsewhere are for your information\..*Not counted: 1 error the PR already has\./
+    );
+    await captureAll('type-check-errors');
+    await js(`${block(0)}.focus()`);
+    await wait("!document.querySelector('.conflict-type-check-errors')");
+    // Back to off for the steps below: the summary counts the Merged conflict again.
+    await typeCheckShows(null, null);
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 2 of 4 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.'"
+    );
     // J and K visit both conflicts that need you: the one to decide and the one to check.
     await js(`${block(0)}.focus()`);
     await key('j');
@@ -1671,6 +1783,12 @@ void app.whenReady().then(async () => {
     const legendIn = (scope: string) =>
       `Number(document.querySelector(${JSON.stringify(`${scope} .conflict-written-legend`)})?.dataset.written ?? 0)`;
     await wait(`${legendIn('.conflict-whole-file')}>0 && ${markedIn('.conflict-whole-file')}===${legendIn('.conflict-whole-file')}`);
+    // Its diff names its columns, and is no second region named after the file inside the card.
+    assert.deepEqual(
+      await js(`[...${whole}.querySelectorAll('.conflict-diff-columns > span')].map(s=>s.lastChild.textContent)`),
+      ['This PR · feature/retry', 'Proposed result']
+    );
+    assert.equal(await js(`[...${whole}.querySelectorAll('section')].filter(s=>s.hasAttribute('aria-label')).length`), 0);
     await captureAll('whole-file-check');
     // The link shows the conflicts below the proposal; J and K then visit both.
     await click('Resolve conflict by conflict instead (1)');

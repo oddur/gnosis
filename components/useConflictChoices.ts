@@ -182,10 +182,10 @@ export function useConflictChoices({
       return;
     }
     const next = [...model.choices];
-    next[index] = edit.before;
+    next[index] = edit.before ?? undefined;
     pendingFocus.current = { at: index };
     onEdits?.(editsWithout(index));
-    onPick?.(index, edit.pick);
+    onPick?.(index, edit.pick ?? undefined);
     onChange(applyChoices(model.segments, next, proposals, model.edits));
   }
   /** The text the in-place editor starts from: the conflict's lines, or both sides while it is open. */
