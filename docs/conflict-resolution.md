@@ -76,9 +76,15 @@ Without a linked clone, with dependencies missing, or for a fork, there is no ty
 | Key | Action |
 | --- | --- |
 | J / K | Next / previous conflict |
+| A | Use the proposal on the focused conflict and go to the next conflict that needs you |
 | 1 / 2 / 3 | Keep PR change / the base branch's change (such as main's) / both, for the focused conflict |
+| U | Undo: right after A, that choice; otherwise the choice on the focused conflict |
+| V | Compare with PR, the base branch or both |
+| G | Turn on **Review Merged-only files myself** |
 | M | Mark the file reviewed and open the next file |
 | N / P | Next / previous file |
+| Cmd+Enter (Ctrl+Enter) | **Review and push…**: opens the confirmation, never pushes |
+| Esc | Close the Conflicts view |
 
 Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, in a conflict's editor and in the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
 

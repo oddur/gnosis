@@ -25,17 +25,34 @@ import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
  * in-place editor (#445 items 8 and 11).
  */
 
-/** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
+/**
+ * What the proposal did, once it is in the draft: Merged, or used by you. Past tense only there. A Merged one the
+ * same-change rule decided is the PR's version, whoever proposed it.
+ */
 export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
   proposal.source === 'model'
     ? `Proposed by ${proposal.by ?? 'a model'}`
     : proposal.source === 'rerere'
       ? 'Same as you resolved before'
       : proposal.source === 'union'
-        ? 'Gnosis kept both sides’ additions'
+        ? 'Gnosis’s rule kept both sides’ additions'
         : proposal.source === 'same' || (verdict?.merged && verdict.note.startsWith(SAME_CHANGE))
-          ? 'Gnosis kept the PR’s version'
+          ? 'Gnosis’s rule kept the PR’s version'
           : 'Structural merge combined both sides’ changes';
+/**
+ * A proposal nobody chose yet (Check): it is not in the draft (#507), so it is named as an offer, with its writer, never
+ * as something done: "Proposal from structural merge: combine both sides' changes".
+ */
+export const proposalOffer = (proposal: ConflictProposal) =>
+  proposal.source === 'model'
+    ? `Proposal from ${proposal.by ?? 'the model'}`
+    : proposal.source === 'rerere'
+      ? 'Proposal from your earlier merge: resolve it the same way'
+      : proposal.source === 'union'
+        ? 'Proposal from Gnosis’s rule: keep both sides’ additions'
+        : proposal.source === 'same'
+          ? 'Proposal from Gnosis’s rule: the PR’s version'
+          : 'Proposal from structural merge: combine both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere'
@@ -217,6 +234,7 @@ export function ConflictCard({
           variant="outline"
           disabled={disabled}
           data-choice="proposal"
+          aria-keyshortcuts={shortcuts ? 'A' : undefined}
           onClick={() => onChoose('proposal')}
         >
           Use the proposal
@@ -228,7 +246,14 @@ export function ConflictCard({
   // Each Undo says what it does: undo your Use the proposal, or take a proposal back so you decide yourself.
   const undoAs = (label: string, aria: string) =>
     onUndo && (
-      <Button size="xs" variant="ghost" disabled={disabled} onClick={onUndo} aria-label={aria}>
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={disabled}
+        onClick={onUndo}
+        aria-keyshortcuts={shortcuts ? 'U' : undefined}
+        aria-label={aria}
+      >
         <Undo2 aria-hidden="true" />
         {label}
       </Button>
@@ -319,6 +344,7 @@ export function ConflictCard({
       variant="ghost"
       disabled={disabled}
       onClick={onUndo}
+      aria-keyshortcuts={shortcuts ? 'U' : undefined}
       aria-label={`Undo your edit of conflict ${index + 1}`}
     >
       <Undo2 aria-hidden="true" />
@@ -387,6 +413,7 @@ export function ConflictCard({
                 variant="ghost"
                 disabled={disabled}
                 onClick={onUndo}
+                aria-keyshortcuts={shortcuts ? 'U' : undefined}
                 aria-label={`Undo: ${labels.kept[choice]} in conflict ${index + 1}`}
               >
                 <Undo2 aria-hidden="true" />
@@ -434,7 +461,7 @@ export function ConflictCard({
         <>
           <ModelIntents proposal={proposal} labels={labels} />
           <div className="conflict-proposal-preview" data-conflict-proposal="">
-            <h4 className="conflict-side-label">Proposal · {proposalWhat(proposal)}</h4>
+            <h4 className="conflict-side-label">{proposalOffer(proposal)}</h4>
             {proposal.text ? <CodeSnippet name={name} text={proposal.text} /> : <p className="conflict-side-empty">No lines</p>}
           </div>
         </>
