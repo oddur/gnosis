@@ -1,5 +1,6 @@
 import { DEFAULT_EXPLANATION_PREFERENCES, explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
 import { changedRange } from '../../lib/explanation-noise';
+import { applyConflictStats, emptyConflictStats, markChoice, validChoice } from '../../lib/conflict-stats';
 import type { GenerateReviewRequest } from '../../lib/types';
 import { initializeChecksView } from '../../lib/checks-view';
 import { automaticBriefingBlock } from '../../lib/repository-settings';
@@ -1292,6 +1293,25 @@ if (updateScenario) {
       return Promise.resolve('/tmp/gnosis-diagnostics.json');
     },
     refreshOpenPr: (urls: string[]) => { fixtureWindow.fixtureFocusRefreshes.push(urls); },
+  });
+}
+// Settings › Diagnostics › Conflict resolution stats (#445 item 2): the main process's counting, in memory, against the
+// test's `window.conflictFixture` draft as main counts against the saved one. Tests read `window.fixtureConflictStats`.
+{
+  const fixtureWindow = window as unknown as {
+    fixtureConflictStats: import('../../lib/conflict-stats').ConflictStats;
+    conflictFixture?: import('../../lib/conflict-resolution').ConflictSession;
+  };
+  fixtureWindow.fixtureConflictStats = emptyConflictStats();
+  Object.assign(mocks, {
+    recordConflictChoice: (value: unknown) => {
+      const choice = validChoice(value);
+      const draft = fixtureWindow.conflictFixture;
+      const event = choice && draft?.id === choice.id ? markChoice(draft, choice) : undefined;
+      if (event) fixtureWindow.fixtureConflictStats = applyConflictStats(fixtureWindow.fixtureConflictStats, [event]);
+    },
+    conflictStats: () => Promise.resolve(structuredClone(fixtureWindow.fixtureConflictStats)),
+    resetConflictStats: () => Promise.resolve((fixtureWindow.fixtureConflictStats = emptyConflictStats())),
   });
 }
 // Settings › Updates (#404). ?app-version=<v> is the running build and ?update-channel=prerelease the saved channel.

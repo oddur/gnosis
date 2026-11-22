@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import { Toggle, SettingRow } from './SettingsControls';
 import { SyncHealthSettings } from './SyncHealthSettings';
+import { ConflictStatsSettings } from './ConflictStatsSettings';
 import { interactionMonitorState, onSlowInteraction, setSlowInteractionLog, slowInteractions } from '../lib/interaction-latency';
 import { collectRendererDiagnostics } from '../lib/diagnostics';
 
@@ -84,6 +85,7 @@ export function DiagnosticsSettings() {
       </section>
       <SyncHealthSettings />
       <SlowInteractionsSettings />
+      <ConflictStatsSettings />
     </div>
   );
 }
