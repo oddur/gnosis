@@ -4,6 +4,7 @@
  * This implementation is written for Gnosis; no Beautiful UI code is copied.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { pushButtonKey } from '../lib/push-button-keys';
 import {
   ArrowRight,
   Circle,
@@ -207,13 +208,10 @@ export function StepCard({
   const optional = !!step?.optional && !!onSkip;
   const mac = window.electronAPI.platform === 'darwin';
   function onContinueKey(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
     // No implicit click from Enter or Space, and the card's Enter never sees the key either.
-    event.preventDefault();
-    event.stopPropagation();
-    const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-    if (event.type === 'keydown' && event.key === 'Enter' && mod && !event.repeat && !event.altKey && !event.shiftKey)
-      if (canContinue) onContinue();
+    pushButtonKey(event, mac, () => {
+      if (canContinue) onContinue?.();
+    });
   }
   return (
     <section

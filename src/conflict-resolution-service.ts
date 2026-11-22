@@ -34,6 +34,7 @@ import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
+import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE } from '../lib/conflict-undo';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
@@ -109,6 +110,11 @@ interface Deps {
   backgroundDrafts?: number;
   /** Settings › Diagnostics › Conflict resolution stats (src/conflict-stats-store.ts). Counts only; it never throws. */
   stats?: { record(events: readonly ConflictStatsEvent[]): void };
+  /**
+   * Repository settings' "Allow undoing a conflict update with a force push", for the PR's repository. Without it, or
+   * false, Undo this update is refused (#445 item 25).
+   */
+  allowUndo?: (repo: string) => boolean;
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -1084,6 +1090,14 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    // An undo whose reply or status write was lost: the PR head says whether it landed (#445 item 25).
+    if (saved?.status === 'published' && saved.undoing && !background) {
+      if (state.headSha === saved.headSha && state.headBranch === saved.headBranch && state.headRepo === saved.headRepo)
+        await undone(ctx, saved);
+      else delete saved.undoing;
+      saved.version++;
+      await persist(saved);
+    }
     // A background draft counts only for the revisions it was prepared on. Your own draft, or a push still to restack,
     // is never replaced in the background.
     const current = !!saved && revisionChange(saved, state) === 'none';
@@ -1349,6 +1363,98 @@ export function createConflictResolutionService(deps: Deps) {
       signal
     );
   }
+  /** A published draft goes back to editing with its files and choices; its push and restack plan are gone. */
+  async function undone(ctx: Context, session: ConflictSession) {
+    const plan = session.restack;
+    session.status = 'editing';
+    delete session.commitSha;
+    delete session.undoing;
+    delete session.restack;
+    delete session.lastPush;
+    delete session.reopened;
+    writeCarry(ctx.account, session.id, []);
+    if (plan?.status === 'blocked')
+      await abandonWorktree(ctx, session.id, plan.token).catch((error: unknown) =>
+        console.warn('[conflicts] Could not remove a paused restack worktree.', error)
+      );
+  }
+  /**
+   * Undo this update (#445 item 25): push the PR's previous head back over the merge commit. Only while the merge
+   * commit is still the head, read live from GitHub and from the remote, and the push's lease checks it once more.
+   */
+  async function undoPublish(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal,
+    report: (text: string) => void
+  ) {
+    const { commitSha, headSha } = session;
+    if (session.status !== 'published' || !commitSha || !oid(commitSha) || !oid(headSha)) throw new Error(UNDO_UNAVAILABLE);
+    // Dependent PRs now sit on the merge commit: moving it back would leave them on a commit the PR no longer has.
+    if (session.restack?.status === 'published') throw new Error(UNDO_RESTACKED);
+    if (deps.allowUndo?.(session.baseRepo) !== true) throw new Error(UNDO_OFF);
+    report('Checking that the merge commit is still the PR head.');
+    const state = await deps.read(session.url);
+    signal.throwIfAborted();
+    assertAccount(ctx);
+    if (state.state !== 'OPEN') throw new Error(UNDO_CLOSED);
+    if (state.account !== ctx.account || state.archived || !state.canUpdateBranch)
+      throw new Error('You cannot update this PR branch with the connected account. Nothing was changed.');
+    if (state.headRepo !== session.headRepo || state.headBranch !== session.headBranch || state.headSha !== commitSha)
+      throw new Error(UNDO_MOVED);
+    // The pushed commits must be here, so the push sends nothing: the remote already has the previous head. Startup
+    // cleanup may have removed this PR's cache since the push.
+    const dir = await directory(ctx.account, session.id);
+    if (!(await exists(path.join(dir, 'HEAD')))) {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await git(ctx, session.id, ['init', '--bare', '.'], signal);
+    }
+    const present = async (sha: string) =>
+      (await git(ctx, session.id, ['cat-file', '-e', `${sha}^{commit}`], signal, undefined, [0, 1, 128], { lazyFetch: false }))
+        .code === 0;
+    if (!(await present(commitSha)) || !(await present(headSha)))
+      await git(
+        ctx,
+        session.id,
+        ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', '--depth=2', remote(session.headRepo), commitSha],
+        signal
+      );
+    // GitHub's PR read can lag a push: the remote's own ref is the live head.
+    const live = (
+      await git(ctx, session.id, ['ls-remote', remote(session.headRepo), `refs/heads/${session.headBranch}`], signal)
+    ).stdout
+      .toString()
+      .trim()
+      .split(/\s/)[0];
+    if (live !== commitSha) throw new Error(UNDO_MOVED);
+    assertAccount(ctx);
+    // Saved before the network write, so a reopen can finish an undo whose reply was lost.
+    session.undoing = true;
+    session.version++;
+    await persist(session);
+    report(`Moving ${session.headBranch} back to its previous commit.`);
+    try {
+      await git(
+        ctx,
+        session.id,
+        [
+          'push',
+          '--porcelain',
+          `--force-with-lease=refs/heads/${session.headBranch}:${commitSha}`,
+          remote(session.headRepo),
+          `${headSha}:refs/heads/${session.headBranch}`,
+        ],
+        signal
+      );
+    } catch (error) {
+      // Refused: nothing changed, and the update stays. A lost reply is settled by the next open.
+      delete session.undoing;
+      session.version++;
+      await persist(session);
+      throw error;
+    }
+    await undone(ctx, session);
+  }
   function assertReviewed(session: ConflictSession) {
     if (session.preparation === 'up-to-date')
       throw new Error('The PR already contains the base branch. No update is needed.');
@@ -1530,6 +1636,19 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.account) return undefined;
       const saved = deps.storage.read(storageKey(ctx.account, hash(url))) as ConflictSession | undefined;
       return saved?.status === 'editing' && saved.headSha === headSha && saved.files.length ? saved : undefined;
+    },
+    /**
+     * Your pushed update while its merge commit is this PR head: the PR header offers Undo this update for it. A push
+     * whose dependent PRs were restacked onto it has none.
+     */
+    pushed(url: string, headSha: string) {
+      const ctx = deps.context();
+      if (!ctx.account) return undefined;
+      const saved = deps.storage.read(storageKey(ctx.account, hash(url))) as ConflictSession | undefined;
+      if (!saved || saved.status !== 'published' || saved.commitSha !== headSha || saved.undoing) return undefined;
+      if (saved.restack?.status === 'published') return undefined;
+      const { id, version, url: pr, headRepo, baseRepo, headBranch, baseBranch, commitSha } = saved;
+      return { id, version, url: pr, headRepo, baseRepo, headBranch, baseBranch, headSha: saved.headSha, commitSha };
     },
     /** Removes a background draft (the PR moved or merges cleanly now). Your own draft is never removed. */
     async forgetBackground(url: string) {
@@ -1721,6 +1840,12 @@ export function createConflictResolutionService(deps: Deps) {
             writeCarry(ctx.account, id, []);
           }
           assertAccount(ctx);
+          session.version++;
+          await persist(session);
+          return { session };
+        }
+        if (request.kind === 'undo-publish') {
+          await undoPublish(ctx, session, signal, report);
           session.version++;
           await persist(session);
           return { session };

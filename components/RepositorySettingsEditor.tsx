@@ -31,6 +31,7 @@ export const REPOSITORY_SETTING_KEYS = [
   'icon',
   'color',
   'notifications',
+  'allowConflictUndo',
 ] as const;
 type Key = keyof RepositorySettings;
 const settingNames = {
@@ -43,6 +44,7 @@ const settingNames = {
   color: 'color',
   notifications: 'notifications',
   showMergedConflicts: 'merged conflicts',
+  allowConflictUndo: 'conflict undo',
 };
 export function RepositorySettingsEditor({
   repo,
@@ -252,6 +254,25 @@ export function RepositorySettingsEditor({
                   onValueChange={(value) => patch({ notifications: value as RepositoryNotificationLevel })}
                 />
               )}
+            </div>
+          </div>
+          <div className="repository-setting-row" data-setting="allow-conflict-undo">
+            <div>
+              <h4>Undo conflict updates</h4>
+              <p>
+                After Gnosis pushes a conflict resolution, offer to force-push the PR’s previous commit back. Leave it
+                off if your team forbids force pushes on shared branches.
+              </p>
+            </div>
+            <div>
+              <label className="repository-inherit">
+                <input
+                  type="checkbox"
+                  checked={draft.allowConflictUndo === true}
+                  onChange={(e) => patch({ allowConflictUndo: e.target.checked ? true : undefined })}
+                />
+                Allow undoing a conflict update with a force push
+              </label>
             </div>
           </div>
           {!bulk && <LocalCloneSettings key={repo.toLowerCase()} repo={repo} />}
