@@ -239,11 +239,6 @@ export interface BaseMove {
   files: string[];
 }
 /**
- * The opt-in type check of a prepared merge (#445 item 24): the PR's TypeScript compiler, from your linked clone, run on
- * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
- * fingerprint each was checked with (`typeCheckKey`).
- */
-/**
  * A file's new type errors: `note` for every Merged proposal in the file, or, with `blocks`, a note for each conflict
  * (by block index) that holds an error. `blocks` is only set when every error was inside a conflict.
  */
@@ -252,11 +247,19 @@ export interface TypeErrorMark {
   note: string;
   blocks?: (string | null)[];
 }
+/**
+ * The opt-in type check of a prepared merge (#445 item 24): the PR's TypeScript compiler, from your linked clone, run on
+ * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
+ * fingerprint each was checked with (`typeCheckKey`).
+ * `checked`: every file's key the finished run checked, by path. A result says nothing about a file whose draft changed
+ * since; without `checked` it says nothing about any file.
+ */
 export type ConflictTypeCheck =
   | { state: 'running' }
-  | { state: 'passed'; preExisting: number }
+  | { state: 'passed'; preExisting: number; checked?: Record<string, string> }
   | {
       state: 'errors';
+      checked?: Record<string, string>;
       count: number;
       preExisting: number;
       /** The first new errors, one line each: "path:line TS1234 message". */

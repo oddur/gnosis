@@ -222,7 +222,7 @@ declare global {
       cancelConflictModel?: (request: import('../lib/conflict-model').ConflictModelRequest) => Promise<void>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
-      conflictTypeCheck: (id: string) => Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null>;
+      conflictTypeCheck: (id: string) => Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null | undefined>;
       cancelConflictTypeCheck: (id: string) => Promise<void>;
       onConflictTypeCheckChanged: (callback: (id: string) => void) => () => void;
       conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;

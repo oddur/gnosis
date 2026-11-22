@@ -513,9 +513,9 @@ export function ConflictWorkspace({
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
   // Kept across saves of the same draft, so files don't flash between buckets while the status is read again.
-  const [typeCheckOf, setTypeCheck] = useState<{ id: string; status: ConflictTypeCheck | null }>();
+  const [typeCheckOf, setTypeCheck] = useState<{ id: string; status: ConflictTypeCheck | null | undefined }>();
   const sessionId = session?.id;
-  // Undefined until read for this draft: the demotions saved on the files apply meanwhile.
+  // Undefined until read for this draft, or on but not run: the demotions saved on the files apply.
   const typeCheck = typeCheckOf && typeCheckOf.id === sessionId ? typeCheckOf.status : undefined;
   useEffect(() => {
     if (!sessionId) return;

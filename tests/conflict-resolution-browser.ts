@@ -1326,6 +1326,7 @@ void app.whenReady().then(async () => {
         count: 2,
         preExisting: 1,
         errors: ["src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.", "src/use.ts:1 TS2322 Type 'string' is not assignable to type 'number'."],
+        checked: { 'src/imports.ts': typeCheckKey(counted[1] as Parameters<typeof typeCheckKey>[0]) },
         files: [{ path: 'src/imports.ts', key: typeCheckKey(counted[1] as Parameters<typeof typeCheckKey>[0]), note: typeNote }],
       },
       'Type check: 2 new errors'

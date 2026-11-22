@@ -62,15 +62,17 @@ export function withTypeError(
 ): Verdict | undefined {
   if (!verdict || !mark) return verdict;
   const { note, blocks } = mark;
-  if (blocks) {
-    const demoted = (index: number) => blocks[index] != null && !!blockVerdict(verdict, index)?.merged;
-    if (!blocks.some((_, index) => demoted(index))) return verdict;
+  // Only the conflicts the errors were in, while each of them is still a Merged proposal. When one of them no longer is,
+  // the error may come from elsewhere in the file: every Merged proposal in it is Check.
+  const held = blocks?.flatMap((text, index) => (text != null ? [index] : []));
+  if (blocks && held?.length && held.every((index) => blockVerdict(verdict, index)?.merged)) {
     // Every conflict gets its own entry, so the others keep the file's verdict when the file's own is no longer Merged.
     const count = Math.max(blocks.length, verdict.blocks?.length ?? 0);
     const own = Array.from({ length: count }, (_, index): BlockVerdict =>
-      demoted(index) ? { merged: false, note: blocks[index] as string } : (blockVerdict(verdict, index) as BlockVerdict)
+      blocks[index] != null ? { merged: false, note: blocks[index] } : (blockVerdict(verdict, index) as BlockVerdict)
     );
-    return { ...verdict, merged: false, note: verdict.merged ? (own.find((b) => !b.merged)?.note ?? note) : verdict.note, blocks: own };
+    const firstNote = own.find((b) => !b.merged)?.note ?? note;
+    return { ...verdict, merged: false, note: verdict.merged ? firstNote : verdict.note, blocks: own };
   }
   if (!(verdict.merged || verdict.blocks?.some((block) => block?.merged))) return verdict;
   return {
@@ -1096,6 +1098,20 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
 export const CHECKS_VERSION = 10;
 const proposalKeys = new WeakMap<object, string>();
 /**
+ * FNV-1a and length of a file's conflict, proposals and `draft`, the fingerprint `proposalKey` and `typeCheckKey` share.
+ */
+function fileFingerprint(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>, draft: string) {
+  const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
+  const text = [
+    file.original,
+    ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
+    `\u0002${draft}`,
+  ].join('\u0000');
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return `${(hash >>> 0).toString(36)}:${text.length}`;
+}
+/**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
  * check result counts only for the proposals it checked, beside the choices it checked them with.
  */
@@ -1104,16 +1120,8 @@ export function proposalKey(
 ) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
-    const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
-    const text = [
-      file.original,
-      ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
-      // The draft matters only to per-conflict checks; a whole-file check ignores it.
-      `\u0002${file.wholeFile ? '' : (file.result ?? '')}`,
-    ].join('\u0000');
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
-    key = `${(hash >>> 0).toString(36)}:${text.length}`;
+    // The draft matters only to per-conflict checks; a whole-file check ignores it.
+    key = fileFingerprint(file, file.wholeFile ? '' : (file.result ?? ''));
     proposalKeys.set(file, key);
   }
   return key;
@@ -1129,15 +1137,7 @@ export function typeCheckKey(file: Pick<ConflictFile, 'original' | 'proposals' |
   const inputs = [file.original, file.proposals, file.wholeFile, file.result] as const;
   const known = typeCheckKeys.get(file);
   if (known && known.inputs.every((value, index) => value === inputs[index])) return known.key;
-  const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
-  const text = [
-    file.original,
-    ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
-    `\u0002${file.result}`,
-  ].join('\u0000');
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
-  const key = `${(hash >>> 0).toString(36)}:${text.length}`;
+  const key = fileFingerprint(file, file.result);
   typeCheckKeys.set(file, { inputs, key });
   return key;
 }
@@ -1145,20 +1145,18 @@ export function typeCheckKey(file: Pick<ConflictFile, 'original' | 'proposals' |
  * The type check's demotion of a file, the same for the Conflicts view, the PR header and the stats. `status` is the
  * PR's type check: null when it is off, undefined when not known (not asked yet, or not run since the app started).
  *
- * - A run that passed demotes nothing; one that found errors demotes what it found for this draft.
- * - Otherwise (running, skipped, stopped, not known, or a result for an older draft) the demotion saved on the file
- *   stays: a demotion only goes when a finished run says so, or the check is turned off.
+ * - A finished run decides a file only while the file's draft is the one it checked (`checked`): it passed there, or it
+ *   found errors there.
+ * - Otherwise (running, skipped, stopped, not known, or a result for another draft) the demotion saved on the file
+ *   stays: a demotion only goes when a finished run for its draft says so, or the check is turned off.
  */
 export function typeErrorOf(
   file: Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'wholeFile' | 'result' | 'typeError'>,
   status: ConflictTypeCheck | null | undefined
 ): TypeErrorMark | undefined {
-  if (status === null || status?.state === 'passed') return undefined;
-  if (status?.state === 'errors') {
-    const own = status.files.find((x) => x.path === file.path);
-    if (!own) return undefined;
-    if (own.key === typeCheckKey(file)) return own;
-  }
+  if (status === null) return undefined;
+  if ((status?.state === 'passed' || status?.state === 'errors') && status.checked?.[file.path] === typeCheckKey(file))
+    return status.state === 'errors' ? status.files.find((x) => x.path === file.path) : undefined;
   return file.typeError;
 }
 

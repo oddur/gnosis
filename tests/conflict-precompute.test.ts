@@ -353,7 +353,7 @@ void test('the header line applies the type check’s demotions as the conflict 
   const line = h.precompute.header(A, sha(1));
   assert.equal(line?.state === 'ready' && line.sentence, '1 file has conflicts. 1 to check.');
   // A run that passed, or the check off: nothing is demoted.
-  status = { state: 'passed', preExisting: 0 };
+  status = { state: 'passed', preExisting: 0, checked: { 'a.ts': typeCheckKey(draft.files[0]) } };
   h.precompute.typeCheckChanged(id);
   assert.equal(merged(), true);
   status = null;

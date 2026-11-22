@@ -4359,7 +4359,7 @@ const conflictPrecompute = createConflictPrecompute({
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),
   // Off: null, as the conflict dialog reads it. On but not run since the app started: the saved demotions apply.
-  typeCheck: draft => conflicts.typeCheck(draft.id) ?? (typeCheckCloneFor(draft.baseRepo) ? undefined : null),
+  typeCheck: draft => conflicts.typeCheckStatus(draft.id, draft.baseRepo),
 });
 // The cascade preview before a push (#445 item 22): a dry run of the stack, in the background, never on battery.
 const cascadePreviews = createCascadePreviews({
@@ -4407,7 +4407,8 @@ ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   return conflictPrecompute.header(url, headSha) ?? null;
 });
 // The opt-in type check of a prepared merge (#445 item 24): its status, and Stop.
-ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheck(id) ?? null : null));
+// The same reading as the PR header's (src/conflict-precompute.ts): null off, undefined on but not run.
+ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheckStatus(id) : null));
 ipcMain.handle('conflict-type-check-cancel', (_event, id: unknown) => {
   if (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)) conflicts.cancelTypeCheck(id);
 });
