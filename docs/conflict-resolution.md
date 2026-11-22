@@ -234,6 +234,8 @@ Rust has no reflection over variants, so nothing else can see their order.
 
 Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields.
 
+**TypeScript type imports.** An import runs its module, and modules run in the order they are imported. Nothing in a syntax tree shows that a module has no side effects, such as a polyfill or a registration. So JavaScript, TypeScript and Python imports are never order-free in general, and they stay in Check. The exception is `import type …`: TypeScript erases it whole from the output, also with `verbatimModuleSyntax`, so it runs nothing. Both sides' imports must all be `import type`, and they must bind different names. `import { type A } from './a'` is not an exception: it can leave `import {} from './a'`, which still runs the module.
+
 ## Testing the resolvers
 
 The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.

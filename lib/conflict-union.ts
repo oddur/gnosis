@@ -345,6 +345,7 @@ type OrderKind = 'method' | 'member' | 'import' | 'variant' | 'field';
  */
 const SCRIPT_ORDER_FREE = [
   { parents: ['class_body'], types: ['method_definition'], kind: 'method' as const },
+  { parents: ['program'], types: ['import_statement'], kind: 'import' as const },
   {
     parents: ['interface_body', 'object_type'],
     types: ['method_signature', 'property_signature'],
@@ -432,7 +433,7 @@ export function orderFree(
     (kind === 'import' || PLAIN_NAMES.has(u.nameKind ?? '')) &&
     python(u) &&
     using(u);
-  if (![...a, ...b].every(fits) || !proved(kind, ours)) return false;
+  if (![...a, ...b].every(fits) || !proved(language, kind, ours, [...a, ...b])) return false;
   // An import by its line; a method by its name, with its parameter types where overloads differ by them.
   const key = (u: RangeUnit) =>
     kind === 'import'
@@ -494,8 +495,18 @@ const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash
  * nothing to run), with no attribute; and nothing but lint, `doc` and `cfg` attributes and STRUCT_DERIVES sit on the
  * struct or around it. Without `#[repr]` the layout is unspecified (rustc reorders fields), and struct literals and
  * patterns name their fields.
+ *
+ * TypeScript imports: an import runs its module, in order, and nothing in the syntax tree shows that a module has no
+ * side effects, so a value import is never order-free. `import type …` is erased whole from the output (even with
+ * `verbatimModuleSyntax`), so it runs nothing: both sides' imports must all be `import type`, binding different names.
+ * `import { type A }` is not: it can leave `import {} from './a'`, which runs the module.
  */
-function proved(kind: OrderKind, units: RangeUnits) {
+function proved(language: SyntaxLanguage, kind: OrderKind, units: RangeUnits, added: RangeUnit[]) {
+  if (language === 'typescript' || language === 'tsx') {
+    if (kind !== 'import') return true;
+    const binds = added.flatMap((u) => u.binds ?? []);
+    return added.every((u) => u.typeOnly && u.binds?.length) && new Set(binds).size === binds.length;
+  }
   if (kind !== 'variant' && kind !== 'field') return true;
   const owner = units.owner;
   if (kind === 'field')

@@ -965,6 +965,33 @@ void test('#481: Rust struct fields are order-free only for scalar fields and or
   assert.equal((await options('', '    depth: i64,\n', '    depth: u8,\n')).merged, false);
 });
 
+void test('#481: TypeScript `import type` lines are order-free; value and side-effect imports are Check', async () => {
+  const imports = (ours: string, theirs: string, path = 'src/index.ts') =>
+    samePlace(path, "import type { A } from './a';\n", '\nexport const x = 1;\n', ours, theirs, ours + theirs);
+  for (const path of ['src/index.ts', 'src/view.tsx']) {
+    const verdict = await imports("import type { B } from './b';\n", "import type C, { D as E } from './c';\n", path);
+    assert.equal(verdict.merged, true, `${path}: ${verdict.note}`);
+    assert.match(verdict.note, /different imports here/);
+  }
+  assert.equal((await imports("import type * as B from './b';\n", "import type { C } from './c';\n")).merged, true);
+  // A value import runs its module; so may `import { type C }` (it can leave `import {} from './c'`); a bare import is
+  // only a side effect: Check.
+  for (const other of ["import { C } from './c';\n", "import { type C } from './c';\n", "import './c';\n"])
+    assert.equal((await imports("import type { B } from './b';\n", other)).merged, false, other);
+  // One name bound by both sides: Check.
+  assert.equal((await imports("import type { B } from './b';\n", "import type { B } from './c';\n")).merged, false);
+  // JavaScript has no type imports, and its imports run in order: Check.
+  const js = await samePlace(
+    'src/index.js',
+    "import { a } from './a';\n",
+    '\nexport const x = a;\n',
+    "import { b } from './b';\n",
+    "import { c } from './c';\n",
+    "import { b } from './b';\nimport { c } from './c';\n"
+  );
+  assert.equal(js.merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

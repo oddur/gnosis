@@ -561,6 +561,9 @@ export interface RangeUnit {
   returns?: boolean;
   /** Its first line, spaces squashed: an import's whole text. */
   head?: string;
+  /** A JavaScript or TypeScript import: `import type …`, which TypeScript erases, and the local names it binds. */
+  typeOnly?: boolean;
+  binds?: string[];
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
@@ -585,6 +588,22 @@ export interface RangeOwner {
   members: { name: string; value?: string; type?: string; fields?: boolean; attributed?: boolean }[];
   /** The text of each `use` and `extern crate` in the file, with its attributes: either can rename a derive. */
   uses: string[];
+}
+/** An import statement's `type` keyword (on the statement, not on one name) and the local names it binds. */
+function scriptImport(node: Node) {
+  const binds: string[] = [];
+  const clause = node.namedChildren.find((c) => c.type === 'import_clause');
+  for (const c of clause?.namedChildren ?? []) {
+    if (c.type === 'identifier') binds.push(c.text);
+    else if (c.type === 'namespace_import') binds.push(...c.namedChildren.filter((x) => x.type === 'identifier').map((x) => x.text));
+    else if (c.type === 'named_imports')
+      for (const s of c.namedChildren)
+        if (s.type === 'import_specifier') {
+          const local = s.childForFieldName('alias') ?? s.childForFieldName('name');
+          if (local) binds.push(local.text);
+        }
+  }
+  return { typeOnly: node.children.some((c) => !c.isNamed && c.type === 'type'), binds };
 }
 /** The text inside `#[…]` of each attribute just before a node, comments aside. */
 function attributesBefore(node: Node) {
@@ -681,6 +700,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
         ...(decorated ? { decorated } : {}),
         ...(annotated ? { annotated } : {}),
         head: squash(c.text.split('\n')[0]),
+        ...(c.type === 'import_statement' ? scriptImport(c) : {}),
       };
     };
     const units: RangeUnit[] = [];
