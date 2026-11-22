@@ -574,6 +574,67 @@ export interface RangeUnits {
   before?: string;
   /** For a JSON object: the keys of the pairs that hold it, from the document's top. */
   path?: string[];
+  /** For a Rust enum's variants or a struct's fields: the item that holds them (rangeOwner). */
+  owner?: RangeOwner;
+}
+/** A Rust enum or struct whose variants or fields are the units, as the order-free proofs read it (#481). */
+export interface RangeOwner {
+  /** Each attribute on the item and on every item around it, inner attributes included, as written inside `#[…]`. */
+  attributes: string[];
+  /** Every variant or field of the item, in order: its discriminant or type as written, and whether it has fields or attributes. */
+  members: { name: string; value?: string; type?: string; fields?: boolean; attributed?: boolean }[];
+  /** The text of each `use` and `extern crate` in the file, with its attributes: either can rename a derive. */
+  uses: string[];
+}
+/** The text inside `#[…]` of each attribute just before a node, comments aside. */
+function attributesBefore(node: Node) {
+  const found: string[] = [];
+  for (let at = node.previousNamedSibling; at; at = at.previousNamedSibling) {
+    if (/comment/.test(at.type)) continue;
+    if (at.type !== 'attribute_item') break;
+    found.unshift(squash(at.namedChildren.find((c) => c.type === 'attribute')?.text ?? at.text));
+  }
+  return found;
+}
+/** A Rust enum's or struct's attributes, members and the file's `use` lines; undefined for any other list. */
+function rangeOwner(list: Node): RangeOwner | undefined {
+  const item = list.parent;
+  if (!item || !['enum_variant_list', 'field_declaration_list'].includes(list.type)) return undefined;
+  if (item.type !== 'enum_item' && item.type !== 'struct_item') return undefined;
+  const attributes: string[] = [];
+  for (let at: Node | null = item; at; at = at.parent) {
+    attributes.push(...attributesBefore(at));
+    for (const c of at.namedChildren)
+      if (c.type === 'inner_attribute_item')
+        attributes.push(squash(c.namedChildren.find((x) => x.type === 'attribute')?.text ?? c.text));
+  }
+  const members: RangeOwner['members'] = [];
+  const unit = list.type === 'enum_variant_list' ? 'enum_variant' : 'field_declaration';
+  let attributed = false;
+  for (const c of list.namedChildren) {
+    if (/comment/.test(c.type)) continue;
+    if (c.type === 'attribute_item') {
+      attributed = true;
+      continue;
+    }
+    const value = c.childForFieldName('value');
+    const type = c.childForFieldName('type');
+    members.push({
+      name: c.childForFieldName('name')?.text ?? squash(c.text),
+      ...(value ? { value: squash(value.text) } : {}),
+      ...(type ? { type: squash(type.text) } : {}),
+      ...(c.childForFieldName('body') ? { fields: true } : {}),
+      // Anything but a plain variant or field (a macro call, say) counts as attributed: it can't be proved.
+      ...(attributed || c.type !== unit ? { attributed: true } : {}),
+    });
+    attributed = false;
+  }
+  let root: Node = list;
+  while (root.parent) root = root.parent;
+  const uses = root
+    .descendantsOfType(['use_declaration', 'extern_crate_declaration'])
+    .map((n) => [...attributesBefore(n).map((a) => `#[${a}] `), squash(n.text)].join(''));
+  return { attributes, members, uses };
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -638,7 +699,9 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
     if (node.type === 'object')
       for (let at: Node | null = node.parent; at; at = at.parent)
         if (at.type === 'pair') path.unshift(at.childForFieldName('key')?.text ?? '');
+    const owner = rangeOwner(node);
     return {
+      ...(owner ? { owner } : {}),
       parent: node.type,
       ...(node.parent ? { container: node.parent.type } : {}),
       units,

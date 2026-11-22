@@ -887,6 +887,59 @@ void test('#476: package.json dependency lists are order-free; other JSON keys a
   assert.equal(cs.merged, false);
 });
 
+void test('#481: Rust enum variants are order-free only with explicit, different discriminants and order-blind derives', async () => {
+  const variants = '    Green = 2,\n    Blue = 3,\n';
+  const color = (head: string, ours = '    Green = 2,\n', theirs = '    Blue = 3,\n', path = 'src/color.rs') =>
+    samePlace(path, `${head}pub enum Color {\n    Red = 1,\n`, '}\n', ours, theirs, ours + theirs);
+  for (const head of ['', '#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n', '#[allow(dead_code)]\n/// Colors.\n']) {
+    const verdict = await color(head);
+    assert.equal(verdict.merged, true, `${head}: ${verdict.note}`);
+    assert.match(verdict.note, /their order doesn’t matter/);
+  }
+  // Either side first.
+  const flipped = await samePlace(
+    'src/color.rs',
+    'pub enum Color {\n    Red = 1,\n',
+    '}\n',
+    '    Green = 2,\n',
+    '    Blue = 3,\n',
+    '    Blue = 3,\n    Green = 2,\n'
+  );
+  assert.equal(flipped.merged, true, flipped.note);
+  // Derives and attributes that read the order, or could: Check.
+  for (const head of [
+    '#[derive(PartialOrd, PartialEq)]\n',
+    '#[derive(Ord)]\n',
+    '#[derive(Serialize)]\n',
+    '#[derive(strum::EnumIter)]\n',
+    '#[repr(u8)]\n',
+    '#[cfg_attr(test, derive(PartialOrd))]\n',
+    'use serde::Serialize as Debug;\n#[derive(Debug)]\n',
+    'use my_macros::*;\n#[derive(Debug)]\n',
+  ])
+    assert.equal((await color(head)).merged, false, head);
+  // A variant without its own value takes the next one in order (`as` casts read it); a value that isn't a literal can
+  // be anything; two equal values; a variant with fields: Check.
+  assert.equal((await color('', '    Green,\n')).merged, false, 'implicit discriminant');
+  assert.equal((await samePlace('src/c.rs', 'enum C {\n    Red,\n', '}\n', '    Green = 2,\n', '    Blue = 3,\n', variants)).merged, false);
+  assert.equal((await color('', '    Green = BASE + 1,\n')).merged, false, 'not a literal');
+  assert.equal((await color('', '    Green = 0x3,\n')).merged, false, 'the same value as Blue');
+  assert.equal((await color('', '    Green(u8),\n')).merged, false, 'fields');
+  // An attribute on a variant (`#[default]`, serde renames) or around the enum: Check.
+  assert.equal((await color('', '    #[default]\n    Green = 2,\n')).merged, false);
+  const inside = await samePlace(
+    'src/color.rs',
+    '#[my_macro]\nmod colors {\n    pub enum Color {\n        Red = 1,\n',
+    '    }\n}\n',
+    '        Green = 2,\n',
+    '        Blue = 3,\n',
+    '        Green = 2,\n        Blue = 3,\n'
+  );
+  assert.equal(inside.merged, false, 'an attribute macro on the module sees the enum');
+  // The same name on both sides: Check.
+  assert.equal((await color('', '    Green = 2,\n', '    Green = 3,\n')).merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

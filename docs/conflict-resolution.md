@@ -202,6 +202,28 @@ Preview and publish recheck account, permissions, repository, branch names, and 
 
 The preparation reads the live target branch tip (`baseRef.target.oid`), not the PR's historical `baseRefOid` snapshot. If Git can merge it cleanly, Gnosis says **No conflicts to resolve** and offers **Review and push…**. If the PR already contains that tip, Gnosis says that the branch already includes the base and prevents an unnecessary merge commit. Neither state means that Gnosis pushed anything.
 
+## When both sides add at one place
+
+When both sides insert whole definitions at the same place, Gnosis proposes both, the PR's first. That proposal is **Merged** only when the structural merge wrote it and Gnosis can prove the order of the two insertions can't change what the program does. Every other such proposal is **Check**. The proof is per kind of node, from the syntax tree of the result:
+
+- Plain methods of a class, impl or interface (Go: methods with a receiver), without decorators, annotations or attributes. Calls find a method by its name.
+- TypeScript interface and type-literal members. They are types only.
+- Go, Rust and Java imports of one kind, and plain C# `using` lines. These languages don't run code when they import.
+- The keys of `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies` in `package.json`. Package managers read these lists as sets of names.
+
+For every kind, each side must add at least one node, no name may be added twice, and no decorator or attribute may stand just before the insertion, where it would attach to whichever node comes first.
+
+Each kind below has its own proof. A case that the proof does not cover stays in Check.
+
+**Rust enum variants.** The order of the variants matters in three places: an implicit discriminant is the previous value plus one, which `as` casts read; derives such as `PartialOrd`, `Ord` and serde's variant index read the order; and macros on the enum or around it can read anything. So the variants are order-free only when all of the following are true:
+
+- Every variant, old and new, is a unit variant with an explicit integer discriminant, and no two discriminants are equal.
+- The enum and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and `Hash`. These derives read only the variant's name or its discriminant.
+- No variant has an attribute, such as `#[default]` or `#[serde(rename)]`.
+- No `use` or `extern crate` in the file can put another macro under one of those derive names: no rename, no glob outside `std`, `core` and `alloc`, and no `macro_use`.
+
+Rust has no reflection over variants, so nothing else can see their order.
+
 ## Testing the resolvers
 
 The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.

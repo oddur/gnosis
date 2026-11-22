@@ -1,6 +1,6 @@
 import { parseConflicts, textLines as lines, type ConflictBlock } from './conflict-blocks';
 import type { ConflictProposal } from './conflict-resolution';
-import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
+import { syntaxLanguage, type RangeOwner, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
 
 /**
  * Both sides added different definitions at the same place (#445, tier 3). Mergiraf leaves such a conflict open when
@@ -334,13 +334,14 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 }
 
 /** What an order-free unit is: both sides' units must all be one kind. */
-type OrderKind = 'method' | 'member' | 'import';
+type OrderKind = 'method' | 'member' | 'import' | 'variant';
 /**
  * Where order doesn't matter (#476), the provable core only: per language, the parent node that holds the units (and,
  * where the parent type is ambiguous, the node that holds it), the unit types, and their kind. Plain methods of a class,
  * impl or interface body (Go: methods with a receiver); TypeScript interface and type-literal members, which are types
- * only; imports in Go, Rust, Java and C#. Nothing else: no fields, enum members, functions, keys, cases, list items or
- * statements, no JavaScript, TypeScript or Python imports.
+ * only; imports in Go, Rust, Java and C#. Since #481, each with its own proof (`proved`, and docs/conflict-resolution.md):
+ * Rust enum variants. Nothing else: no other fields, enum members, functions, keys, cases, list items or statements, no
+ * JavaScript, TypeScript or Python imports.
  */
 const SCRIPT_ORDER_FREE = [
   { parents: ['class_body'], types: ['method_definition'], kind: 'method' as const },
@@ -374,6 +375,7 @@ const ORDER_FREE: Partial<
     { parents: ['declaration_list'], containers: ['impl_item'], types: ['function_item'], kind: 'method' },
     { parents: ['source_file'], types: ['use_declaration'], kind: 'import' },
     { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'], kind: 'import' },
+    { parents: ['enum_variant_list'], containers: ['enum_item'], types: ['enum_variant'], kind: 'variant' },
   ],
 };
 /** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
@@ -429,7 +431,7 @@ export function orderFree(
     (kind === 'import' || PLAIN_NAMES.has(u.nameKind ?? '')) &&
     python(u) &&
     using(u);
-  if (![...a, ...b].every(fits)) return false;
+  if (![...a, ...b].every(fits) || !proved(kind, ours)) return false;
   // An import by its line; a method by its name, with its parameter types where overloads differ by them.
   const key = (u: RangeUnit) =>
     kind === 'import'
@@ -439,6 +441,56 @@ export function orderFree(
         : u.name;
   const mine = new Set(a.map(key));
   return !b.some((u) => mine.has(key(u)));
+}
+
+/** Lint and documentation attributes, and `cfg`, which keeps or drops the whole item: none of them reads an order. */
+const INERT_ATTRIBUTES = /^(?:allow|warn|deny|forbid|expect|cfg)\s*\(|^doc\b/;
+/**
+ * Every attribute on a Rust item and around it is inert or a `derive` of only these std derives, and no `use` or
+ * `extern crate` in the file could bring another macro under one of their names (a glob or a rename, or `macro_use`).
+ */
+function rustAttributes(owner: RangeOwner, derives: ReadonlySet<string>) {
+  const derived = (text: string) => {
+    const list = /^derive\s*\(([^()]*)\)$/.exec(text)?.[1];
+    return list !== undefined && list.split(',').every((name) => !name.trim() || derives.has(name.trim()));
+  };
+  const named = (text: string) => [...derives].some((name) => new RegExp(`\\b${name}\\b`).test(text));
+  const std = (text: string) => /^(?:pub(?:\([^)]*\))? )?use (?:::)?(?:std|core|alloc)::/.test(text);
+  const safe = (text: string) =>
+    !/macro_use/.test(text) &&
+    (!/\*|\{/.test(text) || std(text)) &&
+    (!named(text) || (std(text) && !/ as /.test(text)));
+  return owner.attributes.every((a) => INERT_ATTRIBUTES.test(a) || derived(a)) && owner.uses.every(safe);
+}
+/** A Rust integer literal's value, `-` allowed; undefined for anything else (a constant, an expression). */
+function rustInteger(text: string | undefined) {
+  const match = /^(-\s*)?(0x[0-9a-f_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*)(?:[iu](?:8|16|32|64|128|size))?$/i.exec(
+    text?.trim() ?? ''
+  );
+  if (!match) return undefined;
+  const digits = match[2].replace(/_/g, '');
+  if (/^0[xob]$/i.test(digits)) return undefined;
+  const value = BigInt(digits.toLowerCase());
+  return match[1] ? -value : value;
+}
+/** Derives that never read a fieldless enum's variant order once each variant has its own value. */
+const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash']);
+/**
+ * The per-kind proofs (#481), for kinds whose order can matter elsewhere.
+ *
+ * Rust enum variants: a variant's order sets only its implicit discriminant (what `as` casts read) and what derives
+ * that look at the order read (`PartialOrd`, `Ord`, serde's variant index). So every variant, old and new, is a unit
+ * variant with an explicit integer discriminant, all different; nothing but lint, `doc` and `cfg` attributes and
+ * ENUM_DERIVES sit on the enum or around it, no variant has an attribute (`#[default]`, `#[serde(…)]`), and no `use`
+ * could rename a derive. Rust has no reflection over variants.
+ */
+function proved(kind: OrderKind, units: RangeUnits) {
+  if (kind !== 'variant') return true;
+  const owner = units.owner;
+  if (!owner || !rustAttributes(owner, ENUM_DERIVES)) return false;
+  const values = owner.members.map((m) => (m.fields || m.attributed ? undefined : rustInteger(m.value)));
+  if (values.some((v) => v === undefined)) return false;
+  return new Set(values.map(String)).size === values.length;
 }
 
 /** A JSON string, read as JSON reads it; undefined for anything else. */

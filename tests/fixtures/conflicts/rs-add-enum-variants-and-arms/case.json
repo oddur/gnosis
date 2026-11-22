@@ -1,8 +1,8 @@
 {
-  "description": "Both sides add a different enum variant and its match arm.",
+  "description": "Both sides add a different enum variant and its match arm. The variants have no discriminants, so each takes the next value in order (#481), and match arms are always proposed as a union: both blocks are a proposal to check.",
   "language": "rust",
   "category": "structure/both-add",
   "expected": {
-    "src/color.rs": "merged"
+    "src/color.rs": "check"
   }
 }
