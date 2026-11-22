@@ -60,10 +60,11 @@ export interface ConflictFile {
    */
   statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
   /**
-   * New type errors the opt-in type check found in this file (#445 item 24), for the proposals it checked
-   * (`typeCheckKey`). While the key matches, every Merged proposal in the file is Check with this note.
+   * New type errors the opt-in type check found in this file (#445 item 24), for the draft it checked (`typeCheckKey`).
+   * Every Merged proposal in the file is Check with this note, or only the conflicts in `blocks` when each error was
+   * inside a conflict. It stays until a finished run says otherwise, or the check is turned off (`typeErrorOf`).
    */
-  typeError?: { key: string; note: string };
+  typeError?: TypeErrorMark;
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -247,21 +248,30 @@ export interface BaseMove {
   /** Files with new conflicts. */
   files: string[];
 }
+/** New type errors in the PR, saved on a conflicted file: `note` for every Merged proposal in it. */
+export interface TypeErrorMark {
+  key: string;
+  note: string;
+}
 /**
  * The opt-in type check of a prepared merge (#445 item 24): the PR's TypeScript compiler, from your linked clone, run on
- * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
- * fingerprint each was checked with (`typeCheckKey`).
+ * the merge result in a private worktree. A new error anywhere demotes every conflicted file: `files` lists each, with
+ * the fingerprint of the draft it was checked with (`typeCheckKey`). `checked`: every file's key the finished run
+ * checked, by path. A result counts only for that draft (`typeCheckFor`).
  */
 export type ConflictTypeCheck =
+  /** The draft changed: it is checked again once your changes stop. */
+  | { state: 'waiting' }
   | { state: 'running' }
-  | { state: 'passed'; preExisting: number }
+  | { state: 'passed'; preExisting: number; checked?: Record<string, string> }
   | {
       state: 'errors';
+      checked?: Record<string, string>;
       count: number;
       preExisting: number;
       /** The first new errors, one line each: "path:line TS1234 message". */
       errors: string[];
-      files: { path: string; key: string; note: string }[];
+      files: (TypeErrorMark & { path: string })[];
     }
   | { state: 'skipped'; reason: string }
   /** The compiler ran but did not check types, such as for an options or syntax error. Never passed. */
