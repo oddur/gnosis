@@ -43,13 +43,14 @@ import { blockFingerprints } from '../lib/conflict-stats';
 import { nextCompare } from '../lib/conflict-shortcuts';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
-import { ChangesDiff } from './ChangesDiff';
+import { ChangesDiff, diffHosts } from './ChangesDiff';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
+import { SIDES_CSS, conflictSideRows, markSides, prSideOf, type SideRange, type SideTone } from '../lib/conflict-sides';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
@@ -82,7 +83,12 @@ export function ConflictFileDiff<A>({
   note,
   written,
   landmark = true,
+  sides,
+  sideLabels,
 }: {
+  /** Open conflicts' lines (lib/conflict-sides.ts): each side wears its neutral tint and its name, not −/+. */
+  sides?: readonly SideRange[];
+  sideLabels?: Record<SideTone, string>;
   name: string;
   before?: string;
   after?: string;
@@ -124,7 +130,7 @@ export function ConflictFileDiff<A>({
   // A Compare with: both row hides nothing and cannot expand: context as long as the row puts all its lines in one hunk.
   const context = bare ? compareRowContext(before, after) : diffContextLines(appearance);
   const codeSettings = useMemo(() => codeIntelligenceSettings(preferences), [preferences?.codeIntelligence]);
-  const { hunks, annotations, additions, deletions } = useMemo(() => {
+  const { hunks, annotations, additions, deletions, sideRows } = useMemo(() => {
     let base: GapHunk[] = [];
     try {
       base = hunksFromDiff(
@@ -147,8 +153,15 @@ export function ConflictFileDiff<A>({
       annotations,
       additions: rows.filter((row) => row.type === '+').length,
       deletions: rows.filter((row) => row.type === '-').length,
+      sideRows: sides?.length ? conflictSideRows(base, sides) : undefined,
     };
-  }, [name, before, after, context, pins, annotate, bare, patch]);
+  }, [name, before, after, context, pins, annotate, bare, patch, sides]);
+  const marks = useRef({ sideRows, sideLabels });
+  marks.current = { sideRows, sideLabels };
+  useEffect(() => {
+    if (!sideLabels) return;
+    if (sectionRef.current) for (const host of diffHosts(sectionRef.current)) markSides(host, sideRows, sideLabels);
+  }, [sideRows, sideLabels]);
   const contents = useMemo(
     (): PrFileContents | undefined =>
       patch ? undefined : { before: { kind: 'text', content: before }, after: { kind: 'text', content: after } },
@@ -190,6 +203,13 @@ export function ConflictFileDiff<A>({
     disableBackground: !appearance.backgrounds,
     disableLineNumbers: bare || !appearance.lineNumbers,
     overflow: appearance.wrap ? 'wrap' : 'scroll',
+    ...(sideLabels && {
+      unsafeCSS: SIDES_CSS,
+      onPostRender: (node: HTMLElement) => {
+        const { sideRows: rows, sideLabels: labels } = marks.current;
+        if (labels) markSides(node, rows, labels);
+      },
+    }),
   };
   const quiet = model.noise?.file;
   return (
@@ -479,11 +499,20 @@ function ConflictCompareBoth({
 }
 
 const ConflictCards = createContext<(index: number) => ReactNode>(() => null);
-function Cards({ indexes }: { indexes: number[] }) {
-  const card = useContext(ConflictCards);
-  return <div className="conflict-diff-cards">{indexes.map(card)}</div>;
+/** The cards under one line, with how many of the shown version's lines above them are their conflict's (J reveals them). */
+interface CardsPlace {
+  indexes: number[];
+  rows: number;
 }
-const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) => <Cards indexes={metadata.indexes} />;
+function Cards({ indexes, rows }: CardsPlace) {
+  const card = useContext(ConflictCards);
+  return (
+    <div className="conflict-diff-cards" data-conflict-rows={rows}>
+      {indexes.map(card)}
+    </div>
+  );
+}
+const renderCards = ({ metadata }: DiffLineAnnotation<CardsPlace>) => <Cards {...metadata} />;
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
@@ -550,7 +579,16 @@ export function ConflictDiff({
   proposals?: readonly (ConflictProposal | null)[];
   verdict?: Verdict;
   note?: string;
-  wholeFile?: { proposal: ConflictProposal; ours: string; theirs: string; onUse: () => void; shown: boolean; onShow: () => void };
+  wholeFile?: {
+    proposal: ConflictProposal;
+    ours: string;
+    theirs: string;
+    onUse: () => void;
+    /** Use the proposal for this file on the card too: off while the footer's primary is the same action. */
+    inlineUse?: boolean;
+    shown: boolean;
+    onShow: () => void;
+  };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -674,6 +712,7 @@ export function ConflictDiff({
         model={models?.[index]}
         onUndo={model.undoable ? () => undo(index) : undefined}
         compare={mode}
+        prSide={prSideOf(kind)}
         written={written.get(index)?.length ?? 0}
       />
     );
@@ -715,7 +754,12 @@ export function ConflictDiff({
     () => (wholeWritten ? { ours, theirs, resolver: resolverText, by: writer } : undefined),
     [wholeWritten, ours, theirs, resolverText, writer]
   );
-  const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
+  // The sides' names in the code (lib/conflict-sides.ts): the PR's, and main's or the updated parent's.
+  const sideLabels = useMemo(
+    (): Record<SideTone, string> => ({ pr: 'PR', base: kind === 'restack' ? 'parent' : baseName }),
+    [kind, baseName]
+  );
+  const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides, kind, sideLabels };
   return (
     <div ref={root} className="conflict-view conflict-diff-view" data-undoable={model.undoable || undefined}>
       {wholeFile && (
@@ -793,7 +837,12 @@ function CompareDiff({
   actions,
   written,
   sides,
+  kind,
+  sideLabels,
 }: {
+  /** A restack's PR is the conflict's second side (theirs), a merge's the first (ours). */
+  kind: 'merge' | 'restack';
+  sideLabels: Record<SideTone, string>;
   name: string;
   model: ConflictModel;
   proposals?: readonly (ConflictProposal | null)[];
@@ -825,6 +874,15 @@ function CompareDiff({
         : shownWritten(shown.blocks, draft.written),
     [shown, draft.written, draft.sides]
   );
+  // Each open conflict's two sides (lib/conflict-sides.ts): the shown lines are the version not compared with.
+  const sideRanges = useMemo(() => {
+    const pr = prSideOf(kind);
+    const tone = (side: 'ours' | 'theirs'): SideTone => (side === pr ? 'pr' : 'base');
+    const shownSide = against === 'ours' ? 'theirs' : 'ours';
+    return shown.blocks
+      .filter((block) => draft.model.choices[block.index] === undefined)
+      .map((block): SideRange => ({ start: block.start, end: block.end, added: tone(shownSide), removed: tone(against) }));
+  }, [shown, draft.model, against, kind]);
   // A conflict's lines stay in view, and so does every marked line: the mark never sits in a hidden gap, even where
   // the diff reads the line as unchanged context (a moved line in a resolver's whole file).
   const pins = useMemo(
@@ -838,12 +896,17 @@ function CompareDiff({
   // updates them in place: a card that kept its DOM keeps its focus and its open details.
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
-      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
+      const byPlace = new Map<string, DiffLineAnnotation<CardsPlace>>();
       for (const anchor of cardAnchors(shown.blocks, hunks)) {
         const place = `${anchor.side}:${anchor.line}`;
+        const block = shown.blocks.find((b) => b.index === anchor.index);
+        // A card under its conflict's last line has the conflict's lines above it; one placed elsewhere has none.
+        const rows = block && anchor.side === 'additions' && anchor.line === block.end ? block.end - block.start + 1 : 0;
         const existing = byPlace.get(place);
-        if (existing) existing.metadata.indexes.push(anchor.index);
-        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
+        if (existing) {
+          existing.metadata.indexes.push(anchor.index);
+          existing.metadata.rows = Math.max(existing.metadata.rows, rows);
+        } else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index], rows } });
       }
       return [...byPlace.values()];
     },
@@ -870,6 +933,8 @@ function CompareDiff({
           label={`Against ${against === 'theirs' ? labels.theirs : labels.ours}`}
           actions={actions}
           written={marks}
+          sides={sideRanges}
+          sideLabels={sideLabels}
         />
       </ConflictCards.Provider>
     </div>
@@ -947,6 +1012,7 @@ function WholeFile({
   ours,
   theirs,
   onUse,
+  inlineUse = true,
   verdict,
   labels,
   disabled,
@@ -961,6 +1027,7 @@ function WholeFile({
   /** main's whole file: with the PR's, what the proposal's lines are compared with for their marks (#445 item 10). */
   theirs: string;
   onUse: () => void;
+  inlineUse?: boolean;
   verdict?: Verdict;
   labels: ConflictLabels;
   disabled: boolean;
@@ -1002,11 +1069,13 @@ function WholeFile({
         by={proposalWriter(proposal)}
         landmark={false}
       />
-      <div className="conflict-block-actions">
-        <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
-          Use the proposal for this file
-        </Button>
-      </div>
+      {inlineUse && (
+        <div className="conflict-block-actions">
+          <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
+            Use the proposal for this file
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

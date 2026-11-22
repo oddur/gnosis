@@ -1,5 +1,6 @@
 import { LoadingIndicator } from './LoadingState';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { DropdownMenu, Popover } from 'radix-ui';
 import type { DiffLineAnnotation } from '@pierre/diffs';
 import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
@@ -8,6 +9,7 @@ import {
   Bot,
   Check,
   CheckCheck,
+  ChevronDown,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -173,6 +175,113 @@ function FilePath({ path }: { path: string }) {
       {cut > 0 && <span className="conflict-path-dir">{path.slice(0, cut)}</span>}
       <span className="conflict-path-name">{path.slice(cut)}</span>
     </span>
+  );
+}
+
+/** One way back in the Reset menu. `separated` starts the session's part: the fresh merge, after the file's. */
+interface ResetItem {
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  separated?: boolean;
+  /** The item moves focus itself (Start over focuses the footer's Cancel): the menu doesn't return it to Reset. */
+  movesFocus?: boolean;
+}
+
+/** Reset file, Start from Git's conflict, Try structural merge again and Start over, in one menu (#445 distill). */
+function ResetMenu({ items, disabled }: { items: ResetItem[]; disabled: boolean }) {
+  const moved = useRef(false);
+  if (!items.length) return null;
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <Button size="sm" variant="ghost" disabled={disabled} data-conflict-reset="">
+          <RotateCcw aria-hidden="true" />
+          Reset
+          <ChevronDown aria-hidden="true" />
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="pr-update-menu conflict-reset-menu"
+          align="end"
+          sideOffset={4}
+          onCloseAutoFocus={(event) => {
+            if (moved.current) event.preventDefault();
+            moved.current = false;
+          }}
+        >
+          {items.map((item, index) => (
+            <Fragment key={item.label}>
+              {item.separated && index > 0 && <DropdownMenu.Separator className="conflict-menu-separator" />}
+              <DropdownMenu.Item
+                disabled={item.disabled}
+                onSelect={() => {
+                  moved.current = !!item.movesFocus;
+                  item.onSelect();
+                }}
+              >
+                {item.label}
+              </DropdownMenu.Item>
+            </Fragment>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+/**
+ * Below 900px the file list gives its width to the code (#445 distill): the open file, its place and a list of every file
+ * with its status, in a popover.
+ */
+function FilePicker({
+  file,
+  status,
+  position,
+  total,
+  disabled,
+  children,
+}: {
+  file?: ConflictFile;
+  /** The open file's status, as its row in the list shows it: the band's one count of the file at this width. */
+  status?: React.ReactNode;
+  position: number;
+  total: number;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button size="sm" variant="outline" disabled={disabled} className="conflict-file-picker" data-conflict-file-picker="">
+          {file && <FilePath path={file.path} />}
+          {status}
+          {total > 1 && (
+            <span className="conflict-file-picker-count">
+              {position} of {total}
+            </span>
+          )}
+          <ChevronDown aria-hidden="true" />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={4}
+          collisionPadding={12}
+          aria-label="Files"
+          className="conflict-files conflict-file-picker-menu z-50 rounded-md border bg-popover text-popover-foreground shadow-md"
+          // A choice closes the list; the file opens behind it.
+          onClick={(event) => {
+            if ((event.target as Element).closest('button')) setOpen(false);
+          }}
+        >
+          {children}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -503,6 +612,13 @@ export function ConflictWorkspace({
   const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState('');
   const [resetPrompt, setResetPrompt] = useState(false);
+  // Cancel takes focus once the prompt is on screen, after any menu that opened it has closed.
+  const cancelReset = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!resetPrompt) return;
+    const frame = requestAnimationFrame(() => cancelReset.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [resetPrompt]);
   const [outcome, setOutcome] = useState('');
   // One line after Gnosis merged new commits from the base branch again.
   const [baseNote, setBaseNote] = useState('');
@@ -1209,7 +1325,7 @@ export function ConflictWorkspace({
     if (
       origin.isContentEditable ||
       origin.closest(
-        'input:not([type=checkbox]),textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
+        'input:not([type=checkbox]),textarea,select,[contenteditable=true],[role=menu],[role=dialog],.conflict-suggest-menu,.conflict-block[data-state=editing]'
       )
     )
       return;
@@ -1398,6 +1514,44 @@ export function ConflictWorkspace({
         return null;
     }
   })();
+  const summaryShown = editing && summary.conflicts > 0;
+  const mergedSetting = !!session?.files.some((f) => f.proposals);
+  const fileButtons = fileStates.map(({ file: f, stage, status }) => (
+    <button
+      key={f.path}
+      disabled={busy}
+      aria-current={f.path === selected ? 'true' : undefined}
+      onClick={() => chooseFile(f.path)}
+    >
+      <FilePath path={f.path} />
+      <small>
+        <FileStatusBadge status={status} stage={stage} />
+      </small>
+    </button>
+  ));
+  // Every way back, in one menu (#445 distill): the file's three, then the fresh merge, which asks first.
+  const resetItems: ResetItem[] =
+    file && !file.unsupported && editing
+      ? [
+          ...(contents !== resetTarget(file)
+            ? [{ label: 'Reset file', disabled: !canEdit, onSelect: () => resetTo(resetTarget(file)) }]
+            : []),
+          // Reset returns to what preparation proposed; Git's conflict is a separate step back.
+          ...(file.proposals && contents !== file.original
+            ? [{ label: 'Start from Git’s conflict', disabled: !canEdit, onSelect: () => resetTo(file.original) }]
+            : []),
+          ...(canRetryStructural(file, contents === resetTarget(file))
+            ? [{ label: 'Try structural merge again', disabled: !canEdit, onSelect: () => suggest('mergiraf') }]
+            : []),
+        ]
+      : [];
+  if (editing && !session.stale)
+    resetItems.push({
+      label: 'Start over with latest code…',
+      separated: true,
+      movesFocus: true,
+      onSelect: () => setResetPrompt(true),
+    });
   const footerStatus = busy
     ? activity?.detail || 'Working…'
     : hint ||
@@ -1424,41 +1578,72 @@ export function ConflictWorkspace({
       aria-labelledby="conflict-workspace-title"
       onKeyDown={onKeyDown}
     >
+        {/* One band over the code (#445 distill): the direction and the count of what's left, then the file's tools. */}
         <div className="conflict-heading">
-          <div>
+          <div className="conflict-heading-text">
             <h2 id="conflict-workspace-title">{title}</h2>
             {!session && (
               <p className="conflict-heading-description">
                 Gnosis prepares the merge privately. Your checkout stays unchanged.
               </p>
             )}
-          </div>
-          <Button variant="outline" size="sm" onClick={() => void close()}>
-            {busy && !session ? 'Close · keeps preparing' : busy ? 'Continue in background' : 'Close'}
-          </Button>
-        </div>
-        {editing && summary.conflicts > 0 && (
-          <div className="conflict-summary">
-            <p role="status" data-conflict-summary="">
-              {summarySentence(summary)}
-            </p>
-            {models.notice && (
-              <p className="conflict-model-notice" role="status" data-conflict-model-notice="">
-                <Bot size={13} aria-hidden="true" />
-                {models.notice} Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them
-                yourself.
+            {summaryShown && (
+              <p role="status" data-conflict-summary="">
+                {summarySentence(summary)}
               </p>
             )}
-            {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
-            <div className="conflict-summary-tools">
-              {/* Nothing goes to the model until you ask (#445 item 7). The cards show both sides meanwhile. */}
-              {models.waiting > 0 && (
-                <Button size="sm" variant="outline" data-conflict-ask-model="" onClick={models.askAll}>
-                  <Bot aria-hidden="true" />
-                  Ask {model} about {models.waiting} {models.waiting === 1 ? 'conflict' : 'conflicts'}
-                </Button>
+          </div>
+          <div className="conflict-heading-tools">
+            {editing && (
+              <FilePicker
+                disabled={busy}
+                file={file}
+                status={selectedState && <FileStatusBadge status={selectedState.status} stage={selectedState.stage} />}
+                position={session.files.findIndex((f) => f.path === selected) + 1}
+                total={session.files.length}
+              >
+                {fileButtons}
+              </FilePicker>
+            )}
+            {editing && (models.waiting > 0 || (file && !file.unsupported)) && (
+              <ConflictSuggestMenu
+                disabled={!canEdit}
+                fileName={file && !file.unsupported ? (file.path.split('/').pop() ?? file.path) : undefined}
+                model={model}
+                onAsk={(instructions) => suggest('agent', instructions)}
+                // Nothing goes to the model until you ask (#445 item 7). The cards show both sides meanwhile.
+                all={models.waiting > 0 ? { count: models.waiting, onAsk: models.askAll } : undefined}
+              />
+            )}
+            {editing && <ResetMenu disabled={busy} items={resetItems} />}
+            {summaryShown && (
+              <span className="conflict-save-state" role="status">
+                {saveState === 'failed'
+                  ? 'Couldn’t save · retrying'
+                  : dirty || saveState === 'saving'
+                    ? 'Saving…'
+                    : 'Saved'}
+              </span>
+            )}
+            {summaryShown && (
+              <ConflictGuideButton id={guideId} open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
+            )}
+            {summaryShown && <KeyboardHelp base={session.baseBranch} />}
+            <Button variant="outline" size="sm" onClick={() => void close()}>
+              {busy && !session ? 'Close · keeps preparing' : busy ? 'Continue in background' : 'Close'}
+            </Button>
+          </div>
+          {summaryShown && (models.notice || session.lastPush || typeCheck || mergedSetting) && (
+            <div className="conflict-summary-notes">
+              {models.notice && (
+                <p className="conflict-model-notice" role="status" data-conflict-model-notice="">
+                  <Bot size={13} aria-hidden="true" />
+                  {models.notice} Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them
+                  yourself.
+                </p>
               )}
-              {session.files.some((f) => f.proposals) && (
+              {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
+              {mergedSetting && (
                 <label title="On: you mark every file reviewed. Off: a file whose conflicts are all Merged is marked reviewed for you. Saved for this repository.">
                   <input
                     ref={mergedToggle}
@@ -1477,19 +1662,11 @@ export function ConflictWorkspace({
                   onStop={() => void window.electronAPI.cancelConflictTypeCheck(session.id)}
                 />
               )}
-              <span className="conflict-save-state" role="status">
-                {saveState === 'failed'
-                  ? 'Couldn’t save · retrying'
-                  : dirty || saveState === 'saving'
-                    ? 'Saving…'
-                    : 'Saved'}
-              </span>
-              <ConflictGuideButton id={guideId} open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
-              <KeyboardHelp base={session.baseBranch} />
             </div>
-          </div>
-        )}
-        {editing && summary.conflicts > 0 && (
+          )}
+        </div>
+        {/* First-run key and notes (#510) sit under the band, over the code. */}
+        {summaryShown && (
           <ConflictNotes
             guideId={guideId}
             guideOpen={guideOpen}
@@ -1753,7 +1930,21 @@ export function ConflictWorkspace({
                 focusIntent.current = true;
               }}
               backLabel={session.files.length ? 'Back to files' : 'Back'}
-              status="Nothing is pushed until you select Push."
+              // The bar under the page holds the message and Push (#445 distill): it stays in view however long the diff.
+              status={
+                <span className="conflict-confirm-bar">
+                  <label className="conflict-confirm-message">
+                    Merge commit message
+                    <input
+                      value={message}
+                      maxLength={2000}
+                      disabled={busy}
+                      onChange={(e) => setMessage(e.target.value)}
+                    />
+                  </label>
+                  <span>Nothing is pushed until you select Push.</span>
+                </span>
+              }
               continueLabel={busy ? 'Pushing…' : 'Push merge commit'}
               continueDisabled={
                 !message.trim() ||
@@ -1812,10 +2003,6 @@ export function ConflictWorkspace({
                   checks run again.
                 </li>
               </ul>
-              <label className="conflict-confirm-message">
-                Merge commit message
-                <input value={message} maxLength={2000} disabled={busy} onChange={(e) => setMessage(e.target.value)} />
-              </label>
               {groups && (
                 <ConfirmDiff
                   session={session}
@@ -1875,74 +2062,11 @@ export function ConflictWorkspace({
           <>
             <div className="conflict-body">
               <nav aria-label="Files" className="conflict-files">
-                {fileStates.map(({ file: f, stage, status }) => (
-                  <button
-                    key={f.path}
-                    disabled={busy}
-                    aria-current={f.path === selected ? 'true' : undefined}
-                    onClick={() => chooseFile(f.path)}
-                  >
-                    <FilePath path={f.path} />
-                    <small>
-                      <FileStatusBadge status={status} stage={stage} />
-                    </small>
-                  </button>
-                ))}
+                {fileButtons}
               </nav>
               <section className="conflict-file-pane" aria-label={file ? `File ${file.path}` : 'File'}>
                 {file && (
                   <>
-                    <header className="conflict-file-header">
-                      <div className="conflict-file-title">
-                        <strong>
-                          <FilePath path={file.path} />
-                        </strong>
-                        {selectedState && <FileStatusBadge status={selectedState.status} stage={selectedState.stage} />}
-                      </div>
-                      {!file.unsupported && (
-                        <div className="conflict-file-tools">
-                          <ConflictSuggestMenu
-                            disabled={!canEdit}
-                            fileName={file.path.split('/').pop() ?? file.path}
-                            model={model}
-                            onAsk={(instructions) => suggest('agent', instructions)}
-                          />
-                          {canRetryStructural(file, contents === resetTarget(file)) && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={!canEdit}
-                              data-conflict-structural=""
-                              onClick={() => suggest('mergiraf')}
-                            >
-                              Try structural merge again
-                            </Button>
-                          )}
-                          {/* Reset returns to what preparation proposed; Git's conflict is a separate step back. */}
-                          {file.proposals && contents !== file.original && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={!canEdit}
-                              onClick={() => resetTo(file.original)}
-                            >
-                              Start from Git’s conflict
-                            </Button>
-                          )}
-                          {contents !== resetTarget(file) && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={!canEdit}
-                              onClick={() => resetTo(resetTarget(file))}
-                            >
-                              <RotateCcw aria-hidden="true" />
-                              Reset file
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </header>
                     <div className="conflict-scroll selectable" data-diff-scroller="" inert={busy || session.stale}>
                       {file.unsupported ? (
                         <LocalMerge session={session} reason={file.unsupported} />
@@ -1997,6 +2121,8 @@ export function ConflictWorkspace({
                                         theirs: file.theirs,
                                         // The proposal as it is, structural merge's or the move rule's: nothing runs again.
                                         onUse: () => suggest('whole-file'),
+                                        // The footer's primary uses it while it is the file's one stop: no second button.
+                                        inlineUse: !proposalOnly,
                                         shown: blocksShown === viewKey,
                                         onShow: () => setBlocksShown(viewKey),
                                       }
@@ -2039,7 +2165,7 @@ export function ConflictWorkspace({
                     Start over with the latest code? Your current resolutions are replaced by a fresh merge.
                   </span>
                   {/* Cancel has focus: Enter or a stray Space never discards your resolutions. */}
-                  <Button size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
+                  <Button ref={cancelReset} size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
                     Cancel
                   </Button>
                   <Button size="sm" variant="destructive" disabled={busy} onClick={() => void load(true)}>
@@ -2048,9 +2174,6 @@ export function ConflictWorkspace({
                 </>
               ) : (
                 <>
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setResetPrompt(true)}>
-                    Start over with latest code…
-                  </Button>
                   {error && errorCopy ? (
                     <span className="conflict-footer-status" data-error="" role="alert" title={errorCopy.details}>
                       {errorCopy.title} {errorCopy.body}
@@ -2338,6 +2461,18 @@ function ConfirmDiff({
       </div>
     );
   const { decided, merged, main, incoming, counts } = groups;
+  // Only the groups with something in them show (#445 distill), each counted once more at the top, as a way to it.
+  const shown = [
+    ...(!clean && decided.length ? [{ id: 'decided' as const, title: 'You decided', count: confirmCount(counts.decided, decided.length) }] : []),
+    ...(!clean && merged.length ? [{ id: 'merged' as const, title: 'Merged for you', count: confirmCount(counts.merged, merged.length) }] : []),
+    ...(counts.mainFiles ? [{ id: 'main' as const, title: `Arriving from ${session.baseBranch}`, count: confirmCount(0, counts.mainFiles) }] : []),
+  ];
+  const jump = (id: keyof typeof open) => {
+    setOpen((previous) => ({ ...previous, [id]: true }));
+    requestAnimationFrame(() =>
+      root.current?.querySelector(`[data-confirm-group=${id}]`)?.scrollIntoView({ block: 'start' })
+    );
+  };
   const part = (group: 'decided' | 'merged' | 'main') => (p: ConfirmFile) => (
     <ConfirmFileDiff
       key={p.path}
@@ -2351,59 +2486,42 @@ function ConfirmDiff({
   );
   return (
     <div ref={root} className="conflict-confirm-diff">
-      {!clean && (
-        <ConfirmSection
-          id="decided"
-          title="You decided"
-          count={confirmCount(counts.decided, decided.length)}
-          open={open.decided}
-          onToggle={() => toggle('decided')}
-        >
-          {decided.length ? (
-            decided.map(part('decided'))
-          ) : (
-            <p className="conflict-side-empty">You decided no conflicts. Each one was merged for you.</p>
-          )}
-        </ConfirmSection>
+      {shown.length > 1 && (
+        <nav className="conflict-confirm-jump" aria-label="What the merge commit holds">
+          {shown.map(({ id, title, count }) => (
+            <button key={id} type="button" data-confirm-jump={id} onClick={() => jump(id)}>
+              {title} <span>{count}</span>
+            </button>
+          ))}
+        </nav>
       )}
-      {!clean && (
-        <ConfirmSection
-          id="merged"
-          title="Merged for you"
-          count={confirmCount(counts.merged, merged.length)}
-          open={open.merged}
-          onToggle={() => toggle('merged')}
-        >
-          {merged.length ? (
+      {/* An empty You decided is gone, but the fact isn't: this is the last look before the push. */}
+      {!clean && !decided.length && (
+        <p className="conflict-confirm-lead" data-confirm-none-decided="">
+          You decided no conflicts. Everything here was merged for you or arrives from {session.baseBranch}.
+        </p>
+      )}
+      {shown.map(({ id, title, count }) => (
+        <ConfirmSection key={id} id={id} title={title} count={count} open={open[id]} onToggle={() => toggle(id)}>
+          {id === 'decided' && decided.map(part('decided'))}
+          {id === 'merged' && (
             <>
               <p className="conflict-confirm-lead">Proposals that passed every check. You didn’t change them.</p>
               {merged.map(part('merged'))}
             </>
-          ) : (
-            <p className="conflict-side-empty">No conflicts were merged for you.</p>
+          )}
+          {id === 'main' && (
+            <>
+              <p className="conflict-confirm-lead">
+                {main.length
+                  ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
+                  : `${session.baseBranch}’s changes that didn’t conflict.`}
+              </p>
+              <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
+            </>
           )}
         </ConfirmSection>
-      )}
-      <ConfirmSection
-        id="main"
-        title={`Arriving from ${session.baseBranch}`}
-        count={confirmCount(0, counts.mainFiles)}
-        open={open.main}
-        onToggle={() => toggle('main')}
-      >
-        {counts.mainFiles ? (
-          <>
-            <p className="conflict-confirm-lead">
-              {main.length
-                ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
-                : `${session.baseBranch}’s changes that didn’t conflict.`}
-            </p>
-            <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
-          </>
-        ) : (
-          <p className="conflict-side-empty">No other files change.</p>
-        )}
-      </ConfirmSection>
+      ))}
       {preview.validation && (
         <details className="conflict-whitespace">
           <summary>Whitespace warnings</summary>

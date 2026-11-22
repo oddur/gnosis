@@ -99,7 +99,7 @@ const READ = `(() => {
   const box = ws.getBoundingClientRect();
   const visible = (e) => e.checkVisibility();
   const name = (e) => e.className && typeof e.className === 'string' ? e.tagName.toLowerCase() + '.' + e.className.split(' ')[0] : e.tagName.toLowerCase();
-  const watched = [...ws.querySelectorAll('.conflict-heading *, .conflict-summary *, .conflict-footer *, .conflict-files *, .conflict-file-header *, .conflict-block-header *, .conflict-kept *')].filter(visible);
+  const watched = [...ws.querySelectorAll('.conflict-heading *, .conflict-footer *, .conflict-files *, .conflict-block-header *, .conflict-kept *')].filter(visible);
   return {
     title: text(ws.querySelector('h2')),
     summary: text(ws.querySelector('[data-conflict-summary]')),
@@ -114,9 +114,10 @@ const READ = `(() => {
     blocks: [...ws.querySelectorAll('.conflict-view .conflict-block')]
       .filter((b) => Number(b.dataset.conflictIndex) >= 0)
       .map((b) => b.dataset.bucket ?? (b.dataset.state === 'open' ? 'decide' : b.dataset.state === 'kept' || b.dataset.state === 'edited' ? 'decided' : b.dataset.state)),
+    // The open file's status is its file list row's (#445 distill): the band has no second badge.
     header: {
-      status: ws.querySelector('.conflict-file-title [data-status]')?.dataset.status ?? null,
-      text: text(ws.querySelector('.conflict-file-title [data-status]')),
+      status: ws.querySelector('nav.conflict-files > button[aria-current=true] [data-status]')?.dataset.status ?? null,
+      text: text(ws.querySelector('nav.conflict-files > button[aria-current=true] [data-status]')),
     },
     hidden: Number(/\\((\\d+)\\)/.exec(text([...ws.querySelectorAll('.conflict-context-toggle')].find((b) => b.textContent.startsWith('Resolve conflict by conflict instead'))) ?? '')?.[1] ?? 0),
     wholeFile: !!ws.querySelector('.conflict-whole-file'),
@@ -208,6 +209,33 @@ void app.whenReady().then(async () => {
   const click = async (label: string, scope?: string) => {
     await until(`(${button(label, scope)}) && !(${button(label, scope)}).disabled`, `the ${label} button`);
     await js(`(${button(label, scope)}).click()`);
+  };
+  // The band's Reset menu (#445 distill): an item by its name, after opening the menu with the keyboard.
+  const resetItem = (label: string) =>
+    `[...document.querySelectorAll('.conflict-reset-menu [role=menuitem]:not([data-disabled])')].find((e) => e.textContent.trim() === ${JSON.stringify(label)})`;
+  const openReset = async () => {
+    if (!(await js<boolean>("!!document.querySelector('[data-conflict-reset]:not(:disabled)')"))) return false;
+    await js(
+      "(() => { const b = document.querySelector('[data-conflict-reset]'); b.focus(); b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()"
+    );
+    await until("!!document.querySelector('.conflict-reset-menu')", 'the Reset menu');
+    return true;
+  };
+  const closeReset = async () => {
+    if (!(await js<boolean>("!!document.querySelector('.conflict-reset-menu')"))) return;
+    await js("document.querySelector('.conflict-reset-menu').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await until("!document.querySelector('.conflict-reset-menu')", 'the Reset menu to close');
+  };
+  /** Chooses a Reset menu item, if the menu offers it. */
+  const reset = async (label: string) => {
+    if (!(await openReset())) return false;
+    if (!(await js<boolean>(`!!(${resetItem(label)})`))) {
+      await closeReset();
+      return false;
+    }
+    await js(`(${resetItem(label)}).click()`);
+    await until("!document.querySelector('.conflict-reset-menu')", 'the Reset menu to close');
+    return true;
   };
 
   const server = spawn(path.resolve('node_modules/.bin/tsx'), ['scripts/conflict-gallery-server.mjs'], {
@@ -536,12 +564,12 @@ void app.whenReady().then(async () => {
         ) {
           await shot('whole-file-proposal', (await read()).summary ?? '');
           // Use the whole-file result, look at it, then go back to the conflicts with Reset file.
-          await click('Use the proposal for this file', "document.querySelector('.conflict-whole-file')");
+          // Using it is the footer's primary while the proposal is the file's one stop (#445 distill).
+          await click('Use the proposal for this file');
           await settle();
           const used = await read();
           await shot('use-this-result', `${used.header.text ?? ''} · ${used.footer ?? ''}`);
-          if (await has('Reset file')) {
-            await click('Reset file');
+          if (await reset('Reset file')) {
             await settle();
             await shot('reset-file', (await read()).header.text ?? '');
           }
@@ -679,8 +707,10 @@ void app.whenReady().then(async () => {
           problems.push(
             `The confirmation counts ${counted('decided')} decided and ${counted('merged')} merged, but the case has ${conflicts} conflicts`
           );
+        // Only the groups with something in them show (#445 distill): You decided open, the others collapsed.
         const open = Object.entries(groups.groups).map(([group, g]) => `${group} ${g?.open}`).join(', ');
-        if (open !== 'decided true, merged false, main false') problems.push(`The confirmation opens as: ${open}`);
+        const expected = Object.keys(groups.groups).map((group) => `${group} ${group === 'decided'}`).join(', ');
+        if (open !== expected) problems.push(`The confirmation opens as: ${open}`);
         // Every group open, light and dark; then collapsed again.
         await js(
           "document.querySelectorAll('.conflict-confirm [data-confirm-group] .conflict-disclosure[aria-expanded=false]').forEach((b) => b.click())"

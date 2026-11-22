@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cascadePrLine, cascadeSentence, type CascadePr, type CascadePreview } from '../lib/conflict-cascade';
+import { cascadePrLine, cascadeReviewLine, cascadeSentence, type CascadePr, type CascadePreview } from '../lib/conflict-cascade';
 import { CASCADE_OUT_OF_DATE, CASCADE_RETRY_MS, createCascadePreviews } from '../src/conflict-cascade';
 import { BACKGROUND_YIELDED } from '../src/conflict-resolution-service';
 
@@ -28,6 +28,12 @@ void test('the cascade sentence names what the push settles, where it stops, and
     'Resolving #101 also settles #102, #103 and #104.'
   );
   assert.equal(cascadePrLine(pr(103, 'merged')), '#103 · Merged and checked · No review needed');
+  // The decisive counts stay beside the sentence while the per-PR lines wait under a disclosure (#445 distill).
+  assert.equal(
+    cascadeReviewLine(preview([pr(102, 'carried'), pr(103, 'clean', { merges: 2, review: true }), pr(104, 'merged')])),
+    '2 PRs need your review. 1 PR recreates its merge commits.'
+  );
+  assert.equal(cascadeReviewLine(preview([pr(102, 'merged'), pr(103, 'waiting', { review: true })])), 'No PR needs your review.');
   assert.equal(cascadePrLine(pr(102, 'carried')), '#102 · Settled by your choices · Needs your review');
   assert.equal(
     cascadePrLine(pr(104, 'clean', { merges: 1, review: true })),

@@ -234,8 +234,10 @@ export function RestackReview({
         </p>
       ) : step.id === 'resolve' && plan?.blocked ? (
         <div className="restack-blocked">
-          <h3>New resolution needed · #{prNumber(plan.blocked.url)}</h3>
-          <p>{plan.blocked.reason}</p>
+          <div className="restack-blocked-lead">
+            <h3>New resolution needed · #{prNumber(plan.blocked.url)}</h3>
+            <p>{plan.blocked.reason}</p>
+          </div>
           {plan.blocked.files.map((file) => {
             const value = drafts[file.path] ?? file.result;
             const dirty = value !== file.result;

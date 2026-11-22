@@ -18,10 +18,67 @@ import type { Verdict } from '../lib/conflict-verify';
 import { nextNeedingYou } from '../lib/conflict-shortcuts';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+/**
+ * The first row of a card's conflict in the diff above it (ConflictDiff's annotation, `data-conflict-rows`): back from
+ * the card's annotation row in the diff's shadow root, over the shown version's lines of the conflict and the other
+ * version's removed lines with them. In Compare with: both, the conflict's group.
+ */
+function conflictTop(card: HTMLElement): Element | undefined {
+  const group = card.closest('.conflict-compare-group');
+  if (group) return group;
+  const cards = card.closest<HTMLElement>('[data-conflict-rows]');
+  const slotted = card.closest('[slot]');
+  const name = slotted?.getAttribute('slot');
+  const root = slotted?.parentElement?.shadowRoot;
+  if (!cards || !name || !root) return undefined;
+  const annotation = root.querySelector(`slot[name="${CSS.escape(name)}"]`)?.closest('[data-line-annotation]');
+  let left = Number(cards.dataset.conflictRows) || 0;
+  let top: Element | undefined;
+  for (let at = annotation?.previousElementSibling; at; at = at.previousElementSibling) {
+    if (!(at instanceof HTMLElement) || !at.hasAttribute('data-line')) continue;
+    const removed = at.dataset.lineType === 'change-deletion';
+    if (left <= 0 && !removed) break;
+    if (!removed) left--;
+    top = at;
+  }
+  return top;
+}
+/**
+ * Focuses a card and scrolls so its conflict's lines show with it, under the pinned file and hunk headers (#445
+ * distill): J lands on a decision with both sides on screen. When they don't fit together, the card is in view, with as
+ * many of the conflict's lines above it as fit.
+ */
 function revealElement(element: HTMLElement | null | undefined) {
   if (!element) return;
   element.focus({ preventScroll: true });
-  element.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  const behavior = reducedMotion() ? 'auto' : 'smooth';
+  const scroller = element.closest<HTMLElement>('[data-diff-scroller]');
+  const top = conflictTop(element);
+  if (!scroller || !top) {
+    element.scrollIntoView({ block: 'nearest', behavior });
+    return;
+  }
+  // The file header pins at the scroller's top, and the hunk header under it: both measured.
+  const file = element.closest('.conflict-diff-file');
+  const pinned =
+    (file?.querySelector('.changes-file-header')?.getBoundingClientRect().height ?? 0) +
+    (file?.querySelector('.diff-gap')?.getBoundingClientRect().height ?? 0);
+  const view = scroller.getBoundingClientRect();
+  const from = view.top + pinned;
+  const to = view.bottom - 8;
+  const first = top.getBoundingClientRect().top;
+  const card = element.getBoundingClientRect();
+  const delta =
+    card.bottom - first <= to - from
+      ? first < from
+        ? first - from
+        : card.bottom > to
+          ? card.bottom - to
+          : 0
+      : card.height <= to - from
+        ? card.bottom - to
+        : card.top - from;
+  if (Math.abs(delta) > 1) scroller.scrollBy({ top: delta, behavior });
 }
 
 export interface ConflictViewHandle {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { EditProvider, File } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
 import { Bot, Check, CheckCheck, CircleAlert, CircleHelp, Pencil, Undo2 } from 'lucide-react';
@@ -17,6 +17,7 @@ import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { ModelCard } from '../lib/conflict-model';
 import { proposalWriter, writtenLabel, type CompareWith } from '../lib/conflict-diff';
 import { WRITTEN_SWATCH } from '../lib/diff-here';
+import { SIDE_COLORS, type SideTone } from '../lib/conflict-sides';
 import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
 
 /*
@@ -149,6 +150,7 @@ export function ConflictCard({
   verdict,
   note,
   compare = 'pr',
+  prSide = 'ours',
   model,
   written = 0,
   edit,
@@ -166,8 +168,10 @@ export function ConflictCard({
   editor?: ReactNode;
   /** This conflict's model request while it has no proposal. */
   model?: ModelCard;
-  /** What the diff around the card compares the result with (#445 item 9), so the legend names its sides right. */
+  /** What the diff around the card compares the result with (#445 item 9): in both, the rows name the sides. */
   compare?: CompareWith;
+  /** Which version is the PR's: ours in a merge, theirs in a restack. The legend names it first, in its tint. */
+  prSide?: 'ours' | 'theirs';
   name: string;
   block: ConflictBlock;
   index: number;
@@ -200,6 +204,9 @@ export function ConflictCard({
       </section>
     );
   const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
+  const baseSide = prSide === 'ours' ? 'theirs' : 'ours';
+  // Each side's swatch is its tint in the code (lib/conflict-sides.ts), from the one list of colours.
+  const swatch = (tone: SideTone) => ({ '--conflict-side-swatch': SIDE_COLORS[tone] }) as CSSProperties;
   // The writer is the proposal's, also for its lines you left as they were in your edit.
   const by = proposal ? proposalWriter(proposal) : undefined;
   const writtenNote = wrote && <WrittenLegend count={written} by={by} />;
@@ -479,20 +486,16 @@ export function ConflictCard({
           </div>
         </>
       )}
-      {/* The diff above shows the two sides: against the PR, its lines removed and the base branch's added; against
-          main, the other way round. In both, the rows above name them. Neither is chosen. */}
+      {/* The diff above shows the two sides, each in its own neutral tint (lib/conflict-sides.ts), the PR's first. In
+          both, the rows above name them. Neither is chosen. */}
       <p className="conflict-diff-legend">
         {compare !== 'both' && (
           <>
-            <span
-              className="conflict-side-label"
-              data-side={compare === 'main' ? 'theirs' : 'ours'}
-              data-mark="removed"
-            >
-              {compare === 'main' ? labels.theirs : labels.ours}
+            <span className="conflict-side-label" data-side={prSide} data-tone="pr" style={swatch('pr')}>
+              {labels[prSide]}
             </span>
-            <span className="conflict-side-label" data-side={compare === 'main' ? 'ours' : 'theirs'} data-mark="added">
-              {compare === 'main' ? labels.ours : labels.theirs}
+            <span className="conflict-side-label" data-side={baseSide} data-tone="base" style={swatch('base')}>
+              {labels[baseSide]}
             </span>
           </>
         )}

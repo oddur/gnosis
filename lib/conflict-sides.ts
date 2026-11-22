@@ -1,0 +1,127 @@
+/**
+ * The two sides of an open conflict in the Conflicts view's diff (#445 distill). The diff shows the draft against one
+ * version, so an open conflict's lines arrive as a deletion (the compared version's side) and an addition (the other
+ * side). Neither is being deleted or added: nothing is chosen yet. So each side wears its own neutral tint instead of the
+ * review diff's red and green, the same for the PR's side in every mode and in a restack, and the first line of each
+ * side names it ("PR", "main") in its line number's place. Only these rows change: Changes, Explanation and every
+ * chosen conflict keep the review diff's colours.
+ *
+ * The rows live in Pierre's shadow roots: the CSS goes in through the diff's `unsafeCSS`, and ConflictFileDiff marks the
+ * rows after each render (`markSides`), as ChangesDiff marks written lines (lib/diff-here.ts).
+ */
+import type { GapHunk } from './diff-gaps';
+import { gutterOf } from './diff-here';
+
+/** The PR's side, or the side it merges with: main, or a restack's updated parent. */
+export type SideTone = 'pr' | 'base';
+/** An open conflict's shown lines (new side, `start`..`end`), and which side they and the lines they replace are. */
+export interface SideRange {
+  start: number;
+  end: number;
+  added: SideTone;
+  removed: SideTone;
+}
+/** Which version is the PR's: ours in a merge, theirs in a restack (whose ours is the updated parent). */
+export const prSideOf = (kind: 'merge' | 'restack'): 'ours' | 'theirs' => (kind === 'restack' ? 'theirs' : 'ours');
+/** Side tints by line: new-side lines in `added`, old-side lines in `removed`. */
+export interface SideRows {
+  added: ReadonlyMap<number, SideTone>;
+  removed: ReadonlyMap<number, SideTone>;
+}
+
+/**
+ * Each open conflict's rows in the diff's hunks: its shown lines that the diff adds, and the compared version's lines it
+ * removes with them. A run of changed rows belongs to a conflict only when every line it adds is the conflict's, or,
+ * adding none, when it sits inside the conflict's lines (or at the place of a conflict that shows none). A removed row
+ * beside the conflict, in a run that also adds a line outside it, keeps the review diff's colour. Lines both sides share
+ * stay plain context.
+ */
+export function conflictSideRows(hunks: readonly GapHunk[], ranges: readonly SideRange[]): SideRows {
+  const added = new Map<number, SideTone>();
+  const removed = new Map<number, SideTone>();
+  for (const hunk of hunks) {
+    let oldLine = hunk.oldStart;
+    let newLine = hunk.newStart;
+    let index = 0;
+    while (index < hunk.rows.length) {
+      if (hunk.rows[index].type === ' ') {
+        index++;
+        oldLine++;
+        newLine++;
+        continue;
+      }
+      // One run of changed rows: the new lines it adds, the old lines it removes, and where it sits on the new side.
+      const at = newLine;
+      const adds: number[] = [];
+      const removes: number[] = [];
+      for (; index < hunk.rows.length && hunk.rows[index].type !== ' '; index++)
+        if (hunk.rows[index].type === '+') adds.push(newLine++);
+        else removes.push(oldLine++);
+      for (const range of ranges) {
+        const inside = (line: number) => line >= range.start && line <= range.end;
+        for (const line of adds) if (inside(line)) added.set(line, range.added);
+        const owns = adds.length
+          ? adds.every(inside)
+          : range.end < range.start
+            ? at === range.start
+            : at > range.start && at <= range.end;
+        if (owns) for (const line of removes) removed.set(line, range.removed);
+      }
+    }
+  }
+  return { added, removed };
+}
+
+/**
+ * Neutral tints, cool for the PR and warm for the side it merges with, on the code surface (a dark theme in both app
+ * themes). They replace the change colours through Pierre's own properties, so the row, its gutter and its changed words
+ * follow; the −/+ glyph goes, and the first row of a side carries its name.
+ */
+export const SIDE_COLORS: Record<SideTone, string> = { pr: '#9fb1d4', base: '#d2bb8c' };
+export const SIDES_CSS = `
+[data-conflict-side=pr] { --conflict-side: ${SIDE_COLORS.pr}; }
+[data-conflict-side=base] { --conflict-side: ${SIDE_COLORS.base}; }
+[data-conflict-side] {
+  --diffs-deletion-base: var(--conflict-side); --diffs-addition-base: var(--conflict-side);
+  --diffs-bg-deletion-emphasis: rgb(from var(--conflict-side) r g b / 24%); --diffs-bg-addition-emphasis: rgb(from var(--conflict-side) r g b / 24%);
+}
+[data-line][data-conflict-side]::before { content: '' !important; }
+/* The name takes the first row's line number: the gutter stays in view however far the code scrolls sideways. */
+[data-column-number][data-conflict-label] { color: transparent; }
+[data-column-number][data-conflict-label]::after {
+  content: attr(data-conflict-label); position: absolute; top: 0; right: 4px; z-index: 1; padding: 0 4px; border-radius: 3px;
+  background: var(--conflict-side); color: var(--diffs-bg, #0d1117); font: 600 10px/1.6 var(--font-sans, system-ui); pointer-events: none;
+}`;
+
+/**
+ * Marks the rows of a rendered diff (`host`, a Pierre container) with their side, with their gutter cells, and names
+ * the first row of each side's run. Attributes change only where they differ, so a pass over a marked diff writes
+ * nothing; a diff with nothing to mark and nothing marked costs one query.
+ */
+export function markSides(host: Element, rows: SideRows | undefined, labels: Record<SideTone, string>) {
+  const root = host.shadowRoot;
+  if (!root) return;
+  if (!rows?.added.size && !rows?.removed.size && !root.querySelector('[data-conflict-side]')) return;
+  const set = (element: Element | undefined, attribute: string, value: string | undefined) => {
+    if (!element || element.getAttribute(attribute) === (value ?? null)) return;
+    if (value === undefined) element.removeAttribute(attribute);
+    else element.setAttribute(attribute, value);
+  };
+  let previous: { column: Element | null; tone: SideTone | undefined; row: Element } | undefined;
+  for (const row of root.querySelectorAll<HTMLElement>('[data-line]')) {
+    const type = row.dataset.lineType;
+    const line = Number(row.dataset.line);
+    const tone =
+      type === 'change-addition' ? rows?.added.get(line) : type === 'change-deletion' ? rows?.removed.get(line) : undefined;
+    const column = row.closest('[data-deletions], [data-additions]');
+    // A run continues in the same column, row after row.
+    const continues =
+      !!previous && previous.column === column && previous.tone === tone && previous.row.nextElementSibling === row;
+    const gutter = gutterOf(row);
+    set(row, 'data-conflict-side', tone);
+    set(gutter, 'data-conflict-side', tone);
+    set(row, 'data-conflict-label', tone && !continues ? labels[tone] : undefined);
+    set(gutter, 'data-conflict-label', tone && !continues ? labels[tone] : undefined);
+    previous = { column, tone, row };
+  }
+}

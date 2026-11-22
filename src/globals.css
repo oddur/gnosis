@@ -3816,6 +3816,12 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-name-form input { flex:1; min-width:0; background:var(--background); border:1px solid var(--input); border-radius:var(--radius-sm); padding:6px 10px; }
 .stack-name-form [role=alert] { color:var(--destructive); font-size:var(--type-control); margin-top:8px; }
 .pr-summary-page.is-stack .pr-overview-heading { padding-top:8px; }
+/* While Conflicts is the tab, the PR header is its title on one line (#445 distill): approval, readiness, Drafts and
+   Review PR wait on the other tabs, and the code gets their height. */
+.pr-summary-page.is-resolving :is(.pr-summary-context,.pr-merge-status,.pr-snooze-back) { display:none; }
+.pr-summary-page.is-resolving .pr-overview-heading { padding-top:6px; }
+.pr-summary-page.is-resolving .pr-title-with-star { align-items:center; }
+.pr-summary-page.is-resolving .pr-overview-heading h1 { font-size:var(--type-section-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .pr-summary-page.is-stack .pr-title-with-star { flex-wrap:nowrap; }
 .pr-summary-page.is-stack .pr-title-with-star h1 { flex:0 1 auto; text-wrap:pretty; }
 .pr-summary-page.is-stack .pr-actions-stack { margin-left:auto; padding:0; flex-shrink:0; }
@@ -4124,12 +4130,26 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .dark .conflict-workspace,.dark .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 65%,var(--background)); }
 .conflict-suggest-menu { --field-border:color-mix(in srgb,var(--muted-foreground) 80%,var(--background)); }
 /* The Conflicts view (#445 item 8) fills its PR tab, under the PR header and tabs. */
-.conflict-workspace { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
+.conflict-workspace { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden;container:conflict-workspace / inline-size; }
 .conflict-workspace > * { flex-shrink:0; }
 .conflict-workspace:focus-visible { outline:none; }
-.conflict-heading { display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 16px;border-bottom:1px solid var(--border); }
-.conflict-heading h2 { font-size:var(--type-section-title);font-weight:600;line-height:1.35;text-wrap:balance; }
-.conflict-heading-description { margin-top:4px;color:var(--muted-foreground);font-size:var(--type-control); }
+/* One band over the code (#445 distill): the direction and what's left on the left, the file's tools and Close on the
+   right. It wraps under the text when the pane is narrow; notes (a paused model, the last push, settings) take a row. */
+.conflict-heading { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 24px;padding:8px 16px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
+.conflict-heading-text { display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 22ch; }
+.conflict-heading h2 { font-size:var(--type-control);font-weight:600;line-height:1.4;text-wrap:balance; }
+.conflict-heading-text [data-conflict-summary] { line-height:1.4; }
+.conflict-heading-description { color:var(--muted-foreground); }
+.conflict-heading-tools { display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 8px;margin-left:auto; }
+.conflict-summary-notes { display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;flex-basis:100%; }
+.conflict-summary-notes label { display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
+.conflict-menu-separator { height:1px;margin:4px 0;background:var(--border); }
+/* The file picker stands in for the file list below 900px. */
+.conflict-file-picker { display:none;max-width:min(440px,100%);min-width:0; }
+.conflict-file-picker .conflict-path { flex-wrap:nowrap;font-weight:600; }
+.conflict-file-picker .conflict-path-dir { flex:0 1000 auto;min-width:1.5em; }
+.conflict-file-picker-count { flex:none;color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
+.conflict-file-picker-menu { width:min(360px,calc(100vw - 24px));max-height:min(60vh,420px);border:1px solid var(--border); }
 .conflict-body { flex:1 1 auto;min-height:0;display:grid;grid-template-columns:240px minmax(0,1fr); }
 .conflict-files { overflow:auto;border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:2px; }
 .conflict-files button { display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;padding:9px 10px;text-align:left;font-size:var(--type-control);border-radius:var(--radius-sm); }
@@ -4138,18 +4158,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-files button[aria-current=true] { background:var(--accent);color:var(--accent-foreground);font-weight:600; }
 .conflict-files button:not([aria-current=true]):hover { background:var(--secondary); }
 .conflict-file-pane { display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden; }
-.conflict-file-header { display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:8px 16px;border-bottom:1px solid var(--border); }
-/* The title and the tools are always two rows, so a tool that comes and goes never moves the file name. */
-.conflict-file-title { display:flex;align-items:center;gap:10px;min-width:0;min-height:24px;font-size:var(--type-control); }
-.conflict-file-title strong { display:flex;min-width:0; }
-.conflict-file-title > :not(strong) { flex:none; }
-.conflict-file-tools { display:flex;flex-wrap:wrap;align-items:center;gap:8px; }
 /* A path breaks only at "/": the folders shrink with an ellipsis, the file name stays whole. */
 .conflict-path { display:flex;flex-wrap:wrap;min-width:0;max-width:100%;white-space:nowrap; }
 .conflict-path > span { min-width:0;overflow:hidden;text-overflow:ellipsis; }
-/* In the file header the path keeps one line: the folders give way first. */
-.conflict-file-title .conflict-path { flex-wrap:nowrap; }
-.conflict-file-title .conflict-path-dir { flex:0 1000 auto;min-width:1.5em; }
 /* No top padding: a file header pins at the scroller's top edge, where ChangesDiff measures its pinned hunk headers from,
    as in Changes. The first row's space above it is the ::before spacer (with the gap, 16px). */
 .conflict-scroll { flex:1 1 auto;min-height:0;overflow:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:12px;overscroll-behavior:contain; }
@@ -4171,9 +4182,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-file-status[data-stage=reviewed] { color:var(--color-success);background:var(--status-success-bg,color-mix(in srgb,var(--color-success) 10%,var(--background))); }
 
 /* Conflict buckets: Merged (checked), Check (a proposal to read), Decide (no safe proposal). Each has a label and an icon. */
-.conflict-summary { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 20px;padding:8px 24px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
-.conflict-summary p { font-weight:600; }
-.conflict-summary-tools { display:flex;align-items:center;gap:6px 16px;margin-left:auto; }
 .conflict-type-check { display:inline-flex;align-items:center;gap:4px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-type-check[data-type-check=errors] { color:var(--color-warning); }
 .conflict-type-check-detail { text-decoration:underline dotted;text-underline-offset:3px;cursor:help; }
@@ -4188,13 +4196,12 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-local h2 { font-size:var(--type-section-title);font-weight:650; }
 .conflict-commands { display:flex;flex-direction:column;gap:6px; }
 .conflict-local pre,.conflict-commands pre { padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--secondary);font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere; }
-.conflict-summary label { display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-bucket { display:inline-flex;align-items:center;gap:5px;width:fit-content;font-size:var(--type-caption);font-weight:600;white-space:nowrap; }
 .conflict-bucket[data-bucket=decide] { color:var(--color-danger); }
 .conflict-bucket[data-bucket=check] { color:var(--color-warning); }
 .conflict-bucket[data-bucket=merged] { color:var(--color-success); }
 .conflict-file-buckets { display:flex;flex-wrap:wrap;gap:4px; }
-:is(.conflict-files,.conflict-file-title) .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
+.conflict-files .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
 .conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
 .conflict-block-header [data-slot=button] { margin-left:auto; }
 .conflict-whole-file > p { padding:8px 12px;max-width:80ch;font-size:var(--type-control); }
@@ -4252,8 +4259,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-model-notice { display:flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:6px 12px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend .conflict-side-label { padding:0;border:0;color:var(--foreground); }
-.conflict-diff-legend .conflict-side-label[data-mark=removed]::before { content:'− ';color:var(--color-danger); }
-.conflict-diff-legend .conflict-side-label[data-mark=added]::before { content:'+ ';color:var(--color-success); }
+/* Each side's swatch is its tint in the code above, set inline from SIDE_COLORS (lib/conflict-sides.ts), never a −/+
+   (#445 distill). */
+.conflict-diff-legend .conflict-side-label[data-tone] { display:inline-flex;align-items:center;gap:6px; }
+.conflict-diff-legend .conflict-side-label[data-tone]::before { content:'';flex:none;width:10px;height:10px;border-radius:2px;background:var(--conflict-side-swatch);box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 30%,transparent); }
 /* Lines a resolver wrote (#445 item 10): the card's count, with a swatch of the diff's steady mark (lib/diff-here.ts),
    on the code surface. */
 .conflict-written-legend { display:flex;align-items:center;gap:6px; }
@@ -4330,12 +4339,20 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-error-details summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-error-details pre,.conflict-whitespace pre { max-height:200px;overflow:auto;margin-top:6px;padding:8px;border-radius:var(--radius-sm);background:var(--secondary);font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere; }
 
-/* Confirmation: the final update and the push, in one card. */
-.conflict-confirm { flex:1 1 auto;min-height:0;overflow:hidden;display:flex;justify-content:center;padding:20px 24px; }
-/* The title and Push stay in view: only the card's body scrolls, however long the diff. */
-.conflict-confirm > .step-card { width:min(1040px,100%);max-height:100%;min-height:0; }
-.conflict-confirm .step-card-body { flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain; }
-.conflict-confirm-message { display:flex;flex-direction:column;gap:6px;font-weight:500; }
+/* Confirmation: the final update and the push, in one card. The page scrolls (#445 distill); the bar with the message
+   and Push sticks to its bottom, however long the diff. */
+.conflict-confirm { flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;justify-content:center;padding:20px 24px 0; }
+.conflict-confirm > .step-card { width:min(1040px,100%);height:max-content; }
+.conflict-confirm .step-card-body:focus-visible { outline:none; }
+.conflict-confirm .step-card-footer { position:sticky;bottom:0;z-index:4;align-items:flex-end;padding-bottom:16px;background:var(--background); }
+.conflict-confirm .step-card-status { flex:1 1 40ch;min-width:0; }
+.conflict-confirm-bar,.conflict-confirm-bar > * { display:flex;flex-direction:column;gap:6px; }
+.conflict-confirm-message { display:flex;flex-direction:column;gap:6px;color:var(--foreground);font-size:var(--type-control);font-weight:500; }
+/* The groups' counts, at the top, each a way to its group. */
+.conflict-confirm-jump { display:flex;flex-wrap:wrap;gap:4px 16px;font-size:var(--type-control); }
+.conflict-confirm-jump button { font-weight:600;color:var(--primary);text-decoration:underline;text-underline-offset:3px; }
+.conflict-confirm-jump button span { color:var(--muted-foreground);font-weight:500; }
+.conflict-cascade-details summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-workspace :is(input:not([type=checkbox]),textarea),.conflict-suggest-menu textarea { width:100%;padding:8px;background:var(--background);color:var(--foreground);border:1px solid var(--field-border);border-radius:var(--radius-sm); }
 .conflict-confirm-facts { margin:0;padding-left:18px;list-style:disc; }
 .conflict-confirm-facts li + li { margin-top:4px; }
@@ -4398,20 +4415,22 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-suggest-form .conflict-suggest-note { padding:0; }
 .conflict-suggest-form > [data-slot=button]:last-child { align-self:flex-end; }
 
-@media (max-width:850px) {
-  .conflict-body { grid-template-columns:184px minmax(0,1fr); }
-  .conflict-heading { padding:8px 12px;gap:12px; }
+/* Below 900px the code takes the width: the file list is the picker in the band. */
+@container conflict-workspace (max-width:899px) {
+  .conflict-body { display:flex;flex-direction:column; }
+  .conflict-body > .conflict-files { display:none; }
+  .conflict-file-picker { display:inline-flex; }
+  .conflict-heading { padding:8px 12px;gap:6px 12px; }
+  .conflict-file-pane { flex:1 1 auto; }
+  /* The paused restack's code comes first: its plan is the count in the corner, its prose one line. A step that
+     failed keeps its row, with its error and Retry. */
+  .restack-review[data-step=resolve] > .step-list > li:not(:has(.step-list-error)) { display:none; }
 }
 @media (max-width:700px) {
-  .conflict-body { display:flex;flex-direction:column; }
-  .conflict-files { flex-direction:row;flex:none;overflow-x:auto;overflow-y:hidden;padding:6px 8px;border-right:0;border-bottom:1px solid var(--border); }
-  .conflict-files button { flex:0 0 auto;width:auto;max-width:240px;padding:6px 10px; }
-  .conflict-files button > .conflict-path { width:auto; }
-  .conflict-file-pane { flex:1 1 auto; }
   .conflict-scroll { padding:0 12px 12px; }
   .conflict-scroll::before { height:0; }
   .conflict-footer { padding:8px 12px; }
-  .conflict-confirm { padding:12px; }
+  .conflict-confirm { padding:12px 12px 0; }
   .conflict-published { padding:16px; }
 }
 @media (prefers-reduced-motion:reduce) { .conflict-disclosure > svg { transition:none; } }
@@ -4436,6 +4455,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .restack-reviewed input { accent-color:var(--primary);width:auto; }
 .restack-blocked { display:flex;flex-direction:column;gap:12px;padding:4px 0; }
 .restack-blocked h3 { font-weight:600; }
+/* What paused the restack, in one line over the code: its heading, then why. */
+.restack-blocked-lead { display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px; }
+.restack-blocked-lead p { color:var(--muted-foreground);font-size:var(--type-caption); }
 .restack-conflict-file { display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:12px; }
 .restack-conflict-file h4 { display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:600;overflow-wrap:anywhere; }
 .restack-conflict-actions { display:flex;flex-wrap:wrap;gap:8px; }
