@@ -27,7 +27,7 @@ const INTERACT = (
 /** Cases shot in each Compare with mode, light and dark, under compare/ (GNOSIS_GALLERY_COMPARE, comma-separated). */
 const COMPARE = (process.env.GNOSIS_GALLERY_COMPARE ?? '').split(',').filter(Boolean);
 
-/** merged, check, decide or decided; clean for a file Git merged on its own. */
+/** merged, check, decide or decided; clean for a file Git merged on its own; local for the local-merge-tool screen. */
 type Bucket = string;
 type Expectation = string | string[];
 interface Entry {
@@ -52,7 +52,8 @@ interface FileRow {
   /** The file's status (fileStatus in lib/conflict-verify.ts): buckets, proposal, resolved, reviewed, … */
   status: string | null;
   statusText: string | null;
-  limitation: string | null;
+  /** The local-merge-tool screen is on screen for the file (it needs a local merge: binary, rename, deletion). */
+  local: boolean;
 }
 interface Screen {
   title: string | null;
@@ -71,6 +72,8 @@ interface Screen {
   primary: string | null;
   spill: string[];
   truncated: string[];
+  /** Card labels ("Conflict 1 of 1") and buckets that wrap onto a second line: the reason beside them wraps instead. */
+  wrapped: string[];
 }
 interface FileResult {
   path: string;
@@ -109,7 +112,7 @@ const READ = `(() => {
       badges: [...b.querySelectorAll('.conflict-bucket')].map((e) => ({ bucket: e.dataset.bucket, text: text(e) })),
       status: b.querySelector('[data-status]')?.dataset.status ?? null,
       statusText: text(b.querySelector('[data-status]')),
-      limitation: text(b.querySelector('.conflict-file-limitation')),
+      local: false,
     })),
     blocks: [...ws.querySelectorAll('.conflict-view .conflict-block')]
       .filter((b) => Number(b.dataset.conflictIndex) >= 0)
@@ -130,6 +133,16 @@ const READ = `(() => {
     // Spills out of the dialog: a layout bug. Truncated with an ellipsis or clipped: worth a look.
     spill: watched.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > box.right + 0.5 || r.left < box.left - 0.5); }).map(name),
     truncated: watched.filter((e) => e.children.length === 0 && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== 'visible').map((e) => name(e) + ': ' + text(e)),
+    wrapped: [...ws.querySelectorAll('.conflict-block-header > :is(strong, .conflict-bucket)')].filter(visible).filter((e) => {
+      const tops = new Set();
+      const walk = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+      for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects()) if (r.width > 0) tops.add(Math.round(r.top));
+      }
+      return tops.size > 1;
+    }).map((e) => text(e)),
   };
 })()`;
 
@@ -356,9 +369,12 @@ void app.whenReady().then(async () => {
             screen = await read();
           }
           const current = screen.files.find((f) => f.current) ?? row;
-          // A file that needs a local merge tool has one Decide and no blocks on screen.
-          const blocks = current.limitation
-            ? ['decide']
+          // A file that needs a local merge tool shows the local-merge-tool screen and no blocks: one `local`.
+          current.local = await js<boolean>("!!document.querySelector('[data-conflict-local]')?.checkVisibility()");
+          if (current.status === 'unsupported' && !current.local)
+            result.problems.push(`${row.path}: needs a local merge tool, but the local-merge-tool screen is not shown`);
+          const blocks = current.local
+            ? ['local']
             : screen.blocks.length || !screen.hidden
               ? screen.blocks
               : new Array<string>(screen.hidden).fill('check');
@@ -366,6 +382,7 @@ void app.whenReady().then(async () => {
           wholeFiles.set(row.path, screen.wholeFile);
           for (const s of screen.spill) result.problems.push(`${row.path}: ${s} spills out of the dialog`);
           for (const t of screen.truncated) result.notes.push(`${row.path}: truncated ${t}`);
+          for (const w of screen.wrapped) result.problems.push(`${row.path}: "${w}" wraps onto two lines`);
         }
 
         // Expectations, file by file.
@@ -396,7 +413,7 @@ void app.whenReady().then(async () => {
           )
             result.problems.push(`${file}: shows Merged where any-but-Merged is expected`);
           // One status everywhere: the file list and the header show the same, and it counts the blocks on screen.
-          if (!row.limitation) {
+          if (!row.local) {
             if (row.status !== header.status || row.statusText !== header.text)
               result.problems.push(
                 `${file}: file list says "${row.statusText ?? 'nothing'}", header says "${header.text ?? 'nothing'}"`
@@ -430,7 +447,7 @@ void app.whenReady().then(async () => {
             : Number(
                 (/(\d+) needs? you/.exec(s) ??
                   /for (\d+) conflicts/.exec(s) ??
-                  /(\d+) (?:whole-file proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
+                  /(\d+) (?:whole-file proposals? to check|to check|to decide|files? with a conflict marker|files? needs? a local merge tool)/.exec(s))?.[1]
               );
           const want = {
             files: seen.size,
@@ -439,6 +456,7 @@ void app.whenReady().then(async () => {
             // Check blocks in a file marked reviewed no longer need you (bucketSummary, lib/conflict-verify.ts).
             needs:
               count(all, 'decide') +
+              count(all, 'local') +
               [...seen.values()]
                 .filter((f) => f.row.status !== 'reviewed')
                 .reduce((n, f) => n + count(f.blocks, 'check'), 0),
