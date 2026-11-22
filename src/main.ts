@@ -4256,13 +4256,16 @@ async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definiti
 }
 // Settings › Diagnostics › Conflict resolution stats: counts only, on this computer (#445 item 2).
 const conflictStats = createConflictStatsStore(appData);
+/** The opt-in type check (#445 item 24): only a linked clone whose type check is on in Settings › Local clones. */
+const typeCheckCloneFor = (repo: string) =>
+  localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase() && entry.typeCheck)?.path;
 const conflicts = createConflictResolutionService({
   stats: conflictStats,
   // Repository settings' "Allow undoing a conflict update with a force push": off unless set (#445 item 25).
   allowUndo: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.allowConflictUndo === true,
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
-  verify: (file, disabled) => conflictChecks.check(file, disabled),
-  moved: (file, disabled) => conflictChecks.moved(file, disabled),
+  verify: (file, disabled, signal) => conflictChecks.check(file, disabled, signal),
+  moved: (file, disabled, signal) => conflictChecks.moved(file, disabled, signal),
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
@@ -4279,10 +4282,13 @@ const conflicts = createConflictResolutionService({
     return getMergeBase(discussionClient(), owner, repo, base, head);
   },
   localClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase())?.path,
-  // The opt-in type check (#445 item 24): only a linked clone whose type check is on in Settings › Local clones.
-  typeCheckClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase() && entry.typeCheck)?.path,
+  typeCheckClone: typeCheckCloneFor,
   runScript: runUtilityScript,
-  typeCheckChanged: id => broadcastToAllWindows('conflict-type-check-changed', id),
+  typeCheckChanged: id => {
+    broadcastToAllWindows('conflict-type-check-changed', id);
+    // The PR header applies the type check's demotions too (lib/conflict-header.ts).
+    conflictPrecompute.typeCheckChanged(id);
+  },
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
   read: async url => {
     const client = discussionClient();
@@ -4352,6 +4358,8 @@ const conflictPrecompute = createConflictPrecompute({
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),
+  // Off: null, as the conflict dialog reads it. On but not run since the app started: the saved demotions apply.
+  typeCheck: draft => conflicts.typeCheckStatus(draft.id, draft.baseRepo),
 });
 // The cascade preview before a push (#445 item 22): a dry run of the stack, in the background, never on battery.
 const cascadePreviews = createCascadePreviews({
@@ -4399,7 +4407,8 @@ ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   return conflictPrecompute.header(url, headSha) ?? null;
 });
 // The opt-in type check of a prepared merge (#445 item 24): its status, and Stop.
-ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheck(id) ?? null : null));
+// The same reading as the PR header's (src/conflict-precompute.ts): null off, undefined on but not run.
+ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheckStatus(id) : null));
 ipcMain.handle('conflict-type-check-cancel', (_event, id: unknown) => {
   if (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)) conflicts.cancelTypeCheck(id);
 });

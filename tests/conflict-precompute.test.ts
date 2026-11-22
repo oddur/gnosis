@@ -1,10 +1,12 @@
+import crypto from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createConflictPrecompute, type ConflictPrecomputeDeps } from '../src/conflict-precompute';
 import { BACKGROUND_YIELDED, NO_PERMISSION } from '../src/conflict-resolution-service';
 import { conflictHeader, conflictHeaderLine, NO_PUSH_LINE } from '../lib/conflict-header';
 import { verdictKey } from '../lib/conflict-verdict-key';
-import type { ConflictFile, ConflictSession } from '../lib/conflict-resolution';
+import { typeCheckKey } from '../lib/conflict-verify';
+import type { ConflictFile, ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
 
 const A = 'https://github.com/o/r/pull/1';
 const B = 'https://github.com/o/r/pull/2';
@@ -327,4 +329,42 @@ void test('a run that found the PR busy, or gave way to you, is tried again on t
   await yielded.precompute.settle(B);
   yielded.observe(B, sha(2), 'conflicts');
   assert.equal(yielded.precompute.header(B, sha(2))?.state, 'checking');
+});
+
+void test('the header line applies the type check’s demotions as the conflict dialog does, and is read again when it changes (#499)', async () => {
+  let status: ConflictTypeCheck | null | undefined;
+  // "Show me every merged conflict" off: an all-Merged draft would offer Review and push….
+  const h = harness({ showMerged: () => false, typeCheck: () => status });
+  h.observe(A, sha(1), 'conflicts');
+  await h.settle(A);
+  const merged = () => {
+    const header = h.precompute.header(A, sha(1));
+    return header?.state === 'ready' && header.merged;
+  };
+  assert.equal(merged(), true);
+  const draft = h.deps.draft(A, sha(1)) as ConflictSession;
+  draft.files[0].typeError = { key: typeCheckKey(draft.files[0]), note: 'The type check found a new error in this file.' };
+  const id = crypto.createHash('sha256').update(A).digest('hex');
+  h.changed.length = 0;
+  h.precompute.typeCheckChanged(id);
+  assert.deepEqual(h.changed, [A], 'The line is read again');
+  // Not run since the app started: the demotion saved on the draft holds, so no Review and push….
+  assert.equal(merged(), false);
+  const line = h.precompute.header(A, sha(1));
+  assert.equal(line?.state === 'ready' && line.sentence, '1 file has conflicts. 1 to check.');
+  // A run that passed, or the check off: nothing is demoted.
+  status = { state: 'passed', preExisting: 0, checked: { 'a.ts': typeCheckKey(draft.files[0]) } };
+  h.precompute.typeCheckChanged(id);
+  assert.equal(merged(), true);
+  status = null;
+  h.precompute.typeCheckChanged(id);
+  assert.equal(merged(), true);
+  // Running: the saved demotion holds until the run finishes.
+  status = { state: 'running' };
+  h.precompute.typeCheckChanged(id);
+  assert.equal(merged(), false);
+  // Another PR's change leaves this line alone.
+  h.changed.length = 0;
+  h.precompute.typeCheckChanged(crypto.createHash('sha256').update(B).digest('hex'));
+  assert.deepEqual(h.changed, []);
 });
