@@ -126,25 +126,17 @@ When it is on, **Undo this update** opens a confirmation. The confirmation names
 Gnosis then reads the branch from the remote, which is the only head it trusts, and the PR from GitHub, for whether it is still open. It pushes the previous head back with `git push --force-with-lease=<branch>:<merge commit> <previous head>:<branch>`. It uses the same sign-in and push path as the update. The undo is refused, and nothing changes, when:
 
 - someone pushed to the branch after the merge commit, or CI added a commit. The lease refuses this too, if the commit arrives during the undo.
-- the PR is merged or closed.
+- the PR is merged or closed, or its branch was deleted. Gnosis checks this before the branch head, so a merged PR never reads as "someone pushed".
 - a restack of the dependent PRs is prepared, paused or pushed: it builds on the merge commit. Undo for a restack is not supported.
 - GitHub refuses the force push, for example on a protected branch. Gnosis shows GitHub's message.
 
-Where a revert is still possible, the refusal gives the revert commands below to copy (**Copy commands**).
+A refusal says what happened and links this section. Gnosis gives no commands to paste. When GitHub refused the force push, it asks you to have the PR's author, or someone who can push to the repository, reset the branch to the previous commit. When commits landed after the merge commit, a reset would remove them too, and the refusal says so.
 
 After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again, or select **Undo this update** again: Gnosis reads the branch on the remote, not GitHub's PR, which can lag. At the previous commit, the undo landed and Gnosis finishes it. At the merge commit, it never did. If Gnosis can't read the branch, or the branch is at another commit, the workspace says which, keeps your draft and offers no undo. **Keep my resolutions and start over** prepares the merge again on the branch as it is now and carries your choices over; **Discard** removes the draft. Neither pushes anything. Background preparation never replaces a draft while an undo is unsettled.
 
-To undo by hand, without a force push, revert the merge commit on the PR branch. This keeps the history:
+To undo by hand, the safe way is the same reset, by someone allowed to force-push the PR's branch: `git push --force-with-lease=<branch>:<merge commit> <head repository> <previous head>:<branch>`. The outcome shows both commits.
 
-```
-git fetch origin <branch>
-git switch <branch>
-git pull --ff-only
-git revert -m 1 <merge commit>
-git push origin <branch>
-```
-
-After a revert, merging the base branch again does not bring back the changes the reverted merge brought in. Revert the revert first when you merge again. If your team allows force pushes, you can reset the branch instead: `git push --force-with-lease=<branch>:<merge commit> origin <previous head>:<branch>`. The outcome shows both commits.
+Reverting the merge commit (`git revert -m 1 <merge commit>`) avoids the force push, but take care. The revert makes the PR undo the changes the merge brought in from the base branch, so merging the PR afterwards would remove them from the base branch. Merging the base branch into the PR again does not bring them back, and Gnosis can't prepare that merge for you. Revert the revert before you merge the base branch again.
 
 ## Other states
 

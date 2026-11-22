@@ -13,7 +13,7 @@ import {
   type ConflictModel,
   type ConflictSegment,
 } from './conflict-blocks';
-import type { ConflictFile } from './conflict-resolution';
+import type { ConflictFile, ConflictProposal } from './conflict-resolution';
 import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
@@ -436,9 +436,11 @@ export function writerOf(source: string | undefined, by?: string) {
       return 'a resolver';
   }
 }
+/** Who wrote a proposal, for "written by …" and its labels. */
+export const proposalWriter = (proposal: Pick<ConflictProposal, 'source' | 'by'>) => writerOf(proposal.source, proposal.by);
 /** Who wrote a file's resolver text: its whole-file proposal's writer, else the file's source. */
 export const fileWriter = (file: Pick<ConflictFile, 'wholeFile' | 'source'>) =>
-  file.wholeFile ? writerOf(file.wholeFile.source, file.wholeFile.by) : writerOf(file.source);
+  file.wholeFile ? proposalWriter(file.wholeFile) : writerOf(file.source);
 /** "3 lines written by structural merge (neither side had them)". */
 export const writtenLabel = (count: number, by = 'a resolver') =>
   `${count} ${count === 1 ? 'line' : 'lines'} written by ${by} (neither side had ${count === 1 ? 'it' : 'them'})`;

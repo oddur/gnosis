@@ -15,7 +15,7 @@ import {
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { ModelCard } from '../lib/conflict-model';
-import { writerOf, writtenLabel, type CompareWith } from '../lib/conflict-diff';
+import { proposalWriter, writtenLabel, type CompareWith } from '../lib/conflict-diff';
 import { WRITTEN_SWATCH } from '../lib/diff-here';
 import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
 
@@ -26,40 +26,53 @@ import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
  */
 
 /**
- * What the proposal did, once it is in the draft: Merged, or used by you. Past tense only there. A Merged one the
- * same-change rule decided is the PR's version, whoever proposed it.
+ * One row per source: what a proposal did once it is in the draft (`done`: Merged, or used by you; past tense only
+ * there), and how a proposal nobody chose is offered (`offer`: Check, not in the draft, #507). `check` says whether the
+ * Check label names it, only where that is a fact.
  */
+const PROPOSAL_WORDS: Record<
+  ConflictProposal['source'],
+  { done: (by: string) => string; offer: (by: string) => string; check: boolean }
+> = {
+  model: { done: (by) => `Proposed by ${by}`, offer: (by) => `Proposal from ${by}`, check: true },
+  rerere: {
+    done: () => 'Same as you resolved before',
+    offer: () => 'Proposal from your earlier merge: resolve it the same way',
+    check: true,
+  },
+  union: {
+    done: () => 'Gnosis’s rule kept both sides’ additions',
+    offer: () => 'Proposal from Gnosis’s rule: keep both sides’ additions',
+    check: false,
+  },
+  same: {
+    done: () => 'Gnosis’s rule kept the PR’s version',
+    offer: () => 'Proposal from Gnosis’s rule: the PR’s version',
+    check: false,
+  },
+  mergiraf: {
+    done: () => 'Structural merge combined both sides’ changes',
+    offer: () => 'Proposal from structural merge: combine both sides’ changes',
+    check: false,
+  },
+  moved: {
+    done: () => 'Gnosis’s rule applied the edit where the code moved',
+    offer: () => 'Proposal from Gnosis’s rule: apply the edit where the code moved',
+    check: false,
+  },
+};
+/** What the proposal did, in the draft. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
 export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
-  proposal.source === 'model'
-    ? `Proposed by ${proposal.by ?? 'a model'}`
-    : proposal.source === 'rerere'
-      ? 'Same as you resolved before'
-      : proposal.source === 'union'
-        ? 'Gnosis’s rule kept both sides’ additions'
-        : proposal.source === 'same' || (verdict?.merged && verdict.note.startsWith(SAME_CHANGE))
-          ? 'Gnosis’s rule kept the PR’s version'
-          : 'Structural merge combined both sides’ changes';
-/**
- * A proposal nobody chose yet (Check): it is not in the draft (#507), so it is named as an offer, with its writer, never
- * as something done: "Proposal from structural merge: combine both sides' changes".
- */
-export const proposalOffer = (proposal: ConflictProposal) =>
-  proposal.source === 'model'
-    ? `Proposal from ${proposal.by ?? 'the model'}`
-    : proposal.source === 'rerere'
-      ? 'Proposal from your earlier merge: resolve it the same way'
-      : proposal.source === 'union'
-        ? 'Proposal from Gnosis’s rule: keep both sides’ additions'
-        : proposal.source === 'same'
-          ? 'Proposal from Gnosis’s rule: the PR’s version'
-          : 'Proposal from structural merge: combine both sides’ changes';
+  PROPOSAL_WORDS[
+    proposal.source !== 'model' && proposal.source !== 'rerere' && verdict?.merged && verdict.note.startsWith(SAME_CHANGE)
+      ? 'same'
+      : proposal.source
+  ].done(proposalWriter(proposal));
+/** A proposal nobody chose yet, named as an offer with its writer, never as something done. */
+export const proposalOffer = (proposal: ConflictProposal) => PROPOSAL_WORDS[proposal.source].offer(proposalWriter(proposal));
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
-  proposal.source === 'rerere'
-    ? `Check · ${proposalWhat(proposal)}`
-    : proposal.source === 'model'
-      ? `Check · ${proposalWhat(proposal)}`
-      : 'Check';
+  PROPOSAL_WORDS[proposal.source].check ? `Check · ${proposalWhat(proposal)}` : 'Check';
 
 /** A conflict's model request while it has no proposal (lib/conflict-model.ts `ModelCard`). */
 function ModelLine({ card }: { card: ModelCard }) {
@@ -188,7 +201,7 @@ export function ConflictCard({
     );
   const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
   // The writer is the proposal's, also for its lines you left as they were in your edit.
-  const by = proposal ? writerOf(proposal.source, proposal.by) : undefined;
+  const by = proposal ? proposalWriter(proposal) : undefined;
   const writtenNote = wrote && <WrittenLegend count={written} by={by} />;
   const writtenText = wrote ? ` ${writtenLabel(written, by)}.` : '';
   // Edit sits with the Keep actions on an open card, and on the line of a decided one.

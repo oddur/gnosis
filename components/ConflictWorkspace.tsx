@@ -41,7 +41,7 @@ import {
   type BlockPicks,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
-import { cardAnchors, fileWriter, resolverBaseline, writerOf, writtenLabel } from '../lib/conflict-diff';
+import { cardAnchors, fileWriter, proposalWriter, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
   WRITTEN_BUDGET_MS,
   confirmCount,
@@ -346,11 +346,10 @@ function LocalMerge({ session, reason }: { session: ConflictSession; reason: str
   );
 }
 
-/** The PR author, from the queue the app already holds. Unknown authors get neutral copy. */
-function findAuthor(url: string) {
-  return findMember(url)?.author;
-}
-/** The PR as the queue holds it: its branches name a local merge before any session exists. */
+/**
+ * The PR as the queue holds it: its author (unknown authors get neutral copy), and its branches, which name a local
+ * merge before any session exists.
+ */
 function findMember(url: string) {
   const queue = workbenchStore.getQueue();
   for (const subject of [...queue.items.map((item) => item.subject), ...(queue.stacks ?? [])])
@@ -565,7 +564,7 @@ export function ConflictWorkspace({
   // G in the confirmation: each press opens Merged for you and focuses it.
   const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
-  const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
+  const author = useMemo(() => (session ? findMember(session.url)?.author : undefined), [session?.url]);
   // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
   // proposals never counts: the file's proposals are Check until their own checks finish.
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
@@ -908,6 +907,8 @@ export function ConflictWorkspace({
     setConfirming(false);
     setBaseNote('');
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
+    // The footer shows a hint before the outcome: clear it, so the undo's outcome is what it says.
+    setHint('');
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
   /** An in-place edit with unsaved text holds every step that would leave or review the draft: says so, and true. */
@@ -2087,7 +2088,7 @@ function ConfirmFileDiff({
         <Icon size={13} aria-hidden="true" />
         <span>
           Conflict {index + 1} of {total} · {text}
-          {wrote > 0 && ` · ${writtenLabel(wrote, proposal ? writerOf(proposal.source, proposal.by) : saved && fileWriter(saved))}`}
+          {wrote > 0 && ` · ${writtenLabel(wrote, proposal ? proposalWriter(proposal) : saved && fileWriter(saved))}`}
         </span>
       </p>
     );

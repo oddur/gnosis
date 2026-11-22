@@ -2,11 +2,9 @@ import { useRef, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
 import type { ConflictSession } from '../lib/conflict-resolution';
 import { describeUndoError, undoAllowed, UNDO_DOCS_URL, type PushedUpdate, type UndoErrorCopy } from '../lib/conflict-undo';
-import { revertCommands } from '../lib/conflict-flow';
 import { pushButtonKey } from '../lib/push-button-keys';
 import { repositoryKey } from '../lib/repository-settings';
 import { useRepositorySettings } from '../lib/use-repository-settings';
-import { CopyCommands } from './CopyCommands';
 import { BranchBadge, CommitBadge } from './EntityBadge';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -63,7 +61,7 @@ export function ConflictUndo({
         });
       onUndone?.(reply.session);
     } catch (e) {
-      setError(describeUndoError(e instanceof Error ? e.message : String(e), branch, revertCommands(update)));
+      setError(describeUndoError(e instanceof Error ? e.message : String(e), update));
     } finally {
       pending.current = false;
       setBusy(false);
@@ -121,7 +119,13 @@ export function ConflictUndo({
               <div>
                 <p className="conflict-error-title">{error.title}</p>
                 {error.body && <p>{error.body}</p>}
-                {error.commands && <CopyCommands commands={error.commands} />}
+                {error.docs && (
+                  <p>
+                    <a href={UNDO_DOCS_URL} target="_blank" rel="noreferrer">
+                      How to undo this update
+                    </a>
+                  </p>
+                )}
                 {error.details && (
                   <details className="conflict-error-details">
                     <summary>Details</summary>

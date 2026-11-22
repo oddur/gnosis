@@ -43,8 +43,11 @@ export function canRetryStructural(
   return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');
 }
 
-/** A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`. */
-const SAFE_REF = /^[A-Za-z0-9._/-]+$/;
+/**
+ * A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`, and no
+ * leading `-`, which git would read as an option.
+ */
+const SAFE_REF = /^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/;
 /** One shell word: single quotes, with an embedded `'` closed, escaped and reopened. */
 export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 /**
@@ -63,29 +66,13 @@ export function localMergeCommands(session: {
   // A fork's clone has no remote for the base repository: fetch the base branch by URL.
   const base =
     headRepo === baseRepo
-      ? [`git fetch origin ${shellQuote(baseBranch)}`, `git merge ${shellQuote(`origin/${baseBranch}`)}`]
+      ? [`git fetch -- origin ${shellQuote(baseBranch)}`, `git merge -- ${shellQuote(`origin/${baseBranch}`)}`]
       : [
-          `git fetch ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
+          `git fetch -- ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
           'git merge FETCH_HEAD',
         ];
-  return [`git switch ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
-}
-
-/**
- * The commands that undo a pushed merge commit without a force push: revert it on the PR branch, which keeps the
- * history. Undefined for a branch name a shell could read as code, or a commit that isn't a plain hex ID.
- */
-export function revertCommands(update: { headBranch: string; commitSha: string }): string | undefined {
-  const { headBranch, commitSha } = update;
-  if (!SAFE_REF.test(headBranch) || !/^[0-9a-f]{7,64}$/i.test(commitSha)) return undefined;
-  const branch = shellQuote(headBranch);
-  return [
-    `git fetch origin ${branch}`,
-    `git switch ${branch}`,
-    'git pull --ff-only',
-    `git revert -m 1 ${commitSha}`,
-    `git push origin ${branch}`,
-  ].join('\n');
+  // `--` ends the options wherever git takes it, so no name is ever read as one.
+  return [`git switch -- ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
 export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
@@ -202,13 +189,18 @@ export function describeConflictError(
     };
   if (context.stage === 'prepare') {
     const { headRepo, baseRepo, headBranch, baseBranch } = context;
+    // Only a Git or merge failure points to a local merge. A busy PR or GitHub still reading the revisions passes on its
+    // own: Try again is the whole answer.
+    const merging = git || (/\b(?:Git|merge|conflict)/i.test(raw) && !/already running|not returned/i.test(raw));
     const commands =
-      headRepo && baseRepo && headBranch && baseBranch
+      merging && headRepo && baseRepo && headBranch && baseBranch
         ? localMergeCommands({ headRepo, baseRepo, headBranch, baseBranch })
         : undefined;
-    const local = commands
-      ? ` If it fails again, merge on your computer: in a clone of ${headRepo}, run these commands.`
-      : ' If it fails again, merge on your computer.';
+    const local = !merging
+      ? ''
+      : commands
+        ? ` If it fails again, merge on your computer: in a clone of ${headRepo}, run these commands.`
+        : ' If it fails again, merge on your computer.';
     return git
       ? {
           title: 'Gnosis couldn’t prepare this merge.',

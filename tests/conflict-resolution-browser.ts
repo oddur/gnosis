@@ -740,6 +740,10 @@ void app.whenReady().then(async () => {
     assert.match(refused, /GitHub refused to rewrite feature\/retry\./);
     assert.match(refused, /GH006: Protected branch update failed for refs\/heads\/feature\/retry\. Cannot force-push to this branch/);
     assert.ok(await js("document.querySelector('[data-conflict-undo-push]').disabled"), 'A refused undo is never resent');
+    // The safe way left, in words: no revert or other commands to paste, and a link to the docs.
+    assert.match(refused, /Ask the PR’s author, or someone who can push to klang\/engine, to reset feature\/retry to aaaaaaa\./);
+    assert.match(refused, /How to undo this update/);
+    assert.equal(await js("!!document.querySelector('[data-conflict-undo-error] [data-conflict-commands]')"), false);
     await captureAll('undo-refused');
     await key('Escape');
     await wait(`!${undoDialog}`);
@@ -2371,7 +2375,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Needs a local merge tool');
     assert.match(
       await js<string>("document.querySelector('[data-conflict-local] pre').textContent"),
-      /^git switch 'feature\/retry'\ngit pull\ngit fetch 'https:\/\/github\.com\/lab\/file-delete-vs-modify\.git' 'main'\ngit merge FETCH_HEAD$/
+      /^git switch -- 'feature\/retry'\ngit pull\ngit fetch -- 'https:\/\/github\.com\/lab\/file-delete-vs-modify\.git' 'main'\ngit merge FETCH_HEAD$/
     );
     assert.ok(await exists('Copy commands'));
     await shot('p1-unsupported', true);

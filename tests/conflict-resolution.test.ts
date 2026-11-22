@@ -2862,6 +2862,17 @@ void test('undo is refused when someone pushed after the merge commit, and nothi
   assert.equal(f.draft().commitSha, f.merge);
   assert.equal(f.draft().undoing, undefined);
 });
+void test('undo of a merged or closed PR, or a deleted branch, says so, even when the branch moved', async (t) => {
+  const f = await undoFixture(t);
+  const top = f.pushOnTop();
+  f.state.state = 'MERGED';
+  await assert.rejects(f.undo(), (error: Error) => error.message === undoCopy.UNDO_CLOSED);
+  assert.equal(await f.git('rev-parse', 'feature'), top, 'Nothing was pushed');
+  f.state.state = 'OPEN';
+  await f.git('update-ref', '-d', 'refs/heads/feature');
+  await assert.rejects(f.undo(), (error: Error) => error.message === undoCopy.UNDO_CLOSED);
+  assert.equal(f.draft().undoing, undefined);
+});
 void test('undo: the lease refuses a push that lands between the live read and the force push', async (t) => {
   const f = await undoFixture(t);
   let top = '';
@@ -2871,7 +2882,7 @@ void test('undo: the lease refuses a push that lands between the live read and t
   });
   await assert.rejects(raced, (error: Error) => {
     assert.equal(error.message, undoCopy.UNDO_MOVED);
-    assert.equal(undoCopy.describeUndoError(error.message, 'feature').title, 'feature has new commits after the merge commit.');
+    assert.equal(undoCopy.describeUndoError(error.message, { headBranch: 'feature', headRepo: 'a/b', headSha: 'aaaaaaaaaa' }).title, 'feature has new commits after the merge commit.');
     return true;
   });
   assert.ok(top);
@@ -2909,7 +2920,7 @@ void test('undo shows GitHub’s message when branch protection refuses the forc
     { mode: 0o755 }
   );
   await assert.rejects(f.undo(), (error: Error) => {
-    const copy = undoCopy.describeUndoError(error.message, 'feature');
+    const copy = undoCopy.describeUndoError(error.message, { headBranch: 'feature', headRepo: 'a/b', headSha: 'aaaaaaaaaa' });
     assert.equal(copy.title, 'GitHub refused to rewrite feature.');
     assert.match(
       copy.body ?? '',
@@ -2959,17 +2970,18 @@ void test('undo copy and settings: off unless set, and the request validates', (
     'GH006: Protected branch update failed.'
   );
   assert.equal(
-    undoCopy.describeUndoError(`Error invoking remote method 'conflict-resolution': Error: ${undoCopy.UNDO_OFF}`, 'x').title,
+    undoCopy.describeUndoError(`Error invoking remote method 'conflict-resolution': Error: ${undoCopy.UNDO_OFF}`, { headBranch: 'x', headRepo: 'a/b', headSha: 'aaaaaaaaaa' }).title,
     undoCopy.UNDO_OFF
   );
-  assert.match(undoCopy.describeUndoError('Git could not complete this operation. fatal: unable to access', 'x').title, /lost the connection/);
-  // A refusal that leaves a revert gives its commands to copy; a closed PR has no branch to revert on.
-  const off = undoCopy.describeUndoError(undoCopy.UNDO_OFF, 'x', 'git revert -m 1 ddddddd');
-  assert.equal(off.commands, 'git revert -m 1 ddddddd');
-  assert.match(off.body ?? '', /Revert the merge commit instead: run these commands in your clone\./);
-  assert.equal(undoCopy.describeUndoError(undoCopy.UNDO_CLOSED, 'x', 'git revert').commands, undefined);
-  const refused = undoCopy.describeUndoError('remote: error: GH006: Protected branch update failed', 'x', 'git revert');
-  assert.equal(refused.commands, 'git revert');
+  assert.match(undoCopy.describeUndoError('Git could not complete this operation. fatal: unable to access', { headBranch: 'x', headRepo: 'a/b', headSha: 'aaaaaaaaaa' }).title, /lost the connection/);
+  // No revert to paste: a refusal names the safe way left, a reset by someone who may force-push, and links the docs.
+  const refused = undoCopy.describeUndoError('remote: error: GH006: Protected branch update failed', { headBranch: 'x', headRepo: 'a/b', headSha: 'aaaaaaaaaa' });
+  assert.match(refused.body ?? '', /Ask the PR’s author, or someone who can push to a\/b, to reset x to aaaaaaa\.$/);
+  assert.equal(refused.docs, true);
+  const moved = undoCopy.describeUndoError(undoCopy.UNDO_MOVED, { headBranch: 'x', headRepo: 'a/b', headSha: 'aaaaaaaaaa' });
+  assert.doesNotMatch(`${moved.title} ${moved.body}`, /revert|reset x to/i);
+  assert.equal(undoCopy.describeUndoError(undoCopy.UNDO_CLOSED, { headBranch: 'x', headRepo: 'a/b', headSha: 'aaaaaaaaaa' }).docs, false);
+  assert.doesNotMatch(undoCopy.UNDO_OFF, /revert/i);
 });
 void test('undo works after startup cleanup removed the PR’s private cache', async (t) => {
   const f = await undoFixture(t);

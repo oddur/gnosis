@@ -1912,11 +1912,12 @@ export function createConflictResolutionService(deps: Deps) {
       await undone(ctx, session);
       return;
     }
-    if (live !== commitSha) throw new Error(UNDO_MOVED);
+    // The PR's state first: a merged or closed PR, or a deleted branch, is not "someone pushed".
     const state = await deps.read(session.url);
     signal.throwIfAborted();
     assertAccount(ctx);
-    if (state.state !== 'OPEN') throw new Error(UNDO_CLOSED);
+    if (state.state !== 'OPEN' || live === '') throw new Error(UNDO_CLOSED);
+    if (live !== commitSha) throw new Error(UNDO_MOVED);
     if (state.account !== ctx.account || state.archived || !state.canUpdateBranch)
       throw new Error('You cannot update this PR branch with the connected account. Nothing was changed.');
     // GitHub answers for the PR's identity and open state only.

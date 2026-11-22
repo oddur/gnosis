@@ -24,7 +24,7 @@ import {
   resolverBaseline,
   shownWritten,
   fileWriter,
-  writerOf,
+  proposalWriter,
   writtenFileLines,
   type CompareWith,
   type ConflictCompareRows,
@@ -978,7 +978,7 @@ function WholeFile({
       data-bucket="check"
       data-conflict-index={-1}
       tabIndex={0}
-      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : `${writerOf(proposal.source, proposal.by)} combined both sides`}. ${note}`}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : `${proposalWriter(proposal)} combined both sides`}. ${note}`}
     >
       <header className="conflict-block-header">
         <strong>Whole file</strong>
@@ -999,7 +999,7 @@ function WholeFile({
         fileKey={`${fileKey}:whole-file`}
         preferences={preferences}
         written={written}
-        by={writerOf(proposal.source, proposal.by)}
+        by={proposalWriter(proposal)}
         landmark={false}
       />
       <div className="conflict-block-actions">
