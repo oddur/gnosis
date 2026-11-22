@@ -53,28 +53,14 @@ export interface Verdict extends BlockVerdict {
 }
 /**
  * The verdict with the type check's new errors (#445 item 24): every Merged proposal in the file is Check, with the
- * compiler's error as its note. With `blocks`, only the Merged proposals of the conflicts that hold an error. A verdict
- * without such Merged proposals is unchanged.
+ * type check's note. A verdict without Merged proposals is unchanged.
  */
 export function withTypeError(
   verdict: Verdict | undefined,
-  mark: Pick<TypeErrorMark, 'note' | 'blocks'> | undefined
+  mark: Pick<TypeErrorMark, 'note'> | undefined
 ): Verdict | undefined {
-  if (!verdict || !mark) return verdict;
-  const { note, blocks } = mark;
-  // Only the conflicts the errors were in, while each of them is still a Merged proposal. When one of them no longer is,
-  // the error may come from elsewhere in the file: every Merged proposal in it is Check.
-  const held = blocks?.flatMap((text, index) => (text != null ? [index] : []));
-  if (blocks && held?.length && held.every((index) => blockVerdict(verdict, index)?.merged)) {
-    // Every conflict gets its own entry, so the others keep the file's verdict when the file's own is no longer Merged.
-    const count = Math.max(blocks.length, verdict.blocks?.length ?? 0);
-    const own = Array.from({ length: count }, (_, index): BlockVerdict =>
-      blocks[index] != null ? { merged: false, note: blocks[index] } : (blockVerdict(verdict, index) as BlockVerdict)
-    );
-    const firstNote = own.find((b) => !b.merged)?.note ?? note;
-    return { ...verdict, merged: false, note: verdict.merged ? firstNote : verdict.note, blocks: own };
-  }
-  if (!(verdict.merged || verdict.blocks?.some((block) => block?.merged))) return verdict;
+  if (!verdict || !mark || !(verdict.merged || verdict.blocks?.some((block) => block?.merged))) return verdict;
+  const { note } = mark;
   return {
     ...verdict,
     merged: false,
@@ -1142,21 +1128,34 @@ export function typeCheckKey(file: Pick<ConflictFile, 'original' | 'proposals' |
   return key;
 }
 /**
+ * The PR's type check as it applies to this draft: a finished run counts only when every file's draft is the one it
+ * checked (`checked`). A result for another draft reads as waiting: never its "passed" for a changed draft.
+ */
+export function typeCheckFor(
+  status: ConflictTypeCheck | null | undefined,
+  files: readonly Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'wholeFile' | 'result'>[]
+): ConflictTypeCheck | null | undefined {
+  if (status?.state !== 'passed' && status?.state !== 'errors') return status;
+  const { checked } = status;
+  const same =
+    !!checked && Object.keys(checked).length === files.length && files.every((f) => checked[f.path] === typeCheckKey(f));
+  return same ? status : { state: 'waiting' };
+}
+/**
  * The type check's demotion of a file, the same for the Conflicts view, the PR header and the stats. `status` is the
- * PR's type check: null when it is off, undefined when not known (not asked yet, or not run since the app started).
+ * PR's type check for this draft (`typeCheckFor`): null when it is off, undefined when not known (not asked yet, or not
+ * run since the app started).
  *
- * - A finished run decides a file only while the file's draft is the one it checked (`checked`): it passed there, or it
- *   found errors there.
- * - Otherwise (running, skipped, stopped, not known, or a result for another draft) the demotion saved on the file
- *   stays: a demotion only goes when a finished run for its draft says so, or the check is turned off.
+ * - A finished run decides: it passed, or it found new errors, and then every conflicted file is demoted.
+ * - Otherwise (waiting, running, skipped, stopped, not known) the demotion saved on the file stays: a demotion only goes
+ *   when a finished run for the whole draft says so, or the check is turned off.
  */
 export function typeErrorOf(
-  file: Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'wholeFile' | 'result' | 'typeError'>,
+  file: Pick<ConflictFile, 'path' | 'typeError'>,
   status: ConflictTypeCheck | null | undefined
 ): TypeErrorMark | undefined {
-  if (status === null) return undefined;
-  if ((status?.state === 'passed' || status?.state === 'errors') && status.checked?.[file.path] === typeCheckKey(file))
-    return status.state === 'errors' ? status.files.find((x) => x.path === file.path) : undefined;
+  if (status === null || status?.state === 'passed') return undefined;
+  if (status?.state === 'errors') return status.files.find((x) => x.path === file.path);
   return file.typeError;
 }
 

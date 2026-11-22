@@ -5,6 +5,7 @@ import {
   bucketSummary,
   fileStatus,
   summarySentence,
+  typeCheckFor,
   typeErrorOf,
   waitsForReview,
   withTypeError,
@@ -71,11 +72,12 @@ export function conflictHeader(
   typeCheck?: ConflictTypeCheck | null
 ): ConflictHeader {
   let review = false;
+  const status = typeCheckFor(typeCheck, files);
   const states = files.map((f) => {
     // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
     const saved = withTypeError(
       f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined,
-      typeErrorOf(f, typeCheck)
+      typeErrorOf(f, status)
     );
     const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
     const buckets = blockBuckets(f, f.result, verdict);

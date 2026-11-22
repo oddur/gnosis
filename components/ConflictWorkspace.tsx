@@ -95,6 +95,7 @@ import {
   verifyWholeFile,
   type ConflictBucket,
   type Verdict,
+  typeCheckFor,
   typeErrorOf,
   withTypeError,
 } from '../lib/conflict-verify';
@@ -204,6 +205,8 @@ function KeyboardHelp() {
 /** The type check's one line (#445 item 24), "Type check: …". */
 export function typeCheckLine(status: ConflictTypeCheck) {
   switch (status.state) {
+    case 'waiting':
+      return 'Type check: waiting for your changes';
     case 'running':
       return 'Type check: running…';
     case 'passed':
@@ -248,7 +251,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
             <TooltipContent side="bottom" align="end" className="conflict-type-check-errors">
               {status.state === 'errors' && (
                 <>
-                  <p>Errors in a conflicted file keep its merged conflicts in Check. Errors elsewhere are for your information.</p>
+                  <p>Any new error keeps every merged conflict in Check: an error in one file can come from a conflict in another.</p>
                   <ul>
                     {detail.map((error, i) => (
                       <li key={i}>{error}</li>
@@ -264,7 +267,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
       ) : (
         line
       )}
-      {status.state === 'running' && (
+      {(status.state === 'running' || status.state === 'waiting') && (
         <Button size="xs" variant="ghost" onClick={onStop}>
           Stop
         </Button>
@@ -516,7 +519,11 @@ export function ConflictWorkspace({
   const [typeCheckOf, setTypeCheck] = useState<{ id: string; status: ConflictTypeCheck | null | undefined }>();
   const sessionId = session?.id;
   // Undefined until read for this draft, or on but not run: the demotions saved on the files apply.
-  const typeCheck = typeCheckOf && typeCheckOf.id === sessionId ? typeCheckOf.status : undefined;
+  // Only a result for this draft counts; one for an earlier draft reads as waiting (lib/conflict-verify.ts).
+  const typeCheck = useMemo(
+    () => typeCheckFor(typeCheckOf && typeCheckOf.id === sessionId ? typeCheckOf.status : undefined, session?.files ?? []),
+    [typeCheckOf, sessionId, session?.files]
+  );
   useEffect(() => {
     if (!sessionId) return;
     let active = true;

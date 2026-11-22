@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { inferChoices, parseConflicts, pickText } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
-import { blockVerdict, typeCheckKey } from '../lib/conflict-verify';
+import { typeCheckKey } from '../lib/conflict-verify';
 
 /**
  * The opt-in type check of a prepared merge (#445 item 24). Running a repository's type checker runs the repository's
@@ -18,9 +18,8 @@ import { blockVerdict, typeCheckKey } from '../lib/conflict-verify';
 export const TYPE_CHECK_TIMEOUT = 120_000;
 /** A changed draft is checked again this long after its last change, so autosave doesn't start a run each time. */
 export const TYPE_CHECK_DELAY = 2_000;
-/** Up to this many new errors are kept for the summary, and three per file for a Check note. */
+/** Up to this many new errors are kept for the summary. */
 const ERRORS_SHOWN = 20;
-const ERRORS_PER_NOTE = 3;
 const OUTPUT_LIMIT = 16 * 1024 * 1024;
 
 export const NO_DEPENDENCIES = 'dependencies aren’t installed in your clone';
@@ -157,19 +156,6 @@ export function conflictLines(file: Pick<ConflictFile, 'original' | 'proposals' 
     line += breaks;
   }
   return text === checkedText(file.result) ? spans : undefined;
-}
-
-/**
- * Whether a conflict is a Merged proposal in the draft: its proposal is in place, as the checks passed it, and is not a
- * model's or a Keep you picked.
- */
-function mergedProposals(file: Pick<ConflictFile, 'original' | 'proposals' | 'result' | 'picks' | 'verdict'>) {
-  const choices = inferChoices(parseConflicts(file.original), file.result, file.proposals);
-  return (index: number) =>
-    choices?.[index] === 'proposal' &&
-    (!file.picks?.[index] || file.picks[index] === 'proposal') &&
-    file.proposals?.[index]?.source !== 'model' &&
-    !!blockVerdict(file.verdict?.verdict, index)?.merged;
 }
 
 /** Only what the compiler needs: no tokens, no Git variables, no NODE_OPTIONS. */
@@ -403,32 +389,17 @@ export async function typeCheckMerge(options: {
     // Every file's draft this run checked: a result counts for a file only while its draft is the same.
     const checked = Object.fromEntries(session.files.map((f) => [f.path, typeCheckKey(f)]));
     if (!fresh.length) return { state: 'passed', preExisting, checked };
-    const count = (n: number, what: string) => (n === 1 ? `a new error in this ${what}` : `${n} new errors in this ${what}`);
-    const note = (own: readonly TypeDiagnostic[], what: string) => {
-      const shown = own.slice(0, ERRORS_PER_NOTE).map(formatDiagnostic).join(' · ');
-      const more = own.length > ERRORS_PER_NOTE ? ` · ${own.length - ERRORS_PER_NOTE} more` : '';
-      return `The type check found ${count(own.length, what)}: ${shown}${more}`;
-    };
-    const files = session.files.flatMap((file) => {
-      const own = fresh.filter((d) => d.file === file.path);
-      if (!own.length || file.unsupported) return [];
-      // Each error goes to the conflict whose lines hold it, while that conflict is a Merged proposal: then it caused
-      // the error. One outside every conflict, in a conflict that isn't a Merged proposal (the cause may be elsewhere),
-      // or in a draft that can't be split into its conflicts, keeps every Merged proposal in the file in Check.
-      const spans = lines.get(file.path);
-      const isMerged = mergedProposals(file);
-      const traced = own.map((d) =>
-        spans?.findIndex((span) => !!span && d.line !== undefined && d.line >= span[0] && d.line <= span[1])
-      );
-      const blocks =
-        spans && traced.every((index) => index !== undefined && index >= 0 && isMerged(index))
-          ? spans.map((_, index) => {
-              const inBlock = own.filter((_, i) => traced[i] === index);
-              return inBlock.length ? note(inBlock, 'conflict') : null;
-            })
-          : undefined;
-      return [{ path: file.path, key: typeCheckKey(file), note: note(own, 'file'), ...(blocks ? { blocks } : {}) }];
-    });
+    // The compiler checks the whole program, so an error anywhere may come from any Merged proposal: every conflicted
+    // file's Merged proposals are Check, with the first error as the note.
+    const [first] = fresh;
+    const where = `${first.file ?? 'the project'}${first.line ? `:${first.line}` : ''} (${first.code})`;
+    const note =
+      fresh.length === 1
+        ? `The type check found a new error in ${where}.`
+        : `The type check found ${fresh.length} new errors, the first in ${where}.`;
+    const files = session.files.flatMap((file) =>
+      file.unsupported ? [] : [{ path: file.path, key: typeCheckKey(file), note }]
+    );
     return {
       state: 'errors',
       checked,
