@@ -410,6 +410,25 @@ body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+/*
+ * On a narrow window the row keeps its window-drag zone and header controls, which left a lone tab a sliver ("In").
+ * There a pill may narrow to its icon and close button, and below a readable width it drops the title (the tab's
+ * name and tooltip still say it) rather than show two letters. The query container sizes as the old 140px minimum,
+ * so a pill with room keeps its title; wide windows are unchanged.
+ */
+@media (max-width: 760px) {
+  .workspace-tab {
+    container: workspace-tab / inline-size;
+    contain-intrinsic-inline-size: 140px;
+    min-width: 50px;
+  }
+}
+@container workspace-tab (max-width: 96px) {
+  .workspace-tab-title,
+  .workspace-tab-count {
+    display: none;
+  }
+}
 .workspace-tab[data-unread='true'] .workspace-tab-title,
 .workspace-tab[data-unread='true'] .workspace-tab-count {
   font-weight: 700;

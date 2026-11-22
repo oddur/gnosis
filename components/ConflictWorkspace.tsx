@@ -1472,11 +1472,17 @@ export function ConflictWorkspace({
     if (handled) event.preventDefault();
   }
 
-  const headLabel = session ? (author ? `@${author}’s ${session.headBranch}` : session.headBranch) : '';
   const ownBranch = !!session && !!author && author === session.account;
-  const title = session
-    ? `Bring ${session.baseBranch} into ${ownBranch ? `your ${session.headBranch}` : headLabel}`
-    : 'Resolve conflicts';
+  // Branch names are code, as PR details show them: "Bring main into again" reads as a sentence otherwise.
+  const title = session ? (
+    <>
+      Bring <code className="conflict-branch">{session.baseBranch}</code> into{' '}
+      {ownBranch ? 'your ' : author ? `@${author}’s ` : ''}
+      <code className="conflict-branch">{session.headBranch}</code>
+    </>
+  ) : (
+    'Resolve conflicts'
+  );
   // Before a session exists, the queue's copy of the PR names the branches for a local merge.
   const member = error && !session ? findMember(url) : undefined;
   const describedError = error
@@ -1649,7 +1655,7 @@ export function ConflictWorkspace({
       baseNote ||
       (session
         ? [
-            selectedState && fileStatusLine(selectedState.status),
+            selectedState && fileStatusLine(selectedState.status, summary.local),
             `${reviewedCount} of ${session.files.length} ${session.files.length === 1 ? 'file' : 'files'} reviewed`,
           ]
             .filter(Boolean)

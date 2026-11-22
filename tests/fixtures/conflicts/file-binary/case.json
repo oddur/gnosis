@@ -3,6 +3,6 @@
   "language": "binary",
   "category": "files/binary",
   "expected": {
-    "assets/logo.png": "decide"
+    "assets/logo.png": "local"
   }
 }
