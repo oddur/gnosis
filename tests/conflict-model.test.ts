@@ -329,7 +329,7 @@ test('the splice changes only that conflict’s span, and only while it is open'
   assert.deepEqual(modelTargets(conflictFile({ original: two, result: decidedSecond })), [0]);
 });
 
-test('a model proposal is spliced in, checked, and never Merged', async () => {
+test('a model proposal is offered on its card, checked, never Merged, and never written into the draft', async () => {
   // The same text from structural merge passes every check and is Merged.
   const mergiraf = await verifyProposals(conflictFile({ proposals: [{ source: 'mergiraf', text: both }], result: `export function settings() {\n${both}  return x + y;\n}\n` }), (l, t, r) => engine.definitions(l, t, r));
   assert.equal(mergiraf.merged, true, mergiraf.note);
@@ -340,7 +340,8 @@ test('a model proposal is spliced in, checked, and never Merged', async () => {
   assert.equal(f.saved().files[0].result, original);
   const { session } = await f.run({ kind: 'model', path: 'src/settings.ts', index: 0 });
   const file = session.files[0];
-  assert.equal(file.result, `export function settings() {\n${both}  return x + y;\n}\n`);
+  // Fail closed: the draft keeps the conflict's markers until you choose; the proposal waits on the card.
+  assert.equal(file.result, original);
   assert.deepEqual(file.proposals, [
     {
       source: 'model',
@@ -351,8 +352,8 @@ test('a model proposal is spliced in, checked, and never Merged', async () => {
     },
   ]);
   assert.equal(file.resolved, false);
-  // Its lines are a resolver's: the lines neither side had are marked (#445 item 10).
-  assert.equal(file.resolverText, file.result);
+  // Nothing is written yet, so there is nothing to mark.
+  assert.equal(file.resolverText, undefined);
   const verdict = file.verdict?.verdict;
   assert.ok(verdict, 'The checks ran on the proposal');
   assert.equal(verdict.merged, false);

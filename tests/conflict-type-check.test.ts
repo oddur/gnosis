@@ -863,3 +863,34 @@ void test('type check: saves in a row start one run, after the changes stop (#50
   assert.equal(status?.state, 'passed', JSON.stringify(status));
   assert.equal(f.runs.length, first + 1, 'One run, for the last draft');
 });
+
+void test('type check: a demotion that lands after Mark reviewed reopens the file, and the push re-checks (#507)', async (t) => {
+  const linked = await clone(t);
+  // The run starts a little later, so the file is marked reviewed before its result lands.
+  const f = await fixture(t, { clone: linked, delay: 300 });
+  const file = f.session.files.find((x) => x.path === 'sample.ts');
+  assert.ok(file?.proposals?.[0]);
+  assert.deepEqual(blockBuckets(file, file.result, file.verdict?.verdict), ['merged']);
+  // Mark reviewed while the check waits: the Merged proposal needs no choice, so it is accepted.
+  const { session } = await f.service.run(
+    { kind: 'save', id: f.session.id, version: f.saved().version, path: 'sample.ts', contents: file.result, resolved: true },
+    new AbortController().signal
+  );
+  assert.equal(session.files.find((x) => x.path === 'sample.ts')?.resolved, true);
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  // The demotion reopens the file: its conflict waits for a choice again, and nothing can be pushed.
+  const saved = f.saved();
+  const reopened = saved.files.find((x) => x.path === 'sample.ts');
+  assert.equal(reopened?.resolved, false);
+  await assert.rejects(
+    f.service.run({ kind: 'preview', id: saved.id, version: saved.version }, new AbortController().signal),
+    /every file reviewed/
+  );
+  // Even a draft saved as reviewed with the demoted proposal unchosen is refused at the push: the guard runs again.
+  for (const x of saved.files) x.resolved = true;
+  await assert.rejects(
+    f.service.run({ kind: 'preview', id: saved.id, version: saved.version }, new AbortController().signal),
+    /in Check first/
+  );
+});

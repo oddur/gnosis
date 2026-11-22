@@ -23,13 +23,15 @@ import { RestackReview } from './RestackReview';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
+import { CONFLICT_SHORTCUTS, hasGlyph, isReviewAndPushKey, mac, spokenKey } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
 import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
-import { WrittenLegend, proposalWhat, useCodeOptions, type ConflictViewHandle } from './ConflictBlocks';
+import { WrittenLegend, proposalWhat } from './ConflictCard';
+import { useCodeOptions } from '../lib/use-code-options';
+import type { ConflictViewHandle } from './useConflictChoices';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import {
   conflictCount,
@@ -89,6 +91,9 @@ import {
   allMerged,
   blockVerdict,
   summarySentence,
+  unchosenConflicts,
+  preparedDraft,
+  waitingHint,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
@@ -101,7 +106,6 @@ import {
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
-import { withProposals } from '../lib/conflict-carry';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -187,7 +191,16 @@ function KeyboardHelp() {
                 <dt>
                   {keys.split(/\s+/).map((k) => (
                     <kbd key={k} className="kbd">
-                      {k.toUpperCase()}
+                      {hasGlyph(k) ? (
+                        <>
+                          <span aria-hidden="true">{k}</span>
+                          <span className="sr-only">{spokenKey(k)}</span>
+                        </>
+                      ) : k.length === 1 ? (
+                        k.toUpperCase()
+                      ) : (
+                        k
+                      )}
                     </kbd>
                   ))}
                 </dt>
@@ -540,6 +553,11 @@ export function ConflictWorkspace({
   const primary = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
+  const mergedToggle = useRef<HTMLInputElement>(null);
+  // The in-place editor is open with text you haven't saved: the confirmation waits for it (confirm).
+  const editorDirty = useRef(false);
+  // G in the confirmation: each press opens Merged for you and focuses it.
+  const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
   const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
   // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
@@ -669,10 +687,13 @@ export function ConflictWorkspace({
   const proposalOnly = ready && blocksShown !== viewKey;
   // The result is always on screen, in the diff (PR shows it against the PR's version): Mark reviewed needs no separate
   // step. The push confirmation shows the whole update once more before anything is pushed.
+  // Conflicts in Check with no choice of yours: nothing is accepted by default, so Mark reviewed waits for them.
+  const unchosen = file ? unchosenConflicts(file, contents, verdictOf(file), picksOf(file), editsOf(file)) : [];
   const action = conflictFileAction({
     stage: fileStage,
     otherFilesPending: !!nextPending(selected),
     unsupported: !!file?.unsupported,
+    unchosen: unchosen.length > 0,
   });
   const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
@@ -883,9 +904,24 @@ export function ConflictWorkspace({
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
+  /** An in-place edit with unsaved text holds every step that would leave or review the draft: says so, and true. */
+  function editHeld() {
+    if (editorDirty.current) setHint('Save or cancel your edit first.');
+    return editorDirty.current;
+  }
+  /**
+   * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: no unsaved edit
+   * in place, no conflict left unchosen, and every file reviewed in its draft on screen, with no marker or local merge.
+   */
   function confirm() {
-    // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
-    const waiting = sessionRef.current?.files.find((f) => needsYou(f));
+    if (editHeld()) return;
+    if (file && unchosen.length) {
+      setHint(waitingHint(file, contents, unchosen.length));
+      return;
+    }
+    const waiting = sessionRef.current?.files.find((f) =>
+      needsYou(f, f.path === selectedRef.current ? contentsRef.current : f.result)
+    );
     if (waiting) {
       setHint(`${waiting.path} still needs you. Review every file before you push.`);
       return;
@@ -909,7 +945,13 @@ export function ConflictWorkspace({
     );
   }
   function markReviewed() {
+    if (editHeld()) return;
     if (!file || markersRemain || file.unsupported) return;
+    if (unchosen.length) {
+      setHint(waitingHint(file, contents, unchosen.length));
+      view.current?.move(1);
+      return;
+    }
     const path = selected;
     let finished = false;
     void run(
@@ -941,7 +983,9 @@ export function ConflictWorkspace({
       (reply) => setSession(reply.session)
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
-  const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  // What preparation left: the original conflict with only the proposals nobody has to choose in place (the checks'
+  // Merged ones, and remembered resolutions). Every other proposal stays on its card.
+  const resetTarget = (f: ConflictFile) => preparedDraft(f, verdictOf(f));
   // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
@@ -972,6 +1016,7 @@ export function ConflictWorkspace({
     focusIntent.current = true;
   }
   function chooseFile(path: string) {
+    if (path !== selected && editHeld()) return;
     if (!sessionRef.current || pending.current || path === selected) return;
     void persist()
       .then((saved) => select(path, saved))
@@ -998,16 +1043,21 @@ export function ConflictWorkspace({
       (reply) => {
         const current = reply.session.files.find((f) => f.path === path);
         const who = engine === 'mergiraf' ? 'Structural merge' : model.replace(/^the /, 'The ');
+        // A suggestion is offered as proposals (fail closed): the service says what it offered, and what it left to your
+        // decisions.
         setOutcome(
           engine === 'whole-file'
             ? 'The draft is the whole-file proposal now. Review it before you mark the file reviewed.'
-            : current && hasConflictMarkers(current.result)
-              ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
-              : `${who} suggested a result. Review it before you mark the file reviewed.`
+            : engine === 'mergiraf'
+              ? // Structural merge's own words already name it; a timeout says so in its note.
+                (current?.explanation ?? current?.structuralNote ?? 'Structural merge proposed nothing new.')
+              : current?.explanation
+                ? `${who}: ${current.explanation}`
+                : `${who} proposed nothing new.`
         );
-        // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
+        // Only using a whole-file result replaces your choices; a suggestion never overrides them.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
-        if (current?.result !== before) dropPicks(path);
+        if (engine === 'whole-file' && current?.result !== before) dropPicks(path);
         apply(reply, path);
       }
     );
@@ -1113,6 +1163,14 @@ export function ConflictWorkspace({
     []
   );
 
+  /** G: the merged conflicts. Show me every merged conflict turns on, never off, and takes focus. */
+  function showMergedConflicts() {
+    const toggle = mergedToggle.current;
+    if (!toggle) return false;
+    if (!showMerged) void setShowMergedConflicts?.(repo, true);
+    toggle.focus();
+    return true;
+  }
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     // Escape leaves the view, as it closed the dialog. Drafts save first; nothing is pushed.
     if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -1122,16 +1180,36 @@ export function ConflictWorkspace({
       void close();
       return;
     }
-    if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    // U right after A undoes that A; any other key ends that (Shift and the other modifiers alone don't).
+    if (event.key !== 'a' && event.key !== 'u' && !['Shift', 'Meta', 'Control', 'Alt'].includes(event.key))
+      view.current?.forgetAccept();
+    if (event.defaultPrevented || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
-    // The in-place editor's card is yours while it is open: no key chooses, moves or marks from there (#445 item 11).
+    // No key acts while you type: in a field, a menu, the in-place editor's card (#445 item 11) or any editable text.
+    // A checkbox is not typing.
     if (
       origin.isContentEditable ||
       origin.closest(
-        'input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
+        'input:not([type=checkbox]),textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
       )
     )
       return;
+    // In the confirmation, G opens Merged for you. Cmd+Enter there is the Push button's own key, never this view's.
+    if (confirming) {
+      if (event.key === 'g' && !event.metaKey && !event.ctrlKey && groups && !groups.pending.length) {
+        event.preventDefault();
+        setOpenMerged((n) => n + 1);
+      }
+      return;
+    }
+    if (!shortcutsActive) return;
+    // Cmd+Enter opens the confirmation, as Review and push… does. It never pushes: Push takes its own click or key.
+    if (isReviewAndPushKey(event, mac)) {
+      event.preventDefault();
+      if (!event.repeat) confirm();
+      return;
+    }
+    if (event.metaKey || event.ctrlKey) return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {
@@ -1143,6 +1221,7 @@ export function ConflictWorkspace({
         return !!view.current?.choose(key === '1' ? 'ours' : key === '2' ? 'theirs' : 'both');
       }
       if (key === 'm') {
+        if (editHeld()) return true;
         if (markersRemain) setHint('Resolve the remaining conflicts first.');
         else markReviewed();
         return true;
@@ -1151,6 +1230,22 @@ export function ConflictWorkspace({
         stepFile(key === 'n' ? 1 : -1);
         return true;
       }
+      if (key === 'a') {
+        if (!canEdit) return false;
+        // A whole-file proposal is never accepted by a key: Use this result takes it.
+        if (proposalOnly) setHint('A accepts one conflict’s proposal. Use this result takes the whole-file proposal.');
+        else if (!view.current) return false;
+        else if (view.current.accept()) setHint('');
+        else setHint('Nothing to accept here: this conflict has no proposal that needs you.');
+        return true;
+      }
+      if (key === 'u') {
+        if (!canEdit) return false;
+        if (view.current?.undo()) setHint('');
+        return true;
+      }
+      if (key === 'v') return !!view.current?.cycleCompare();
+      if (key === 'g') return showMergedConflicts();
       return false;
     })();
     if (handled) event.preventDefault();
@@ -1342,7 +1437,9 @@ export function ConflictWorkspace({
               {session.files.some((f) => f.proposals) && (
                 <label>
                   <input
+                    ref={mergedToggle}
                     type="checkbox"
+                    aria-keyshortcuts="G"
                     checked={showMerged}
                     disabled={!setShowMergedConflicts}
                     onChange={(e) => void setShowMergedConflicts?.(repo, e.target.checked)}
@@ -1670,6 +1767,7 @@ export function ConflictWorkspace({
                   labels={labels}
                   verdictOf={verdictOf}
                   preferences={preferences}
+                  openMerged={openMerged}
                 />
               )}
             </StepCard>
@@ -1822,6 +1920,7 @@ export function ConflictWorkspace({
                                 disabled={!canEdit}
                                 onChange={setContents}
                                 onAllResolved={() => primary.current?.focus()}
+                                onEditorDirty={(dirty) => (editorDirty.current = dirty)}
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
@@ -1881,10 +1980,11 @@ export function ConflictWorkspace({
                   <span className="conflict-footer-status">
                     Start over with the latest code? Your current resolutions are replaced by a fresh merge.
                   </span>
-                  <Button size="sm" variant="ghost" onClick={() => setResetPrompt(false)}>
+                  {/* Cancel has focus: Enter or a stray Space never discards your resolutions. */}
+                  <Button size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
                     Cancel
                   </Button>
-                  <Button size="sm" disabled={busy} onClick={() => void load(true)}>
+                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => void load(true)}>
                     Start over
                   </Button>
                 </>
@@ -2138,6 +2238,7 @@ function ConfirmDiff({
   labels,
   verdictOf,
   preferences,
+  openMerged = 0,
 }: {
   session: ConflictSession;
   preview: NonNullable<ConflictReply['preview']>;
@@ -2145,10 +2246,20 @@ function ConfirmDiff({
   labels: ConflictLabels;
   verdictOf: (f: ConflictFile) => Verdict | undefined;
   preferences?: Preferences | null;
+  /** Counts G presses: each opens Merged for you and focuses its heading. */
+  openMerged?: number;
 }) {
   const clean = !session.files.length;
   // A clean merge has only main's changes: that group opens.
   const [open, setOpen] = useState({ decided: true, merged: false, main: clean });
+  const root = useRef<HTMLDivElement>(null);
+  const pressed = useRef(openMerged);
+  useEffect(() => {
+    if (openMerged === pressed.current) return;
+    pressed.current = openMerged;
+    setOpen((previous) => ({ ...previous, merged: true }));
+    root.current?.querySelector<HTMLElement>('[data-confirm-group=merged] .conflict-disclosure')?.focus();
+  }, [openMerged]);
   const toggle = (id: keyof typeof open) => setOpen((previous) => ({ ...previous, [id]: !previous[id] }));
   const verdict = (path: string) => {
     const f = session.files.find((file) => file.path === path);
@@ -2181,7 +2292,7 @@ function ConfirmDiff({
     />
   );
   return (
-    <div className="conflict-confirm-diff">
+    <div ref={root} className="conflict-confirm-diff">
       {!clean && (
         <ConfirmSection
           id="decided"

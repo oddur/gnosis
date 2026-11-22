@@ -1,5 +1,5 @@
 import { diffArrays } from 'diff';
-import { blockResolutions } from './conflict-carry';
+import { blockResolutions, restoreMarkers, withProposals } from './conflict-carry';
 import {
   conflictCount,
   editOpen,
@@ -9,6 +9,7 @@ import {
   textLines,
   withPicks,
   type BlockEdits,
+  type BlockPick,
   type BlockPicks,
   type ConflictSegment,
 } from './conflict-blocks';
@@ -200,10 +201,10 @@ export async function verifyProposals(
   const open = conflicts.filter((s) => !proposals[s.index]);
   const proposed = conflicts.filter((s) => proposals[s.index]);
   let probe = fill(segments, proposals, 'ours');
-  if (hasConflictMarkers(probe.text)) return { merged: false, note: 'The result still has conflict markers.' };
+  if (hasConflictMarkers(probe.text)) return { merged: false, note: 'With the proposals in place, the file still has conflict markers.' };
   const ending = lineEnding(file.ours);
   if (lineEnding(probe.text) !== ending && ending !== 'mixed')
-    return { merged: false, note: 'The result mixes line endings.' };
+    return { merged: false, note: 'With the proposals in place, the file mixes line endings.' };
   /** The first failure of each conflict. */
   const failed = new Map<number, string>();
   const fail = (index: number, note: string) => void (failed.has(index) || failed.set(index, note));
@@ -242,7 +243,7 @@ export async function verifyProposals(
     // Your own earlier resolutions stay Merged; nothing else can be checked.
     for (const s of proposed)
       if (proposals[s.index]?.source !== 'rerere')
-        fail(s.index, 'Gnosis can’t parse this file type, so it couldn’t check the result.');
+        fail(s.index, 'Gnosis can’t parse this file type, so it couldn’t check the proposal.');
     return verdict(() => 'Same as you resolved before. Gnosis can’t parse this file type.');
   }
   // Each union's two insertions, as lines of the probe, to read as whole syntax nodes. A structural merge whose result
@@ -403,8 +404,8 @@ export async function verifyProposals(
           break;
         }
       }
-      if (!suspects || !without) return { merged: false, note: 'The result doesn’t parse.' };
-      for (const index of suspects) fail(index, 'This result doesn’t parse.');
+      if (!suspects || !without) return { merged: false, note: 'With the proposals in place, the file doesn’t parse.' };
+      for (const index of suspects) fail(index, 'This proposal doesn’t parse.');
       probe = without.probe;
       parsed[3] = without.parsed;
     } else if (result.errors && (ours.errors || theirs.errors)) {
@@ -414,7 +415,7 @@ export async function verifyProposals(
       // is the only check that sees them break the file. Errors the sides' own lines don't give, that no proposal
       // accounts for, fail every proposal in the file.
       const ranges = result.errorLines;
-      if (!ranges?.length) return { merged: false, note: 'The result doesn’t parse.' };
+      if (!ranges?.length) return { merged: false, note: 'With the proposals in place, the file doesn’t parse.' };
       const sides = await sideFills();
       /** Error ranges in a parse; errors the parser can't place count as too many. */
       const errorCount = (read: ParsedText) => (read.errors ? read.errorLines?.length || Infinity : 0);
@@ -451,7 +452,7 @@ export async function verifyProposals(
       };
       for (const index of suspects) {
         if (written(index)) {
-          fail(index, 'This result doesn’t parse.');
+          fail(index, 'This proposal doesn’t parse.');
           continue;
         }
         const counts = await Promise.all(
@@ -461,11 +462,11 @@ export async function verifyProposals(
         );
         // Errors the parser can't place can't be compared: the proposal is blamed.
         if (counts.some((count) => count < ranges.length || count === Infinity))
-          fail(index, 'This result doesn’t parse.');
+          fail(index, 'This proposal doesn’t parse.');
       }
       // An error no proposal accounts for, that the sides' own lines don't give: every proposal in the file is suspect.
       if (!(await explained(new Set(suspects.filter((index) => failed.has(index))))))
-        return { merged: false, note: 'The result doesn’t parse.' };
+        return { merged: false, note: 'With the proposals in place, the file doesn’t parse.' };
     }
     if (ours.errors || theirs.errors) {
       // A side that doesn't parse, with an error over a proposal: the parser can't vouch for that proposal, whether the
@@ -479,7 +480,7 @@ export async function verifyProposals(
       const sideErrors = await Promise.all(broken.map(({ filled, read }) => errorSet(filled, read)));
       if (!resultErrors || !sideErrors.some((own) => own && within(own, resultErrors)))
         for (const c of proposed)
-          if (!exactSide(c)) fail(c.index, `${doesnt()} here, and the result parses differently. Check it.`);
+          if (!exactSide(c)) fail(c.index, `${doesnt()} here, and with the proposal the file parses differently. Check it.`);
       for (const { filled, read } of filledBoth) {
         if (!read.errors) continue;
         for (const c of proposed) {
@@ -583,7 +584,7 @@ export async function verifyProposals(
     ? 'The file parses.'
     : parseFailed
       ? `${doesnt()}, so Gnosis couldn’t check how this result parses.`
-      : `${doesnt()}; the result adds no parse errors of its own.`;
+      : `${doesnt()}; the proposal adds no parse errors of its own.`;
   return verdict((index) => {
     const own = reformats.get(index);
     if (own) return `${own} ${parses}`;
@@ -594,7 +595,7 @@ export async function verifyProposals(
 /** A model proposal's note when it passed every check: it is still never Merged. */
 export const MODEL_UNCHECKED = 'A model wrote this. Read it before you use it.';
 /** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
-export const SAME_LINES = 'Both sides changed the same lines. Check that the result keeps both changes.';
+export const SAME_LINES = 'Both sides changed the same lines. Check that the proposal keeps both changes.';
 /** The tokens `after` drops from `before` and the ones it adds, in order. */
 function tokenChanges(before: readonly string[], after: readonly string[]) {
   const removed: string[] = [];
@@ -623,7 +624,7 @@ export const SAME_CHANGE = 'Both sides made the same change. Kept the PR’s lay
  * only until the proposal is taken back (src/conflict-checks.ts withoutUnconfirmed).
  */
 export const NOT_SAME =
-  'Both sides changed these lines almost the same way, but Gnosis couldn’t show it is the same change. The result is the PR’s version. Check main’s change.';
+  'Both sides changed these lines almost the same way, but Gnosis couldn’t show it is the same change. The proposal is the PR’s version. Check main’s change.';
 
 /**
  * A conflict where one side only reformatted the lines the other side changed. Each version of the conflict is read
@@ -664,13 +665,13 @@ async function reformatted(
     const [formatter, editor] = pr ? ['the PR', 'main'] : ['main', 'the PR'];
     const lead = `${pr ? 'The PR' : 'Main'} only reformatted these lines and ${editor} changed them`;
     if (!(await equivalent(language, fill(pr ? theirs : ours), fill(proposal))))
-      return { merged: false, note: `${lead}. The result doesn’t match ${editor}’s change. Check it.` };
+      return { merged: false, note: `${lead}. The proposal doesn’t match ${editor}’s change. Check it.` };
     if (!keepsLayout({ base, edited: pr ? theirs : ours, formatted: pr ? ours : theirs }, proposal))
       return {
         merged: false,
-        note: `${lead}. The result keeps ${editor}’s change, but not in ${formatter}’s layout. Check it.`,
+        note: `${lead}. The proposal keeps ${editor}’s change, but not in ${formatter}’s layout. Check it.`,
       };
-    return { merged: true, note: `${lead}; the result keeps ${editor}’s change in ${formatter}’s formatting.` };
+    return { merged: true, note: `${lead}; the proposal keeps ${editor}’s change in ${formatter}’s formatting.` };
   } catch {
     // The comparison failed (the language is off, the file too large): the conflict stays in Check.
     return undefined;
@@ -695,14 +696,16 @@ export async function verifyWholeFile(
     return {
       merged: false,
       passed: true,
-      note: `${proposal.note ?? 'One side moved this definition, and the other edited it.'} Gnosis applied the edit at the new place. The result parses and keeps every change from both sides. ${MOVED_UNCHECKED}`,
+      note: `${proposal.note ?? 'One side moved this definition, and the other edited it.'} The proposal applies the edit at the new place. It parses and keeps every change from both sides. ${MOVED_UNCHECKED}`,
     };
   }
+  // The note names what wrote it: structural merge's whole-file result, a model's, or Gnosis's own.
+  const who = proposal.source === 'mergiraf' ? 'Mergiraf' : proposal.source === 'model' ? (proposal.by ?? 'The model') : 'Gnosis';
   return verdict.merged
     ? {
         merged: false,
         passed: true,
-        note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+        note: `${who} moved lines outside the conflict. The proposal parses and keeps every change from both sides. Read it, then use it.`,
       }
     : { merged: false, note: `${verdict.note} Read it before you use it, or resolve conflict by conflict.` };
 }
@@ -750,9 +753,9 @@ function renamedEdit(texts: readonly string[], parsed: readonly ParsedText[]): s
       if (targets.length !== 1) continue;
       const [to] = targets;
       const out = merged.filter((d) => d.key === to.key);
-      if (merged.some((d) => d.key === old.key)) return `${old.name} is still in the result after its rename.`;
+      if (merged.some((d) => d.key === old.key)) return `${old.name} is still in the proposal after its rename.`;
       if (out.length !== 1 || out[0].body !== rename(edited[0].body, old.name, to.name))
-        return `${to.name} in the result doesn’t match ${who}’s change to ${old.name}.`;
+        return `${to.name} in the proposal doesn’t match ${who}’s change to ${old.name}.`;
     }
   }
   return undefined;
@@ -792,9 +795,9 @@ function lostEdit(texts: string[], parsed: ParsedText[]) {
     if (base !== ours[0] && base !== theirs[0] && !containers.has(key))
       return `Both sides changed ${name}. Check it yourself.`;
     if (base === ours[0] && base !== theirs[0] && result[0] !== theirs[0])
-      return `${name} in the result doesn’t match main’s change to it.`;
+      return `${name} in the proposal doesn’t match main’s change to it.`;
     if (base === theirs[0] && base !== ours[0] && result[0] !== ours[0])
-      return `${name} in the result doesn’t match the PR’s change to it.`;
+      return `${name} in the proposal doesn’t match the PR’s change to it.`;
     if (base === ours[0] && base === theirs[0] && result[0] !== base)
       return `${name} changed in the result, but neither side changed it.`;
   }
@@ -964,7 +967,7 @@ function outOfOrder(
   }
   if (r !== merged.length) return ORDER;
 }
-const ORDER = 'The result changes the order of lines from the PR or main.';
+const ORDER = 'The proposal changes the order of lines from the PR or main.';
 
 /** A side's edits against the ancestor: each replaces ancestor lines [start, end) with `added`. */
 export interface LineChange {
@@ -1025,7 +1028,7 @@ function danglingNames(
       if (word.length < 2 || KEYWORDS.has(word)) continue;
       const side = removed(word, 'ours', 'theirs') ? 'the PR' : removed(word, 'theirs', 'ours') ? 'main' : undefined;
       if (side) {
-        found.push([s.index, `${word} was renamed or removed on ${side}, but the result still uses it.`]);
+        found.push([s.index, `${word} was renamed or removed on ${side}, but the proposal still uses it.`]);
         break;
       }
     }
@@ -1074,7 +1077,7 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
     if (s.kind === 'conflict' && proposals[s.index]) {
       const text = proposals[s.index]?.text ?? '';
       if (semicolons(text) > Math.max(semicolons(s.block.ours), semicolons(s.block.theirs)))
-        found.push([s.index, 'The result adds a line that holds only a semicolon.']);
+        found.push([s.index, 'The proposal adds a line that holds only a semicolon.']);
     }
   return found;
 }
@@ -1170,6 +1173,19 @@ export function typeErrorOf(
   return file.typeError;
 }
 
+/** Picks as the view keeps them, or as the draft saves them (null for none). */
+type SavedPicks = readonly (BlockPick | null | undefined)[];
+const ownPicks = (picks: SavedPicks | undefined): BlockPicks | undefined => picks?.map((pick) => pick ?? undefined);
+/** The checks proved this proposal: Merged. A model's never is, whatever a verdict says (lib/conflict-model.ts). */
+export const provenMerged = (proposal: ConflictProposal, verdict: Verdict | undefined, index: number) =>
+  proposal.source !== 'model' && !!blockVerdict(verdict, index)?.merged;
+/**
+ * A proposal that needs no choice of yours (fail closed: every other one does): the checks Merged it, or it is a
+ * resolution you made before in this repository (rerere).
+ */
+export const needsNoChoice = (proposal: ConflictProposal, verdict: Verdict | undefined, index: number) =>
+  proposal.source === 'rerere' || provenMerged(proposal, verdict, index);
+
 /**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the
  * checks passed, else Check; `verdict` undefined means the checks are still running. A block you chose is Decided.
@@ -1180,11 +1196,12 @@ export function blockBuckets(
   contents: string,
   verdict: Verdict | undefined,
   /** Keep choices you made: one whose text equals the proposal is Decided, not the proposal (withPicks). */
-  picks?: BlockPicks,
+  saved?: SavedPicks,
   /** Your in-place edits (#445 item 11): Decided, or Decide while a conflict marker is left in one. */
   edits?: BlockEdits
 ): ConflictBucket[] {
   if (file.unsupported) return ['decide'];
+  const picks = ownPicks(saved);
   // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that
   // failed its checks leaves them to decide.
   if (file.wholeFile && contents === file.original && (!verdict || verdict.passed))
@@ -1194,30 +1211,114 @@ export function blockBuckets(
   const choices = inferred && withPicks(segments, inferred, file.proposals, picks);
   const blocks = segments.filter((s) => s.kind === 'conflict');
   if (!choices) {
-    // Edited by hand somewhere: each block's own text where the draft still shows it. A proposal that is not shown
-    // to be in place unchanged needs you: it is never Decided, and only Merged when its exact text is there.
     const texts = blockResolutions(segments, contents);
-    let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
+    if (!texts) {
+      // The draft can't be split into its conflicts (edited around them, or past the splitter's limits). Fail closed:
+      // a proposal that needs a choice may still be in it untouched, so it is Check and waits for you (Reset file is
+      // the way back). Others: Decide while the draft still shows a conflict, else Decided.
+      let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
+      return blocks.map((s) => {
+        const proposal = file.proposals?.[s.index];
+        if (proposal && !needsNoChoice(proposal, verdict, s.index)) return 'check';
+        return open-- > 0 ? 'decide' : 'decided';
+      });
+    }
+    // Text typed inside a conflict, the rest as it was: each conflict by its own text. A proposal still in place
+    // unchanged is Merged only as the checks say, else Check; text of yours is Decided.
     return blocks.map((s) => {
       const proposal = file.proposals?.[s.index];
-      const text = texts?.[s.index];
-      if (proposal && text === proposal.text)
-        return proposal.source !== 'model' && blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
-      if (proposal && text === undefined) return 'check';
-      if (texts) return text === undefined ? 'decide' : 'decided';
-      return open-- > 0 ? 'decide' : 'decided';
+      const text = texts[s.index];
+      if (proposal && text === proposal.text) return provenMerged(proposal, verdict, s.index) ? 'merged' : 'check';
+      if (text === undefined) return proposal ? 'check' : 'decide';
+      return 'decided';
     });
   }
   return blocks.map((s) => {
     const pick = choices[s.index];
-    // A model proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
-    if (pick === 'proposal')
-      return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged
-        ? 'merged'
-        : 'check';
+    if (pick === 'proposal') {
+      // Use the proposal, chosen by you, is your decision. Untouched, it is Merged only as the checks say; a model
+      // proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
+      if (picks?.[s.index] === 'proposal') return 'decided';
+      const proposal = file.proposals?.[s.index];
+      return proposal && provenMerged(proposal, verdict, s.index) ? 'merged' : 'check';
+    }
     if (pick === 'edit') return editOpen(edits?.[s.index]) ? 'decide' : 'decided';
-    return pick ? 'decided' : 'decide';
+    if (pick) return 'decided';
+    // Open with a proposal: Check, and nothing is chosen yet (Use the proposal is one of its choices). Without, Decide.
+    return file.proposals?.[s.index] ? 'check' : 'decide';
   });
+}
+
+/**
+ * The conflicts that wait for an explicit choice before the file can be marked reviewed: each in Check, whether its
+ * proposal is in the draft untouched or offered beside the conflict markers. A remembered resolution is your own and
+ * doesn't wait (`rerere`). Fail closed: the checks' Merged conflicts are the only proposals nobody has to choose.
+ */
+export function unchosenConflicts(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
+  contents: string,
+  verdict: Verdict | undefined,
+  picks?: SavedPicks,
+  edits?: BlockEdits
+): number[] {
+  // Behind a whole-file proposal the draft is the original conflict: its markers wait already.
+  if (file.unsupported || (file.wholeFile && contents === file.original)) return [];
+  const buckets = blockBuckets(file, contents, verdict, picks, edits);
+  return parseConflicts(file.original)
+    .flatMap((s) => (s.kind === 'conflict' ? [s.index] : []))
+    .filter((index, i) => {
+      const proposal = file.proposals?.[index];
+      return buckets[i] === 'check' && !(proposal && needsNoChoice(proposal, verdict, index));
+    });
+}
+
+/** "Choose for the conflict in Check first: …", the one wording for every place that waits for a choice. */
+export const chooseFirst = (count: number) =>
+  `Choose for ${count === 1 ? 'the conflict' : `the ${count} conflicts`} in Check first: use the proposal, keep a side, or edit.`;
+/** Why a draft that can't be split into its conflicts waits: only Reset file gives the choices back. */
+export const UNSPLIT_HINT = 'Gnosis can’t tell your edits apart from the proposals here. Reset the file to choose again.';
+/** The wording for conflicts that wait for a choice in `contents`: chooseFirst, or UNSPLIT_HINT for a draft that can't be split. */
+export const waitingHint = (file: Pick<ConflictFile, 'original'>, contents: string, count: number) =>
+  blockResolutions(parseConflicts(file.original), contents) ? chooseFirst(count) : UNSPLIT_HINT;
+
+/**
+ * The draft as preparation leaves it, and the target of Reset file: the original conflict with only the proposals that
+ * need no choice in place (needsNoChoice). Every other proposal waits on its card.
+ */
+export function preparedDraft(
+  file: Pick<ConflictFile, 'original' | 'proposals'>,
+  verdict: Verdict | undefined
+): string {
+  if (!file.proposals) return file.original;
+  const all = withProposals(file.original, file.proposals);
+  return withoutUnchosen({ ...file, result: all }, verdict) ?? all;
+}
+
+/**
+ * The draft without the proposals nobody chose that the checks didn't Merge: each such conflict gets its markers back,
+ * and its proposal stays, offered on its card (Use the proposal). A proposal the checks Merged, a remembered resolution,
+ * and a conflict you chose (a pick) or edited keep their text. Undefined when nothing changes, or when the draft doesn't
+ * split into its conflicts exactly. Fail closed: no verdict means nothing was Merged.
+ */
+export function withoutUnchosen(
+  file: Pick<ConflictFile, 'original' | 'result' | 'proposals'> & Partial<Pick<ConflictFile, 'picks' | 'edits'>>,
+  verdict: Verdict | undefined
+): string | undefined {
+  const proposals = file.proposals;
+  if (!proposals?.some(Boolean)) return undefined;
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, file.result);
+  if (!texts) return undefined;
+  const restore = proposals.flatMap((proposal, index) =>
+    proposal &&
+    !needsNoChoice(proposal, verdict, index) &&
+    texts[index] === proposal.text &&
+    !file.picks?.[index] &&
+    !file.edits?.[index]
+      ? [index]
+      : []
+  );
+  return restore.length ? restoreMarkers(segments, texts, file.result, restore) : undefined;
 }
 
 /**

@@ -51,7 +51,16 @@ import {
 } from '../lib/conflict-model';
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
-import { typeCheckKey, type Verdict } from '../lib/conflict-verify';
+import {
+  typeCheckKey,
+  typeErrorOf,
+  unchosenConflicts,
+  waitingHint,
+  withTypeError,
+  withoutUnchosen,
+  type Verdict,
+} from '../lib/conflict-verify';
+import { offerSuggestion } from '../lib/conflict-offer';
 import {
   FROM_FORK,
   TYPE_CHECK_DELAY,
@@ -344,10 +353,31 @@ export function createConflictResolutionService(deps: Deps) {
     if (file.wholeFile) return 'This file has a whole-file proposal. Use it or decide the conflicts yourself.';
     const probe = conflictProbe(file.original, index);
     if (!probe) return 'This conflict changed.';
-    if (!modelTargets(file).includes(index)) return 'You already decided this conflict.';
+    if (!modelTargets(file).includes(index))
+      return file.proposals?.[index] ? 'This conflict already has a proposal to check.' : 'You already decided this conflict.';
     if ([probe.block.ours, probe.block.theirs, probe.block.base ?? ''].some(hasSecretText))
       return 'This conflict looks like it holds a key or a token, so Gnosis doesn’t send it to a model.';
     return undefined;
+  };
+  /**
+   * A file marked reviewed has an explicit choice for every conflict in Check (fail closed): none is accepted by default.
+   * The saved verdict counts only when it was made for this draft (its key); else nothing counts as Merged.
+   */
+  const unchosenOf = (
+    file: ConflictFile,
+    request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
+  ) => {
+    const key = verdictKey({ ...file, result: request.contents }, deps.disabledLanguages?.() ?? []);
+    // The type check's demotion saved on the file counts too: a Merged proposal it demoted waits for a choice.
+    const verdict = withTypeError(file.verdict?.key === key ? file.verdict.verdict : undefined, typeErrorOf(file, undefined));
+    return unchosenConflicts(file, request.contents, verdict, request.picks ?? file.picks, request.edits ?? file.edits);
+  };
+  const assertChosen = (
+    file: ConflictFile,
+    request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
+  ) => {
+    const waiting = unchosenOf(file, request);
+    if (waiting.length) throw new Error(waitingHint(file, request.contents, waiting.length));
   };
   /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
@@ -396,6 +426,8 @@ export function createConflictResolutionService(deps: Deps) {
       const mark: TypeErrorMark | undefined = typed && { key: typed.key, note: typed.note };
       if (mark && JSON.stringify(file.typeError) !== JSON.stringify(mark)) {
         file.typeError = mark;
+        // A demotion that lands after Mark reviewed reopens the file: its demoted conflicts wait for a choice again.
+        if (file.resolved && unchosenOf(file, { contents: file.result }).length) file.resolved = false;
         changed = true;
       } else if (!typed && file.typeError) {
         delete file.typeError;
@@ -1102,11 +1134,11 @@ export function createConflictResolutionService(deps: Deps) {
    * proposals drops its verdict. True when any verdict changed.
    */
   async function check(files: ConflictFile[], signal: AbortSignal, report: (text: string) => void = () => {}) {
-    if (!deps.verify) return false;
     let changed = false;
     const disabled = deps.disabledLanguages?.() ?? [];
     const due: { file: ConflictFile; key: string }[] = [];
-    for (const file of files) {
+    // Without the checks (a build without them) nothing is verified, but the strip below still runs: fail closed.
+    for (const file of deps.verify ? files : []) {
       if (file.unsupported || (!file.proposals && !file.wholeFile)) {
         if (file.verdict) changed = true;
         delete file.verdict;
@@ -1118,6 +1150,7 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
+      if (!deps.verify) break;
       signal.throwIfAborted();
       // A cancelled request stops its check in the worker (#464), and nothing of the file changes for it.
       let verdict = await deps.verify(file, disabled, signal);
@@ -1132,6 +1165,20 @@ export function createConflictResolutionService(deps: Deps) {
       }
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
+      changed = true;
+    }
+    // Fail closed: a proposal nobody chose stays in the draft only when the checks Merged it. Every other one is taken
+    // out of the draft, with the conflict's markers back, and stays offered on its card (Use the proposal). Its verdict
+    // is the same either way: the checks read an unchosen conflict as its proposal.
+    for (const file of files) {
+      if (file.unsupported) continue;
+      // Only a verdict made for this draft counts; a stale one Merges nothing.
+      const current = file.verdict?.key === verdictKey({ ...file }, disabled) ? file.verdict.verdict : undefined;
+      const held = withoutUnchosen(file, current);
+      if (held === undefined) continue;
+      file.result = held;
+      file.resolved = false;
+      if (file.verdict) file.verdict = { ...file.verdict, key: verdictKey({ ...file }, disabled) };
       changed = true;
     }
     return changed;
@@ -1912,6 +1959,8 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('The PR already contains the base branch. No update is needed.');
     if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
+    // The same guard as Mark reviewed, at the last moment: a conflict in Check without a choice is never pushed.
+    for (const file of session.files) assertChosen(file, { contents: file.result });
   }
   async function resultTree(
     ctx: Context,
@@ -2557,10 +2606,15 @@ export function createConflictResolutionService(deps: Deps) {
               throw new Error('This paused file cannot be edited.');
             if (request.resolved && hasConflictMarkers(request.contents))
               throw new Error('Remove the remaining conflict markers first.');
+            if (request.resolved) assertChosen(file, request);
             file.result = request.contents;
             file.resolved = request.resolved;
             if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
             if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
+            // As for a save: the checks read the draft with your choices, and take back a proposal nobody chose that
+            // they no longer Merge beside them.
+            await check([file], signal, report);
+            if (file.resolved && file.result !== request.contents) file.resolved = false;
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
@@ -2623,6 +2677,7 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('This file cannot be saved in the conflict editor.');
           if (request.resolved && hasConflictMarkers(request.contents))
             throw new Error('Remove the remaining conflict markers first.');
+          if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {
             file.source = 'manual';
             file.explanation = undefined;
@@ -2656,13 +2711,16 @@ export function createConflictResolutionService(deps: Deps) {
           const refused = modelRefusal(session, file, request.index);
           if (refused) throw new Error(`${refused.replace(/\.$/, '')}, so the proposal wasn’t used.`);
           const spliced = spliceModelProposal(file, request.index, modelProposal(waiting.reply, waiting.text, waiting.by));
-          if (!spliced) throw new Error('You already decided this conflict, so the proposal wasn’t used.');
-          file.result = spliced.result;
+          if (!spliced)
+            throw new Error(
+              file.proposals?.[request.index]
+                ? 'This conflict already has a proposal to check, so the new one wasn’t used.'
+                : 'You already decided this conflict, so the proposal wasn’t used.'
+            );
+          // Fail closed: the proposal is offered on the conflict's card, never written into the draft. The conflict keeps
+          // its markers until you choose (Use the proposal, a Keep or an edit). spliceModelProposal checked that it fits
+          // this conflict's span alone.
           file.proposals = spliced.proposals;
-          file.resolved = false;
-          // The draft a resolver wrote now holds the model's lines too: lines neither side had are marked (#445 item 10).
-          // Its text leaves your in-place edits out (spliceModelProposal), so no line you typed is ever taken for it.
-          file.resolverText = spliced.resolver;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -2679,8 +2737,10 @@ export function createConflictResolutionService(deps: Deps) {
               file.explanation =
                 proposal.source === 'moved'
                   ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
-                  : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
-              file.source = proposal.source === 'mergiraf' ? 'mergiraf' : 'manual';
+                  : proposal.source === 'model'
+                    ? 'You used the model’s result for the whole file. Review it before marking the file reviewed.'
+                    : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+              file.source = proposal.source === 'mergiraf' ? 'mergiraf' : proposal.source === 'model' ? 'agent' : 'manual';
               // The draft no longer derives from the per-conflict proposals. The whole-file proposal stays, so Reset
               // file returns to Git's conflicts and the proposal is offered again; so is "Try structural merge again".
               delete file.proposals;
@@ -2698,15 +2758,14 @@ export function createConflictResolutionService(deps: Deps) {
               if (file.base.length + file.ours.length + file.theirs.length > 220_000)
                 throw new Error('This file is too large for agent context. Use the manual editor.');
               const result = await deps.suggest({ session, file, instructions: request.instructions ?? '' }, signal);
+              let note = '';
               if (result.contents !== undefined) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
-                // Your Keep choices were for the draft this replaces.
-                if (result.contents !== file.result) file.picks = file.edits = undefined;
-                file.result = result.contents;
-                file.resolverText = result.contents;
+                note = offerSuggestion(file, result.contents, 'model');
               }
-              file.explanation = result.explanation;
+              file.explanation = [result.explanation, note].filter(Boolean).join(' ');
+              continue;
             } else {
               // Structural merge already ran and left these conflicts open: a retry would throw the unions away, and
               // the dialog never offers one (canRetryStructural). Refused here too (#462).
@@ -2736,25 +2795,22 @@ export function createConflictResolutionService(deps: Deps) {
                 // output is not its merge. The draft stays as it was, and the note says so.
                 if (output === undefined || Date.now() - started >= budget) {
                   file.structuralNote = 'Structural merge timed out again.';
+                  // An older suggestion's words would read as this run's.
+                  file.explanation = undefined;
                   continue;
                 }
               }
-              if (output !== file.result) file.picks = file.edits = undefined;
-              file.result = output;
-              file.resolverText = output;
-              file.explanation = hasConflictMarkers(file.result)
-                ? 'Mergiraf left conflicts that need your input.'
-                : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+              const note = offerSuggestion(file, output, 'mergiraf');
+              file.explanation = [
+                hasConflictMarkers(output)
+                  ? 'Structural merge left conflicts that need your input.'
+                  : 'Structural merge proposed a result. Choose for each conflict before you mark the file reviewed.',
+                note,
+              ]
+                .filter(Boolean)
+                .join(' ');
+              delete file.structuralNote;
             }
-            file.source = request.engine;
-            // A suggestion that declined (no new contents) leaves the draft as it was: its text stays the baseline its
-            // marks come from, once the per-conflict proposals are gone (#445 item 10).
-            file.resolverText ??= file.result;
-            // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
-            // whole-file proposal stays, so Reset file returns to it.
-            delete file.proposals;
-            delete file.structuralNote;
-            file.resolved = false;
           }
         } else {
           const digestOf = (tree: string) =>

@@ -4197,7 +4197,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
 .conflict-block-header [data-slot=button] { margin-left:auto; }
 .conflict-whole-file > p { padding:8px 12px;max-width:80ch;font-size:var(--type-control); }
-.conflict-merged-detail summary { color:var(--muted-foreground); }
 .conflict-proposal { padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:var(--type-control); }
 .conflict-proposal summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-proposal p { margin-top:6px;white-space:pre-wrap;max-width:80ch; }
@@ -4222,6 +4221,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-side + .conflict-side { border-left:0;border-top:1px solid var(--border); }
 }
 .conflict-ancestor { border-top:1px solid var(--border); }
+/* A Check conflict's proposal, one of its choices: shown on its card, never in the draft until you use it. */
+.conflict-proposal-preview { border-top:1px solid var(--border); }
 .conflict-ancestor summary { padding:6px 12px;cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-ancestor[open] summary { border-bottom:1px solid var(--border); }
 .conflict-block-actions { display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--secondary) 50%,var(--card)); }
@@ -4236,7 +4237,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-inline-editor { max-height:min(60vh,480px);overflow:auto;border-top:1px solid var(--border);font-size:var(--type-code,13px); }
 .conflict-inline-editor:focus-within { outline:2px solid var(--ring);outline-offset:-2px; }
 
-.conflict-result-diff,.conflict-preview-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:clip; }
+.conflict-result-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:clip; }
 /* The Conflicts view's diff (#445 item 8) is Changes' file: each conflict's card sits under its lines. */
 .conflict-diff-cards { display:flex;flex-direction:column;gap:8px;padding:8px 12px;font-family:var(--font-sans);color:var(--foreground);white-space:normal; }
 .conflict-block-note-line { padding:4px 12px 6px;color:var(--muted-foreground);font-size:var(--type-caption); }
@@ -4403,6 +4404,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .restack-conflict-file { display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:12px; }
 .restack-conflict-file h4 { display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:600;overflow-wrap:anywhere; }
 .restack-conflict-actions { display:flex;flex-wrap:wrap;gap:8px; }
+.restack-conflict-hint { align-self:center;color:var(--muted-foreground);font-size:var(--type-caption); }
 
 /* Stack summary: one dependency list, with independent review/check/branch evidence. */
 .stack-verdict-reasons { font-size:var(--type-caption);color:var(--muted-foreground); }

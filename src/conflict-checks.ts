@@ -9,7 +9,7 @@ import {
   type Verdict,
 } from '../lib/conflict-verify';
 import { parseConflicts } from '../lib/conflict-blocks';
-import { blockResolutions, withProposals } from '../lib/conflict-carry';
+import { blockResolutions, restoreMarkers, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { movedProposal } from '../lib/conflict-moved';
 import {
@@ -56,22 +56,15 @@ export function withoutUnconfirmed(
   const kept = proposals.map((p, index) => (drop.includes(index) ? null : p));
   const segments = parseConflicts(file.original);
   const texts = blockResolutions(segments, file.result);
-  /** The draft rebuilt from its conflicts' texts, with Git's markers in `restore`. */
-  const draft = (restore: readonly number[]) =>
-    segments
-      .map((s) =>
-        s.kind === 'text' ? s.text : restore.includes(s.index) ? s.block.raw : (texts?.[s.index] ?? s.block.raw)
-      )
-      .join('');
-  // Only when the draft splits back into its conflicts exactly: anything else is left as it is.
-  const restore =
-    texts && draft([]) === file.result ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  // Only when the draft splits back into its conflicts exactly (restoreMarkers): anything else is left as it is.
+  const restore = texts ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  const restored = texts && restore.length ? restoreMarkers(segments, texts, file.result, restore) : undefined;
   const prepared = file.result === withProposals(file.original, proposals);
   const left = kept.some(Boolean);
   return {
     proposals: left ? kept : undefined,
-    result: restore.length ? draft(restore) : file.result,
-    resolved: restore.length ? false : file.resolved,
+    result: restored ?? file.result,
+    resolved: restored !== undefined ? false : file.resolved,
     source: prepared && !left && file.source === 'mergiraf' ? 'manual' : file.source,
     structuralNote: left ? undefined : 'Structural merge couldn’t combine this file.',
   };

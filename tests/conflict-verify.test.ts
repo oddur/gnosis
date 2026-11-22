@@ -11,6 +11,10 @@ import {
   accountLines,
   accountWholeFile,
   blockBuckets,
+  unchosenConflicts,
+  UNSPLIT_HINT,
+  waitingHint,
+  withoutUnchosen,
   bucketSummary,
   fileStatus,
   fileStatusLine,
@@ -126,7 +130,7 @@ void test('a lost definition, a duplicate, a parse error, markers or mixed line 
     file([merged(imports), merged(`${three}${four.replace('}\n', '\n')}`)]),
     analyse
   );
-  const unparsed = { merged: false, note: 'This result doesn’t parse.' };
+  const unparsed = { merged: false, note: 'This proposal doesn’t parse.' };
   assert.deepEqual(broken.blocks, [passed, unparsed]);
   assert.deepEqual(
     blockBuckets(
@@ -139,7 +143,7 @@ void test('a lost definition, a duplicate, a parse error, markers or mixed line 
   const markers = await verifyProposals(file([merged('<<<<<<< x\n'), null]), analyse);
   assert.equal(markers.merged, false);
   const endings = await verifyProposals(file([merged("import { b } from './b';\r\n"), merged(three + four)]), analyse);
-  assert.deepEqual(endings, { merged: false, note: 'The result mixes line endings.' });
+  assert.deepEqual(endings, { merged: false, note: 'With the proposals in place, the file mixes line endings.' });
 });
 
 void test('a definition that only main’s side of an undecided conflict holds is not expected yet', async () => {
@@ -176,11 +180,15 @@ void test('buckets follow the draft: proposal, undone, kept by you, edited by ha
   assert.deepEqual(blockBuckets(f, f.result, ok), ['merged', 'decide']);
   assert.deepEqual(blockBuckets(f, f.result, { merged: false, note: 'x' }), ['check', 'decide']);
   assert.deepEqual(blockBuckets(f, f.result, undefined), ['check', 'decide'], 'Checking: not Merged yet');
-  assert.deepEqual(blockBuckets(f, original, ok), ['decide', 'decide'], 'Undo restores both sides');
+  // Undo restores both sides; the proposal stays on the card, one of the choices: Check, never accepted by default.
+  assert.deepEqual(blockBuckets(f, original, ok), ['check', 'decide'], 'Undo restores both sides');
   const keptPr = f.result.replace(/<<<<<<< feature\nexport function three[\s\S]*?>>>>>>> main\n/, three);
   assert.deepEqual(blockBuckets(f, keptPr, ok), ['merged', 'decided']);
-  // Review probe: an edit elsewhere never turns an unreviewed proposal into a decision.
-  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, ok), ['check', 'decided']);
+  // A draft edited outside its conflicts can't be split into them. Fail closed: a proposal that needs a choice may still
+  // be in it untouched, so it waits (Reset file is the way back); one the checks Merged doesn't.
+  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, ok), ['decided', 'decided']);
+  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, undefined), ['check', 'decided']);
+  assert.deepEqual(unchosenConflicts(f, `// edited\n${keptPr}`, undefined), [0]);
   assert.deepEqual(blockBuckets({ ...f, unsupported: 'binary' }, '', ok), ['decide']);
 });
 
@@ -394,7 +402,7 @@ void test('resolver audit: a result that swaps lines either side put in order is
   assert.equal(accountLines(adjacent, both, false), undefined);
   assert.equal(
     accountLines(adjacent, both.split('\n').reverse().join('\n').slice(1) + '\n', false),
-    'The result changes the order of lines from the PR or main.'
+    'The proposal changes the order of lines from the PR or main.'
   );
   // Two lines one side wrote, swapped, with the other side's identical line elsewhere to stand in for one of them.
   const functions = {
@@ -411,13 +419,13 @@ void test('resolver audit: a result that swaps lines either side put in order is
   assert.equal(accountLines(functions, kept, false, true), undefined);
   assert.equal(
     accountLines(functions, swapped, false, true),
-    'The result changes the order of lines from the PR or main.'
+    'The proposal changes the order of lines from the PR or main.'
   );
   const members = { base: 'RED = 1,\n', ours: 'RED = 1,\nBLUE = 3,\n', theirs: 'RED = 1,\nYELLOW = 4,\n' };
   assert.equal(accountLines(members, 'RED = 1,\nYELLOW = 4,\nBLUE = 3,\n', false), SAME_LINES);
   assert.equal(
     accountLines(members, 'BLUE = 3,\nRED = 1,\nYELLOW = 4,\n', false),
-    'The result changes the order of lines from the PR or main.'
+    'The proposal changes the order of lines from the PR or main.'
   );
 });
 
@@ -462,7 +470,7 @@ void test('resolver audit: with a side that does not parse, a result whose error
   assert.equal(good.merged, true, good.note);
   const broken = await remembered('  timeout: 60_000 45_000,\n');
   assert.equal(broken.merged, false);
-  assert.equal(broken.note, 'This result doesn’t parse.');
+  assert.equal(broken.note, 'This proposal doesn’t parse.');
 });
 
 void test('resolver audit round 2: an error that is the side’s own does not demote a correct earlier resolution', async () => {
@@ -486,7 +494,7 @@ void test('resolver audit round 2: an error that is the side’s own does not de
 });
 
 void test('order per ancestor place: insertions stay on their side of a changed line', () => {
-  const ORDER = 'The result changes the order of lines from the PR or main.';
+  const ORDER = 'The proposal changes the order of lines from the PR or main.';
   // The PR logs before and after go(1); main changes it to go(2).
   const around = { base: '  go(1);\n', ours: "  log('before');\n  go(1);\n  log('after');\n", theirs: '  go(2);\n' };
   assert.equal(accountLines(around, "  log('before');\n  go(2);\n  log('after');\n", false), undefined);
@@ -518,7 +526,7 @@ void test('with a side that does not parse, an error no proposal accounts for fa
   const remember = (file: typeof dropped, text: string) =>
     verifyProposals({ ...file, proposals: [{ source: 'rerere', text }] }, analyse);
   assert.equal((await remember(dropped, block('a || b', 2))).merged, true);
-  assert.deepEqual(await remember(dropped, '    go(2);\n  }\n'), { merged: false, note: 'The result doesn’t parse.' });
+  assert.deepEqual(await remember(dropped, '    go(2);\n  }\n'), { merged: false, note: 'With the proposals in place, the file doesn’t parse.' });
   // main left `if (debug) {` unclosed; two extra closing braces move the error outside the conflict.
   const debug = {
     path: 'src/run.ts',
@@ -545,7 +553,7 @@ void test('a side’s parse error over a proposal leaves it unchecked, unless it
   const remembered = (text: string) => verifyProposals({ ...sides, proposals: [{ source: 'rerere', text }] }, analyse);
   const own = await remembered('  timeout: 60_000,\n');
   assert.equal(own.merged, true, own.note);
-  assert.equal(own.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  assert.equal(own.note, 'Main doesn’t parse; the proposal adds no parse errors of its own.');
   for (const text of ['  timeout: 60_000 45_000,\n', '  timeout: 50_000,\n', '  timeout: 60_000\n'])
     assert.equal((await remembered(text)).merged, false, text);
   // main closes the function early with a stray `}`; a resolution that leaves `if (...) {` open makes the file parse
@@ -618,10 +626,10 @@ void test('with one side broken, a result that loses that side’s error fails e
   const [first, second] = verdict.blocks ?? [];
   assert.ok(first);
   assert.equal(first.merged, true, 'The PR’s lines exactly');
-  assert.notEqual(first.note, 'Main doesn’t parse; the result adds no parse errors of its own.');
+  assert.notEqual(first.note, 'Main doesn’t parse; the proposal adds no parse errors of its own.');
   assert.deepEqual(second, {
     merged: false,
-    note: 'Main doesn’t parse here, and the result parses differently. Check it.',
+    note: 'Main doesn’t parse here, and with the proposal the file parses differently. Check it.',
   });
 });
 
@@ -902,8 +910,11 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   assert.deepEqual(right, {
     merged: false,
     passed: true,
-    note: 'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.',
+    note: 'Mergiraf moved lines outside the conflict. The proposal parses and keeps every change from both sides. Read it, then use it.',
   });
+  // The note names what wrote the whole-file proposal, never Mergiraf for another source.
+  const other = await verifyWholeFile(sides, { source: 'rerere', text: [fn('beta'), fn('alpha', 'value + 10')].join('\n') }, analyse);
+  assert.match(other.note, /^Gnosis moved lines outside the conflict\./);
   // The move without main's edit drops the line main added.
   assert.equal(
     accountWholeFile(sides, sides.ours, false),
@@ -916,7 +927,7 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   // Every line is there, but main's edit landed in beta, which took alpha's place.
   assert.deepEqual(await verifyWholeFile(sides, merged([fn('beta', 'value + 10'), fn('alpha')].join('\n')), analyse), {
     merged: false,
-    note: 'alpha in the result doesn’t match main’s change to it. Read it before you use it, or resolve conflict by conflict.',
+    note: 'alpha in the proposal doesn’t match main’s change to it. Read it before you use it, or resolve conflict by conflict.',
   });
   // Moved and also kept in place: alpha is there twice.
   const doubled = await verifyWholeFile(sides, merged([fn('alpha', 'value + 10'), sides.ours].join('\n')), analyse);
@@ -1056,7 +1067,7 @@ void test('a side that only reformatted the lines the other side changed: Merged
   const right = reformatFile(split('4'), oneLine('5'), split('5'));
   assert.deepEqual(await verifyProposals(right, analyse, false, equivalent), {
     merged: true,
-    note: 'The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting. The file parses.',
+    note: 'The PR only reformatted these lines and main changed them; the proposal keeps main’s change in the PR’s formatting. The file parses.',
   });
   // Main reformatted and the PR changed the argument: the same, the other way round.
   const mirrored = await verifyProposals(
@@ -1068,7 +1079,7 @@ void test('a side that only reformatted the lines the other side changed: Merged
   assert.equal(mirrored.merged, true);
   assert.match(
     mirrored.note,
-    /^Main only reformatted these lines and the PR changed them; the result keeps the PR’s change in main’s formatting\./
+    /^Main only reformatted these lines and the PR changed them; the proposal keeps the PR’s change in main’s formatting\./
   );
   // Without the formatting comparison, it stays in Check, with a reason that fits a combined proposal.
   assert.deepEqual(await verifyProposals(right, analyse), { merged: false, note: SAME_LINES });
@@ -1077,7 +1088,7 @@ void test('a side that only reformatted the lines the other side changed: Merged
     await verifyProposals(reformatFile(split('4'), oneLine('5'), split('4')), analyse, false, equivalent),
     {
       merged: false,
-      note: 'The PR only reformatted these lines and main changed them. The result doesn’t match main’s change. Check it.',
+      note: 'The PR only reformatted these lines and main changed them. The proposal doesn’t match main’s change. Check it.',
     }
   );
   // The right program in main's layout: not the PR's formatting, so Check.
@@ -1085,7 +1096,7 @@ void test('a side that only reformatted the lines the other side changed: Merged
     await verifyProposals(reformatFile(split('4'), oneLine('5'), oneLine('5')), analyse, false, equivalent),
     {
       merged: false,
-      note: 'The PR only reformatted these lines and main changed them. The result keeps main’s change, but not in the PR’s layout. Check it.',
+      note: 'The PR only reformatted these lines and main changed them. The proposal keeps main’s change, but not in the PR’s layout. Check it.',
     }
   );
   // Trap: the "formatting" side also changed a token. Both sides changed the code, so nothing is Merged, whatever the
@@ -1126,7 +1137,7 @@ const greetFile = (oursCall: string, proposal: string): ConflictFile => {
 
 void test('the reformatting side’s quotes and spacing must survive: a matching line count is not enough', async () => {
   const layout =
-    'The PR only reformatted these lines and main changed them. The result keeps main’s change, but not in the PR’s layout. Check it.';
+    'The PR only reformatted these lines and main changed them. The proposal keeps main’s change, but not in the PR’s layout. Check it.';
   // Quotes: the PR's double quotes with main's argument is Merged; main's line word for word is not.
   const quotes = 'return greet(prefix, "hi", 4);';
   assert.equal(
@@ -1262,8 +1273,8 @@ void test('a Keep choice is yours even when its text equals the proposal', () =>
   const empty = '<<<<<<< feature\n||||||| ancestor\na\n=======\nb\n>>>>>>> main\n';
   assert.deepEqual(conflictModel(empty, 'b\n').choices, ['theirs']);
   assert.deepEqual(conflictModel(empty, 'b\n', undefined, ['both']).choices, ['both']);
-  // Git's conflict back in place: picks have nothing to stand in for.
-  assert.deepEqual(blockBuckets(both, both.original, ok, ['both', 'both']), ['decide', 'decide']);
+  // The original conflict back in place: picks have nothing to stand in for, and each proposal waits on its card.
+  assert.deepEqual(blockBuckets(both, both.original, ok, ['both', 'both']), ['check', 'check']);
 });
 
 void test('the summary says what is left: review, a local merge tool, or nothing', () => {
@@ -1321,4 +1332,22 @@ void test('a choice or an edit beside a Merged conflict is never all-Merged: it 
   assert.ok(allMerged(picked));
   assert.equal(allMerged(blockBuckets(f, f.result, ok, ['both'])), false);
   assert.equal(allMerged([]), false);
+});
+
+void test('a draft past the splitter’s limits keeps an untouched proposal in Check, waiting for you (#507 round 2)', () => {
+  // Two conflicts separated by one blank line, with a 100-line tail: the splitter gives up (SPLIT_ENDS), so the draft
+  // can't be told apart into its conflicts.
+  const tail = '\n'.repeat(100);
+  const conflictText = '<<<<<<< pr\na\n=======\nb\n>>>>>>> main\n\n<<<<<<< pr\nc\n=======\nd\n>>>>>>> main\n' + tail;
+  const proposals = [null, { source: 'union' as const, text: 'c\nd\n' }];
+  // You typed text in the first conflict; the second still holds its untouched, unchecked proposal.
+  const draft = 'typed\n\nc\nd\n' + tail;
+  const f = { original: conflictText, proposals, unsupported: undefined, wholeFile: undefined };
+  assert.equal(blockResolutions(parseConflicts(conflictText), draft), undefined, 'The splitter gave up');
+  assert.deepEqual(blockBuckets(f, draft, undefined), ['decided', 'check']);
+  assert.deepEqual(unchosenConflicts(f, draft, undefined), [1], 'It blocks Mark reviewed and the reviewed save');
+  assert.equal(withoutUnchosen({ ...f, result: draft }, undefined), undefined, 'Nothing can be stripped safely');
+  assert.equal(waitingHint(f, draft, 1), UNSPLIT_HINT, 'The way back is Reset file');
+  // A Merged one (or your own remembered resolution) needs no choice even here.
+  assert.deepEqual(unchosenConflicts(f, draft, { merged: true, note: '', blocks: [undefined, { merged: true, note: '' }] }), []);
 });

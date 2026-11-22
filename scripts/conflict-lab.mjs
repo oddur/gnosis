@@ -237,7 +237,10 @@ async function openLab(c, dir) {
       const contents =
         resolvedTree?.get(f.path)?.toString('utf8') ?? (hasConflictMarkers(f.result) ? undefined : f.result);
       if (contents === undefined) throw new Error(`No resolution for ${f.path}.`);
-      s = (await run({ kind: 'save', id: s.id, version: s.version, path: f.path, contents, resolved: true })).session;
+      // Reviewing is choosing: a proposal the lab keeps is used explicitly (fail closed: none is accepted by default).
+      const picks = f.proposals?.map((p) => (p ? 'proposal' : null));
+      s = (await run({ kind: 'save', id: s.id, version: s.version, path: f.path, contents, resolved: true, ...(picks ? { picks } : {}) }))
+        .session;
     }
     return s;
   }
