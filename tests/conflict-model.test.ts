@@ -345,6 +345,8 @@ test('a model proposal is spliced in, checked, and never Merged', async () => {
     },
   ]);
   assert.equal(file.resolved, false);
+  // Its lines are a resolver's: the lines neither side had are marked (#445 item 10).
+  assert.equal(file.resolverText, file.result);
   const verdict = file.verdict?.verdict;
   assert.ok(verdict, 'The checks ran on the proposal');
   assert.equal(verdict.merged, false);

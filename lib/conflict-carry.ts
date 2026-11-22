@@ -6,6 +6,7 @@ import {
   parseConflicts,
   type ConflictSegment,
 } from './conflict-blocks';
+import { holdsResolverLines } from './conflict-diff';
 import {
   hasConflictMarkers,
   type ConflictFile,
@@ -221,15 +222,23 @@ export function carryFile(
   };
 }
 
-/** The fresh merge with an earlier result. Source and explanation stay when the user's result carried over. */
+/**
+ * The fresh merge with an earlier result. Source and explanation stay when the user's result carried over, and so does
+ * the resolver's text (#445 item 10) while the carried draft still holds a line it wrote: its marks survive a base move.
+ */
 export function withResult(old: ConflictFile, next: ConflictFile, result: string, resolved: boolean): ConflictFile {
   const carried = result !== next.original;
+  const resolver =
+    carried && old.resolverText !== undefined && holdsResolverLines(old.resolverText, old.ours, old.theirs, result)
+      ? old.resolverText
+      : undefined;
   return {
     ...next,
     result,
     resolved: resolved && !hasConflictMarkers(result),
     source: carried ? old.source : next.source,
     ...(carried && old.explanation ? { explanation: old.explanation } : {}),
+    ...(resolver !== undefined ? { resolverText: resolver } : {}),
   };
 }
 

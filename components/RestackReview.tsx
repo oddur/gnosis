@@ -266,6 +266,7 @@ export function RestackReview({
                           whole && {
                             proposal: whole,
                             ours: file.ours,
+                            theirs: file.theirs,
                             // The whole-file result replaces every choice in the file, as in the main workspace.
                             onUse: () => {
                               setPicks({ ...picks, [file.path]: [] });

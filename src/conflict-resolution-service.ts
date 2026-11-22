@@ -27,6 +27,7 @@ import {
   withResult,
 } from '../lib/conflict-carry';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import { holdsResolverLines } from '../lib/conflict-diff';
 import {
   MODEL_SYSTEM_PROMPT,
   checkReplacement,
@@ -785,6 +786,8 @@ export function createConflictResolutionService(deps: Deps) {
         file.result = proposals ? withProposals(file.original, proposals) : contents;
         if (proposals) file.proposals = proposals;
         file.source = 'rerere';
+        // The remembered resolution as replayed: the baseline its lines neither side had are marked from (#445 item 10).
+        file.resolverText = file.result;
         file.explanation =
           'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
       }
@@ -1924,6 +1927,15 @@ export function createConflictResolutionService(deps: Deps) {
             file.source = 'manual';
             file.explanation = undefined;
           }
+          // Reset file, Start from Git's conflict, or a draft that no longer holds any line the resolver wrote: its text
+          // is no longer the baseline, so a line you type next is never marked as Gnosis's (#445 item 10).
+          if (
+            file.resolverText !== undefined &&
+            (request.contents === file.original ||
+              (file.proposals && request.contents === withProposals(file.original, file.proposals)) ||
+              !holdsResolverLines(file.resolverText, file.ours, file.theirs, request.contents))
+          )
+            delete file.resolverText;
           file.result = request.contents;
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
@@ -1947,6 +1959,9 @@ export function createConflictResolutionService(deps: Deps) {
           file.result = spliced.result;
           file.proposals = spliced.proposals;
           file.resolved = false;
+          // The draft a resolver wrote now holds the model's lines too: lines neither side had are marked (#445 item 10).
+          // The draft derives only from its conflicts' choices (spliceModelProposal), so no line you typed is in it.
+          file.resolverText = spliced.result;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -1959,6 +1974,7 @@ export function createConflictResolutionService(deps: Deps) {
               if (!proposal || hasConflictMarkers(proposal.text)) throw new Error('This file has no whole-file proposal.');
               if (proposal.text !== file.result) file.picks = undefined;
               file.result = proposal.text;
+              file.resolverText = proposal.text;
               file.explanation =
                 proposal.source === 'moved'
                   ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
@@ -1987,6 +2003,7 @@ export function createConflictResolutionService(deps: Deps) {
                 // Your Keep choices were for the draft this replaces.
                 if (result.contents !== file.result) file.picks = undefined;
                 file.result = result.contents;
+                file.resolverText = result.contents;
               }
               file.explanation = result.explanation;
             } else {
@@ -2019,11 +2036,15 @@ export function createConflictResolutionService(deps: Deps) {
               }
               if (output !== file.result) file.picks = undefined;
               file.result = output;
+              file.resolverText = output;
               file.explanation = hasConflictMarkers(file.result)
                 ? 'Mergiraf left conflicts that need your input.'
                 : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
             }
             file.source = request.engine;
+            // A suggestion that declined (no new contents) leaves the draft as it was: its text stays the baseline its
+            // marks come from, once the per-conflict proposals are gone (#445 item 10).
+            file.resolverText ??= file.result;
             // The draft is a whole-file suggestion now: it no longer derives from the per-conflict proposals. A
             // whole-file proposal stays, so Reset file returns to it.
             delete file.proposals;

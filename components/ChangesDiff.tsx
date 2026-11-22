@@ -7,6 +7,7 @@ import {
   hunkSlices,
   type DiffSlice,
   hunkCounts,
+  hunkFingerprint,
   hunkRange,
   placeOfLine,
   newLineAt,
@@ -17,7 +18,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
-import { HERE_CSS, clearHere, markHere, markSection } from '../lib/diff-here';
+import { HERE_CSS, WRITTEN_CSS, clearHere, markHere, markSection, markWritten } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -91,6 +92,9 @@ ${HERE_CSS}
   background-image: linear-gradient(color-mix(in srgb, var(--diffs-bg) 70%, transparent), color-mix(in srgb, var(--diffs-bg) 70%, transparent));
 }
 [data-moved-line] [data-diff-span] { background-color: transparent; }
+/* Lines a conflict resolver wrote, which neither side had (#445 item 10): the steady here. Last, so a dimming rule
+   above never hides it. */
+${WRITTEN_CSS}
 ${FLAT_TOKEN_CSS}`;
 const NO_ANNOTATIONS: never[] = [];
 const NO_RAILS: readonly ScopeRail[] = [];
@@ -975,6 +979,8 @@ function markLines(host: Element, marks: readonly (readonly [attribute: string, 
   }
 }
 
+const NO_WRITTEN: ReadonlySet<number> = new Set();
+
 /** A move's annotation: the metadata ChangesDiff gives its own rows among the caller's. */
 interface MoveAnnotation {
   gnosisMove: MoveMark;
@@ -1245,6 +1251,7 @@ export function ChangesDiff<A>({
   outline,
   noise,
   moves,
+  written = NO_WRITTEN,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1291,9 +1298,13 @@ export function ChangesDiff<A>({
   noise?: DiffNoise;
   /** Moved and renamed symbols (#398): a note above each one, and the lines it carried over unchanged dimmed. */
   moves?: DiffMoves;
+  /** New-side lines a conflict resolver wrote, which neither side had (#445 item 10): a steady mark on each. */
+  written?: ReadonlySet<number>;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
+  const latestWritten = useRef(written);
+  latestWritten.current = written;
   // The kinds of the blocks still hidden: those the reader opened show.
   const quietKinds = useMemo(() => {
     if (!noise || !noise.shown.size) return noise?.kinds;
@@ -1315,6 +1326,7 @@ export function ChangesDiff<A>({
         ['data-noise-line', latestNoiseLines.current],
         ['data-moved-line', latestMovedLines.current],
       ]);
+      markWritten(node, latestWritten.current);
     },
   } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
@@ -1351,7 +1363,9 @@ export function ChangesDiff<A>({
     const result = parts.map((part) => {
       if (part.kind === 'gap') return part;
       const { hunk } = part;
-      const id = `${part.key}|${hunk.oldStart}|${hunk.newStart}|${hunk.rows.length}|${hunk.noEofOld}|${hunk.noEofNew}`;
+      // The rows' fingerprint is part of the id: a hunk whose lines changed but not their count (a conflict's Keep or
+      // proposal in the Conflicts view) must never reuse slices that show the old text.
+      const id = `${part.key}|${hunk.oldStart}|${hunk.newStart}|${hunk.rows.length}|${hunk.noEofOld}|${hunk.noEofNew}|${hunkFingerprint(hunk.rows)}`;
       const slices = cache.current.get(id) ?? hunkSlices(part.key, hunk, file, parse);
       next.set(id, slices);
       return {
@@ -1862,6 +1876,9 @@ export function ChangesDiff<A>({
   useEffect(() => {
     if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-moved-line', movedLines]]);
   }, [movedLines]);
+  useEffect(() => {
+    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markWritten(host, written);
+  }, [written]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);
   // Breadcrumbs fold to fit their bar: again whenever the bars' width or their crumbs change.
