@@ -1,6 +1,49 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+import { scopeAfter, scopeBefore } from './fixtures/syntax-scope';
+
+/**
+ * A conflict session for the Conflicts view's part of this suite: src/scope.ts as the PR changed it (Changes' version),
+ * and main changing the same line of flush() another way, so the one conflict sits inside the method.
+ */
+function parityConflict() {
+  const text = (lines: string[]) => `${lines.join('\n')}\n`;
+  const theirs = scopeBefore.map((line) => (line === '    total += 30;' ? '    total += 30 + 1;' : line));
+  const original = scopeAfter.flatMap((line) =>
+    line === '    total += 30 * 2;'
+      ? ['<<<<<<< feature/scope', line, '||||||| ancestor', '    total += 30;', '=======', '    total += 30 + 1;', '>>>>>>> main']
+      : [line]
+  );
+  return {
+    id: 'e'.repeat(64),
+    account: 'oddur',
+    url: 'https://github.com/klang/engine/pull/120',
+    title: 'Bound retry delays',
+    headRepo: 'klang/engine',
+    baseRepo: 'klang/engine',
+    headBranch: 'feature/scope',
+    baseBranch: 'main',
+    headSha: 'a'.repeat(40),
+    baseSha: 'b'.repeat(40),
+    tree: 'c'.repeat(40),
+    version: 1,
+    status: 'editing',
+    files: [
+      {
+        path: 'src/scope.ts',
+        mode: '100644',
+        base: text(scopeBefore),
+        ours: text(scopeAfter),
+        theirs: text(theirs),
+        original: text(original),
+        result: text(original),
+        resolved: false,
+        source: 'manual',
+      },
+    ],
+  };
+}
 
 /**
  * Explanation topics show diffs as Changes does (#157 parity). AGENTS.md: Changes (PrFileInspection/ChangesDiff) and
@@ -480,6 +523,64 @@ void app.whenReady().then(async () => {
       500
     );
     assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
+
+    // ── The Conflicts view (#445 items 8 and 11): the same file with a conflict in flush(), in Changes' diff ──
+    // Its diff is ChangesDiff under DiffFileHeader through useDiffFileModel, with no diff chrome of its own: the hunk
+    // header is built of the same parts, reaches the method, takes the same palette, shows the method whole and pins
+    // under the file header, as in Changes and the topic.
+    await js(`(()=>{
+      const s=${JSON.stringify(parityConflict())};
+      window.paritySession=s;
+      window.electronAPI.conflictResolution=async req=>{
+        if(req.kind==='open')return {session:structuredClone(s)};
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;}
+        s.version++;return {session:structuredClone(s)};
+      };
+      window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:s.url}));
+    })()`);
+    const conflictDiff = '.conflict-workspace .conflict-compare-diff[data-compare=pr]';
+    await wait(`!!document.querySelector(${JSON.stringify(conflictDiff)})&&window.headers(document.querySelector(${JSON.stringify(conflictDiff)})).filter(h=>h.crumbs).length>=1`, 500);
+    await settle();
+    assert.equal(await js(`!!document.querySelector(${JSON.stringify(conflictDiff)}+' .changes-file-header')`), true, 'The Conflicts view uses the code-tier file header');
+    assert.equal(
+      await js("document.querySelectorAll('.conflict-workspace :is(.conflict-result-diff,.conflict-diff-columns,.conflict-modes,.review-context-hunk,.diff-context-gap)').length"),
+      0,
+      'No Conflicts-only diff chrome, and no Review result or Edit result mode'
+    );
+    const conflictHeaders = await js<Header[]>(`window.headers(document.querySelector(${JSON.stringify(conflictDiff)}))`);
+    console.log('Conflicts headers:', JSON.stringify(conflictHeaders));
+    const flushHeader = conflictHeaders.find((h) => /StoreBridge › .*flush/.test(h.crumbs));
+    assert.ok(flushHeader, `The conflict's hunk header reaches the method: ${JSON.stringify(conflictHeaders)}`);
+    const changesTwin = changes.find((h) => h.crumbs === flushHeader.crumbs);
+    assert.ok(changesTwin, `Changes shows the same breadcrumb: ${flushHeader.crumbs}`);
+    assert.deepEqual(flushHeader.parts, changesTwin.parts, 'The hunk header is built of the same parts as in Changes');
+    assert.equal(flushHeader.show, changesTwin.show, 'The same definition action');
+    assert.deepEqual(await js<Palette>(`window.palette(document.querySelector(${JSON.stringify(conflictDiff)}))`), changesPalette, 'The Conflicts view takes Changes’ code-tier palette');
+    // The conflict's card sits under its lines, inside the diff, with Edit (#445 item 11).
+    assert.equal(await js(`!!document.querySelector(${JSON.stringify(conflictDiff)}+' .conflict-diff-cards .conflict-block[data-state=open] [data-conflict-edit]')`), true);
+    await capture('conflicts-unpinned', region('.conflict-scroll', 0, 420));
+    // Show whole function, then the hunk header pins under the file header while the view scrolls.
+    await js(`document.querySelector(${JSON.stringify(conflictDiff)}+' [data-show-definition]').click()`);
+    await wait(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(conflictDiff)})).some(e=>e.textContent.includes('flush(): number {'))`, 500);
+    assert.ok(
+      await js<boolean>(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(conflictDiff)})).filter(e=>/total \\+= \\d+;/.test(e.textContent)).length>=59`),
+      'The whole method shows'
+    );
+    await js(`(()=>{const s=document.querySelector('.conflict-scroll');const l=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(conflictDiff)})).find(e=>e.textContent.includes('total += 40;'));s.scrollTop+=l.getBoundingClientRect().top-s.getBoundingClientRect().top-200})()`);
+    await settle();
+    try {
+      await wait(`!!document.querySelector(${JSON.stringify(conflictDiff)}+' .diff-gap[data-hunk-header][data-stuck]')`);
+    } catch (error) {
+      const state = await js<string>(`(()=>{const s=document.querySelector('.conflict-scroll');const g=document.querySelector(${JSON.stringify(conflictDiff)});const f=g.querySelector('.changes-file-header').getBoundingClientRect();const h=g.querySelector('.diff-gap[data-hunk-header]')?.getBoundingClientRect();
+        return JSON.stringify({top:s.scrollTop,height:s.scrollHeight,client:s.clientHeight,scroller:s.getBoundingClientRect().top,file:[f.top,f.bottom],hunk:h&&[h.top,h.bottom],headers:g.querySelectorAll('.diff-gap[data-hunk-header]').length,pos:getComputedStyle(g.querySelector('.changes-file-header')).position})})()`);
+      throw new Error(`Not pinned: ${state}`, { cause: error });
+    }
+    const conflictPinned = await js<{ file: number; hunk: number }>(`(()=>{const g=document.querySelector(${JSON.stringify(conflictDiff)});
+      return {file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round(g.querySelector('.diff-gap[data-stuck]').getBoundingClientRect().top)}})()`);
+    assert.ok(Math.abs(conflictPinned.hunk - conflictPinned.file + 1) <= 1, `The hunk header pins right under the file header: ${JSON.stringify(conflictPinned)}`);
+    await capture('conflicts-pinned', region('.conflict-scroll', 0, 260));
+    await js("[...document.querySelectorAll('.conflict-heading button')].find(b=>b.textContent.trim()==='Close').click()");
+    await wait("!document.querySelector('.conflict-workspace')");
     assert.deepEqual(errors, []);
     if (shots) await sideBySide();
     console.log('Explanation parity checks passed');

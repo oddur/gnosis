@@ -286,6 +286,7 @@ function CompareSwitch({
   baseName,
   baseLabel,
   bothDisabled = false,
+  kind = 'merge',
 }: {
   value: CompareWith;
   onChange: (value: CompareWith) => void;
@@ -293,13 +294,23 @@ function CompareSwitch({
   baseLabel: string;
   /** No conflicts are left to compare side by side: both is off, and says why. */
   bothDisabled?: boolean;
+  /** A paused restack compares with the updated parent and with the PR's commit, not with the PR and main. */
+  kind?: 'merge' | 'restack';
 }) {
-  const names: Record<CompareWith, string> = { pr: 'PR', main: baseName, both: 'both' };
-  const titles: Record<CompareWith, string> = {
-    pr: 'What the author sees change on their branch',
-    main: `What this PR still changes in ${baseLabel} after the merge`,
-    both: 'Each conflict’s two sides, with the result under them',
-  };
+  const names: Record<CompareWith, string> =
+    kind === 'restack' ? { pr: 'Parent', main: 'This PR', both: 'both' } : { pr: 'PR', main: baseName, both: 'both' };
+  const titles: Record<CompareWith, string> =
+    kind === 'restack'
+      ? {
+          pr: 'What the replayed commit changes on the updated parent',
+          main: 'What the updated parent changes in this PR’s commit',
+          both: 'Each conflict’s two sides, with the result under them',
+        }
+      : {
+          pr: 'What the author sees change on their branch',
+          main: `What this PR still changes in ${baseLabel} after the merge`,
+          both: 'Each conflict’s two sides, with the result under them',
+        };
   return (
     <div className="conflict-compare" role="group" aria-label="Compare result with">
       <span className="conflict-compare-label" aria-hidden="true">
@@ -472,7 +483,7 @@ const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) =>
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
- * under its lines. The cards are ConflictView's: Merged, Check and Decide read the same, with the same actions.
+ * under its lines: Merged, Check or Decide, with Keep, Use the proposal, Undo and Edit in place (#445 item 11).
  */
 export function ConflictDiff({
   name,
@@ -499,7 +510,10 @@ export function ConflictDiff({
   models,
   edits,
   onEdits,
+  kind = 'merge',
 }: {
+  /** A paused restack's file (components/RestackReview.tsx): its versions are the updated parent and the PR's commit. */
+  kind?: 'merge' | 'restack';
   /** Each open conflict's model request, by index (#445 item 7). */
   models?: Readonly<Record<number, ModelCard>>;
   /**
@@ -659,6 +673,7 @@ export function ConflictDiff({
       baseName={baseName}
       baseLabel={labels.theirs}
       bothDisabled={!hasConflicts}
+      kind={kind}
     />
   );
   const sides = useMemo(

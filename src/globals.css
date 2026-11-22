@@ -4150,7 +4150,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* In the file header the path keeps one line: the folders give way first. */
 .conflict-file-title .conflict-path { flex-wrap:nowrap; }
 .conflict-file-title .conflict-path-dir { flex:0 1000 auto;min-width:1.5em; }
-.conflict-scroll { flex:1 1 auto;min-height:0;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;overscroll-behavior:contain; }
+/* No top padding: a file header pins at the scroller's top edge, where ChangesDiff measures its pinned hunk headers from,
+   as in Changes. The first row's space above it is the ::before spacer (with the gap, 16px). */
+.conflict-scroll { flex:1 1 auto;min-height:0;overflow:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:12px;overscroll-behavior:contain; }
+.conflict-scroll::before { content:'';height:4px;flex:none; }
 .conflict-scroll > * { flex-shrink:0; }
 .conflict-footer { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 16px;border-top:1px solid var(--border);background:var(--background); }
 .conflict-footer-status { flex:1 1 24ch;min-width:0;color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.5; }
@@ -4369,7 +4372,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-files button { flex:0 0 auto;width:auto;max-width:240px;padding:6px 10px; }
   .conflict-files button > .conflict-path { width:auto; }
   .conflict-file-pane { flex:1 1 auto; }
-  .conflict-scroll { padding:12px; }
+  .conflict-scroll { padding:0 12px 12px; }
+  .conflict-scroll::before { height:0; }
   .conflict-footer { padding:8px 12px; }
   .conflict-confirm { padding:12px; }
   .conflict-published { padding:16px; }
@@ -4378,7 +4382,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 /* Restack after the push: the same conflict view, with each update's review control at its header. */
 .restack-review { display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;border-top:1px solid var(--border);padding-top:16px; }
-.restack-review > .step-card-body { overflow:auto;min-height:0;flex:1; }
+/* A paused file's diff pins its headers to this scroller's top edge (as .conflict-scroll): no top padding, a spacer. */
+.restack-review > .step-card-body { overflow:auto;min-height:0;flex:1;padding-top:0; }
+.restack-review > .step-card-body::before { content:'';height:2px;flex:none; }
 .restack-review > :not(.step-card-body) { flex-shrink:0; }
 .restack-review p { font-size:var(--type-control);line-height:1.6;max-width:75ch; }
 .restack-instructions { display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted-foreground); }

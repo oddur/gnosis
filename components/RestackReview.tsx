@@ -1,17 +1,37 @@
 import { LoadingIndicator } from './LoadingState';
 import { PrStateIcon } from './PrStateIcon';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { CodeView, EditProvider } from '@pierre/diffs/react';
-import { ArrowRight, CheckCheck } from 'lucide-react';
+import { CodeView } from '@pierre/diffs/react';
+import { ArrowRight, CheckCheck, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
-import { ConflictView, ResultEditor, createEditor } from './ConflictBlocks';
-import { conflictLabels, type BlockPick } from '../lib/conflict-blocks';
+import { ConflictDiff } from './ConflictDiff';
+import { conflictLabels, type BlockEdits, type BlockPick } from '../lib/conflict-blocks';
+import { resolverBaseline } from '../lib/conflict-diff';
+import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
-import { hasConflictMarkers, type ConflictRequest, type ConflictSession } from '../lib/conflict-resolution';
+import {
+  hasConflictMarkers,
+  type ConflictRequest,
+  type ConflictSession,
+  type SavedBlockEdit,
+} from '../lib/conflict-resolution';
+import { withProposals } from '../lib/conflict-carry';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
+/** In-place edits as the draft saves them (ConflictFile.edits). */
+const savedEdits = (edits: BlockEdits | undefined): (SavedBlockEdit | null)[] =>
+  Array.from(edits ?? [], (edit) =>
+    edit
+      ? {
+          text: edit.text,
+          before: edit.before ?? null,
+          pick: edit.pick ?? null,
+          ...(edit.written?.length ? { written: [...edit.written] } : {}),
+        }
+      : null
+  );
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 /** Why no update needs a tick: each replayed cleanly, or the checks merged every conflict in it, or some of each. */
 function noReviewSummary(branches: { merged?: number }[]) {
@@ -38,6 +58,7 @@ export function RestackReview({
   error,
   failedKind,
   options,
+  preferences,
 }: {
   session: ConflictSession;
   busy: boolean;
@@ -48,7 +69,8 @@ export function RestackReview({
     path: string,
     contents: string,
     resolved: boolean,
-    picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[]
+    picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[],
+    edits?: (SavedBlockEdit | null)[]
   ) => void;
   onDrafts: (drafts: Record<string, string>) => void;
   /** Reads the branches again. Used after a failed push, which is never resent automatically. */
@@ -58,20 +80,31 @@ export function RestackReview({
   error?: string;
   failedKind?: ConflictRequest['kind'];
   options: ComponentProps<typeof CodeView>['options'];
+  /** The reader's diff preferences: a paused file shows in the Conflicts view's diff (#445 item 11). */
+  preferences?: Preferences | null;
 }) {
   const plan = session.restack;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   // Your Keep choices per paused file, so one whose text equals the proposal reads as yours, not Merged.
   const [picks, setPicks] = useState<Partial<Record<string, (BlockPick | undefined)[]>>>({});
+  // Your in-place edits per paused file (#445 item 11), kept across saves while the file's conflict is the same, so an
+  // edited conflict keeps its card and its Undo.
+  const [edits, setEdits] = useState<Partial<Record<string, { original: string; edits: BlockEdits }>>>({});
   const [wholeShown, setWholeShown] = useState<Partial<Record<string, boolean>>>({});
   useEffect(() => {
     setDrafts({});
     onDrafts({});
     setPicks({});
   }, [session.version]);
+  // One pause: the commit being replayed in one PR. Continue reuses the plan's token, so the pause is named by its commit
+  // and PR too: the next pause starts with no editor open, no unsaved text and no edits of the last one.
+  const pause = plan?.blocked ? `${plan.token}:${plan.blocked.url}:${plan.blocked.commit ?? ''}` : '';
+  useEffect(() => {
+    setEdits({});
+    setWholeShown({});
+  }, [pause]);
   const [review, setReview] = useState<{ token: string; urls: string[] }>({ token: '', urls: [] });
   const [confirming, setConfirming] = useState('');
-  const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const blockedBranch = plan?.blocked ? plan.expected.find((entry) => entry.url === plan.blocked?.url) : undefined;
   const labels = useMemo(
@@ -152,6 +185,7 @@ export function RestackReview({
     <StepCard
       className="restack-review"
       compactSteps={!!plan}
+      diffScroller
       title={
         <h2>
           {published
@@ -212,6 +246,17 @@ export function RestackReview({
             const filePicks = picks[file.path] ?? file.picks?.map((pick) => pick ?? undefined);
             const whole = file.wholeFile;
             const savedPicks = filePicks && Array.from(filePicks, (pick) => pick ?? null);
+            const entry = edits[file.path];
+            // Your edits as you make them, else the ones saved with the paused draft.
+            const fileEdits = entry?.original === file.original ? entry.edits : file.edits;
+            // Reset file returns to what the replay proposed, as in the main workspace: after Use this result too.
+            const resetTarget = file.proposals ? withProposals(file.original, file.proposals) : file.original;
+            const reset = () => {
+              setPicks((previous) => ({ ...previous, [file.path]: [] }));
+              setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: [] } }));
+              setWholeShown((previous) => ({ ...previous, [file.path]: false }));
+              update(resetTarget);
+            };
             return (
               <div className="restack-conflict-file" key={file.path}>
                 <h4>
@@ -235,67 +280,68 @@ export function RestackReview({
                   <p role="alert">{file.unsupported}</p>
                 ) : (
                   <>
-                    {editing[file.path] ? (
-                      <EditProvider createEditor={createEditor}>
-                        <ResultEditor
-                          key={`${file.path}:${session.version}`}
-                          name={file.path}
-                          initial={value}
-                          onChange={update}
-                        />
-                      </EditProvider>
-                    ) : (
-                      <ConflictView
-                        key={`${file.path}:${session.version}`}
-                        name={file.path}
-                        original={file.original}
-                        contents={value}
-                        labels={labels}
-                        disabled={busy}
-                        onChange={update}
-                        proposals={file.proposals}
-                        verdict={file.verdict?.verdict ?? (file.proposals || file.wholeFile ? UNCHECKED : undefined)}
-                        note={file.structuralNote}
-                        picks={filePicks}
-                        onPick={(index, choice) => {
-                          const next = [...(filePicks ?? [])];
-                          next[index] = choice;
-                          setPicks({ ...picks, [file.path]: next });
-                        }}
-                        wholeFile={
-                          whole && {
-                            proposal: whole,
-                            ours: file.ours,
-                            theirs: file.theirs,
-                            // The whole-file result replaces every choice in the file, as in the main workspace.
-                            onUse: () => {
-                              setPicks({ ...picks, [file.path]: [] });
-                              update(whole.text);
-                            },
-                            shown: wholeShown[file.path] === true,
-                            onShow: () => setWholeShown({ ...wholeShown, [file.path]: true }),
-                          }
-                        }
-                      />
-                    )}
+                    {/* The same view as the main resolution: Changes' diff with each conflict's card under its
+                        lines, Compare with, the resolver's marks and Edit in place (#445 items 8 to 11). */}
+                    <ConflictDiff
+                      key={`${file.path}:${pause}`}
+                      kind="restack"
+                      name={file.path}
+                      ours={file.ours}
+                      theirs={file.theirs}
+                      fileKey={`restack:${session.id}:${plan.token}:${file.path}`}
+                      preferences={preferences}
+                      original={file.original}
+                      contents={value}
+                      labels={labels}
+                      disabled={busy}
+                      onChange={update}
+                      proposals={file.proposals}
+                      verdict={file.verdict?.verdict ?? (file.proposals || file.wholeFile ? UNCHECKED : undefined)}
+                      note={file.structuralNote}
+                      picks={filePicks}
+                      onPick={(index, choice) => {
+                        const next = [...(filePicks ?? [])];
+                        next[index] = choice;
+                        setPicks((previous) => ({ ...previous, [file.path]: next }));
+                      }}
+                      edits={fileEdits}
+                      onEdits={(next) =>
+                        setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: next } }))
+                      }
+                      resolverText={resolverBaseline(file, value)}
+                      wholeFile={
+                        whole && value === file.original
+                          ? {
+                              proposal: whole,
+                              ours: file.ours,
+                              theirs: file.theirs,
+                              // The whole-file result replaces every choice in the file, as in the main workspace.
+                              onUse: () => {
+                                setPicks((previous) => ({ ...previous, [file.path]: [] }));
+                                setEdits((previous) => ({ ...previous, [file.path]: undefined }));
+                                update(whole.text);
+                              },
+                              shown: wholeShown[file.path] === true,
+                              onShow: () => setWholeShown((previous) => ({ ...previous, [file.path]: true })),
+                            }
+                          : undefined
+                      }
+                    />
                     <div className="restack-conflict-actions">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        aria-pressed={editing[file.path]}
-                        onClick={() => setEditing({ ...editing, [file.path]: !editing[file.path] })}
-                      >
-                        {editing[file.path] ? 'Choose changes' : 'Edit result'}
-                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={busy || markers || (file.resolved && !dirty)}
-                        onClick={() => onSave(file.path, value, true, savedPicks)}
+                        onClick={() => onSave(file.path, value, true, savedPicks, savedEdits(fileEdits))}
                       >
                         Mark reviewed
                       </Button>
+                      {value !== resetTarget && (
+                        <Button size="sm" variant="ghost" disabled={busy} data-restack-reset="" onClick={reset}>
+                          <RotateCcw aria-hidden="true" />
+                          Reset file
+                        </Button>
+                      )}
                     </div>
                   </>
                 )}

@@ -1535,6 +1535,7 @@ export function ConflictWorkspace({
                 session={session}
                 busy={busy}
                 options={options}
+                preferences={preferences}
                 error={failedKind?.startsWith('restack-') ? error : undefined}
                 failedKind={failedKind === 'open' ? undefined : failedKind}
                 onRecheck={() => void load()}
@@ -1553,7 +1554,7 @@ export function ConflictWorkspace({
                     (reply) => apply(reply)
                   )
                 }
-                onSave={(path, text, resolved, picks) =>
+                onSave={(path, text, resolved, picks, edits) =>
                   void run(
                     (s) => ({
                       kind: 'restack-save',
@@ -1563,6 +1564,7 @@ export function ConflictWorkspace({
                       contents: text,
                       resolved,
                       picks,
+                      edits,
                     }),
                     (reply) => apply(reply)
                   )

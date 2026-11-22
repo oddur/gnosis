@@ -27,4 +27,4 @@ npm run test:browser:docker                             # full suite, as on Linu
 ## Diff presentation
 
 - Diff presentation is shared: Changes (PrFileInspection/ChangesDiff) and Explanation slides (SlideView/ReviewDiff) must render diffs through the same components; any change to diff presentation must land in both, and both must be checked in screenshots and tests.
-- The shared pieces are `components/ChangesDiff.tsx`, `components/DiffFileHeader.tsx`, `components/useDiffFileModel.tsx` and `lib/diff-gaps.ts`. Topic-only features (inline explanations, review-check pins, the topic's hunk subset) ride on top through props and annotations. `--explanation-parity` checks that both surfaces render the same hunk headers and palette.
+- The shared pieces are `components/ChangesDiff.tsx`, `components/DiffFileHeader.tsx`, `components/useDiffFileModel.tsx` and `lib/diff-gaps.ts`. Topic-only features (inline explanations, review-check pins, the topic's hunk subset) ride on top through props and annotations. `--explanation-parity` checks that both surfaces render the same hunk headers and palette, and that the Conflicts view (`components/ConflictDiff.tsx`) does too.

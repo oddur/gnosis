@@ -790,7 +790,7 @@ void app.whenReady().then(async () => {
           window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[{url:s.dependents[0],headSha:'a'.repeat(40),baseSha:'b'.repeat(40),headBranch:'feature/retry-121',baseBranch:'feature/retry'}],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,merged:i?0:2,yours:i?1:0,review:!!i,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
         }
         if(req.kind==='restack-save'){window.conflictCalls.push(req);const f=s.restack.blocked.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;s.version++;return {session:structuredClone(s)};}
-        if(req.kind==='restack-continue'){window.conflictCalls.push(req);s.restack.status='prepared';s.restack.blocked=undefined;s.version++;return {session:structuredClone(s)};}
+        if(req.kind==='restack-continue'){window.conflictCalls.push(req);if(window.nextPause){s.restack.blocked=window.nextPause;window.nextPause=undefined;}else{s.restack.status='prepared';s.restack.blocked=undefined;}s.version++;return {session:structuredClone(s)};}
         if(req.kind==='restack-publish'){window.conflictCalls.push(req);s.restack.status='published';s.version++;return {session:structuredClone(s)};}
         return original(req);
       };
@@ -885,17 +885,71 @@ void app.whenReady().then(async () => {
       1,
       'The merged conflict shows as Merged, in the same view as the main resolution'
     );
+    // The paused file is in the Conflicts view's diff (#445 item 11): Changes' file header, Compare with named for a
+    // restack, and no Edit result mode.
+    const paused = "document.querySelector('.restack-conflict-file')";
+    assert.equal(await js(`!!${paused}.querySelector('.conflict-diff-view .changes-file-header')`), true);
+    assert.deepEqual(
+      await js(`[...${paused}.querySelectorAll('.conflict-compare [data-compare]')].map(b=>b.textContent)`),
+      ['Parent', 'This PR', 'both']
+    );
+    assert.equal(await exists('Edit result'), false);
     await captureAll('restack-paused');
+    // Edit in place in a pause too: the draft takes your text in that conflict, and Undo opens it again.
+    await editInline(0, '// replayed by hand\n', paused);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='edited'`);
+    await wait("window.conflictFixture.restack.blocked.files[0].result.includes('// replayed by hand')");
+    assert.equal(
+      await js(`${paused}.querySelectorAll('.conflict-block[data-bucket=merged]').length`),
+      1,
+      'The Merged conflict keeps its proposal'
+    );
+    await captureAll('restack-inline-edited');
+    await js(`[...${paused}.querySelector('.conflict-block[data-conflict-index="0"]').querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='open'`);
+    await wait("!window.conflictFixture.restack.blocked.files[0].result.includes('// replayed by hand')");
     await js(
       "document.querySelector('.restack-conflict-file .conflict-block[data-state=open] [data-choice=theirs]').click()"
     );
     await wait("!document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
+    // Reset file returns the paused file to what the replay proposed, as in the main workspace.
+    await js(`${paused}.querySelector('[data-restack-reset]').click()`);
+    await wait(`${paused}.querySelector('.conflict-block[data-conflict-index="0"]')?.dataset.state==='open' && !${paused}.querySelector('[data-restack-reset]')`);
+    await js(`${paused}.querySelector('.conflict-block[data-state=open] [data-choice=theirs]').click()`);
+    await wait("!document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
+    // The pause scrolls in a diff scroller: its file and hunk headers pin as in the Conflicts view.
+    assert.equal(await js("document.querySelector('.restack-review > .step-card-body')?.hasAttribute('data-diff-scroller')"), true);
     // Closing must save an unreviewed paused draft; it must not lose it or publish.
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
     assert.doesNotMatch(await js<string>('window.conflictFixture.restack.blocked.files[0].result'), /<{7}/);
     assert.equal(await js('window.conflictFixture.restack.blocked.files[0].resolved'), false);
     await open();
+    // An edit left open and unsaved belongs to this pause. Continue pauses again on the same path in the next commit,
+    // with a whole-file proposal: the editor is closed there and the earlier text is gone.
+    await wait(`!!document.querySelector('.restack-conflict-file .conflict-block[data-conflict-index="0"] [data-conflict-edit]')`);
+    await js(`${paused}.querySelector('.conflict-block[data-conflict-index="0"] [data-conflict-edit]').click()`);
+    const pausedEditor = inlineEditor(0, paused);
+    await wait(`!!${pausedEditor} && ${pausedEditor}.getRootNode().activeElement===${pausedEditor}`);
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '// stale, never saved\n' });
+    await wait(`!${paused}.querySelector('[data-conflict-edit-save]').disabled`);
+    await click('Mark reviewed');
+    await wait('window.conflictFixture.restack.blocked.files[0].resolved===true');
+    await js(`(()=>{const s=window.conflictFixture,f=s.restack.blocked.files[0];
+      window.nextPause={...s.restack.blocked,commit:'f'.repeat(40),reason:'The restack is paused on the next commit.',files:[{...f,result:f.original,resolved:false,proposals:undefined,verdict:undefined,picks:undefined,edits:undefined,wholeFile:{source:'mergiraf',text:f.theirs}}]};})()`);
+    await click('Continue restack');
+    await wait("document.querySelector('.restack-blocked p')?.textContent==='The restack is paused on the next commit.'");
+    await wait(`!!${paused}.querySelector('.conflict-whole-file')`);
+    assert.equal(await js("!!document.querySelector('[data-conflict-inline-edit]')"), false, 'No editor carries into the next pause');
+    assert.doesNotMatch(await js<string>('window.conflictFixture.restack.blocked.files[0].result'), /stale, never saved/);
+    // After Use this result the file has no cards: Reset file brings the proposal and its conflicts back.
+    await click('Use this result');
+    await wait(`!${paused}.querySelector('.conflict-whole-file') && !!${paused}.querySelector('[data-restack-reset]')`);
+    await captureAll('restack-whole-file-used');
+    await js(`${paused}.querySelector('[data-restack-reset]').click()`);
+    await wait(`!!${paused}.querySelector('.conflict-whole-file')`);
+    await click('Use this result');
+    await wait(`!${paused}.querySelector('.conflict-whole-file')`);
     await click('Mark reviewed');
     await click('Continue restack');
     await wait("!document.querySelector('.restack-blocked')");
