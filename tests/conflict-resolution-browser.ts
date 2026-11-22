@@ -216,7 +216,8 @@ void app.whenReady().then(async () => {
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
         // As the service does: a save from an earlier version lands while its file is the one it started from.
-        if(req.version!==s.version){const f=req.kind==='save'&&req.base!==undefined&&req.version<s.version?s.files.find(f=>f.path===req.path):undefined;if(!f)throw Error('The saved resolution changed. Reopen the workspace before continuing.');if(window.draftKey(f)!==req.base)throw Error(window.draftChanged);}
+        if(req.kind==='save'&&req.base!==undefined){if(s.status==='published')throw Error(window.refusals.pushed);if(req.version>s.version)throw Error(window.stale);const f=s.files.find(f=>f.path===req.path);if(!f)throw Error(window.refusals.left);const r=window.rev(f);if(r!==req.base)throw Error(r.split('.')[0]===req.base.split('.')[0]?window.refusals.changed:window.refusals.conflicts);}
+        else if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
         if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='You used structural merge’s result for the whole file. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
         else if(req.kind==='resolve'){s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run. It differed on 2 conflicts already decided; those keep their text.';}
@@ -225,9 +226,17 @@ void app.whenReady().then(async () => {
         s.version++;return {session:structuredClone(s)};
       };
     })()`);
-    await js(
-      "import('/lib/conflict-resolution.ts').then(m=>{window.draftKey=m.fileDraftKey;window.draftChanged=m.FILE_DRAFT_CHANGED;})"
-    );
+    // Each file's revision, as the service names it (fileRevision): its conflicts, then its draft and your choices.
+    await js(`import('/lib/conflict-resolution.ts').then(m=>{
+      window.refusals=m.SAVE_REFUSALS;window.stale=m.STALE_DRAFT;
+      const h=t=>{let a=0x811c9dc5;for(let i=0;i<t.length;i++)a=Math.imul(a^t.charCodeAt(i),16777619);return (a>>>0).toString(36)+'-'+t.length};
+      window.rev=f=>h(f.path+'\\0'+f.original)+'.'+h(JSON.stringify([f.result,f.proposals??null,f.picks??null,f.edits??null]));
+      const handle=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        const reply=await handle(req);
+        return reply?.session?{...reply,session:{...reply.session,files:reply.session.files.map(f=>({...f,revision:window.rev(f)}))}}:reply;
+      };
+    })`);
     await js(`(async()=>{
       const stack=(await window.electronAPI.workbenchQueue()).items.find(i=>i.subject.kind==='stack');
       const read=window.electronAPI.getQueueSignals;

@@ -4,8 +4,9 @@ import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
-  FILE_DRAFT_CHANGED,
-  fileDraftKey,
+  SAVE_REFUSALS,
+  STALE_DRAFT,
+  revisionConflicts,
   hasConflictMarkers,
   validateConflictRequest,
   type ConflictFile,
@@ -99,7 +100,17 @@ import {
   type SharedLayout,
 } from './conflict-object-store';
 
+/** A save waits this long for another request on the PR to finish. */
+const SAVE_WAIT = 30_000;
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+/**
+ * A file's saved draft, named (`ConflictFile.revision`): its conflicts, then its draft, proposals, choices and edits.
+ * Exact, so a save from another view's draft of the file is never taken for this one.
+ */
+const fileRevision = (f: ConflictFile) =>
+  `${hash(`${f.path}\0${f.original}`).slice(0, 16)}.${hash(
+    JSON.stringify([f.path, f.original, f.result, f.proposals ?? null, f.picks ?? null, f.edits ?? null])
+  ).slice(0, 32)}`;
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
 /** Why background work stopped: a request of yours came for the same PR. */
@@ -194,6 +205,8 @@ interface Deps {
   typeCheckTimeout?: number;
   /** Milliseconds after the last change to a draft before it is type checked again. Tests change it. */
   typeCheckDelay?: number;
+  /** Milliseconds a save waits for another request on the PR before it fails as busy (SAVE_WAIT). Tests change it. */
+  saveWait?: number;
   /** A PR's type check status changed (`typeCheck`). */
   typeCheckChanged?: (id: string) => void;
 }
@@ -609,20 +622,27 @@ export function createConflictResolutionService(deps: Deps) {
     });
   }
   /**
-   * A save sent from an earlier version of the draft: another writer (an open in another view, its checks, a save of
-   * another file) moved the draft on meanwhile. It goes on from the draft as it is now while the file it edits is the
-   * one the edit started from (`base`). When that file changed too, the save is refused and nothing is overwritten.
+   * Why a save can't go on from the draft as it is now; undefined when it can. Another writer (an open in another view,
+   * its checks, a save of another file) may have moved the draft on since the save's version: the save goes on while
+   * the file it edits is the one it started from (`base`), and is refused when that file changed. Nothing is
+   * overwritten.
    */
-  function rebases(request: ConflictRequest, session: ConflictSession) {
-    if (request.kind !== 'save' || request.base === undefined || request.version > session.version) return false;
-    if (session.status !== 'editing') return false;
+  function saveRefusal(request: Extract<ConflictRequest, { kind: 'save' }>, session: ConflictSession) {
+    if (session.status === 'published') return SAVE_REFUSALS.pushed;
+    if (request.version > session.version) return STALE_DRAFT;
     const file = session.files.find((f) => f.path === request.path);
-    if (!file || fileDraftKey(file) !== request.base) throw new Error(FILE_DRAFT_CHANGED);
-    return true;
+    if (!file) return SAVE_REFUSALS.left;
+    const revision = fileRevision(file);
+    if (revision === request.base) return undefined;
+    return revisionConflicts(revision) === revisionConflicts(request.base)
+      ? SAVE_REFUSALS.changed
+      : SAVE_REFUSALS.conflicts;
   }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    write(key, withChoices(key, session));
+    withChoices(key, session);
+    for (const f of session.files) f.revision = fileRevision(f);
+    write(key, session);
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -2252,7 +2272,7 @@ export function createConflictResolutionService(deps: Deps) {
         await maintenance;
         const session = sessionFor(ctx, id);
         if (session.version !== version)
-          throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+          throw new Error(STALE_DRAFT);
         if (session.status !== 'editing') throw new Error('This resolution has already been published.');
         const urls = deps.dependents?.(session.url) ?? [];
         if (!urls.length) return { version, url: session.url, prs: [] };
@@ -2532,7 +2552,12 @@ export function createConflictResolutionService(deps: Deps) {
         do await yieldToYou(key);
         while (backgroundWork.has(key));
         if (!busy.has(key) || request.kind !== 'save') break;
-        await freed(key, signal);
+        // Bounded: a save behind a long request fails as busy, and the view's autosave tries again later.
+        const waited = AbortSignal.any([signal, AbortSignal.timeout(deps.saveWait ?? SAVE_WAIT)]);
+        await freed(key, waited).catch((error: unknown) => {
+          if (signal.aborted) throw error;
+        });
+        if (waited.aborted && !signal.aborted) break;
       }
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
@@ -2565,8 +2590,14 @@ export function createConflictResolutionService(deps: Deps) {
           return { session };
         }
         const session = sessionFor(ctx, id);
-        if (request.version !== session.version && !rebases(request, session))
-          throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+        // A save that names its file's revision is checked against the file; any other request against the version.
+        const refused =
+          request.kind === 'save' && request.base !== undefined
+            ? saveRefusal(request, session)
+            : request.version !== session.version
+              ? STALE_DRAFT
+              : undefined;
+        if (refused) throw new Error(refused);
         if (
           request.kind === 'restack-prepare' ||
           request.kind === 'restack-publish' ||
@@ -2679,7 +2710,9 @@ export function createConflictResolutionService(deps: Deps) {
           return { session };
         }
         if (session.status !== 'editing')
-          throw new Error('This resolution has already been published. Refresh the PR.');
+          throw new Error(
+            request.kind === 'save' ? SAVE_REFUSALS.pushed : 'This resolution has already been published. Refresh the PR.'
+          );
         let baseMoved: BaseMove | undefined;
         if (request.kind === 'discard') {
           await stopTypeCheck(key, id);
