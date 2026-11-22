@@ -82,7 +82,7 @@ After the push, a stack can restack the PRs above this one. Each PR is replayed 
 
 The restack pauses only on a conflict in Check or Decide. A paused restack uses the same conflict view, with **Updated parent** and **This PR** as the versions; Merged conflicts in a paused file show as Merged. A choice you make in a pause is kept for the same conflict when you select **Prepare again**.
 
-A PR update whose replay had no conflict, or whose every conflict the checks merged, says "Merged and checked · No review needed" (or "Replayed cleanly") and needs no tick. Every other update has its **Reviewed** checkbox at its header: one that paused, used a remembered resolution, or carried a choice of yours. Those are your decisions, never Merged. Continue stays disabled, with the reason beside it, until each of those updates is reviewed. All branches are pushed together in one atomic push, or none are.
+A PR update whose replay had no conflict, or whose every conflict the checks merged, says "Merged and checked · No review needed" (or "Replayed cleanly") and needs no tick. Every other update has its **Reviewed** checkbox at its header: one that paused, used a remembered resolution, carried a choice of yours, or recreated a merge commit. A recreated merge commit can lose what the original merge added even when Git reports no conflict, so the update says "Recreated 1 merge commit; check that nothing they added was lost." Those are your decisions, never Merged. Continue stays disabled, with the reason beside it, until each of those updates is reviewed. All branches are pushed together in one atomic push, or none are.
 
 ## Supported conflicts
 

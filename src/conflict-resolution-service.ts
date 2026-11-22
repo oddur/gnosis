@@ -38,7 +38,7 @@ import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
-import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import { carryList, prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
 import {
   SHARED_LAYOUT_FILE,
   STORES_DIRECTORY,
@@ -156,6 +156,17 @@ export function createConflictResolutionService(deps: Deps) {
   }
   const withStore = createStoreLocks();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
+  /**
+   * Your reviewed paused restack files, for carrying your choices (src/conflict-restack.ts). Kept beside the draft, not
+   * in it: it stays in the main process, and survives a preparation that fails.
+   */
+  const carryKey = (account: string, id: string) => `conflict-restack-carry:${account}:${id}`;
+  const readCarry = (account: string, id: string) =>
+    (deps.storage.read(carryKey(account, id)) as ConflictFile[] | null | undefined) ?? [];
+  const writeCarry = (account: string, id: string, files: ConflictFile[]) => {
+    if (files.length || readCarry(account, id).length)
+      deps.storage.write(carryKey(account, id), files.length ? files : null);
+  };
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
   async function persist(session: ConflictSession) {
     deps.storage.write(storageKey(session.account, session.id), session);
@@ -1355,6 +1366,7 @@ export function createConflictResolutionService(deps: Deps) {
   /** Removes a draft and its cache, as Discard does. */
   async function drop(account: string, id: string) {
     deps.storage.write(storageKey(account, id), null);
+    writeCarry(account, id, []);
     await deps.storage.flush();
     const dir = await directory(account, id);
     await dropStoreRefs(account, id, dir);
@@ -1531,20 +1543,43 @@ export function createConflictResolutionService(deps: Deps) {
             signal,
             report,
             // The main merge's pipeline for each paused commit (#445 item 21): the same steps, not a copy of them.
-            propose: async (files: ConflictFile[], branches: { head: string; base: string }) => {
-              await mergeStructurally(ctx, id, branches, files, signal, report);
+            propose: async (files: ConflictFile[], branches: { head: string; base: string }, keepDraft: boolean) => {
+              await mergeStructurally(ctx, id, branches, files, signal, report, keepDraft);
             },
             check: async (files: ConflictFile[]) => {
               await check(files, signal, report);
             },
           };
           if (request.kind === 'restack-prepare') {
-            // Your reviewed choices in the plan this one replaces carry to the same conflicts in the new one.
-            const carry = [
-              ...(session.restack?.carry ?? []),
-              ...(session.restack?.blocked?.files.filter((file) => file.resolved) ?? []),
-            ];
-            if (session.restack?.status === 'blocked')
+            // Your reviewed choices so far, and the paused plan's this one replaces, carry to the same conflicts.
+            const previous = session.restack;
+            const carry = carryList([
+              ...readCarry(ctx.account, id),
+              ...(previous?.blocked?.files.filter((file) => file.resolved) ?? []),
+            ]);
+            writeCarry(ctx.account, id, carry);
+            // A failed preparation must not leave an older plan publishable. A paused one is kept, with its worktree,
+            // until the new plan is ready, and comes back if preparing fails.
+            session.restack = undefined;
+            await persist(session);
+            try {
+              await restoreHistory(ctx, session, signal, report);
+              session.dependents = deps.dependents?.(session.url) ?? [];
+              await memory.record(memoryScope(session), session.files, signal);
+              const repo = await directory(ctx.account, id);
+              session.restack = await memory.withRepository(memoryScope(session), repo, () =>
+                prepareRestack(session, session.dependents ?? [], { ...restackDeps, carry })
+              );
+            } catch (error) {
+              if (previous?.status === 'blocked') {
+                session.restack = previous;
+                await persist(session);
+              }
+              throw error;
+            } finally {
+              writeCarry(ctx.account, id, carry);
+            }
+            if (previous?.status === 'blocked')
               await git(
                 ctx,
                 id,
@@ -1552,21 +1587,12 @@ export function createConflictResolutionService(deps: Deps) {
                   'worktree',
                   'remove',
                   '--force',
-                  await restackWorktreePath(await directory(ctx.account, id), session.restack.token),
+                  await restackWorktreePath(await directory(ctx.account, id), previous.token),
                 ],
                 signal,
                 undefined,
                 [0, 128]
               );
-            // A failed preparation must not leave an older plan publishable.
-            session.restack = undefined;
-            await persist(session);
-            await restoreHistory(ctx, session, signal, report);
-            session.dependents = deps.dependents?.(session.url) ?? [];
-            await memory.record(memoryScope(session), session.files, signal);
-            session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
-              prepareRestack(session, session.dependents ?? [], { ...restackDeps, carry })
-            );
           } else if (request.kind === 'restack-save') {
             const file = session.restack?.blocked?.files.find((file) => file.path === request.path);
             if (
@@ -1584,9 +1610,15 @@ export function createConflictResolutionService(deps: Deps) {
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
-            session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
-              prepareRestack(session, session.dependents ?? [], restackDeps, true)
-            );
+            const carry = readCarry(ctx.account, id);
+            try {
+              const repo = await directory(ctx.account, id);
+              session.restack = await memory.withRepository(memoryScope(session), repo, () =>
+                prepareRestack(session, session.dependents ?? [], { ...restackDeps, carry }, true)
+              );
+            } finally {
+              writeCarry(ctx.account, id, carry);
+            }
           } else {
             // Every update that needs its tick has it. An update whose replay the checks merged whole needs none.
             const urls = session.restack?.branches.map((branch) => branch.url) ?? [];
@@ -1600,6 +1632,7 @@ export function createConflictResolutionService(deps: Deps) {
             )
               throw new Error('Review every dependent PR update before pushing.');
             await publishRestack(session, request.previewToken, restackDeps);
+            writeCarry(ctx.account, id, []);
           }
           assertAccount(ctx);
           session.version++;

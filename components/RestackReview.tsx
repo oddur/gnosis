@@ -13,6 +13,17 @@ import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+/** Why no update needs a tick: each replayed cleanly, or the checks merged every conflict in it, or some of each. */
+function noReviewSummary(branches: { merged?: number }[]) {
+  const checked = branches.filter((branch) => branch.merged).length;
+  const clean = branches.length - checked;
+  if (!checked) return `${clean === 1 ? 'The update' : `All ${clean} updates`} replayed cleanly`;
+  if (!clean) return 'The checks merged every conflict';
+  const others = checked === 1 ? 'the other' : `the other ${checked}`;
+  return `${plural(clean, 'update')} replayed cleanly, and the checks merged every conflict in ${others}`;
+}
+/** A paused file whose proposals have no verdict: the checks could not run, and the restack does not run them again. */
+const UNCHECKED = { merged: false, note: 'Gnosis couldn’t check this result. Check it yourself.' };
 
 export function RestackReview({
   session,
@@ -168,7 +179,7 @@ export function RestackReview({
       status={
         step.id === 'review' && plan
           ? !needsReview.length
-            ? `No update needs review: the checks merged every conflict · Nothing pushed yet`
+            ? `${noReviewSummary(plan.branches)} · Nothing pushed yet`
             : allReviewed
               ? `${needsReview.length === plan.branches.length ? 'All ' : ''}${plural(needsReview.length, 'PR update')} reviewed · Nothing pushed yet`
               : `${needsReview.filter((branch) => reviewed.includes(branch.url)).length} of ${plural(needsReview.length, 'PR update')} reviewed · Mark each update reviewed to continue`
@@ -243,7 +254,7 @@ export function RestackReview({
                         disabled={busy}
                         onChange={update}
                         proposals={file.proposals}
-                        verdict={file.verdict?.verdict}
+                        verdict={file.verdict?.verdict ?? (file.proposals || file.wholeFile ? UNCHECKED : undefined)}
                         note={file.structuralNote}
                         picks={filePicks}
                         onPick={(index, choice) => {
@@ -356,6 +367,11 @@ export function RestackReview({
                       {branch.merged ? ` · ${plural(branch.merged, 'conflict')} merged and checked` : ''}
                       {branch.yours ? ` · ${plural(branch.yours, 'conflict')} resolved by you` : ''}
                     </p>
+                    {branch.merges ? (
+                      <p className="restack-merges">
+                        Recreated {plural(branch.merges, 'merge commit')}; check that nothing they added was lost.
+                      </p>
+                    ) : null}
                     <p className="restack-revisions">
                       <code>{branch.oldSha.slice(0, 7)}</code> → <code>{branch.newSha.slice(0, 7)}</code>
                     </p>

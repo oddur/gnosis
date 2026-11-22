@@ -109,9 +109,12 @@ export interface RestackPlan {
     merged?: number;
     /** Conflicts resolved by you: decided in a pause, or your earlier choice carried over to the same conflict. */
     yours?: number;
+    /** Merge commits the replay recreated. A clean recreation can still lose what the original merge added. */
+    merges?: number;
     /**
-     * The update needs its Reviewed tick. False only when the replay had no conflict, or every conflict was Merged by
-     * the checks: nothing you decided, carried or remembered. Missing (a plan from an earlier version) counts as true.
+     * The update needs its Reviewed tick. False only when the replay recreated no merge commit and had no conflict, or
+     * every conflict was Merged by the checks: nothing you decided, carried or remembered. Missing (a plan from an
+     * earlier version) counts as true.
      */
     review?: boolean;
     patch: string;
@@ -128,12 +131,6 @@ export interface RestackPlan {
     merged?: number;
     yours?: number;
   };
-  /**
-   * Paused files you marked reviewed, kept so a later pause or Prepare again carries your choice for a conflict with the
-   * same text (lib/conflict-carry.ts), as the resolved PR's own files are. Only `path`, `original`, `result` and
-   * `picks` are kept.
-   */
-  carry?: ConflictFile[];
 }
 export type ConflictRequest =
   /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */

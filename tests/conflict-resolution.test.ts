@@ -2050,6 +2050,15 @@ void test('a paused replay runs the pipeline: a PR whose conflicts the checks me
   if (await nativeMergirafMissing(t)) return;
   const f = await pipelineStack(t, { name: 'account.py', base: ACCOUNT, main: ACCOUNT + STATEMENT, child: ACCOUNT + WITHDRAW });
   const child = await f.git('rev-parse', 'child');
+  // Preimages without a resolution: the root merge's own lookups leave some; the replay must add none.
+  const memory = path.join(f.deps.directory(), 'resolution-memory');
+  const orphans = async () => {
+    const entries = await fs.readdir(memory, { recursive: true }).catch((): string[] => []);
+    const resolved = (entry: string) =>
+      entries.includes(path.join(path.dirname(entry), path.basename(entry).replace('preimage', 'postimage')));
+    return entries.filter((entry) => path.basename(entry).startsWith('preimage') && !resolved(entry)).sort();
+  };
+  const before = await orphans();
   let { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
   assert.equal(session.restack?.status, 'prepared', 'Nothing stops for you: both added methods are Merged');
   assert.deepEqual(
@@ -2061,6 +2070,7 @@ void test('a paused replay runs the pipeline: a PR whose conflicts the checks me
     'PR 2 is Merged by the checks and PR 3 replays cleanly: neither needs a tick'
   );
   assert.equal(await f.git('rev-parse', 'child'), child, 'Preparation must not push');
+  assert.deepEqual(await orphans(), before, 'The replay leaves no preimage of a result it settled');
   // The checks' result is not remembered as yours: Prepare again merges it again, rather than reusing it.
   session = (await f.run({ kind: 'restack-prepare', id: session.id, version: session.version })).session;
   assert.equal(session.restack?.branches[0].reused, 0);
@@ -2133,6 +2143,65 @@ void test('a replayed conflict the checks leave in Check pauses the restack, and
   ).session;
   assert.equal(session.restack?.status, 'published');
   assert.equal(await f.git('show', 'tip:imports.ts'), file.result.trimEnd());
+});
+void test('a clean replay that recreates a merge commit still needs its tick (#445)', async (t) => {
+  const f = await stackedFixture(t);
+  // PR 2 gets a merge commit of its own: a side branch merged with --no-ff, which the replay recreates cleanly.
+  await f.git('checkout', '-b', 'side', 'child');
+  await fs.writeFile(path.join(f.deps.remote(), 'side.txt'), 'side change\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'side change');
+  await f.git('checkout', 'child');
+  await f.git('merge', '--no-ff', '-m', 'Merge side', 'side');
+  await f.git('checkout', 'main');
+  const service = createConflictResolutionService({ ...f.deps, dependents: () => [f.urls[0]] });
+  const { session } = await service.run(
+    { kind: 'restack-prepare', id: f.session.id, version: f.session.version },
+    new AbortController().signal
+  );
+  assert.equal(session.restack?.status, 'prepared');
+  const [branch] = session.restack.branches;
+  assert.equal(branch.merges, 1);
+  assert.equal(branch.merged, 0);
+  assert.equal(branch.review, true, 'A recreated merge can lose what the original merge added');
+  await assert.rejects(
+    service.run(
+      { kind: 'restack-publish', id: session.id, version: session.version, previewToken: session.restack.token, reviewed: [] },
+      new AbortController().signal
+    ),
+    /Review every/
+  );
+});
+void test('Prepare again that fails keeps the paused plan and your carried choices (#445)', async (t) => {
+  const f = await stackedFixture(t, true);
+  let session = (await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version })).session;
+  session = (
+    await f.run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 5;\n',
+      resolved: true,
+    })
+  ).session;
+  const dependents = f.deps.dependents;
+  // A stack that names a PR twice: preparing throws after the old plan was set aside.
+  f.deps.dependents = () => [f.urls[0], f.urls[0]];
+  await assert.rejects(f.run({ kind: 'restack-prepare', id: session.id, version: session.version }), /single linear stack/);
+  f.deps.dependents = dependents;
+  session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(session.restack?.status, 'blocked', 'The paused plan comes back');
+  assert.equal(session.restack.blocked?.files[0].result, 'export const answer = 5;\n');
+  assert.equal(
+    (session.restack as { carry?: unknown }).carry,
+    undefined,
+    'The carried choices stay in the main process, never in the reply'
+  );
+  // Its worktree is still there: Continue works.
+  const continued = (await f.run({ kind: 'restack-continue', id: session.id, version: session.version })).session;
+  assert.equal(continued.restack?.status, 'prepared');
+  assert.equal(continued.restack.branches[0].yours, 1);
 });
 void test('your choice in a paused replay carries to the same conflict after Prepare again, as yours (#445)', async (t) => {
   const f = await stackedFixture(t, true);
