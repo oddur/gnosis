@@ -106,6 +106,13 @@ export const BACKGROUND_YIELDED = 'Background preparation stopped for your reque
 export const NO_PERMISSION = 'You need permission to update this open PR branch.';
 /** Background drafts kept, newest first, and the age after which one leaves (src/conflict-precompute.ts). */
 const BACKGROUND_DRAFTS = 8;
+/**
+ * The reopen pass's total time (#450): structural merge for files of a draft that never had it. The saved draft shows
+ * once it is over; what it doesn't reach waits for the next reopen, and Suggest tries any file at once.
+ */
+const REOPEN_STRUCTURAL_BUDGET = 2000;
+/** Less time than this left in the reopen pass: a file doesn't start. */
+const REOPEN_MIN_START = 250;
 const BACKGROUND_AGE = 7 * 24 * 60 * 60 * 1000;
 interface Context {
   account: string;
@@ -125,6 +132,8 @@ interface Deps {
    * 30000. Tests change them.
    */
   structuralTimeouts?: [number, number, number];
+  /** The reopen pass's total time (#450); REOPEN_STRUCTURAL_BUDGET by default. */
+  reopenStructuralBudget?: number;
   suggest: (
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
     signal: AbortSignal
@@ -1237,7 +1246,12 @@ export function createConflictResolutionService(deps: Deps) {
     signal: AbortSignal,
     report: (text: string) => void,
     /** Store what it proposes beside the draft, without applying it: the draft may be your own. */
-    keepDraft = false
+    keepDraft = false,
+    /**
+     * The whole pass's time, for the reopen pass (#450): no retry, and a file it can't start in time is left for the next
+     * reopen or an explicit Suggest.
+     */
+    total?: number
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
     if (!queue.length) return files;
@@ -1285,24 +1299,41 @@ export function createConflictResolutionService(deps: Deps) {
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
+    /** Files structural merge ran on. One that never got its turn in time has no note, and the next reopen tries it. */
+    const started = new Set<ConflictFile>();
     /** Four files at a time. A file that runs out of time goes on `late`. */
     const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
       const work = async () => {
-        for (let file = files.shift(); file; file = files.shift())
-          if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
+        for (let file = files.shift(); file; file = files.shift()) {
+          const time = budget();
+          if (time > 0) started.add(file);
+          if (time <= 0 || !(await propose(file, time))) late.push(file);
+        }
       };
       await Promise.all([work(), work(), work(), work()]);
     };
     const late: ConflictFile[] = [];
-    // The pool takes files off the list it is given.
-    await pool([...queue], () => first, late);
+    const end = total === undefined ? Infinity : Date.now() + total;
+    // The pool takes files off the list it is given. Too little time left to merge a file is none.
+    await pool(
+      [...queue],
+      () => {
+        const left = end - Date.now();
+        return left < Math.min(first, REOPEN_MIN_START) ? 0 : Math.min(first, left);
+      },
+      late
+    );
     // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
-    const deadline = Date.now() + cap;
+    // The reopen pass has no retry: what it can't finish waits for Suggest.
+    const deadline = Math.min(Date.now() + (total === undefined ? cap : 0), end);
     const failed: ConflictFile[] = [];
     await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
     for (const file of failed) {
+      if (!started.has(file)) continue;
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
+      // It ran: a reopen doesn't wait for it again. "Try structural merge again" does, with the Suggest budget.
+      file.structuralRan = true;
     }
     await proposeMoves(queue, signal);
     return files;
@@ -1642,7 +1673,8 @@ export function createConflictResolutionService(deps: Deps) {
           untried,
           signal,
           report,
-          true
+          true,
+          deps.reopenStructuralBudget ?? REOPEN_STRUCTURAL_BUDGET
         );
       // A draft saved before the main process checked proposals, or by a build without the checks, gets them now.
       if ((await check(saved.files, signal, report)) || untried.length) {
