@@ -21,6 +21,8 @@ export interface SideRange {
   added: SideTone;
   removed: SideTone;
 }
+/** Which version is the PR's: ours in a merge, theirs in a restack (whose ours is the updated parent). */
+export const prSideOf = (kind: 'merge' | 'restack'): 'ours' | 'theirs' => (kind === 'restack' ? 'theirs' : 'ours');
 /** Side tints by line: new-side lines in `added`, old-side lines in `removed`. */
 export interface SideRows {
   added: ReadonlyMap<number, SideTone>;
@@ -29,34 +31,41 @@ export interface SideRows {
 
 /**
  * Each open conflict's rows in the diff's hunks: its shown lines that the diff adds, and the compared version's lines it
- * removes beside them. Lines both sides share stay plain context.
+ * removes with them. A run of changed rows belongs to a conflict only when every line it adds is the conflict's, or,
+ * adding none, when it sits inside the conflict's lines (or at the place of a conflict that shows none). A removed row
+ * beside the conflict, in a run that also adds a line outside it, keeps the review diff's colour. Lines both sides share
+ * stay plain context.
  */
 export function conflictSideRows(hunks: readonly GapHunk[], ranges: readonly SideRange[]): SideRows {
   const added = new Map<number, SideTone>();
   const removed = new Map<number, SideTone>();
-  for (const range of ranges) {
-    const last = Math.max(range.end, range.start);
-    for (const hunk of hunks) {
-      let oldLine = hunk.oldStart;
-      let newLine = hunk.newStart;
-      let adding = false;
-      for (const row of hunk.rows) {
-        if (row.type === '+') {
-          if (newLine >= range.start && newLine <= range.end) {
-            added.set(newLine, range.added);
-            adding = true;
-          }
-          newLine++;
-        } else if (row.type === '-') {
-          // Removed lines sit at the conflict's place: before its first line, among its lines, or right after them.
-          if ((newLine >= range.start && newLine <= last) || (adding && newLine === range.end + 1))
-            removed.set(oldLine, range.removed);
-          oldLine++;
-        } else {
-          adding = false;
-          oldLine++;
-          newLine++;
-        }
+  for (const hunk of hunks) {
+    let oldLine = hunk.oldStart;
+    let newLine = hunk.newStart;
+    let index = 0;
+    while (index < hunk.rows.length) {
+      if (hunk.rows[index].type === ' ') {
+        index++;
+        oldLine++;
+        newLine++;
+        continue;
+      }
+      // One run of changed rows: the new lines it adds, the old lines it removes, and where it sits on the new side.
+      const at = newLine;
+      const adds: number[] = [];
+      const removes: number[] = [];
+      for (; index < hunk.rows.length && hunk.rows[index].type !== ' '; index++)
+        if (hunk.rows[index].type === '+') adds.push(newLine++);
+        else removes.push(oldLine++);
+      for (const range of ranges) {
+        const inside = (line: number) => line >= range.start && line <= range.end;
+        for (const line of adds) if (inside(line)) added.set(line, range.added);
+        const owns = adds.length
+          ? adds.every(inside)
+          : range.end < range.start
+            ? at === range.start
+            : at > range.start && at <= range.end;
+        if (owns) for (const line of removes) removed.set(line, range.removed);
       }
     }
   }

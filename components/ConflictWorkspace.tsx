@@ -1795,7 +1795,7 @@ export function ConflictWorkspace({
               backLabel={session.files.length ? 'Back to files' : 'Back'}
               // The bar under the page holds the message and Push (#445 distill): it stays in view however long the diff.
               status={
-                <div className="conflict-confirm-bar">
+                <span className="conflict-confirm-bar">
                   <label className="conflict-confirm-message">
                     Merge commit message
                     <input
@@ -1806,7 +1806,7 @@ export function ConflictWorkspace({
                     />
                   </label>
                   <span>Nothing is pushed until you select Push.</span>
-                </div>
+                </span>
               }
               continueLabel={busy ? 'Pushing…' : 'Push merge commit'}
               continueDisabled={
@@ -2336,12 +2336,24 @@ function ConfirmDiff({
     <div className="conflict-confirm-diff">
       {shown.length > 1 && (
         <nav className="conflict-confirm-jump" aria-label="What the merge commit holds">
-          {shown.map(({ id, title, count }) => (
+          {/* An empty You decided is gone, but the fact isn't: this is the last look before the push. */}
+      {!clean && !decided.length && (
+        <p className="conflict-confirm-lead" data-confirm-none-decided="">
+          You decided no conflicts. Everything here was merged for you or arrives from {session.baseBranch}.
+        </p>
+      )}
+      {shown.map(({ id, title, count }) => (
             <button key={id} type="button" data-confirm-jump={id} onClick={() => jump(id)}>
               {title} <span>{count}</span>
             </button>
           ))}
         </nav>
+      )}
+      {/* An empty You decided is gone, but the fact isn't: this is the last look before the push. */}
+      {!clean && !decided.length && (
+        <p className="conflict-confirm-lead" data-confirm-none-decided="">
+          You decided no conflicts. Everything here was merged for you or arrives from {session.baseBranch}.
+        </p>
       )}
       {shown.map(({ id, title, count }) => (
         <ConfirmSection key={id} id={id} title={title} count={count} open={open[id]} onToggle={() => toggle(id)}>

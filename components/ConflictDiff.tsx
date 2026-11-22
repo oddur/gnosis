@@ -40,14 +40,14 @@ import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution'
 import { blockFingerprints } from '../lib/conflict-stats';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
-import { ChangesDiff } from './ChangesDiff';
+import { ChangesDiff, diffHosts } from './ChangesDiff';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
-import { SIDES_CSS, conflictSideRows, markSides, type SideRange, type SideTone } from '../lib/conflict-sides';
+import { SIDES_CSS, conflictSideRows, markSides, prSideOf, type SideRange, type SideTone } from '../lib/conflict-sides';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
@@ -157,8 +157,7 @@ export function ConflictFileDiff<A>({
   marks.current = { sideRows, sideLabels };
   useEffect(() => {
     if (!sideLabels) return;
-    for (const host of sectionRef.current?.querySelectorAll('diffs-container') ?? [])
-      if (!host.parentElement?.closest('diffs-container')) markSides(host, sideRows, sideLabels);
+    if (sectionRef.current) for (const host of diffHosts(sectionRef.current)) markSides(host, sideRows, sideLabels);
   }, [sideRows, sideLabels]);
   const contents = useMemo(
     (): PrFileContents | undefined =>
@@ -684,7 +683,7 @@ export function ConflictDiff({
         model={models?.[index]}
         onUndo={model.undoable ? () => undo(index) : undefined}
         compare={mode}
-        prSide={kind === 'restack' ? 'theirs' : 'ours'}
+        prSide={prSideOf(kind)}
         written={written.get(index)?.length ?? 0}
       />
     );
@@ -840,7 +839,7 @@ function CompareDiff({
   );
   // Each open conflict's two sides (lib/conflict-sides.ts): the shown lines are the version not compared with.
   const sideRanges = useMemo(() => {
-    const pr = kind === 'restack' ? 'theirs' : 'ours';
+    const pr = prSideOf(kind);
     const tone = (side: 'ours' | 'theirs'): SideTone => (side === pr ? 'pr' : 'base');
     const shownSide = against === 'ours' ? 'theirs' : 'ours';
     return shown.blocks

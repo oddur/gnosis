@@ -1126,7 +1126,7 @@ const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as cons
  * The diffs under `scope`, without a diff or an editor inside one's annotations, such as a conflict's in-place editor
  * (#445 item 11): marks and line lookups are for the diff's own rows, never for code in a card under them.
  */
-function diffHosts(scope: ParentNode): HTMLElement[] {
+export function diffHosts(scope: ParentNode): HTMLElement[] {
   return [...scope.querySelectorAll<HTMLElement>('diffs-container')].filter(
     (host) => !host.parentElement?.closest('diffs-container')
   );

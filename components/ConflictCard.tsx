@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { EditProvider, File } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
 import { Bot, Check, CheckCheck, CircleAlert, CircleHelp, Pencil, Undo2 } from 'lucide-react';
@@ -17,6 +17,7 @@ import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { ModelCard } from '../lib/conflict-model';
 import { writtenLabel, type CompareWith } from '../lib/conflict-diff';
 import { WRITTEN_SWATCH } from '../lib/diff-here';
+import { SIDE_COLORS, type SideTone } from '../lib/conflict-sides';
 import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
 
 /*
@@ -174,6 +175,8 @@ export function ConflictCard({
     );
   const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
   const baseSide = prSide === 'ours' ? 'theirs' : 'ours';
+  // Each side's swatch is its tint in the code (lib/conflict-sides.ts), from the one list of colours.
+  const swatch = (tone: SideTone) => ({ '--conflict-side-swatch': SIDE_COLORS[tone] }) as CSSProperties;
   const writtenNote = wrote && <WrittenLegend count={written} />;
   const writtenText = wrote ? ` ${writtenLabel(written)}.` : '';
   // Edit sits with the Keep actions on an open card, and on the line of a decided one.
@@ -449,10 +452,10 @@ export function ConflictCard({
       <p className="conflict-diff-legend">
         {compare !== 'both' && (
           <>
-            <span className="conflict-side-label" data-side={prSide} data-tone="pr">
+            <span className="conflict-side-label" data-side={prSide} data-tone="pr" style={swatch('pr')}>
               {labels[prSide]}
             </span>
-            <span className="conflict-side-label" data-side={baseSide} data-tone="base">
+            <span className="conflict-side-label" data-side={baseSide} data-tone="base" style={swatch('base')}>
               {labels[baseSide]}
             </span>
           </>

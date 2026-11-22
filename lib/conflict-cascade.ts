@@ -58,6 +58,19 @@ export function cascadeSentence(preview: CascadePreview): string {
     parts.push(`${list(waiting.map((pr) => number(pr.url)))} ${waiting.length === 1 ? 'waits' : 'wait'} for ${number(stopped.url)}.`);
   return parts.join(' ');
 }
+/**
+ * What the push asks of you next, beside the sentence, while each PR's line waits under a disclosure (#445 distill):
+ * how many PRs need your review in the restack, and how many recreate merge commits. A PR that waits behind a new
+ * conflict is not counted: the restack checks it later.
+ */
+export function cascadeReviewLine(preview: CascadePreview): string {
+  const known = preview.prs.filter((pr) => pr.outcome !== 'waiting');
+  const review = known.filter((pr) => pr.review).length;
+  const merges = known.filter((pr) => pr.merges > 0).length;
+  const parts = [review ? `${plural(review, 'PR')} ${review === 1 ? 'needs' : 'need'} your review.` : 'No PR needs your review.'];
+  if (merges) parts.push(`${plural(merges, 'PR')} ${merges === 1 ? 'recreates its' : 'recreate their'} merge commits.`);
+  return parts.join(' ');
+}
 /** One PR's line under the sentence, such as "#102 · Merged and checked". */
 export function cascadePrLine(pr: CascadePr): string {
   const what =

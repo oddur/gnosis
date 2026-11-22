@@ -162,9 +162,6 @@ void test('An open conflict’s sides wear neutral tints, the same in the code a
     assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < 80, `${color} is a neutral tint`);
   }
   assert.ok(SIDES_CSS.includes(SIDE_COLORS.pr) && SIDES_CSS.includes(SIDE_COLORS.base));
-  const css = (await import('node:fs')).readFileSync(new URL('../src/globals.css', import.meta.url), 'utf8');
-  assert.ok(css.includes(`[data-tone=pr] { --conflict-side-swatch:${SIDE_COLORS.pr}; }`), 'the PR swatch is its tint');
-  assert.ok(css.includes(`[data-tone=base] { --conflict-side-swatch:${SIDE_COLORS.base}; }`), 'the base swatch is its tint');
   // The PR's line (old 2) and main's (new 2) of an open conflict; the context around them stays plain.
   const rows = conflictSideRows(
     [
@@ -186,4 +183,11 @@ void test('An open conflict’s sides wear neutral tints, the same in the code a
   );
   assert.deepEqual([...rows.added], [[2, 'base']]);
   assert.deepEqual([...rows.removed], [[2, 'pr']]);
+  // A removed line beside the conflict, in a run that also adds a line outside it, is not the conflict's.
+  const beside = conflictSideRows(
+    [{ oldStart: 1, newStart: 1, noEofOld: false, noEofNew: false, rows: [{ type: '-', text: 'x' }, { type: '+', text: 'y' }, { type: '+', text: 'main' }] }],
+    [{ start: 2, end: 2, added: 'base', removed: 'pr' }]
+  );
+  assert.deepEqual([...beside.added], [[2, 'base']]);
+  assert.deepEqual([...beside.removed], []);
 });
