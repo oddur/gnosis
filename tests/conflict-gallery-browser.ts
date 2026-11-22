@@ -398,7 +398,7 @@ void app.whenReady().then(async () => {
             : Number(
                 (/(\d+) needs? you/.exec(s) ??
                   /for (\d+) conflicts/.exec(s) ??
-                  /(\d+) (?:proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
+                  /(\d+) (?:whole-file proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
               );
           const want = {
             files: seen.size,
