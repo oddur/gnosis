@@ -294,6 +294,8 @@ export function createConflictResolutionService(deps: Deps) {
       }
       return;
     }
+    // The draft as it was prepared: the reply that carries `session` goes on without waiting for the check.
+    const snapshot = structuredClone(session);
     const controller = new AbortController();
     const entry = { status: { state: 'running' } as ConflictTypeCheck, fingerprint, controller };
     typeChecks.set(key, entry);
@@ -320,7 +322,7 @@ export function createConflictResolutionService(deps: Deps) {
         return { state: 'skipped', reason: `your clone has no remote for ${session.baseRepo}` };
       const signal = controller.signal;
       return typeCheckMerge({
-        session: structuredClone(session),
+        session: snapshot,
         clone,
         directory: await directory(ctx.account, session.id),
         git: (args, signal, cwd) => git(ctx, session.id, args, signal, undefined, [0], { cwd }),
