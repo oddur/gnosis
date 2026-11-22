@@ -1234,6 +1234,8 @@ export function createConflictResolutionService(deps: Deps) {
     if (lastPush && (lastPush.commitSha === state.headSha || lastPush.unrestacked?.length)) session.lastPush = lastPush;
     signal.throwIfAborted();
     assertAccount(ctx);
+    // A new merge for the PR: choices carried from an earlier restack no longer belong to it.
+    writeCarry(ctx.account, id, []);
     await persist(session);
     return session;
   }
@@ -1364,6 +1366,21 @@ export function createConflictResolutionService(deps: Deps) {
     return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
   }
   /** Removes a draft and its cache, as Discard does. */
+  /**
+   * Removes a paused restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the
+   * resolution memory keeps no preimage of a pause nobody resolved.
+   */
+  async function abandonWorktree(ctx: Context, id: string, token: string) {
+    const worktree = await restackWorktreePath(await directory(ctx.account, id), token);
+    const signal = AbortSignal.timeout(30_000);
+    if (await exists(worktree))
+      for (const args of [
+        ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
+        ['rebase', '--abort'],
+      ])
+        await git(ctx, id, ['-C', worktree, ...args], signal, undefined, [0, 1, 128]).catch(() => {});
+    await git(ctx, id, ['worktree', 'remove', '--force', worktree], signal, undefined, [0, 128]);
+  }
   async function drop(account: string, id: string) {
     deps.storage.write(storageKey(account, id), null);
     writeCarry(account, id, []);
@@ -1385,7 +1402,18 @@ export function createConflictResolutionService(deps: Deps) {
     // Their caches go below, with every other directory no saved session needs.
     const stale = staleBackground(deps.backgroundDrafts ?? BACKGROUND_DRAFTS);
     for (const { name } of stale) deps.storage.write(name, null);
-    if (stale.length) await deps.storage.flush();
+    let dropped = 0;
+    // Carried restack choices outlive nothing: only a pushed resolution whose restack is still to push keeps them.
+    for (const name of deps.storage.names()) {
+      const match = /^conflict-restack-carry:(.*):([a-f0-9]{64})$/.exec(name);
+      if (!match || busy.has(storageKey(match[1], match[2]))) continue;
+      const saved = deps.storage.read(storageKey(match[1], match[2])) as ConflictSession | null | undefined;
+      if (saved?.status !== 'published' || saved.restack?.status === 'published') {
+        deps.storage.write(name, null);
+        dropped++;
+      }
+    }
+    if (stale.length || dropped) await deps.storage.flush();
     const root = deps.directory();
     if (!(await exists(root))) return { removed };
     const keep = new Set<string>();
@@ -1579,20 +1607,16 @@ export function createConflictResolutionService(deps: Deps) {
             } finally {
               writeCarry(ctx.account, id, carry);
             }
-            if (previous?.status === 'blocked')
-              await git(
-                ctx,
-                id,
-                [
-                  'worktree',
-                  'remove',
-                  '--force',
-                  await restackWorktreePath(await directory(ctx.account, id), previous.token),
-                ],
-                signal,
-                undefined,
-                [0, 128]
+            // The new plan is saved before the paused one's worktree goes, and a failed removal loses neither: startup
+            // cleanup removes the directory with the session's cache once nothing needs it.
+            if (previous?.status === 'blocked') {
+              assertAccount(ctx);
+              session.version++;
+              await persist(session);
+              await abandonWorktree(ctx, id, previous.token).catch((error: unknown) =>
+                console.warn('[conflicts] Could not remove a paused restack worktree.', error)
               );
+            }
           } else if (request.kind === 'restack-save') {
             const file = session.restack?.blocked?.files.find((file) => file.path === request.path);
             if (

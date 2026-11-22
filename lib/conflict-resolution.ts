@@ -130,6 +130,12 @@ export interface RestackPlan {
     /** What the paused PR's replay settled before this pause: Merged by the checks, and yours (carried). */
     merged?: number;
     yours?: number;
+    /**
+     * Where the replay paused: the commit being replayed (REBASE_HEAD) and the worktree's HEAD. Continue writes the
+     * paused files only while the worktree is still there, on these conflicted paths; a pause without them is stale.
+     */
+    commit?: string;
+    head?: string;
   };
 }
 export type ConflictRequest =

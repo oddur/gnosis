@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
-import { replayBuckets, restackWorktreePath } from '../src/conflict-restack';
+import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, validateConflictRequest, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
@@ -2144,6 +2144,75 @@ void test('a replayed conflict the checks leave in Check pauses the restack, and
   assert.equal(session.restack?.status, 'published');
   assert.equal(await f.git('show', 'tip:imports.ts'), file.result.trimEnd());
 });
+void test('a Continue that fails after Git moved on leaves a stale pause that is never written (#445)', async (t) => {
+  const f = await stackedFixture(t, true);
+  // PR 2 has a second commit that conflicts again, so Continue moves the replay to another paused step.
+  await f.git('checkout', 'child');
+  await fs.writeFile(path.join(f.deps.remote(), 'sample.ts'), 'export const answer = 6;\n');
+  await f.git('commit', '-am', 'child change 2');
+  await f.git('checkout', 'main');
+  const child = await f.git('rev-parse', 'child');
+  const deps = { ...f.deps, dependents: () => [f.urls[0]] };
+  const service = createConflictResolutionService(deps);
+  const run = (r: Parameters<typeof service.run>[0]) => service.run(r, new AbortController().signal);
+  let session = (await run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version })).session;
+  assert.equal(session.restack?.status, 'blocked');
+  const paused = session.restack.blocked;
+  assert.ok(paused?.commit && paused.head, 'The pause names its commit and HEAD');
+  session = (
+    await run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 5;\n',
+      resolved: true,
+    })
+  ).session;
+  // Continue writes the first pause, Git moves on to the second commit, and the pipeline then fails.
+  const mergiraf = deps.mergiraf;
+  deps.mergiraf = () => {
+    throw new Error('structural merge failed');
+  };
+  await assert.rejects(run({ kind: 'restack-continue', id: session.id, version: session.version }), /structural merge failed/);
+  deps.mergiraf = mergiraf;
+  assert.ok(session.restack);
+  const worktree = await restackWorktreePath(
+    await conflictSessionDirectory(f.deps.directory(), 'tester', session.id),
+    session.restack.token
+  );
+  const before = await fs.readFile(path.join(worktree, 'sample.ts'), 'utf8');
+  assert.match(before, /<{7}/, 'The worktree is paused on the second commit');
+  // The stored plan still describes the first pause: a retry refuses and writes nothing.
+  await assert.rejects(
+    run({ kind: 'restack-continue', id: session.id, version: session.version }),
+    /The replay moved on since this pause; prepare again/
+  );
+  assert.equal(await fs.stat(worktree).catch(() => undefined), undefined, 'The stale worktree is aborted and removed');
+  assert.equal(await f.git('rev-parse', 'child'), child, 'Nothing was pushed');
+  await assert.rejects(
+    run({ kind: 'restack-continue', id: session.id, version: session.version }),
+    /moved on since this pause/,
+    'It keeps refusing'
+  );
+  // Prepare again starts over; your choice for the first commit still applies.
+  session = (await run({ kind: 'restack-prepare', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.status, 'blocked');
+  assert.notEqual(session.restack.blocked?.commit, paused.commit, 'It pauses on the second commit');
+  const blocked = session.restack.blocked;
+  assert.equal(
+    (blocked?.reused ?? 0) + (blocked?.yours ?? 0),
+    1,
+    'Your choice for the first commit is reused (rerere recorded it when Continue committed it), as yours'
+  );
+});
+void test('a partly carried file is built from its conflicts, not by splitting a draft again (#445)', () => {
+  // Both conflicts and the line between them read the same: splitting a draft of them is ambiguous.
+  const block = '<<<<<<< parent\nx\n||||||| base\ny\n=======\nz\n>>>>>>> pr\n';
+  const original = `${block}x\n${block}`;
+  assert.equal(composeCarried(original, ['x\n'], [null, { text: 'x\nz\n' }]), 'x\nx\nx\nz\n');
+  assert.equal(composeCarried(original, [undefined, 'z\n'], undefined), `${block}x\nz\n`);
+});
 void test('a clean replay that recreates a merge commit still needs its tick (#445)', async (t) => {
   const f = await stackedFixture(t);
   // PR 2 gets a merge commit of its own: a side branch merged with --no-ff, which the replay recreates cleanly.
@@ -2243,6 +2312,7 @@ void test('your choice in a paused replay carries to the same conflict after Pre
     })
   ).session;
   assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
+  assert.equal(f.deps.storage.read(`conflict-restack-carry:tester:${session.id}`), null, 'Publishing clears the carry');
 });
 void test('replay buckets fail closed: only an unchanged, checked proposal is Merged', () => {
   const original = '<<<<<<< HEAD\na\n||||||| base\nx\n=======\nb\n>>>>>>> pr\n';

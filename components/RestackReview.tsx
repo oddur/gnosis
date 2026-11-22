@@ -266,7 +266,11 @@ export function RestackReview({
                           whole && {
                             proposal: whole,
                             ours: file.ours,
-                            onUse: () => update(whole.text),
+                            // The whole-file result replaces every choice in the file, as in the main workspace.
+                            onUse: () => {
+                              setPicks({ ...picks, [file.path]: [] });
+                              update(whole.text);
+                            },
                             shown: wholeShown[file.path] === true,
                             onShow: () => setWholeShown({ ...wholeShown, [file.path]: true }),
                           }
