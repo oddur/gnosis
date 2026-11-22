@@ -62,6 +62,7 @@ import {
 } from './conflict-type-check';
 import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { hasUnion } from '../lib/conflict-flow';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
@@ -129,12 +130,16 @@ interface Deps {
    * before any dialog opens. Without it, the renderer checks them. Undefined: the check could not run, so nothing is
    * saved and the next open checks again.
    */
-  verify?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<Verdict | undefined>;
+  verify?: (file: ConflictFile, disabled: SyntaxLanguage[], signal?: AbortSignal) => Promise<Verdict | undefined>;
   /**
    * The 'moved' proposal for a file whose conflicts structural merge left open (lib/conflict-moved.ts), found in the
    * checks' worker. Undefined: nothing safe to propose, or the worker could not run it.
    */
-  moved?: (file: ConflictFile, disabled: SyntaxLanguage[]) => Promise<ConflictProposal | undefined>;
+  moved?: (
+    file: ConflictFile,
+    disabled: SyntaxLanguage[],
+    signal?: AbortSignal
+  ) => Promise<ConflictProposal | undefined>;
   /** The languages that are off in Settings › Code intelligence: a saved verdict counts only for the same ones. */
   disabledLanguages?: () => SyntaxLanguage[];
   /**
@@ -1054,13 +1059,16 @@ export function createConflictResolutionService(deps: Deps) {
     if (due.length) report(`Checking ${due.length} ${due.length === 1 ? 'file' : 'files'}.`);
     for (const { file, key } of due) {
       signal.throwIfAborted();
-      let verdict = await deps.verify(file, disabled);
+      // A cancelled request stops its check in the worker (#464), and nothing of the file changes for it.
+      let verdict = await deps.verify(file, disabled, signal);
+      signal.throwIfAborted();
       // A same-change proposal its check didn't Merge is taken back, a check that couldn't run included
       // (src/conflict-checks.ts). The rest are checked again once, only after a check that ran; else the dialog checks.
       const back = withoutUnconfirmed(file, verdict);
       if (back) {
         Object.assign(file, back);
-        verdict = verdict && file.proposals ? await deps.verify(file, disabled) : undefined;
+        verdict = verdict && file.proposals ? await deps.verify(file, disabled, signal) : undefined;
+        signal.throwIfAborted();
       }
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
       else delete file.verdict;
@@ -1207,7 +1215,7 @@ export function createConflictResolutionService(deps: Deps) {
     for (const file of files) {
       signal.throwIfAborted();
       if (taken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
-      const proposal = await deps.moved(file, disabled);
+      const proposal = await deps.moved(file, disabled, signal);
       signal.throwIfAborted();
       if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
       // The file may have changed while the worker read it.
@@ -2613,6 +2621,10 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
+              // Structural merge already ran and left these conflicts open: a retry would throw the unions away, and
+              // the dialog never offers one (canRetryStructural). Refused here too (#462).
+              if (hasUnion(file))
+                throw new Error('Structural merge already ran on this file. Resolve its conflicts here.');
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's. A move rule's proposal is not
               // Mergiraf's result: "Try structural merge again" runs Mergiraf.

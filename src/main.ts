@@ -4261,8 +4261,8 @@ const conflicts = createConflictResolutionService({
   // Repository settings' "Allow undoing a conflict update with a force push": off unless set (#445 item 25).
   allowUndo: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.allowConflictUndo === true,
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
-  verify: (file, disabled) => conflictChecks.check(file, disabled),
-  moved: (file, disabled) => conflictChecks.moved(file, disabled),
+  verify: (file, disabled, signal) => conflictChecks.check(file, disabled, signal),
+  moved: (file, disabled, signal) => conflictChecks.moved(file, disabled, signal),
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   dependents: url => {
     const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
