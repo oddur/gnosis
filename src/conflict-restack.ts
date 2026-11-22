@@ -157,6 +157,20 @@ function writable(state: PrActionState, session: ConflictSession): asserts state
     );
 }
 
+/**
+ * Removes a restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the resolution
+ * memory keeps no preimage of a pause nobody resolved. `git` runs in the session repository. Never throws: whatever
+ * Git can't remove, startup cleanup removes later.
+ */
+export async function removeRestackWorktree(git: Git, worktree: string, signal: AbortSignal) {
+  for (const args of [
+    ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
+    ['rebase', '--abort'],
+  ])
+    await git(['-C', worktree, ...args], undefined, [0, 1, 128], signal).catch(() => {});
+  await git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], signal).catch(() => {});
+}
+
 /** Keep Git's worktree metadata path below its Windows limit; resume older drafts in place. */
 export async function restackWorktreePath(directory: string, token: string): Promise<string> {
   const legacy = path.join(directory, `restack-${token}`);
@@ -632,13 +646,8 @@ export async function prepareRestack(
     keepWorktree = false;
     return plan;
   } finally {
-    const cleanup = AbortSignal.timeout(30_000);
-    if (!keepWorktree) {
-      // An abandoned pause leaves no preimage of its own behind in the resolution memory.
-      await git(['rerere', 'clear'], undefined, [0, 1, 128], cleanup).catch(() => {});
-      await git(['rebase', '--abort'], undefined, [0, 1, 128], cleanup).catch(() => {});
-      await deps.git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], cleanup).catch(() => {});
-    }
+    // An abandoned pause leaves no preimage of its own behind in the resolution memory.
+    if (!keepWorktree) await removeRestackWorktree(deps.git, worktree, AbortSignal.timeout(30_000));
   }
 }
 

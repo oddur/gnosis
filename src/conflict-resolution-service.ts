@@ -83,7 +83,14 @@ import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
-import { cascadeOutcomes, carryList, prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import {
+  cascadeOutcomes,
+  carryList,
+  prepareRestack,
+  publishRestack,
+  removeRestackWorktree,
+  restackWorktreePath,
+} from './conflict-restack';
 import type { CascadePreview } from '../lib/conflict-cascade';
 import {
   SHARED_LAYOUT_FILE,
@@ -227,29 +234,48 @@ export function createConflictResolutionService(deps: Deps) {
   const busy = new Set<string>();
   /** Waiting for a PR's lock to be free (`freed`): told when its holder lets go (`release`). */
   const waiters = new Map<string, (() => void)[]>();
+  /**
+   * Requests of yours on their way to the PR's lock, by draft key: they stop background work first (`yieldToYou`).
+   * Meanwhile the lock is not free for background work that waits (`freed`), so it never takes the lock ahead of you.
+   */
+  const yours = new Map<string, number>();
+  function wakeWaiters(key: string) {
+    const waiting = waiters.get(key) ?? [];
+    waiters.delete(key);
+    for (const wake of waiting) wake();
+  }
   function release(key: string) {
     busy.delete(key);
     // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
     const queued = pendingTypeErrors.get(key);
     if (queued) saveTypeErrors(key, queued);
-    const waiting = waiters.get(key) ?? [];
-    waiters.delete(key);
-    for (const wake of waiting) wake();
+    wakeWaiters(key);
   }
-  /** Resolves once nobody holds the PR's lock. `signal` stops the wait. */
+  /** Your request has the lock, or gave up on it: background work that waits may go once nobody holds it. */
+  function yourTurnEnded(key: string) {
+    const left = (yours.get(key) ?? 1) - 1;
+    if (left > 0) yours.set(key, left);
+    else yours.delete(key);
+    if (!left && !busy.has(key)) wakeWaiters(key);
+  }
+  /** Resolves once nobody holds the PR's lock and no request of yours waits for it. `signal` stops the wait. */
   async function freed(key: string, signal: AbortSignal) {
-    while (busy.has(key)) {
+    while (busy.has(key) || yours.has(key)) {
       signal.throwIfAborted();
       await new Promise<void>((resolve, reject) => {
-        const stop = () => reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped.'));
+        const wake = () => {
+          signal.removeEventListener('abort', stop);
+          resolve();
+        };
+        // A stopped wait leaves the list at once: aborted waits never pile up.
+        const stop = () => {
+          const left = (waiters.get(key) ?? []).filter((waiting) => waiting !== wake);
+          if (left.length) waiters.set(key, left);
+          else waiters.delete(key);
+          reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped.'));
+        };
         signal.addEventListener('abort', stop, { once: true });
-        waiters.set(key, [
-          ...(waiters.get(key) ?? []),
-          () => {
-            signal.removeEventListener('abort', stop);
-            resolve();
-          },
-        ]);
+        waiters.set(key, [...(waiters.get(key) ?? []), wake]);
       });
     }
   }
@@ -2044,36 +2070,26 @@ export function createConflictResolutionService(deps: Deps) {
     return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
   }
   /** Removes a draft and its cache, as Discard does. */
-  /**
-   * Removes a paused restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the
-   * resolution memory keeps no preimage of a pause nobody resolved.
-   */
+  /** Removes a paused restack's private worktree (`removeRestackWorktree`). */
   async function abandonWorktree(ctx: Context, id: string, token: string) {
     const worktree = await restackWorktreePath(await directory(ctx.account, id), token);
-    const signal = AbortSignal.timeout(30_000);
-    if (await exists(worktree))
-      for (const args of [
-        ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
-        ['rebase', '--abort'],
-      ])
-        await git(ctx, id, ['-C', worktree, ...args], signal, undefined, [0, 1, 128]).catch(() => {});
-    await git(ctx, id, ['worktree', 'remove', '--force', worktree], signal, undefined, [0, 128]);
+    await removeRestackWorktree(
+      (args, input, allowed, signal) => git(ctx, id, args, signal ?? AbortSignal.timeout(30_000), input, allowed),
+      worktree,
+      AbortSignal.timeout(30_000)
+    );
   }
   /** Every `restack-*` worktree but the paused restack's own: its rerere state is cleared, then it is removed. */
   async function removeLeftoverWorktrees(dir: string, saved: ConflictSession) {
     const token = saved.restack?.status === 'blocked' ? saved.restack.token : undefined;
     const own = token ? new Set([`restack-${token}`, `restack-${token.slice(0, 16)}`]) : new Set<string>();
     const signal = AbortSignal.timeout(30_000);
+    const local = (args: string[], input?: string, allowed?: number[]) => runGit(dir, args, signal, { input, allowed });
     let removedAny = false;
     for (const name of await fs.readdir(dir).catch(() => [] as string[])) {
       if (!/^restack-[a-f0-9]+$/.test(name) || own.has(name)) continue;
       const worktree = path.join(dir, name);
-      for (const args of [
-        ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
-        ['rebase', '--abort'],
-      ])
-        await runGit(dir, ['-C', worktree, ...args], signal, { allowed: [0, 1, 128] }).catch(() => {});
-      await runGit(dir, ['worktree', 'remove', '--force', worktree], signal, { allowed: [0, 128] }).catch(() => {});
+      await removeRestackWorktree(local, worktree, signal);
       await fs.rm(worktree, { recursive: true, force: true });
       removedAny = true;
     }
@@ -2090,7 +2106,7 @@ export function createConflictResolutionService(deps: Deps) {
   /** Drops a background draft under the PR's lock, so no run or open interleaves. Skipped while the PR is busy. */
   async function dropBackground(account: string, id: string) {
     const key = storageKey(account, id);
-    if (busy.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
+    if (busy.has(key) || yours.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
     // A request of yours that comes meanwhile waits for the drop to finish; it is short.
     await asBackground(key, undefined, () => drop(account, id));
   }
@@ -2214,7 +2230,7 @@ export function createConflictResolutionService(deps: Deps) {
       // Your draft, or a push still to restack: nothing to do, before any work. open() keeps the full rule.
       const saved = deps.storage.read(key) as ConflictSession | undefined;
       if (saved && !saved.background && (saved.status === 'editing' || saved.restack || saved.undoing)) return saved;
-      if (busy.has(key)) return undefined;
+      if (busy.has(key) || yours.has(key)) return undefined;
       return asBackground(key, signal, async (yielding) => {
         await maintenance;
         return open(ctx, url, false, false, yielding, () => {}, files);
@@ -2231,8 +2247,8 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       if (!/^[a-f0-9]{64}$/.test(id) || !Number.isSafeInteger(version)) throw new Error('Invalid conflict session.');
       const key = storageKey(ctx.account, id);
-      // Another operation holds the PR: wait until it lets go, then try once.
-      if (busy.has(key)) await freed(key, signal);
+      // Another operation holds the PR, or a request of yours is on its way: wait until both are done, then try once.
+      await freed(key, signal);
       if (busy.has(key)) return undefined;
       return asBackground(key, signal, async (yielding) => {
         await maintenance;
@@ -2511,12 +2527,17 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
-      // Background work on this PR stops for you; only another request of yours makes this one wait.
-      // A background run that took the lock while this waited gives way too.
-      do await yieldToYou(key);
-      while (backgroundWork.has(key));
-      if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
-      busy.add(key);
+      // Background work on this PR stops for you; only another request of yours makes this one wait. Background work
+      // waiting for the lock stays back meanwhile (`yours`); one that took it anyway gives way too.
+      yours.set(key, (yours.get(key) ?? 0) + 1);
+      try {
+        do await yieldToYou(key);
+        while (backgroundWork.has(key));
+        if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
+        busy.add(key);
+      } finally {
+        yourTurnEnded(key);
+      }
       try {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;

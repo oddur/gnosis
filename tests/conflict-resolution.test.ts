@@ -2758,6 +2758,81 @@ void test('a wait for the resolution memory stops on abort, and never lets two t
   assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), []);
 });
 
+void test('a stopped snapshot deletes its private copy, whenever the stop lands (#496)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-memory-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const memory = createConflictMemory(() => dir);
+  const repo = path.join(dir, 'repo');
+  await fs.mkdir(repo);
+  // A memory with enough entries that copying it takes a while.
+  await memory.withRepository('scope', repo, async () => {
+    const cache = path.resolve(repo, await fs.readlink(path.join(repo, 'rr-cache')));
+    for (let i = 0; i < 400; i++) {
+      await fs.mkdir(path.join(cache, `entry-${i}`));
+      await fs.writeFile(path.join(cache, `entry-${i}`, 'preimage'), 'x'.repeat(1024));
+    }
+  });
+  for (const delay of [0, 1, 5, 20]) {
+    const controller = new AbortController();
+    const copying = memory.snapshot('scope', repo, controller.signal);
+    setTimeout(() => controller.abort(new Error('stopped')), delay);
+    const restore = await copying.catch(() => undefined);
+    await restore?.();
+    // The next task on the scope runs once the copy task is done, stopped or not.
+    await memory.withRepository('scope', repo, () => Promise.resolve());
+    assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), [], `stop after ${delay} ms`);
+  }
+});
+void test('startup repair never waits for a scope another PR holds; the next use restores the memory (#496)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-memory-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const memory = createConflictMemory(() => dir);
+  const [busy, left] = [path.join(dir, 'busy'), path.join(dir, 'left')];
+  await Promise.all([fs.mkdir(busy), fs.mkdir(left)]);
+  // What a quit during a dry run leaves: rr-cache pointing at a private copy.
+  await memory.withRepository('scope', left, () => Promise.resolve());
+  const shared = path.resolve(left, await fs.readlink(path.join(left, 'rr-cache')));
+  const copy = path.join(left, 'rr-cache-preview-0123456789abcdef');
+  await fs.mkdir(copy);
+  await fs.unlink(path.join(left, 'rr-cache'));
+  await fs.symlink(copy, path.join(left, 'rr-cache'));
+  // Another PR of the scope holds the memory, as a whole restack does.
+  let release = () => {};
+  let started = () => {};
+  const holds = new Promise<void>((resolve) => (started = resolve));
+  const holding = memory.withRepository(
+    'scope',
+    busy,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+        started();
+      })
+  );
+  await holds;
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Repair waited for the lock')), 10_000).unref());
+  await Promise.race([memory.repair('scope', left), timeout]);
+  assert.equal(await fs.stat(copy).catch(() => undefined), undefined, 'The copy is gone without waiting');
+  release();
+  await holding;
+  await memory.withRepository('scope', left, () => Promise.resolve());
+  assert.equal(path.resolve(left, await fs.readlink(path.join(left, 'rr-cache'))), shared, 'The next use restores the link');
+});
+void test('a cascade preview waiting for the lock stays back while a request of yours takes it (#496)', async (t) => {
+  const f = await cascadeStack(t);
+  const held = f.hold();
+  const first = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  await held.arrived;
+  // A second run waits for the lock; then a request of yours comes, which stops the first.
+  const second = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  const mine = f.service.run({ kind: 'open', url: f.state.url }, new AbortController().signal);
+  held.release();
+  await assert.rejects(first, (error: Error) => error.message === BACKGROUND_YIELDED);
+  assert.equal((await mine).session.version, f.session.version);
+  // The waiting run never took the lock ahead of you, so nothing stopped it: it runs once you are done.
+  assert.ok(await second);
+});
+
 // Undo this update (#445 item 25): the previous head goes back with a lease on the merge commit.
 async function undoFixture(t: TestContext, allowUndo: ((repo: string) => boolean) | null = () => true) {
   const f = await fixture(t);
