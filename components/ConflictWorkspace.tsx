@@ -741,11 +741,11 @@ export function ConflictWorkspace({
   /** Undo this update (#445 item 25) moved the branch back: the draft is editable again, with your choices. */
   function undone(next: ConflictSession) {
     setPicks({});
+    setEdits({});
     setPreview(undefined);
     setConfirming(false);
-    setShown({});
     setBaseNote('');
-    apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current, 'conflicts');
+    apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
   function confirm() {
