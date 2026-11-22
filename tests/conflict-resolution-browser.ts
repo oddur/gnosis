@@ -568,10 +568,20 @@ void app.whenReady().then(async () => {
     // src/clock.ts. You decided is open, the other two are collapsed.
     assert.deepEqual(await confirmGroupsShown(), {
       decided: { count: '2 conflicts in 1 file', open: 'true' },
-      merged: { count: 'none', open: 'false' },
       main: { count: '1 file', open: 'false' },
     });
     assert.match(confirmText, /You decided ·\s+2 conflicts in 1 file/);
+    // An empty group doesn't show (#445 distill). The counts head the page, each a way to its group, and the page
+    // scrolls under a bar that keeps the message and Push in view.
+    assert.deepEqual(await js("[...document.querySelectorAll('[data-confirm-jump]')].map(b=>b.dataset.confirmJump)"), ['decided', 'main']);
+    const pushInView = () =>
+      js<boolean>(
+        `(()=>{const p=(${visibleButton('Push merge commit')}).getBoundingClientRect();const m=document.querySelector('.conflict-confirm-message input').getBoundingClientRect();const v=document.querySelector('.conflict-confirm').getBoundingClientRect();return p.top>=v.top&&p.bottom<=v.bottom+0.5&&m.top>=v.top&&m.bottom<=v.bottom+0.5})()`
+      );
+    assert.ok(await pushInView(), 'Push and the message are in view');
+    await js("document.querySelector('.conflict-confirm').scrollTop=1e6");
+    assert.ok(await pushInView(), 'Push and the message stay in view at the end of the page');
+    await js("document.querySelector('.conflict-confirm').scrollTop=0");
     assert.deepEqual(
       await js("[...document.querySelectorAll('[data-confirm-group=decided] [data-confirm-how]')].map(e=>e.textContent)"),
       ['Conflict 1 of 2 · Kept both changes', 'Conflict 2 of 2 · Kept main’s change']
@@ -630,6 +640,12 @@ void app.whenReady().then(async () => {
     await key('Enter');
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(await publishes(), 0, 'Enter alone never pushes');
+    // Nor in the message, which sits in the bar beside Push (#445 distill).
+    await js("document.querySelector('.conflict-confirm-message input').focus()");
+    await key('Enter');
+    await modEnter();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await publishes(), 0, 'Enter or Cmd+Enter in the message never pushes');
     // Not on the Push button either: Enter and Space do nothing there, and neither does the wrong modifier.
     await pushButton();
     await key('Enter');
@@ -911,7 +927,7 @@ void app.whenReady().then(async () => {
       await js(
         "[...document.querySelector('.restack-conflict-file .conflict-block').querySelectorAll('.conflict-side-label')].map(e=>e.textContent)"
       ),
-      ['Updated parent · feature/retry', 'This PR · feature/retry-121']
+      ['This PR · feature/retry-121', 'Updated parent · feature/retry']
     );
     assert.ok(await js(`(${visibleButton('Continue restack')}).disabled`));
     assert.match(
@@ -1192,7 +1208,6 @@ void app.whenReady().then(async () => {
     // Two Keeps, one per file; main brings src/clock.ts.
     assert.deepEqual(await confirmGroupsShown(), {
       decided: { count: '2 conflicts in 2 files', open: 'true' },
-      merged: { count: 'none', open: 'false' },
       main: { count: '1 file', open: 'false' },
     });
     assert.deepEqual(
@@ -1551,9 +1566,16 @@ void app.whenReady().then(async () => {
     assert.equal(await cardUnder(1, threeLines), true);
     await decideSaysNothing();
     assert.deepEqual(
-      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-mark]')].map(s=>s.dataset.mark+' '+s.textContent)`),
-      ['removed This PR · feature/retry', 'added main']
+      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-tone]')].map(s=>s.dataset.tone+' '+s.textContent)`),
+      ['pr This PR · feature/retry', 'base main']
     );
+    // In the code the open sides are neutral and named, never −/+ (#445 distill): the first row of each side.
+    const namedSides = (mode: string) =>
+      js<string[]>(
+        `[...document.querySelectorAll('.conflict-compare-diff[data-compare=${mode}] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line][data-conflict-label]')??[])]).map(r=>r.dataset.conflictSide+' '+r.dataset.conflictLabel)`
+      );
+    for (let n = 0; n < 200 && (await namedSides('pr')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual((await namedSides('pr')).slice(0, 2), ['pr PR', 'base main']);
     // Lines revealed in PR survive a round trip through main and both: the PR diff stays mounted while hidden.
     const prGaps = () =>
       js<number>("document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length");
@@ -1595,9 +1617,13 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${block(1)}.dataset.bucket`), 'check');
     await decideSaysNothing();
     assert.deepEqual(
-      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-mark]')].map(s=>s.dataset.mark+' '+s.textContent)`),
-      ['removed main', 'added This PR · feature/retry']
+      await js(`[...${block(0)}.querySelectorAll('.conflict-diff-legend [data-tone]')].map(s=>s.dataset.tone+' '+s.textContent)`),
+      ['pr This PR · feature/retry', 'base main'],
+      'The legend keeps its order and tints in every mode'
     );
+    // Against main the diff shows main's lines first; they keep main's tint and name, the PR's keep the PR's.
+    for (let n = 0; n < 200 && (await namedSides('main')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual((await namedSides('main')).slice(0, 2), ['base main', 'pr PR']);
     // J and K still visit both.
     await js(`${block(0)}.focus()`);
     await key('j');
@@ -2315,8 +2341,6 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-confirm .step-card')");
     assert.deepEqual(await confirmGroupsShown(), {
       decided: { count: '1 conflict in 1 file', open: 'true' },
-      merged: { count: 'none', open: 'false' },
-      main: { count: 'none', open: 'false' },
     });
     await wait("document.querySelector('[data-confirm-group=decided] [data-confirm-how]')");
     assert.match((await notesIn('decided'))[0], /^used: Conflict 1 of 1 · Used the proposal · /);

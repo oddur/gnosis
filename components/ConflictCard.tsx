@@ -119,6 +119,7 @@ export function ConflictCard({
   verdict,
   note,
   compare = 'pr',
+  prSide = 'ours',
   model,
   written = 0,
   edit,
@@ -136,8 +137,10 @@ export function ConflictCard({
   editor?: ReactNode;
   /** This conflict's model request while it has no proposal. */
   model?: ModelCard;
-  /** What the diff around the card compares the result with (#445 item 9), so the legend names its sides right. */
+  /** What the diff around the card compares the result with (#445 item 9): in both, the rows name the sides. */
   compare?: CompareWith;
+  /** Which version is the PR's: ours in a merge, theirs in a restack. The legend names it first, in its tint. */
+  prSide?: 'ours' | 'theirs';
   name: string;
   block: ConflictBlock;
   index: number;
@@ -170,6 +173,7 @@ export function ConflictCard({
       </section>
     );
   const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
+  const baseSide = prSide === 'ours' ? 'theirs' : 'ours';
   const writtenNote = wrote && <WrittenLegend count={written} />;
   const writtenText = wrote ? ` ${writtenLabel(written)}.` : '';
   // Edit sits with the Keep actions on an open card, and on the line of a decided one.
@@ -440,20 +444,16 @@ export function ConflictCard({
           </div>
         </>
       )}
-      {/* The diff above shows the two sides: against the PR, its lines removed and the base branch's added; against
-          main, the other way round. In both, the rows above name them. Neither is chosen. */}
+      {/* The diff above shows the two sides, each in its own neutral tint (lib/conflict-sides.ts), the PR's first. In
+          both, the rows above name them. Neither is chosen. */}
       <p className="conflict-diff-legend">
         {compare !== 'both' && (
           <>
-            <span
-              className="conflict-side-label"
-              data-side={compare === 'main' ? 'theirs' : 'ours'}
-              data-mark="removed"
-            >
-              {compare === 'main' ? labels.theirs : labels.ours}
+            <span className="conflict-side-label" data-side={prSide} data-tone="pr">
+              {labels[prSide]}
             </span>
-            <span className="conflict-side-label" data-side={compare === 'main' ? 'ours' : 'theirs'} data-mark="added">
-              {compare === 'main' ? labels.ours : labels.theirs}
+            <span className="conflict-side-label" data-side={baseSide} data-tone="base">
+              {labels[baseSide]}
             </span>
           </>
         )}

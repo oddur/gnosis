@@ -696,8 +696,10 @@ void app.whenReady().then(async () => {
           problems.push(
             `The confirmation counts ${counted('decided')} decided and ${counted('merged')} merged, but the case has ${conflicts} conflicts`
           );
+        // Only the groups with something in them show (#445 distill): You decided open, the others collapsed.
         const open = Object.entries(groups.groups).map(([group, g]) => `${group} ${g?.open}`).join(', ');
-        if (open !== 'decided true, merged false, main false') problems.push(`The confirmation opens as: ${open}`);
+        const expected = Object.keys(groups.groups).map((group) => `${group} ${group === 'decided'}`).join(', ');
+        if (open !== expected) problems.push(`The confirmation opens as: ${open}`);
         // Every group open, light and dark; then collapsed again.
         await js(
           "document.querySelectorAll('.conflict-confirm [data-confirm-group] .conflict-disclosure[aria-expanded=false]').forEach((b) => b.click())"

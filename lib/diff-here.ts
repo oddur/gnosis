@@ -86,10 +86,12 @@ export const WRITTEN_CSS = `
 [data-line][data-written-line] { background-image: ${WRITTEN_LAYERS}; }`;
 
 /**
- * The steady mark as a swatch for the card's legend ("1 line written by Gnosis"): the same rail and band, on the code
- * surface, so the legend looks as the marked rows do.
+ * The steady mark as a swatch for the card's legend ("1 line written by Gnosis"): the same band, with the rail in the
+ * app's primary blue. The legend sits on the card, outside the code's palette, where the code surface's colour is not
+ * defined: drawn over it, the swatch fell back to near-black in light mode (#445 critique). On the card the band is laid
+ * twice, so the small square reads as the blue tint the rows wear over the code, in both themes.
  */
-export const WRITTEN_SWATCH = `${WRITTEN_LAYERS}, var(--diff-code-bg, #0d1117)`;
+export const WRITTEN_SWATCH = `linear-gradient(to right, var(--primary) 0 2px, transparent 2px), linear-gradient(rgb(${BAND} / 12%), rgb(${BAND} / 12%)), rgb(${BAND} / 12%)`;
 
 /** What a marked written line says to assistive technology, and in its line number's tooltip. */
 export const WRITTEN_LINE_DESCRIPTION = 'Written by Gnosis. Neither side had this line.';

@@ -153,3 +153,37 @@ void test('"You are here" shows on every theme and surface, and the line under i
   const swatch = css.match(/\.conflict-written-swatch \{[^}]*\}/)?.[0] ?? '';
   assert.ok(swatch && !/rgb|#[0-9a-f]{3}/i.test(swatch), `the swatch CSS has no colour of its own: ${swatch}`);
 });
+
+void test('An open conflict’s sides wear neutral tints, the same in the code and in the card’s legend (#445 distill)', async () => {
+  const { SIDE_COLORS, SIDES_CSS, conflictSideRows } = await import('../lib/conflict-sides');
+  // Neither tint is the review diff's red or green: each is closer to grey than any saturated hue.
+  for (const color of Object.values(SIDE_COLORS)) {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < 80, `${color} is a neutral tint`);
+  }
+  assert.ok(SIDES_CSS.includes(SIDE_COLORS.pr) && SIDES_CSS.includes(SIDE_COLORS.base));
+  const css = (await import('node:fs')).readFileSync(new URL('../src/globals.css', import.meta.url), 'utf8');
+  assert.ok(css.includes(`[data-tone=pr] { --conflict-side-swatch:${SIDE_COLORS.pr}; }`), 'the PR swatch is its tint');
+  assert.ok(css.includes(`[data-tone=base] { --conflict-side-swatch:${SIDE_COLORS.base}; }`), 'the base swatch is its tint');
+  // The PR's line (old 2) and main's (new 2) of an open conflict; the context around them stays plain.
+  const rows = conflictSideRows(
+    [
+      {
+        oldStart: 1,
+        newStart: 1,
+        noEofOld: false,
+        noEofNew: false,
+        rows: [
+          { type: ' ', text: 'a' },
+          { type: '-', text: 'pr' },
+          { type: '+', text: 'main' },
+          { type: ' ', text: 'b' },
+          { type: '-', text: 'elsewhere' },
+        ],
+      },
+    ],
+    [{ start: 2, end: 2, added: 'base', removed: 'pr' }]
+  );
+  assert.deepEqual([...rows.added], [[2, 'base']]);
+  assert.deepEqual([...rows.removed], [[2, 'pr']]);
+});

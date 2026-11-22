@@ -1757,7 +1757,21 @@ export function ConflictWorkspace({
                 focusIntent.current = true;
               }}
               backLabel={session.files.length ? 'Back to files' : 'Back'}
-              status="Nothing is pushed until you select Push."
+              // The bar under the page holds the message and Push (#445 distill): it stays in view however long the diff.
+              status={
+                <div className="conflict-confirm-bar">
+                  <label className="conflict-confirm-message">
+                    Merge commit message
+                    <input
+                      value={message}
+                      maxLength={2000}
+                      disabled={busy}
+                      onChange={(e) => setMessage(e.target.value)}
+                    />
+                  </label>
+                  <span>Nothing is pushed until you select Push.</span>
+                </div>
+              }
               continueLabel={busy ? 'Pushing…' : 'Push merge commit'}
               continueDisabled={
                 !message.trim() ||
@@ -1815,10 +1829,6 @@ export function ConflictWorkspace({
                   checks run again.
                 </li>
               </ul>
-              <label className="conflict-confirm-message">
-                Merge commit message
-                <input value={message} maxLength={2000} disabled={busy} onChange={(e) => setMessage(e.target.value)} />
-              </label>
               {groups && (
                 <ConfirmDiff
                   session={session}
@@ -2263,6 +2273,18 @@ function ConfirmDiff({
       </div>
     );
   const { decided, merged, main, incoming, counts } = groups;
+  // Only the groups with something in them show (#445 distill), each counted once more at the top, as a way to it.
+  const shown = [
+    ...(!clean && decided.length ? [{ id: 'decided' as const, title: 'You decided', count: confirmCount(counts.decided, decided.length) }] : []),
+    ...(!clean && merged.length ? [{ id: 'merged' as const, title: 'Merged for you', count: confirmCount(counts.merged, merged.length) }] : []),
+    ...(counts.mainFiles ? [{ id: 'main' as const, title: `Arriving from ${session.baseBranch}`, count: confirmCount(0, counts.mainFiles) }] : []),
+  ];
+  const jump = (id: keyof typeof open) => {
+    setOpen((previous) => ({ ...previous, [id]: true }));
+    requestAnimationFrame(() =>
+      document.querySelector(`.conflict-confirm [data-confirm-group=${id}]`)?.scrollIntoView({ block: 'start' })
+    );
+  };
   const part = (group: 'decided' | 'merged' | 'main') => (p: ConfirmFile) => (
     <ConfirmFileDiff
       key={p.path}
@@ -2276,59 +2298,36 @@ function ConfirmDiff({
   );
   return (
     <div className="conflict-confirm-diff">
-      {!clean && (
-        <ConfirmSection
-          id="decided"
-          title="You decided"
-          count={confirmCount(counts.decided, decided.length)}
-          open={open.decided}
-          onToggle={() => toggle('decided')}
-        >
-          {decided.length ? (
-            decided.map(part('decided'))
-          ) : (
-            <p className="conflict-side-empty">You decided no conflicts. Each one was merged for you.</p>
-          )}
-        </ConfirmSection>
+      {shown.length > 1 && (
+        <nav className="conflict-confirm-jump" aria-label="What the merge commit holds">
+          {shown.map(({ id, title, count }) => (
+            <button key={id} type="button" data-confirm-jump={id} onClick={() => jump(id)}>
+              {title} <span>{count}</span>
+            </button>
+          ))}
+        </nav>
       )}
-      {!clean && (
-        <ConfirmSection
-          id="merged"
-          title="Merged for you"
-          count={confirmCount(counts.merged, merged.length)}
-          open={open.merged}
-          onToggle={() => toggle('merged')}
-        >
-          {merged.length ? (
+      {shown.map(({ id, title, count }) => (
+        <ConfirmSection key={id} id={id} title={title} count={count} open={open[id]} onToggle={() => toggle(id)}>
+          {id === 'decided' && decided.map(part('decided'))}
+          {id === 'merged' && (
             <>
               <p className="conflict-confirm-lead">Proposals that passed every check. You didn’t change them.</p>
               {merged.map(part('merged'))}
             </>
-          ) : (
-            <p className="conflict-side-empty">No conflicts were merged for you.</p>
+          )}
+          {id === 'main' && (
+            <>
+              <p className="conflict-confirm-lead">
+                {main.length
+                  ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
+                  : `${session.baseBranch}’s changes that didn’t conflict.`}
+              </p>
+              <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
+            </>
           )}
         </ConfirmSection>
-      )}
-      <ConfirmSection
-        id="main"
-        title={`Arriving from ${session.baseBranch}`}
-        count={confirmCount(0, counts.mainFiles)}
-        open={open.main}
-        onToggle={() => toggle('main')}
-      >
-        {counts.mainFiles ? (
-          <>
-            <p className="conflict-confirm-lead">
-              {main.length
-                ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
-                : `${session.baseBranch}’s changes that didn’t conflict.`}
-            </p>
-            <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
-          </>
-        ) : (
-          <p className="conflict-side-empty">No other files change.</p>
-        )}
-      </ConfirmSection>
+      ))}
       {preview.validation && (
         <details className="conflict-whitespace">
           <summary>Whitespace warnings</summary>

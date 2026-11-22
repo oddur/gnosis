@@ -4258,8 +4258,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-model-notice { display:flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:6px 12px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-diff-legend .conflict-side-label { padding:0;border:0;color:var(--foreground); }
-.conflict-diff-legend .conflict-side-label[data-mark=removed]::before { content:'− ';color:var(--color-danger); }
-.conflict-diff-legend .conflict-side-label[data-mark=added]::before { content:'+ ';color:var(--color-success); }
+/* Each side's swatch is its tint in the code above (lib/conflict-sides.ts SIDE_COLORS), never a −/+ (#445 distill). */
+.conflict-diff-legend .conflict-side-label[data-tone] { display:inline-flex;align-items:center;gap:6px; }
+.conflict-diff-legend .conflict-side-label[data-tone]::before { content:'';flex:none;width:10px;height:10px;border-radius:2px;background:var(--conflict-side-swatch);box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 30%,transparent); }
+.conflict-diff-legend .conflict-side-label[data-tone=pr] { --conflict-side-swatch:#9fb1d4; }
+.conflict-diff-legend .conflict-side-label[data-tone=base] { --conflict-side-swatch:#d2bb8c; }
 /* Lines a resolver wrote (#445 item 10): the card's count, with a swatch of the diff's steady mark (lib/diff-here.ts),
    on the code surface. */
 .conflict-written-legend { display:flex;align-items:center;gap:6px; }
@@ -4302,12 +4305,20 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-error-details summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-error-details pre,.conflict-whitespace pre { max-height:200px;overflow:auto;margin-top:6px;padding:8px;border-radius:var(--radius-sm);background:var(--secondary);font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere; }
 
-/* Confirmation: the final update and the push, in one card. */
-.conflict-confirm { flex:1 1 auto;min-height:0;overflow:hidden;display:flex;justify-content:center;padding:20px 24px; }
-/* The title and Push stay in view: only the card's body scrolls, however long the diff. */
-.conflict-confirm > .step-card { width:min(1040px,100%);max-height:100%;min-height:0; }
-.conflict-confirm .step-card-body { flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain; }
-.conflict-confirm-message { display:flex;flex-direction:column;gap:6px;font-weight:500; }
+/* Confirmation: the final update and the push, in one card. The page scrolls (#445 distill); the bar with the message
+   and Push sticks to its bottom, however long the diff. */
+.conflict-confirm { flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;justify-content:center;padding:20px 24px 0; }
+.conflict-confirm > .step-card { width:min(1040px,100%);height:max-content; }
+.conflict-confirm .step-card-body:focus-visible { outline:none; }
+.conflict-confirm .step-card-footer { position:sticky;bottom:0;z-index:4;align-items:flex-end;padding-bottom:16px;background:var(--background); }
+.conflict-confirm .step-card-status { flex:1 1 40ch;min-width:0; }
+.conflict-confirm-bar { display:flex;flex-direction:column;gap:6px; }
+.conflict-confirm-message { display:flex;flex-direction:column;gap:6px;color:var(--foreground);font-size:var(--type-control);font-weight:500; }
+/* The groups' counts, at the top, each a way to its group. */
+.conflict-confirm-jump { display:flex;flex-wrap:wrap;gap:4px 16px;font-size:var(--type-control); }
+.conflict-confirm-jump button { font-weight:600;color:var(--primary);text-decoration:underline;text-underline-offset:3px; }
+.conflict-confirm-jump button span { color:var(--muted-foreground);font-weight:500; }
+.conflict-cascade-details summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-workspace :is(input:not([type=checkbox]),textarea),.conflict-suggest-menu textarea { width:100%;padding:8px;background:var(--background);color:var(--foreground);border:1px solid var(--field-border);border-radius:var(--radius-sm); }
 .conflict-confirm-facts { margin:0;padding-left:18px;list-style:disc; }
 .conflict-confirm-facts li + li { margin-top:4px; }
@@ -4384,7 +4395,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-scroll { padding:0 12px 12px; }
   .conflict-scroll::before { height:0; }
   .conflict-footer { padding:8px 12px; }
-  .conflict-confirm { padding:12px; }
+  .conflict-confirm { padding:12px 12px 0; }
   .conflict-published { padding:16px; }
 }
 @media (prefers-reduced-motion:reduce) { .conflict-disclosure > svg { transition:none; } }

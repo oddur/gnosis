@@ -79,13 +79,17 @@ export function ConflictCascadeLine({ cascade }: { cascade: ConflictCascade }) {
     <li data-cascade="ready">
       <span data-cascade-sentence="">{cascadeSentence(state.preview)}</span> A dry run that pushes nothing. The
       restack after the push still asks you to review each update that needs it.
-      <ul className="conflict-cascade-prs">
-        {state.preview.prs.map((pr) => (
-          <li key={pr.url} data-cascade-outcome={pr.outcome}>
-            {cascadePrLine(pr)}
-          </li>
-        ))}
-      </ul>
+      {/* Each PR's line waits under a disclosure (#445 distill): the sentence says what the stack needs. */}
+      <details className="conflict-cascade-details">
+        <summary>Each PR</summary>
+        <ul className="conflict-cascade-prs">
+          {state.preview.prs.map((pr) => (
+            <li key={pr.url} data-cascade-outcome={pr.outcome}>
+              {cascadePrLine(pr)}
+            </li>
+          ))}
+        </ul>
+      </details>
     </li>
   );
 }

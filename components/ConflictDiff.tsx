@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffMetadata, type FileDiffOptions } from '@pierre/diffs';
 import { CircleHelp } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
@@ -47,6 +47,7 @@ import { useDiffFileModel } from './useDiffFileModel';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
+import { SIDES_CSS, conflictSideRows, markSides, type SideRange, type SideTone } from '../lib/conflict-sides';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
@@ -79,7 +80,12 @@ export function ConflictFileDiff<A>({
   note,
   written,
   landmark = true,
+  sides,
+  sideLabels,
 }: {
+  /** Open conflicts' lines (lib/conflict-sides.ts): each side wears its neutral tint and its name, not −/+. */
+  sides?: readonly SideRange[];
+  sideLabels?: Record<SideTone, string>;
   name: string;
   before?: string;
   after?: string;
@@ -121,7 +127,7 @@ export function ConflictFileDiff<A>({
   // A Compare with: both row hides nothing and cannot expand: context as long as the row puts all its lines in one hunk.
   const context = bare ? compareRowContext(before, after) : diffContextLines(appearance);
   const codeSettings = useMemo(() => codeIntelligenceSettings(preferences), [preferences?.codeIntelligence]);
-  const { hunks, annotations, additions, deletions } = useMemo(() => {
+  const { hunks, annotations, additions, deletions, sideRows } = useMemo(() => {
     let base: GapHunk[] = [];
     try {
       base = hunksFromDiff(
@@ -144,8 +150,16 @@ export function ConflictFileDiff<A>({
       annotations,
       additions: rows.filter((row) => row.type === '+').length,
       deletions: rows.filter((row) => row.type === '-').length,
+      sideRows: sides?.length ? conflictSideRows(base, sides) : undefined,
     };
-  }, [name, before, after, context, pins, annotate, bare, patch]);
+  }, [name, before, after, context, pins, annotate, bare, patch, sides]);
+  const marks = useRef({ sideRows, sideLabels });
+  marks.current = { sideRows, sideLabels };
+  useEffect(() => {
+    if (!sideLabels) return;
+    for (const host of sectionRef.current?.querySelectorAll('diffs-container') ?? [])
+      if (!host.parentElement?.closest('diffs-container')) markSides(host, sideRows, sideLabels);
+  }, [sideRows, sideLabels]);
   const contents = useMemo(
     (): PrFileContents | undefined =>
       patch ? undefined : { before: { kind: 'text', content: before }, after: { kind: 'text', content: after } },
@@ -187,6 +201,13 @@ export function ConflictFileDiff<A>({
     disableBackground: !appearance.backgrounds,
     disableLineNumbers: bare || !appearance.lineNumbers,
     overflow: appearance.wrap ? 'wrap' : 'scroll',
+    ...(sideLabels && {
+      unsafeCSS: SIDES_CSS,
+      onPostRender: (node: HTMLElement) => {
+        const { sideRows: rows, sideLabels: labels } = marks.current;
+        if (labels) markSides(node, rows, labels);
+      },
+    }),
   };
   const quiet = model.noise?.file;
   return (
@@ -663,6 +684,7 @@ export function ConflictDiff({
         model={models?.[index]}
         onUndo={model.undoable ? () => undo(index) : undefined}
         compare={mode}
+        prSide={kind === 'restack' ? 'theirs' : 'ours'}
         written={written.get(index)?.length ?? 0}
       />
     );
@@ -696,7 +718,12 @@ export function ConflictDiff({
     () => (wholeWritten ? { ours, theirs, resolver: resolverText } : undefined),
     [wholeWritten, ours, theirs, resolverText]
   );
-  const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
+  // The sides' names in the code (lib/conflict-sides.ts): the PR's, and main's or the updated parent's.
+  const sideLabels = useMemo(
+    (): Record<SideTone, string> => ({ pr: 'PR', base: kind === 'restack' ? 'parent' : baseName }),
+    [kind, baseName]
+  );
+  const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides, kind, sideLabels };
   return (
     <div ref={root} className="conflict-view conflict-diff-view" data-undoable={model.undoable || undefined}>
       {wholeFile && (
@@ -774,7 +801,12 @@ function CompareDiff({
   actions,
   written,
   sides,
+  kind,
+  sideLabels,
 }: {
+  /** A restack's PR is the conflict's second side (theirs), a merge's the first (ours). */
+  kind: 'merge' | 'restack';
+  sideLabels: Record<SideTone, string>;
   name: string;
   model: ConflictModel;
   proposals?: readonly (ConflictProposal | null)[];
@@ -806,6 +838,15 @@ function CompareDiff({
         : shownWritten(shown.blocks, draft.written),
     [shown, draft.written, draft.sides]
   );
+  // Each open conflict's two sides (lib/conflict-sides.ts): the shown lines are the version not compared with.
+  const sideRanges = useMemo(() => {
+    const pr = kind === 'restack' ? 'theirs' : 'ours';
+    const tone = (side: 'ours' | 'theirs'): SideTone => (side === pr ? 'pr' : 'base');
+    const shownSide = against === 'ours' ? 'theirs' : 'ours';
+    return shown.blocks
+      .filter((block) => draft.model.choices[block.index] === undefined)
+      .map((block): SideRange => ({ start: block.start, end: block.end, added: tone(shownSide), removed: tone(against) }));
+  }, [shown, draft.model, against, kind]);
   // A conflict's lines stay in view, and so does every marked line: the mark never sits in a hidden gap, even where
   // the diff reads the line as unchanged context (a moved line in a resolver's whole file).
   const pins = useMemo(
@@ -856,6 +897,8 @@ function CompareDiff({
           label={`Against ${against === 'theirs' ? labels.theirs : labels.ours}`}
           actions={actions}
           written={marks}
+          sides={sideRanges}
+          sideLabels={sideLabels}
         />
       </ConflictCards.Provider>
     </div>
