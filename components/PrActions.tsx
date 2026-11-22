@@ -1,6 +1,8 @@
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { useConflictHeader } from '../lib/use-conflict-header';
+import { useConflictPushed } from '../lib/use-conflict-pushed';
+import { ConflictUndo } from './ConflictUndo';
 import { conflictHeaderLine } from '../lib/conflict-header';
 import { PrStateIcon } from './PrStateIcon';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
@@ -173,6 +175,8 @@ export function PrActions({
   const conflictLine = useConflictHeader(member.url, member.headSha, conflicted && !stackMembers && !trigger);
   const rebaseBlocked = updateBlocked ?? (state ? workflowReason(state, 'update-rebase') : undefined);
   const active = state?.state === 'OPEN' && !state.archived;
+  // "Merged main into this PR · Undo this update", while your pushed merge commit is the head (#445 item 25).
+  const [pushedUpdate, rereadPushed] = useConflictPushed(member.url, state?.headSha ?? member.headSha, active && !stackMembers && !trigger);
   const kind = dialog?.kind;
   const members = plan ? (kind === 'merge' ? plan.members : [plan.target]) : [];
   const heading =
@@ -521,6 +525,21 @@ export function PrActions({
                 <Loader2 size={13} className="motion-safe:animate-spin" aria-hidden="true" />
               )}
               {conflictHeaderLine(conflictLine)}
+            </p>
+          )}
+          {pushedUpdate && (
+            <p role="note" className="pr-action-note pr-conflict-line" data-conflict-pushed="">
+              <span>Merged {pushedUpdate.baseBranch} into this PR</span>
+              <span aria-hidden="true">·</span>
+              <ConflictUndo
+                update={pushedUpdate}
+                onUndone={() => {
+                  // The head moves back only once GitHub's read catches up: read the saved draft again now.
+                  rereadPushed();
+                  void refresh();
+                  onChanged?.();
+                }}
+              />
             </p>
           )}
           {!compact && state && hasMergeConflicts(state) && (

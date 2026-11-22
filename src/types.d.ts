@@ -222,6 +222,7 @@ declare global {
       cancelConflictModel?: (request: import('../lib/conflict-model').ConflictModelRequest) => Promise<void>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
+      conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
       /** Local counts for Settings › Diagnostics › Conflict resolution stats (lib/conflict-stats.ts). Fire and forget. */
       recordConflictChoice?: (choice: import('../lib/conflict-stats').ConflictChoice) => void;
       conflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;

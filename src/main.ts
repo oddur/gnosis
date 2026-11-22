@@ -4249,6 +4249,8 @@ async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definiti
 const conflictStats = createConflictStatsStore(appData);
 const conflicts = createConflictResolutionService({
   stats: conflictStats,
+  // Repository settings' "Allow undoing a conflict update with a force push": off unless set (#445 item 25).
+  allowUndo: repo => loadPreferences().repositorySettings?.[repositoryKey(repo)]?.allowConflictUndo === true,
   // Settings › Code intelligence applies here as in the renderer: a language that is off is never parsed.
   verify: (file, disabled) => conflictChecks.check(file, disabled),
   moved: (file, disabled) => conflictChecks.moved(file, disabled),
@@ -4383,6 +4385,13 @@ ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   conflictPrecompute.opened(url, headSha);
   return conflictPrecompute.header(url, headSha) ?? null;
 });
+// The PR header's "Merged main into this PR · Undo this update": your pushed update while its merge commit is the head.
+ipcMain.handle('conflict-pushed', (_event, url: unknown, headSha: unknown) => {
+  if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
+  if (typeof headSha !== 'string' || !/^[a-f0-9]{40,64}$/.test(headSha)) return null;
+  if (!getResolvedToken() || !cachedLogin) return null;
+  return conflicts.pushed(url, headSha) ?? null;
+});
 handleInteractive('conflict-resolution', async (_event, request: ConflictRequest) => {
   validateConflictRequest(request);
   const token = getResolvedToken();
@@ -4391,7 +4400,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   const controller = new AbortController();
   const id = `pr-action:conflicts:${crypto.randomUUID()}`;
   const tracked = !['save', 'discard', 'restack-save', 'model'].includes(request.kind);
-  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
+  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : request.kind === 'undo-publish' ? 'Undoing the conflict update' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish', 'undo-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
     // A background preparation of this PR finishes first, so opening reuses it.
     if (request.kind === 'open') await conflictPrecompute.settle(request.url, controller.signal);
@@ -4400,11 +4409,11 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
     if (request.kind === 'discard' || result.session.status === 'published') cascadePreviews.forget(result.session.id);
     if (request.kind === 'discard') conflictPrecompute.dismiss(result.session.url, result.session.headSha);
     else conflictPrecompute.refresh(result.session.url);
-    if ((request.kind === 'publish' && result.session.status === 'published') || request.kind === 'restack-publish') {
+    if ((request.kind === 'publish' && result.session.status === 'published') || request.kind === 'restack-publish' || request.kind === 'undo-publish') {
       const urls = request.kind === 'restack-publish' ? result.session.restack?.branches.map(branch => branch.url) ?? [] : [result.session.url];
       void githubWrites.after('push', urls);
     }
-    if (tracked) activities.finish(id, 'completed', ['restack-prepare', 'restack-continue'].includes(request.kind) ? (result.session.restack?.status === 'blocked' ? 'Restack paused on new conflicts. Open the workspace to resolve and continue.' : 'Dependent PR updates prepared. Review the result before pushing.') : request.kind === 'restack-publish' ? 'Dependent PR branches updated together.' : result.session.status === 'published' ? 'PR branch updated. GitHub checks will run for the new commit.' : result.baseMoved?.conflicts ? `${result.session.baseBranch} moved and brought new conflicts. Nothing was pushed. Open Resolve conflicts on the PR to resolve them.` : 'Conflict workspace ready. Open Resolve conflicts on the PR to continue.');
+    if (tracked) activities.finish(id, 'completed', ['restack-prepare', 'restack-continue'].includes(request.kind) ? (result.session.restack?.status === 'blocked' ? 'Restack paused on new conflicts. Open the workspace to resolve and continue.' : 'Dependent PR updates prepared. Review the result before pushing.') : request.kind === 'restack-publish' ? 'Dependent PR branches updated together.' : request.kind === 'undo-publish' ? `${result.session.headBranch} is back at its previous commit. Your resolutions are saved.` : result.session.status === 'published' ? 'PR branch updated. GitHub checks will run for the new commit.' : result.baseMoved?.conflicts ? `${result.session.baseBranch} moved and brought new conflicts. Nothing was pushed. Open Resolve conflicts on the PR to resolve them.` : 'Conflict workspace ready. Open Resolve conflicts on the PR to continue.');
     return result;
   } catch (error) {
     if (tracked) activities.finish(id, controller.signal.aborted ? 'cancelled' : 'failed', error instanceof Error ? error.message : String(error));

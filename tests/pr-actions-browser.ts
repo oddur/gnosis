@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
       window.writes=[];window.actionTasks=[];window.nativeStack=false;window.failAction=false;window.denyWrite=false;window.changedHead=false;window.conflicts=false;
       const q=await window.electronAPI.workbenchQueue();window.queue=q;
       const originalActivity=window.electronAPI.listActivity;window.electronAPI.listActivity=async()=>[...await originalActivity(),...window.actionTasks];
-      window.actionState=url=>{const member=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);if(!member)throw Error('Unknown mock PR');const stack=q.items.find(i=>i.subject.members.some(m=>m.url===url)&&i.subject.kind==='stack');return {...member,account:'oddur',id:'PR_'+member.number,checkedAt:Date.now(),state:member.merged?'MERGED':'OPEN',headSha:window.changedHead?'changed-head':member.headSha,headRepo:member.repo,repository:member.repo,archived:false,canWrite:!window.denyWrite,mergeable:window.conflicts?'CONFLICTING':'MERGEABLE',mergeState:window.conflicts?'DIRTY':'CLEAN',methods:['SQUASH','MERGE','REBASE'],defaultMethod:'SQUASH',autoMerge:member.autoMerge?.method??null,canEnableAuto:true,canDisableAuto:true,canUpdateBranch:true,canChangeDraft:!window.denyWrite,mergeQueue:false,inMergeQueue:false,stack:stack&&window.nativeStack?{number:8,baseBranch:'main',complete:true,mergeQueue:false,members:stack.subject.members.map(m=>({...m,state:'OPEN'}))}:null};};
+      window.actionState=url=>{const member=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);if(!member)throw Error('Unknown mock PR');const stack=q.items.find(i=>i.subject.members.some(m=>m.url===url)&&i.subject.kind==='stack');return {...member,account:'oddur',id:'PR_'+member.number,checkedAt:Date.now(),state:member.merged?'MERGED':'OPEN',headSha:window.changedHead?'changed-head':window.pushedHead??member.headSha,headRepo:member.repo,repository:member.repo,archived:false,canWrite:!window.denyWrite,mergeable:window.conflicts?'CONFLICTING':'MERGEABLE',mergeState:window.conflicts?'DIRTY':'CLEAN',methods:['SQUASH','MERGE','REBASE'],defaultMethod:'SQUASH',autoMerge:member.autoMerge?.method??null,canEnableAuto:true,canDisableAuto:true,canUpdateBranch:true,canChangeDraft:!window.denyWrite,mergeQueue:false,inMergeQueue:false,stack:stack&&window.nativeStack?{number:8,baseBranch:'main',complete:true,mergeQueue:false,members:stack.subject.members.map(m=>({...m,state:'OPEN'}))}:null};};
       const originalStatus=window.electronAPI.getPrStatus;
       window.electronAPI.getPrStatus=async(...args)=>{const result=await originalStatus(...args);const state=window.actionState(args[0]);return {...result,isDraft:state.isDraft,signals:{...result.signals,checkedAt:Date.now(),readiness:{...result.signals.readiness,isDraft:state.isDraft,mergeable:state.mergeable,mergeState:state.mergeState}}};};
       window.electronAPI.getPrActionState=async(url)=>window.actionState(url);
@@ -145,6 +145,32 @@ void app.whenReady().then(async () => {
     await wait(`${line}?.startsWith('You can’t push to this branch')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
     await header(null);
     await wait(`!document.querySelector('.pr-conflict-line')&&${resolveButton('Resolve conflicts…')}?.disabled===false`);
+    // After a conflict update (#445 item 25): "Merged main into this PR", with the manual steps while the repository
+    // doesn't allow the force push, and Undo this update with its confirmation when it does.
+    await js(`(()=>{
+      const s=window.actionState(window.headerUrl);window.pushedRepo=s.repository;
+      window.electronAPI.conflictPushed=async(url,head)=>head==='d'.repeat(40)?{id:'a'.repeat(64),version:1,url,headRepo:s.headRepo,baseRepo:s.repository,headBranch:s.headBranch,baseBranch:s.baseBranch,headSha:'e'.repeat(40),commitSha:'d'.repeat(40)}:null;
+      window.pushedHead='d'.repeat(40);
+    })()`);
+    await click('Refresh PR actions');
+    const pushedLine = "document.querySelector('[data-conflict-pushed]')";
+    await wait(`${pushedLine}?.textContent.startsWith('Merged main into this PR')`);
+    assert.equal(await js(`!!${pushedLine}.querySelector('[data-conflict-undo]')`), false, 'Off by default');
+    assert.match(await js<string>(`${pushedLine}.querySelector('[data-conflict-undo-docs]').href`), /#undo-an-update$/);
+    const allowUndo = (allow: boolean) =>
+      js(`(async()=>{const p=await window.electronAPI.loadPreferences();const key=window.pushedRepo.toLowerCase();const r={...p.repositorySettings?.[key]};if(${allow})r.allowConflictUndo=true;else delete r.allowConflictUndo;const next={...p,repositorySettings:{...p.repositorySettings,[key]:r}};await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));})()`);
+    await allowUndo(true);
+    await wait(`!!${pushedLine}?.querySelector('[data-conflict-undo]')`);
+    await js(`${pushedLine}.querySelector('[data-conflict-undo]').click()`);
+    await wait("!!document.querySelector('[data-conflict-undo-dialog]')");
+    assert.match(await js<string>("document.querySelector('[data-conflict-undo-dialog]').innerText"), /rewrites its history/);
+    await capture('conflict-undo-header-light-1280');
+    await js("document.querySelector('[data-conflict-undo-dialog] button[data-variant=outline]').click()");
+    await wait("!document.querySelector('[data-conflict-undo-dialog]')");
+    await allowUndo(false);
+    await js('delete window.pushedHead');
+    await click('Refresh PR actions');
+    await wait(`!${pushedLine}`);
     await js('window.conflicts=false');
     await click('Refresh PR actions');
     await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");

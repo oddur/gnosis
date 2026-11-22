@@ -448,6 +448,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('conflict-model-cancel', request),
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
+  conflictPushed: (url: string, headSha: string): Promise<import('../lib/conflict-undo').PushedUpdate | null> =>
+    ipcRenderer.invoke('conflict-pushed', url, headSha),
   // The cascade preview before a push (#445 item 22), and when it changes.
   conflictCascade: (
     id: string,
