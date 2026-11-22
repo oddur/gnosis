@@ -1,0 +1,9 @@
+{
+  "description": "The PR moves orderTotal to the end of the file and adds quoteTotal, a copy of it, beside it; main fixes a line inside orderTotal. Two bodies match the one main edited, so the move is ambiguous and the move rule proposes nothing. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "typescript",
+  "category": "trap/move-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "src/pricing.ts": "decide"
+  }
+}

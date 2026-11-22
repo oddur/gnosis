@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { NOISE_MAX_CHARACTERS } from '../lib/semantic-noise';
+import { comparisonTexts, NOISE_MAX_CHARACTERS, patchHunks } from '../lib/semantic-noise';
 import {
   blockVerdict,
   verifyProposals,
@@ -10,10 +10,16 @@ import {
 } from '../lib/conflict-verify';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { blockResolutions, withProposals } from '../lib/conflict-carry';
-import type { ConflictFile } from '../lib/conflict-resolution';
-import { SYNTAX_MAX_CHARACTERS, type createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { comparisonTexts } from '../lib/semantic-noise';
+import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
+import { movedProposal } from '../lib/conflict-moved';
+import {
+  SYNTAX_MAX_CHARACTERS,
+  syntaxLanguage,
+  type createSyntaxEngine,
+  type SyntaxLanguage,
+} from '../lib/syntax-scope';
 import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
+import { createPatch } from 'diff';
 
 /**
  * The conflict checks (lib/conflict-verify.ts) in the main process (#445 item 3), so a session's buckets do not depend
@@ -111,27 +117,59 @@ export function conflictChecker(engine: Engine, disabled: readonly SyntaxLanguag
   };
 }
 
+/** What the move rule reads of a file (lib/conflict-moved.ts). */
+export type MovedFile = Pick<
+  ConflictFile,
+  'path' | 'base' | 'ours' | 'theirs' | 'original' | 'proposals' | 'unsupported'
+>;
+/**
+ * The 'moved' proposal for a file (lib/conflict-moved.ts), with each side's moved-symbol candidates read by the syntax
+ * engine as Changes reads them. A language that is off in Settings, or a text over the limits, proposes nothing; so
+ * does a read that fails.
+ */
+export function moveProposer(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'symbols'>,
+  disabled: readonly SyntaxLanguage[] = []
+) {
+  return async (file: MovedFile): Promise<ConflictProposal | undefined> => {
+    const language = syntaxLanguage(file.path);
+    if (!language || disabled.includes(language)) return undefined;
+    if ([file.base, file.ours, file.theirs].some((text) => text.length > SYNTAX_MAX_CHARACTERS)) return undefined;
+    try {
+      return await movedProposal(file, async (id, before, after) => {
+        const hunks = patchHunks(createPatch(file.path, before, after, '', '', { context: 3 })) ?? [];
+        return (await engine.symbols(id, { mode: 'modified', text: after, hunks })).prints;
+      });
+    } catch (error) {
+      console.warn(`[conflicts] The move rule failed on ${file.path}.`, error);
+      return undefined;
+    }
+  };
+}
+
 /** Where the worker finds the tree-sitter runtime and grammars: `src/assets/tree-sitter` in development. */
 export interface TreeSitterFiles {
   runtime: string;
   grammars: string;
 }
 /**
- * The worker's jobs: a conflict check, or Reduce noise's syntax comparison for an explanation's files
- * (lib/explanation-noise.ts), which needs the same grammars.
+ * The worker's jobs: a conflict check, the move rule's proposal for a file (moveProposer), or Reduce noise's syntax
+ * comparison for an explanation's files (lib/explanation-noise.ts), which needs the same grammars.
  */
 export type CheckRequest =
-  | { id: number; kind?: 'check'; file: CheckedFile; disabled: SyntaxLanguage[] }
+  | { id: number; kind?: 'check' | 'moved'; file: CheckedFile; disabled: SyntaxLanguage[] }
   | { id: number; kind: 'noise'; files: NoiseFile[] };
 /** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
 export type NoiseFile = Pick<NoiseRequest, 'language' | 'after' | 'hunks' | 'imports'>;
 export type CheckResponse =
   | { id: number; verdict?: Verdict }
+  | { id: number; proposal?: ConflictProposal }
   | { id: number; noise: (NoiseAnswer | null)[] }
   | { id: number; error: string };
 
 interface Job {
   request: CheckRequest;
+  /** The worker's answer, or undefined when it failed, ran out of time or stopped. */
   resolve: (response: CheckResponse | undefined) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -237,15 +275,26 @@ export function createConflictCheckWorker(
       queue.push({ request, resolve });
       pump();
     });
+  /** A conflict file's job: its check, or the move rule's proposal. */
+  const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved') => {
+    if (disposed) return Promise.resolve(undefined);
+    const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
+    return run({
+      id: ++serial,
+      ...(kind === 'moved' ? { kind } : {}),
+      file: { path, base, ours, theirs, original, proposals, wholeFile, result },
+      disabled,
+    });
+  };
   return {
-    check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
-      if (disposed) return Promise.resolve(undefined);
-      const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
-      return run({
-        id: ++serial,
-        file: { path, base, ours, theirs, original, proposals, wholeFile, result },
-        disabled,
-      }).then((response) => (response && 'verdict' in response ? response.verdict : undefined));
+    async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
+      const response = await ask(file, disabled, 'check');
+      return response && 'verdict' in response ? response.verdict : undefined;
+    },
+    /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
+    async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
+      const response = await ask(file, disabled, 'moved');
+      return response && 'proposal' in response ? response.proposal : undefined;
     },
     /**
      * Reduce noise's comparison of an explanation's files, one job per file so each has its own time limit. Fail

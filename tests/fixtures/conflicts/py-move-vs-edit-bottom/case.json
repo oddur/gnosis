@@ -1,0 +1,9 @@
+{
+  "description": "The PR moves weighted_mean to the end of the module; main changes a line inside it. The right result is the moved function with main’s change. Gnosis proposes it in Check, never Merged. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "python",
+  "category": "structure/move-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "lab/stats.py": "check"
+  }
+}

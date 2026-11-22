@@ -1,0 +1,3 @@
+# The conflict cases are byte-exact: LF cases stay LF and CRLF cases stay CRLF on every platform, so a Windows
+# checkout (core.autocrlf) doesn't turn LF cases into CRLF ones, which the move rule declines by design.
+** -text

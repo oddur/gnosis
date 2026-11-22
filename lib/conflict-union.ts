@@ -1,4 +1,4 @@
-import { parseConflicts, type ConflictBlock } from './conflict-blocks';
+import { parseConflicts, textLines as lines, type ConflictBlock } from './conflict-blocks';
 import type { ConflictProposal } from './conflict-resolution';
 import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
 
@@ -9,7 +9,6 @@ import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } 
  * the checks (lib/conflict-verify.ts) put it in Check, with a note from the syntax nodes each side added (unionNote).
  */
 
-const lines = (text: string) => text.split(/(?<=\n)/).filter(Boolean);
 /** The ways `side` is `base` with lines inserted at one place: the place, and the inserted lines. */
 function insertions(base: string[], side: string[]) {
   const found = new Map<number, string[]>();
