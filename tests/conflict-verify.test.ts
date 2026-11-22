@@ -323,9 +323,10 @@ void test('review probe: a check result belongs to the proposals it checked', ()
   const same = file([merged(imports), merged(three + four)]);
   for (const field of ['path', 'base', 'ours', 'theirs'] as const)
     assert.notEqual(proposalKey(before), proposalKey({ ...same, [field]: `${same[field]} ` }), field);
+  // The type check's key has the draft (#499), and no sides.
   assert.equal(
     typeCheckKey(before),
-    proposalKey({ original: before.original, proposals: before.proposals, wholeFile: before.wholeFile })
+    proposalKey({ original: before.original, proposals: before.proposals, wholeFile: before.wholeFile, result: before.result })
   );
   assert.equal(typeCheckKey(before), typeCheckKey(Object.assign({ ...same }, { base: `${same.base} ` })));
 });

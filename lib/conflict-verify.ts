@@ -15,6 +15,8 @@ import {
   type ConflictFile,
   type ConflictFileStage,
   type ConflictProposal,
+  type ConflictTypeCheck,
+  type TypeErrorMark,
 } from './conflict-resolution';
 import { commaUnion, layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
 import {
@@ -51,11 +53,14 @@ export interface Verdict extends BlockVerdict {
 }
 /**
  * The verdict with the type check's new errors (#445 item 24): every Merged proposal in the file is Check, with the
- * compiler's error as its note. A verdict without Merged proposals is unchanged.
+ * type check's note. A verdict without Merged proposals is unchanged.
  */
-export function withTypeError(verdict: Verdict | undefined, note: string | undefined): Verdict | undefined {
-  if (!verdict || note === undefined || !(verdict.merged || verdict.blocks?.some((block) => block?.merged)))
-    return verdict;
+export function withTypeError(
+  verdict: Verdict | undefined,
+  mark: Pick<TypeErrorMark, 'note'> | undefined
+): Verdict | undefined {
+  if (!verdict || !mark || !(verdict.merged || verdict.blocks?.some((block) => block?.merged))) return verdict;
+  const { note } = mark;
   return {
     ...verdict,
     merged: false,
@@ -1079,6 +1084,27 @@ function strayLines(segments: ConflictSegment[], proposals: readonly (ConflictPr
 export const CHECKS_VERSION = 10;
 const proposalKeys = new WeakMap<object, string>();
 /**
+ * FNV-1a and length of a file's conflict, proposals and `draft`, the fingerprint `proposalKey` and `typeCheckKey` share.
+ * `sides` (the path and the three versions) are added when any is given; without them (typeCheckKey), the key is the
+ * one it always was.
+ */
+function fileFingerprint(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>,
+  draft: string,
+  sides: readonly (string | undefined)[] = []
+) {
+  const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
+  const text = [
+    file.original,
+    ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
+    `\u0002${draft}`,
+    ...(sides.some((side) => side !== undefined) ? [`\u0003${sides.map((side) => side ?? '\u0004').join('\u0003')}`] : []),
+  ].join('\u0000');
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return `${(hash >>> 0).toString(36)}:${text.length}`;
+}
+/**
  * A cheap fingerprint of a file's conflict, proposals and draft (FNV-1a and length), remembered per file object. A
  * check result counts only for the proposals it checked, beside the choices it checked them with. When given, the path
  * and the three versions the checks read count too (#464), so a verdict never outlives a file whose sides changed.
@@ -1089,32 +1115,58 @@ export function proposalKey(
 ) {
   let key = proposalKeys.get(file);
   if (key === undefined) {
-    const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
-    const sides = [file.path, file.base, file.ours, file.theirs];
-    const text = [
-      file.original,
-      ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
-      // The draft matters only to per-conflict checks; a whole-file check ignores it.
-      `\u0002${file.wholeFile ? '' : (file.result ?? '')}`,
-      // Without them (typeCheckKey), the key is the one it always was.
-      ...(sides.some((side) => side !== undefined)
-        ? [`\u0003${sides.map((side) => side ?? '\u0004').join('\u0003')}`]
-        : []),
-    ].join('\u0000');
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
-    key = `${(hash >>> 0).toString(36)}:${text.length}`;
+    // The draft matters only to per-conflict checks; a whole-file check ignores it.
+    key = fileFingerprint(file, file.wholeFile ? '' : (file.result ?? ''), [file.path, file.base, file.ours, file.theirs]);
     proposalKeys.set(file, key);
   }
   return key;
 }
 
-/** The proposals a type check result belongs to: Git's conflict and the proposals, never the draft. */
-export const typeCheckKey = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) =>
-  proposalKey({ original: file.original, proposals: file.proposals, wholeFile: file.wholeFile });
-/** The type check's note for a file, while its proposals are the ones it checked. */
-export const typeErrorNote = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'typeError'>) =>
-  file.typeError && file.typeError.key === typeCheckKey(file) ? file.typeError.note : undefined;
+/** What a type check key was computed from, by file object: a file can change in place, so its inputs are compared. */
+const typeCheckKeys = new WeakMap<object, { inputs: readonly unknown[]; key: string }>();
+/**
+ * The draft a type check result belongs to: Git's conflict, the proposals and the draft itself, so a fixed conflict is
+ * checked again. Remembered per file object while those are the same.
+ */
+export function typeCheckKey(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'result'>) {
+  const inputs = [file.original, file.proposals, file.wholeFile, file.result] as const;
+  const known = typeCheckKeys.get(file);
+  if (known && known.inputs.every((value, index) => value === inputs[index])) return known.key;
+  const key = fileFingerprint(file, file.result);
+  typeCheckKeys.set(file, { inputs, key });
+  return key;
+}
+/**
+ * The PR's type check as it applies to this draft: a finished run counts only when every file's draft is the one it
+ * checked (`checked`). A result for another draft reads as waiting: never its "passed" for a changed draft.
+ */
+export function typeCheckFor(
+  status: ConflictTypeCheck | null | undefined,
+  files: readonly Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'wholeFile' | 'result'>[]
+): ConflictTypeCheck | null | undefined {
+  if (status?.state !== 'passed' && status?.state !== 'errors') return status;
+  const { checked } = status;
+  const same =
+    !!checked && Object.keys(checked).length === files.length && files.every((f) => checked[f.path] === typeCheckKey(f));
+  return same ? status : { state: 'waiting' };
+}
+/**
+ * The type check's demotion of a file, the same for the Conflicts view, the PR header and the stats. `status` is the
+ * PR's type check for this draft (`typeCheckFor`): null when it is off, undefined when not known (not asked yet, or not
+ * run since the app started).
+ *
+ * - A finished run decides: it passed, or it found new errors, and then every conflicted file is demoted.
+ * - Otherwise (waiting, running, skipped, stopped, not known) the demotion saved on the file stays: a demotion only goes
+ *   when a finished run for the whole draft says so, or the check is turned off.
+ */
+export function typeErrorOf(
+  file: Pick<ConflictFile, 'path' | 'typeError'>,
+  status: ConflictTypeCheck | null | undefined
+): TypeErrorMark | undefined {
+  if (status === null || status?.state === 'passed') return undefined;
+  if (status?.state === 'errors') return status.files.find((x) => x.path === file.path);
+  return file.typeError;
+}
 
 /**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the

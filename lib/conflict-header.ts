@@ -1,11 +1,14 @@
-import { conflictFileStage, type ConflictFile } from './conflict-resolution';
+import { conflictFileStage, type ConflictFile, type ConflictTypeCheck } from './conflict-resolution';
 import {
   allMerged,
   blockBuckets,
   bucketSummary,
   fileStatus,
   summarySentence,
+  typeCheckFor,
+  typeErrorOf,
   waitsForReview,
+  withTypeError,
   type ConflictBucket,
   type FileStatus,
   type Verdict,
@@ -57,16 +60,25 @@ export function summaryEntry(
  */
 const NOT_CHECKED: Verdict = { merged: false, passed: true, note: 'Not checked yet.' };
 
-/** A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals. */
+/**
+ * A prepared draft's line: its files as saved, each with the verdict the main process saved for its proposals and the
+ * type check's demotions over it, as the conflict dialog applies them (`typeErrorOf`). `typeCheck`: the PR's type check,
+ * null when it is off.
+ */
 export function conflictHeader(
   files: readonly ConflictFile[],
   disabled: readonly SyntaxLanguage[] = [],
-  showMerged = true
+  showMerged = true,
+  typeCheck?: ConflictTypeCheck | null
 ): ConflictHeader {
   let review = false;
+  const status = typeCheckFor(typeCheck, files);
   const states = files.map((f) => {
     // The same comparison as the conflict dialog's: the checks' version, the file's language, the proposals and draft.
-    const saved = f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined;
+    const saved = withTypeError(
+      f.verdict?.key === verdictKey(f, disabled) ? f.verdict.verdict : undefined,
+      typeErrorOf(f, status)
+    );
     const verdict = saved ?? (f.proposals || f.wholeFile ? NOT_CHECKED : undefined);
     const buckets = blockBuckets(f, f.result, verdict);
     const stage = conflictFileStage(f);

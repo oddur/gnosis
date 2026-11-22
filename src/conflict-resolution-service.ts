@@ -12,6 +12,7 @@ import {
   type ConflictRequest,
   type ConflictReply,
   type ConflictTypeCheck,
+  type TypeErrorMark,
   type BaseMove,
 } from '../lib/conflict-resolution';
 import {
@@ -53,6 +54,7 @@ import { mayHaveMove } from '../lib/conflict-moved';
 import { typeCheckKey, type Verdict } from '../lib/conflict-verify';
 import {
   FROM_FORK,
+  TYPE_CHECK_DELAY,
   TYPE_CHECK_TIMEOUT,
   TypeCheckSkipped,
   TypeCheckUnchecked,
@@ -179,6 +181,8 @@ interface Deps {
   runScript?: RunScript;
   /** Milliseconds for the type check (TYPE_CHECK_TIMEOUT). Tests change it. */
   typeCheckTimeout?: number;
+  /** Milliseconds after the last change to a draft before it is type checked again. Tests change it. */
+  typeCheckDelay?: number;
   /** A PR's type check status changed (`typeCheck`). */
   typeCheckChanged?: (id: string) => void;
 }
@@ -362,23 +366,36 @@ export function createConflictResolutionService(deps: Deps) {
     pushedCache.delete(key);
     deps.storage.write(key, value);
   }
+  /** A file's new type errors from a finished type check (lib/conflict-resolution.ts `TypeErrorMark`). */
+  type TypedFile = TypeErrorMark & { path: string };
+  /**
+   * A finished run's demotions, with the fingerprint of the whole draft it checked (`typeCheckFingerprint`). Without a
+   * fingerprint (the check turned off), every file's demotion goes.
+   */
+  interface TypedResult {
+    files: readonly TypedFile[];
+    fingerprint?: string;
+  }
   /**
    * A type check's demotions that came while a request held the draft: saved with its next write, as choices are. Each
    * entry is a whole run's list, so it replaces the one before; an empty list clears them (a pass, or the check off).
    */
-  const pendingTypeErrors = new Map<string, { path: string; key: string; note: string }[]>();
+  const pendingTypeErrors = new Map<string, TypedResult>();
   /**
    * The type check's demotions as an overlay on the files (`typeError`): the files with new errors get theirs, every
    * other file loses its own. The checks' saved verdict is never changed; the view applies the overlay while the check
-   * is on. Only for the proposals the type check saw.
+   * is on. Only for the whole draft the run checked: when any file changed since, the result is dropped, and the
+   * demotions saved on the files stand.
    */
-  function applyTypeErrors(session: ConflictSession, files: readonly { path: string; key: string; note: string }[]) {
+  function applyTypeErrors(session: ConflictSession, { files, fingerprint }: TypedResult) {
     let changed = false;
     if (session.status !== 'editing') return changed;
+    if (fingerprint !== undefined && fingerprint !== typeCheckFingerprint(session)) return changed;
     for (const file of session.files) {
       const typed = files.find((x) => x.path === file.path && x.key === typeCheckKey(file));
-      if (typed && file.typeError?.note !== typed.note) {
-        file.typeError = { key: typed.key, note: typed.note };
+      const mark: TypeErrorMark | undefined = typed && { key: typed.key, note: typed.note };
+      if (mark && JSON.stringify(file.typeError) !== JSON.stringify(mark)) {
+        file.typeError = mark;
         changed = true;
       } else if (!typed && file.typeError) {
         delete file.typeError;
@@ -388,14 +405,14 @@ export function createConflictResolutionService(deps: Deps) {
     return changed;
   }
   /** Saves a run's demotions on the draft now, or with the next write while a request holds it. */
-  function saveTypeErrors(key: string, files: { path: string; key: string; note: string }[], match?: (saved: ConflictSession) => boolean) {
+  function saveTypeErrors(key: string, result: TypedResult, match?: (saved: ConflictSession) => boolean) {
     if (busy.has(key)) {
-      pendingTypeErrors.set(key, files);
+      pendingTypeErrors.set(key, result);
       return;
     }
     pendingTypeErrors.delete(key);
     const saved = deps.storage.read(key) as ConflictSession | undefined;
-    if (saved && (!match || match(saved)) && applyTypeErrors(saved, files)) {
+    if (saved && (!match || match(saved)) && applyTypeErrors(saved, result)) {
       write(key, saved);
       void deps.storage.flush();
     }
@@ -411,6 +428,42 @@ export function createConflictResolutionService(deps: Deps) {
     done: Promise<void>;
   }
   const typeChecks = new Map<string, TypeCheckRun>();
+  /** A changed draft's type check, waiting for the changes to stop (`typeCheckDelay`), by draft key. */
+  const typeCheckLater = new Map<string, NodeJS.Timeout>();
+  /**
+   * The draft changed (#445 item 24): a run in flight for an earlier draft stops at once, and the status reads waiting.
+   * The draft is checked again once the changes stop (`typeCheckDelay`), so autosave doesn't start a run each time.
+   * Meanwhile the demotions saved on its files stay. A check you stopped stays stopped until the next open.
+   */
+  function draftChanged(ctx: Context, session: ConflictSession) {
+    const key = storageKey(ctx.account, session.id);
+    const run = typeChecks.get(key);
+    const fingerprint = typeCheckFingerprint(session);
+    if (run?.status.state === 'cancelled' || run?.fingerprint === fingerprint) return;
+    run?.controller.abort();
+    const clone = deps.typeCheckClone?.(session.baseRepo);
+    if (clone)
+      typeChecks.set(key, {
+        status: { state: 'waiting' },
+        fingerprint,
+        controller: new AbortController(),
+        repo: session.baseRepo,
+        clone,
+        done: Promise.resolve(),
+      });
+    else typeChecks.delete(key);
+    if (run || clone) deps.typeCheckChanged?.(session.id);
+    clearTimeout(typeCheckLater.get(key));
+    const timer = setTimeout(() => {
+      typeCheckLater.delete(key);
+      if (deps.context().account !== ctx.account) return;
+      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      if (saved?.id !== session.id || typeChecks.get(key)?.status.state === 'cancelled') return;
+      startTypeCheck(ctx, saved);
+    }, deps.typeCheckDelay ?? TYPE_CHECK_DELAY);
+    timer.unref();
+    typeCheckLater.set(key, timer);
+  }
   const typeCheckFingerprint = (session: ConflictSession) =>
     hash(JSON.stringify([session.headSha, session.baseSha, session.tree, session.files.map((f) => [f.path, typeCheckKey(f)])]));
   /**
@@ -418,6 +471,8 @@ export function createConflictResolutionService(deps: Deps) {
    * to let go of its worktree; a result that comes later is dropped.
    */
   async function stopTypeCheck(key: string, id: string) {
+    clearTimeout(typeCheckLater.get(key));
+    typeCheckLater.delete(key);
     const run = typeChecks.get(key);
     if (!run) return;
     typeChecks.delete(key);
@@ -432,6 +487,8 @@ export function createConflictResolutionService(deps: Deps) {
    */
   function startTypeCheck(ctx: Context, session: ConflictSession) {
     const key = storageKey(ctx.account, session.id);
+    clearTimeout(typeCheckLater.get(key));
+    typeCheckLater.delete(key);
     const clone =
       session.status === 'editing' && session.preparation === 'conflicts' && !session.stale
         ? deps.typeCheckClone?.(session.baseRepo)
@@ -446,7 +503,7 @@ export function createConflictResolutionService(deps: Deps) {
     ) {
       // Start over made new files for the same proposals: they get the errors again with the next write.
       if (previous.status.state === 'errors' && previous.status.files.length)
-        pendingTypeErrors.set(key, previous.status.files);
+        pendingTypeErrors.set(key, { files: previous.status.files, fingerprint });
       return;
     }
     previous?.controller.abort();
@@ -456,7 +513,7 @@ export function createConflictResolutionService(deps: Deps) {
         deps.typeCheckChanged?.(session.id);
       }
       // The check is off: its demotions go with the next write.
-      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, []);
+      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, { files: [] });
       return;
     }
     // The draft as it was prepared: the reply that carries `session` goes on without waiting for the check.
@@ -482,9 +539,12 @@ export function createConflictResolutionService(deps: Deps) {
       }
       entry.status = status;
       // A finished run decides each file: its new errors demote it, and a file without any is clear again.
+      // Only for the whole draft it checked (`fingerprint`).
       if (status.state === 'errors' || status.state === 'passed')
-        saveTypeErrors(key, status.state === 'errors' ? status.files : [], (saved) =>
-          saved.id === session.id && saved.headSha === session.headSha
+        saveTypeErrors(
+          key,
+          { files: status.state === 'errors' ? status.files : [], fingerprint: entry.fingerprint },
+          (saved) => saved.id === session.id && saved.headSha === session.headSha
         );
       deps.typeCheckChanged?.(session.id);
     };
@@ -2222,10 +2282,33 @@ export function createConflictResolutionService(deps: Deps) {
       const ctx = deps.context();
       return ctx.account ? typeChecks.get(storageKey(ctx.account, id))?.status : undefined;
     },
+    /**
+     * The type check as the conflict dialog and the PR header both read it (lib/conflict-verify.ts `typeErrorOf`): its
+     * run's status; null when the repository's check is off; undefined when it is on but hasn't run since the app started.
+     */
+    typeCheckStatus(id: string, repo?: string): ConflictTypeCheck | null | undefined {
+      const ctx = deps.context();
+      const status = ctx.account ? typeChecks.get(storageKey(ctx.account, id))?.status : undefined;
+      if (status) return status;
+      repo ??= ctx.account
+        ? (deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined)?.baseRepo
+        : undefined;
+      return repo && deps.typeCheckClone?.(repo) ? undefined : null;
+    },
     /** Stops a running type check. Nothing it found is applied. */
     cancelTypeCheck(id: string) {
       const ctx = deps.context();
-      if (ctx.account) typeChecks.get(storageKey(ctx.account, id))?.controller.abort();
+      if (!ctx.account) return;
+      const key = storageKey(ctx.account, id);
+      const run = typeChecks.get(key);
+      run?.controller.abort();
+      // Waiting for your changes: nothing runs yet, so it is stopped here.
+      if (run?.status.state === 'waiting') {
+        clearTimeout(typeCheckLater.get(key));
+        typeCheckLater.delete(key);
+        run.status = { state: 'cancelled' };
+        deps.typeCheckChanged?.(id);
+      }
     },
     /**
      * Settings › Local clones changed: a type check whose clone is no longer linked with the check on, or is another
@@ -2243,8 +2326,10 @@ export function createConflictResolutionService(deps: Deps) {
       for (const name of deps.storage.names?.() ?? []) {
         if (!name.startsWith('conflict-draft:')) continue;
         const saved = deps.storage.read(name) as ConflictSession | null | undefined;
-        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name)))
-          saveTypeErrors(name, []);
+        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name))) {
+          saveTypeErrors(name, { files: [] });
+          deps.typeCheckChanged?.(saved.id);
+        }
       }
     },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
@@ -2762,6 +2847,8 @@ export function createConflictResolutionService(deps: Deps) {
         }
         session.version++;
         await persist(session);
+        // A changed draft is type checked again once the changes stop (#445 item 24).
+        if (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model') draftChanged(ctx, session);
         return { session, ...(baseMoved ? { baseMoved } : {}) };
       } finally {
         release(key);
