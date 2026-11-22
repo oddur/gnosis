@@ -182,10 +182,13 @@ interface ResetItem {
   onSelect: () => void;
   disabled?: boolean;
   separated?: boolean;
+  /** The item moves focus itself (Start over focuses the footer's Cancel): the menu doesn't return it to Reset. */
+  movesFocus?: boolean;
 }
 
 /** Reset file, Start from Git's conflict, Try structural merge again and Start over, in one menu (#445 distill). */
 function ResetMenu({ items, disabled }: { items: ResetItem[]; disabled: boolean }) {
+  const moved = useRef(false);
   if (!items.length) return null;
   return (
     <DropdownMenu.Root>
@@ -197,11 +200,25 @@ function ResetMenu({ items, disabled }: { items: ResetItem[]; disabled: boolean 
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="pr-update-menu conflict-reset-menu" align="end" sideOffset={4}>
+        <DropdownMenu.Content
+          className="pr-update-menu conflict-reset-menu"
+          align="end"
+          sideOffset={4}
+          onCloseAutoFocus={(event) => {
+            if (moved.current) event.preventDefault();
+            moved.current = false;
+          }}
+        >
           {items.map((item, index) => (
             <Fragment key={item.label}>
               {item.separated && index > 0 && <DropdownMenu.Separator className="conflict-menu-separator" />}
-              <DropdownMenu.Item disabled={item.disabled} onSelect={item.onSelect}>
+              <DropdownMenu.Item
+                disabled={item.disabled}
+                onSelect={() => {
+                  moved.current = !!item.movesFocus;
+                  item.onSelect();
+                }}
+              >
                 {item.label}
               </DropdownMenu.Item>
             </Fragment>
@@ -218,12 +235,15 @@ function ResetMenu({ items, disabled }: { items: ResetItem[]; disabled: boolean 
  */
 function FilePicker({
   file,
+  status,
   position,
   total,
   disabled,
   children,
 }: {
   file?: ConflictFile;
+  /** The open file's status, as its row in the list shows it: the band's one count of the file at this width. */
+  status?: React.ReactNode;
   position: number;
   total: number;
   disabled: boolean;
@@ -235,9 +255,12 @@ function FilePicker({
       <Popover.Trigger asChild>
         <Button size="sm" variant="outline" disabled={disabled} className="conflict-file-picker" data-conflict-file-picker="">
           {file && <FilePath path={file.path} />}
-          <span className="conflict-file-picker-count">
-            {position} of {total}
-          </span>
+          {status}
+          {total > 1 && (
+            <span className="conflict-file-picker-count">
+              {position} of {total}
+            </span>
+          )}
           <ChevronDown aria-hidden="true" />
         </Button>
       </Popover.Trigger>
@@ -574,6 +597,13 @@ export function ConflictWorkspace({
   const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState('');
   const [resetPrompt, setResetPrompt] = useState(false);
+  // Cancel takes focus once the prompt is on screen, after any menu that opened it has closed.
+  const cancelReset = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!resetPrompt) return;
+    const frame = requestAnimationFrame(() => cancelReset.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [resetPrompt]);
   const [outcome, setOutcome] = useState('');
   // One line after Gnosis merged new commits from the base branch again.
   const [baseNote, setBaseNote] = useState('');
@@ -1417,7 +1447,12 @@ export function ConflictWorkspace({
         ]
       : [];
   if (editing && !session.stale)
-    resetItems.push({ label: 'Start over with latest code…', separated: true, onSelect: () => setResetPrompt(true) });
+    resetItems.push({
+      label: 'Start over with latest code…',
+      separated: true,
+      movesFocus: true,
+      onSelect: () => setResetPrompt(true),
+    });
   const footerStatus = busy
     ? activity?.detail || 'Working…'
     : hint ||
@@ -1460,10 +1495,11 @@ export function ConflictWorkspace({
             )}
           </div>
           <div className="conflict-heading-tools">
-            {editing && session.files.length > 1 && (
+            {editing && (
               <FilePicker
                 disabled={busy}
                 file={file}
+                status={selectedState && <FileStatusBadge status={selectedState.status} stage={selectedState.stage} />}
                 position={session.files.findIndex((f) => f.path === selected) + 1}
                 total={session.files.length}
               >
@@ -1978,7 +2014,7 @@ export function ConflictWorkspace({
                     Start over with the latest code? Your current resolutions are replaced by a fresh merge.
                   </span>
                   {/* Cancel has focus: Enter or a stray Space never discards your resolutions. */}
-                  <Button size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
+                  <Button ref={cancelReset} size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
                     Cancel
                   </Button>
                   <Button size="sm" variant="destructive" disabled={busy} onClick={() => void load(true)}>

@@ -4145,7 +4145,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-summary-notes label { display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-menu-separator { height:1px;margin:4px 0;background:var(--border); }
 /* The file picker stands in for the file list below 900px. */
-.conflict-file-picker { display:none;max-width:min(320px,100%);min-width:0; }
+.conflict-file-picker { display:none;max-width:min(440px,100%);min-width:0; }
 .conflict-file-picker .conflict-path { flex-wrap:nowrap;font-weight:600; }
 .conflict-file-picker .conflict-path-dir { flex:0 1000 auto;min-width:1.5em; }
 .conflict-file-picker-count { flex:none;color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
@@ -4377,8 +4377,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-file-picker { display:inline-flex; }
   .conflict-heading { padding:8px 12px;gap:6px 12px; }
   .conflict-file-pane { flex:1 1 auto; }
-  /* The paused restack's code comes first: its plan is the count in the corner, its prose one line. */
-  .restack-review[data-step=resolve] > .step-list { display:none; }
+  /* The paused restack's code comes first: its plan is the count in the corner, its prose one line. A step that
+     failed keeps its row, with its error and Retry. */
+  .restack-review[data-step=resolve] > .step-list > li:not(:has(.step-list-error)) { display:none; }
 }
 @media (max-width:700px) {
   .conflict-scroll { padding:0 12px 12px; }
