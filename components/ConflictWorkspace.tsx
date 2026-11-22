@@ -94,8 +94,8 @@ import {
   verifyWholeFile,
   type ConflictBucket,
   type Verdict,
-  typeCheckKey,
-  typeErrorNote,
+  typeCheckFor,
+  typeErrorOf,
   withTypeError,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
@@ -204,6 +204,8 @@ function KeyboardHelp() {
 /** The type check's one line (#445 item 24), "Type check: …". */
 export function typeCheckLine(status: ConflictTypeCheck) {
   switch (status.state) {
+    case 'waiting':
+      return 'Type check: waiting for your changes';
     case 'running':
       return 'Type check: running…';
     case 'passed':
@@ -233,7 +235,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
         : undefined;
   const already =
     (status.state === 'errors' || status.state === 'passed') && status.preExisting
-      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR already has.`
+      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR or its base already has.`
       : undefined;
   return (
     <span className="conflict-type-check" role="status" data-type-check={status.state}>
@@ -248,7 +250,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
             <TooltipContent side="bottom" align="end" className="conflict-type-check-errors">
               {status.state === 'errors' && (
                 <>
-                  <p>Errors in a conflicted file keep its merged conflicts in Check. Errors elsewhere are for your information.</p>
+                  <p>Any new error keeps every merged conflict in Check: an error in one file can come from a conflict in another.</p>
                   <ul>
                     {detail.map((error, i) => (
                       <li key={i}>{error}</li>
@@ -264,7 +266,7 @@ function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop
       ) : (
         line
       )}
-      {status.state === 'running' && (
+      {(status.state === 'running' || status.state === 'waiting') && (
         <Button size="xs" variant="ghost" onClick={onStop}>
           Stop
         </Button>
@@ -547,15 +549,21 @@ export function ConflictWorkspace({
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
-  const [typeCheck, setTypeCheck] = useState<ConflictTypeCheck | null>(null);
+  // Kept across saves of the same draft, so files don't flash between buckets while the status is read again.
+  const [typeCheckOf, setTypeCheck] = useState<{ id: string; status: ConflictTypeCheck | null | undefined }>();
   const sessionId = session?.id;
+  // Undefined until read for this draft, or on but not run: the demotions saved on the files apply.
+  // Only a result for this draft counts; one for an earlier draft reads as waiting (lib/conflict-verify.ts).
+  const typeCheck = useMemo(
+    () => typeCheckFor(typeCheckOf && typeCheckOf.id === sessionId ? typeCheckOf.status : undefined, session?.files ?? []),
+    [typeCheckOf, sessionId, session?.files]
+  );
   useEffect(() => {
-    setTypeCheck(null);
     if (!sessionId) return;
     let active = true;
     const refresh = () =>
       void window.electronAPI.conflictTypeCheck(sessionId).then(
-        (value) => active && setTypeCheck(value),
+        (status) => active && setTypeCheck({ id: sessionId, status }),
         () => {}
       );
     refresh();
@@ -565,16 +573,8 @@ export function ConflictWorkspace({
       off();
     };
   }, [sessionId, session?.version]);
-  // New type errors in a file keep its Merged proposals in Check: saved on the file, or just found by the check.
-  // Only while the check is on (it has a status): a finished run's own result, else the demotion saved on the file.
-  const typeNoteOf = (f: ConflictFile) =>
-    !typeCheck
-      ? undefined
-      : typeCheck.state === 'errors'
-        ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
-        : typeCheck.state === 'passed'
-          ? undefined
-          : typeErrorNote(f);
+  // New type errors keep Merged proposals in Check: the same overlay as the PR header's (lib/conflict-verify.ts).
+  const typeNoteOf = (f: ConflictFile) => typeErrorOf(f, typeCheck);
   const verdictOf = (f: ConflictFile) => {
     if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
       return withTypeError(f.verdict.verdict, typeNoteOf(f));

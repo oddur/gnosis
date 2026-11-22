@@ -1,4 +1,5 @@
-import type { ConflictSession } from '../lib/conflict-resolution';
+import crypto from 'node:crypto';
+import type { ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
 import { conflictHeader, type ConflictHeader } from '../lib/conflict-header';
 import type { MergeConflictState } from '../lib/merge-conflicts';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
@@ -32,6 +33,11 @@ export interface ConflictPrecomputeDeps {
   disabledLanguages?: () => SyntaxLanguage[];
   /** "Show me every merged conflict" for a repository: unset is on. */
   showMerged?: (repo: string) => boolean;
+  /**
+   * The PR's type check (#445 item 24) for a draft, so the line applies its demotions as the conflict dialog does: null
+   * when it is off, undefined when not known.
+   */
+  typeCheck?: (draft: ConflictSession) => ConflictTypeCheck | null | undefined;
   /** A fingerprint of the settings a header line depends on: the languages off and "Show me every merged conflict". */
   settingsKey?: () => string;
   /** Preparations at once: 1 or 2. */
@@ -88,7 +94,12 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     if (known?.headSha === headSha) return known.header;
     const draft = deps.draft(url, headSha);
     const header = draft
-      ? conflictHeader(draft.files, deps.disabledLanguages?.() ?? [], deps.showMerged?.(draft.baseRepo) ?? true)
+      ? conflictHeader(
+          draft.files,
+          deps.disabledLanguages?.() ?? [],
+          deps.showMerged?.(draft.baseRepo) ?? true,
+          deps.typeCheck?.(draft)
+        )
       : undefined;
     lines.delete(url);
     lines.set(url, { headSha, header });
@@ -182,6 +193,11 @@ export function createConflictPrecompute(deps: ConflictPrecomputeDeps) {
     },
     /** The PR's draft changed (you edited or pushed it): its line is read again. */
     refresh: note,
+    /** A PR's type check changed, by draft ID (the hash of its URL): its line is read again. */
+    typeCheckChanged(id: string) {
+      for (const url of [...lines.keys()])
+        if (crypto.createHash('sha256').update(url).digest('hex') === id) note(url);
+    },
     /** Settings changed (Code intelligence, "Show me every merged conflict"): every line is read again. */
     settingsChanged() {
       const key = deps.settingsKey?.() ?? '';
