@@ -1704,7 +1704,7 @@ void app.whenReady().then(async () => {
       (await js<boolean>("window.electronAPI.platform==='darwin'")) ? ['Command', 'Enter'] : ['Enter']
     );
     assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /Turn on Review Merged-only files myself/);
-    assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /right after A, that accept/);
+    assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /right after A, that choice/);
     // With GNOSIS_CONFLICT_SHOTS set, the legend in light and dark prints as `CONFLICTSHOT <name> <base64 PNG>`.
     if (process.env.GNOSIS_CONFLICT_SHOTS)
       for (const theme of ['light', 'dark']) {
@@ -1722,7 +1722,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${block(0)}.dataset.state`), 'open');
     assert.match(await footerSays(), /no proposal that needs you/);
     // U is the card's Undo: the Check proposal goes, and the conflict waits in Decide with Use the proposal.
-    assert.equal(await js(`${block(1)}.querySelector('[aria-label^="Undo"]').getAttribute('aria-keyshortcuts')`), 'U');
+    assert.equal(await js(`${block(1)}.querySelector('[aria-label^="Undo"],[aria-label^="Remove"]').getAttribute('aria-keyshortcuts')`), 'U');
     assert.deepEqual(
       await js("[...document.querySelectorAll('.conflict-compare-diff:not([hidden]) .conflict-compare button')].map(b=>b.getAttribute('aria-keyshortcuts'))"),
       ['V', 'V', 'V']
