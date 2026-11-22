@@ -117,10 +117,38 @@ export interface RestackPlan {
     baseSha: string;
     commits: number;
     reused: number;
+    /** Conflicts the replay resolved with the main merge's pipeline and that passed every check (#445 item 21). */
+    merged?: number;
+    /** Conflicts resolved by you: decided in a pause, or your earlier choice carried over to the same conflict. */
+    yours?: number;
+    /** Merge commits the replay recreated. A clean recreation can still lose what the original merge added. */
+    merges?: number;
+    /**
+     * The update needs its Reviewed tick. False only when the replay recreated no merge commit and had no conflict, or
+     * every conflict was Merged by the checks: nothing you decided, carried or remembered. Missing (a plan from an
+     * earlier version) counts as true.
+     */
+    review?: boolean;
     patch: string;
     files: import('@pierre/diffs').FileDiffMetadata[];
   }[];
-  blocked?: { url: string; title: string; reason: string; paths: string[]; files: ConflictFile[]; reused: number };
+  blocked?: {
+    url: string;
+    title: string;
+    reason: string;
+    paths: string[];
+    files: ConflictFile[];
+    reused: number;
+    /** What the paused PR's replay settled before this pause: Merged by the checks, and yours (carried). */
+    merged?: number;
+    yours?: number;
+    /**
+     * Where the replay paused: the commit being replayed (REBASE_HEAD) and the worktree's HEAD. Continue writes the
+     * paused files only while the worktree is still there, on these conflicted paths; a pause without them is stale.
+     */
+    commit?: string;
+    head?: string;
+  };
 }
 export type ConflictRequest =
   /** `restart` prepares a fresh merge. With `keep`, resolutions whose conflicts are unchanged carry over. */
@@ -149,7 +177,16 @@ export type ConflictRequest =
   | { kind: 'discard'; id: string; version: number }
   | { kind: 'restack-prepare'; id: string; version: number }
   | { kind: 'restack-continue'; id: string; version: number }
-  | { kind: 'restack-save'; id: string; version: number; path: string; contents: string; resolved: boolean }
+  | {
+      kind: 'restack-save';
+      id: string;
+      version: number;
+      path: string;
+      contents: string;
+      resolved: boolean;
+      /** Your Keep choices per block, as for `save`. */
+      picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
+    }
   | { kind: 'restack-publish'; id: string; version: number; previewToken: string; reviewed: string[] };
 /**
  * The base branch moved while the user resolved conflicts, and Gnosis merged its latest commit again. `conflicts`
@@ -215,8 +252,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     text('contents', CONFLICT_FILE_LIMIT) &&
     typeof r.resolved === 'boolean' &&
     (r.picks === undefined ||
-      (r.kind === 'save' &&
-        Array.isArray(r.picks) &&
+      (Array.isArray(r.picks) &&
         r.picks.length <= 10_000 &&
         (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal')))
   )

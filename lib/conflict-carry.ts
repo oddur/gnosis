@@ -148,21 +148,19 @@ export interface CarriedFile {
   open: number;
   /** False when the earlier draft could not be matched block by block. */
   mapped: boolean;
+  /** The blocks of `next` that reuse the user's earlier result, by index. */
+  carried?: number[];
+  /** The text each carried block reuses, by block index of `next`. */
+  texts?: (string | undefined)[];
 }
 
-/**
- * Moves a draft onto a fresh merge of the same file. A block whose three sides are unchanged keeps the user's result;
- * any other block stays open. The file stays reviewed only when `keepReview` is set and every block was reused.
- */
-export function carryFile(old: ConflictFile | undefined, next: ConflictFile, keepReview: boolean): CarriedFile {
-  if (next.unsupported || !old || old.unsupported)
-    return { file: next, reused: 0, open: next.unsupported ? 0 : conflictCount(next.original), mapped: !old };
+/** An earlier draft's resolved blocks by their conflict text, as carryFile reads them. Compute it once per draft. */
+export type CarrySource = Map<string, { text: string; pick: NonNullable<ConflictFile['picks']>[number] }[]>;
+export function carrySource(old: ConflictFile): CarrySource | undefined {
   const oldSegments = parseConflicts(old.original);
   const resolutions = blockResolutions(oldSegments, old.result);
-  const segments = parseConflicts(next.original);
-  if (!resolutions) return { file: next, reused: 0, open: conflictCount(next.original), mapped: false };
-  // Each reused block keeps your Keep choice for it (ConflictFile.picks), so a Keep never turns into Merged.
-  const available = new Map<string, { text: string; pick: NonNullable<ConflictFile['picks']>[number] }[]>();
+  if (!resolutions) return undefined;
+  const available: CarrySource = new Map();
   for (const segment of oldSegments) {
     if (segment.kind !== 'conflict') continue;
     const text = resolutions[segment.index];
@@ -170,8 +168,32 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
     const key = blockKey(segment);
     available.set(key, [...(available.get(key) ?? []), { text, pick: old.picks?.[segment.index] ?? null }]);
   }
+  return available;
+}
+
+/**
+ * Moves a draft onto a fresh merge of the same file. A block whose three sides are unchanged keeps the user's result;
+ * any other block stays open. The file stays reviewed only when `keepReview` is set and every block was reused.
+ */
+export function carryFile(
+  old: ConflictFile | undefined,
+  next: ConflictFile,
+  keepReview: boolean,
+  /** `carrySource(old)`, when the caller carries the same draft to many files. */
+  source?: CarrySource
+): CarriedFile {
+  if (next.unsupported || !old || old.unsupported)
+    return { file: next, reused: 0, open: next.unsupported ? 0 : conflictCount(next.original), mapped: !old };
+  const segments = parseConflicts(next.original);
+  const from = source ?? carrySource(old);
+  if (!from) return { file: next, reused: 0, open: conflictCount(next.original), mapped: false };
+  // Each reused block keeps your Keep choice for it (ConflictFile.picks), so a Keep never turns into Merged. A copy:
+  // each block is used once per file.
+  const available = new Map([...from].map(([key, list]) => [key, [...list]]));
   let reused = 0;
   let open = 0;
+  const carriedBlocks: number[] = [];
+  const texts: (string | undefined)[] = [];
   const picks: NonNullable<ConflictFile['picks']> = [];
   const result = segments
     .map((segment) => {
@@ -184,11 +206,20 @@ export function carryFile(old: ConflictFile | undefined, next: ConflictFile, kee
         return next.proposals?.[segment.index]?.text ?? segment.block.raw;
       }
       reused++;
+      carriedBlocks.push(segment.index);
+      texts[segment.index] = carried.text;
       return carried.text;
     })
     .join('');
   const file = withResult(old, next, result, keepReview && open === 0 && old.resolved);
-  return { file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file, reused, open, mapped: true };
+  return {
+    file: picks.some(Boolean) ? { ...file, picks: Array.from(picks, (pick) => pick ?? null) } : file,
+    reused,
+    open,
+    mapped: true,
+    carried: carriedBlocks,
+    texts,
+  };
 }
 
 /**
