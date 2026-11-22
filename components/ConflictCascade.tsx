@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { cascadePrLine, cascadeSentence, type CascadeState } from '../lib/conflict-cascade';
 import { hasConflictMarkers, type ConflictSession } from '../lib/conflict-resolution';
+import { Button } from './ui/button';
+
+export interface ConflictCascade {
+  state: CascadeState | undefined;
+  /** Check again after a failure. */
+  retry: () => void;
+}
 
 /**
  * The cascade preview for this draft version (#445 item 22), once every file is reviewed and other PRs stack on this
  * one. Main runs the dry run in the background and says when it changes; a request of yours (`busy`) stops it, and it
  * is asked for again when that is done.
  */
-export function useConflictCascade(session: ConflictSession | undefined, busy: boolean): CascadeState | undefined {
+export function useConflictCascade(session: ConflictSession | undefined, busy: boolean): ConflictCascade {
   const [value, setValue] = useState<{ key: string; state: CascadeState | undefined }>();
+  const [retries, setRetries] = useState(0);
   const ready =
     !!session &&
     session.status === 'editing' &&
@@ -22,15 +30,15 @@ export function useConflictCascade(session: ConflictSession | undefined, busy: b
     if (!key || busy || !session || !api.conflictCascade) return;
     const { id, version } = session;
     let live = true;
-    const read = () =>
-      api.conflictCascade?.(id, version).then(
+    const read = (retry = false) =>
+      api.conflictCascade?.(id, version, retry).then(
         (state) => {
           if (live && state) setValue({ key, state });
         },
         // An older main process, or a test without the handler: nothing shows.
         () => {}
       );
-    void read();
+    void read(retries > 0);
     const off = api.onConflictCascadeChanged?.((changed) => {
       if (changed === id) void read();
     });
@@ -38,12 +46,16 @@ export function useConflictCascade(session: ConflictSession | undefined, busy: b
       live = false;
       off?.();
     };
-  }, [key, busy]);
-  return key && value?.key === key ? value.state : undefined;
+  }, [key, busy, retries]);
+  return {
+    state: key && value?.key === key ? value.state : undefined,
+    retry: () => setRetries((count) => count + 1),
+  };
 }
 
 /** The preview in the push confirmation: advisory, it never changes what needs review. */
-export function ConflictCascadeLine({ state }: { state: CascadeState | undefined }) {
+export function ConflictCascadeLine({ cascade }: { cascade: ConflictCascade }) {
+  const { state } = cascade;
   if (!state) return null;
   if (state.state === 'checking')
     return (
@@ -53,7 +65,15 @@ export function ConflictCascadeLine({ state }: { state: CascadeState | undefined
     );
   if (state.state === 'battery')
     return <li data-cascade="battery">The stack is checked when your computer is on power.</li>;
-  if (state.state === 'failed') return <li data-cascade="failed">Couldn’t check the stack: {state.message}</li>;
+  if (state.state === 'failed')
+    return (
+      <li data-cascade="failed">
+        Couldn’t check the stack: {state.message}{' '}
+        <Button size="sm" variant="link" className="h-auto p-0" onClick={cascade.retry}>
+          Check again
+        </Button>
+      </li>
+    );
   if (!state.preview.prs.length) return null;
   return (
     <li data-cascade="ready">

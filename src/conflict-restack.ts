@@ -580,19 +580,22 @@ export async function prepareRestack(
       }
       if (result.code) throw new Error('The restack exceeded its replay limit. No branches were pushed.');
       const newSha = await text(git, ['rev-parse', 'HEAD']);
-      // A dry run reports outcomes, not the updates: no patch, and no ref keeps its commits.
-      const patch = deps.dryRun
-        ? ''
-        : (await git(['diff', '--no-ext-diff', '--no-textconv', state.headSha, newSha])).stdout.toString('utf8');
-      if (
-        Buffer.byteLength(patch) + plan.branches.reduce((bytes, branch) => bytes + Buffer.byteLength(branch.patch), 0) >
-        8 * 1024 * 1024
-      )
-        throw new Error(
-          'The restack preview exceeds 8 MB. Review and restack this large change with a local Git tool.'
-        );
-      const { parsePatchFiles } = await import('@pierre/diffs');
-      const files = parsePatchFiles(patch).flatMap((value) => value.files);
+      // A dry run reports outcomes, not the updates: no patch, no size check, and no ref keeps its commits.
+      let patch = '';
+      let files: RestackPlan['branches'][number]['files'] = [];
+      if (!deps.dryRun) {
+        patch = (await git(['diff', '--no-ext-diff', '--no-textconv', state.headSha, newSha])).stdout.toString('utf8');
+        if (
+          Buffer.byteLength(patch) +
+            plan.branches.reduce((bytes, branch) => bytes + Buffer.byteLength(branch.patch), 0) >
+          8 * 1024 * 1024
+        )
+          throw new Error(
+            'The restack preview exceeds 8 MB. Review and restack this large change with a local Git tool.'
+          );
+        const { parsePatchFiles } = await import('@pierre/diffs');
+        files = parsePatchFiles(patch).flatMap((value) => value.files);
+      }
       // Keep prepared objects reachable after closing the private worktree.
       if (!deps.dryRun)
         await deps.git(['update-ref', `refs/gnosis/restack/${plan.token}/${plan.branches.length}`, newSha]);

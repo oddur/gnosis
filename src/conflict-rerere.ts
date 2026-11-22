@@ -8,29 +8,87 @@ import { hasConflictMarkers, type ConflictFile } from '../lib/conflict-resolutio
 export function createConflictMemory(directory: () => string) {
   const locks = new Map<string, Promise<unknown>>();
   const cachePath = (scope: string) => path.join(directory(), crypto.createHash('sha256').update(scope).digest('hex'));
-  async function withCache<T>(scope: string, task: (cache: string) => Promise<T>): Promise<T> {
+  /**
+   * One task per scope at a time. `signal` stops a wait for the lock: the caller gets the abort at once, and the task
+   * never runs. The lock passes on only once the task before it settled, so a stopped wait never lets two run.
+   */
+  async function withCache<T>(scope: string, task: (cache: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     const previous = locks.get(scope) ?? Promise.resolve();
     const next = previous
       .catch(() => {})
       .then(async () => {
+        signal?.throwIfAborted();
         const cache = cachePath(scope);
         await fs.mkdir(cache, { recursive: true, mode: 0o700 });
         return task(cache);
       });
     locks.set(scope, next);
-    try {
-      return await next;
-    } finally {
+    void next.then(
+      () => {},
+      () => {}
+    ).finally(() => {
       if (locks.get(scope) === next) locks.delete(scope);
+    });
+    if (!signal) return next;
+    let stop: (() => void) | undefined;
+    const stopped = new Promise<never>((_, reject) => {
+      stop = () => reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped.'));
+      signal.addEventListener('abort', stop, { once: true });
+    });
+    try {
+      return await Promise.race([next, stopped]);
+    } finally {
+      if (stop) signal.removeEventListener('abort', stop);
     }
   }
   async function attach(repo: string, cache: string) {
     const target = path.join(repo, 'rr-cache');
     const current = await fs.lstat(target).catch(() => undefined);
+    // A preview's private copy left behind by a quit: the repository uses the shared memory again.
+    if (current?.isSymbolicLink() && isPreviewCopy(repo, await fs.readlink(target))) {
+      await fs.rm(path.resolve(repo, await fs.readlink(target)), { recursive: true, force: true });
+      await fs.unlink(target);
+      return attach(repo, cache);
+    }
     if (current) {
       if (!current.isSymbolicLink() || path.resolve(await fs.readlink(target)) !== path.resolve(cache))
         throw new Error('The private resolution cache has an unexpected location.');
     } else await fs.symlink(cache, target, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const PREVIEW_COPY = 'rr-cache-preview-';
+  const isPreviewCopy = (repo: string, link: string) => {
+    const resolved = path.resolve(repo, link);
+    return path.dirname(resolved) === path.resolve(repo) && path.basename(resolved).startsWith(PREVIEW_COPY);
+  };
+  /**
+   * A private copy of the resolution memory for a dry run (#445 item 22): the shared lock is held only while it is
+   * copied. The repository's `rr-cache` points at the copy until `release`, which restores the shared memory and
+   * deletes the copy with whatever the dry run recorded in it.
+   */
+  async function snapshot(scope: string, repo: string, signal?: AbortSignal) {
+    const copy = path.join(repo, `${PREVIEW_COPY}${crypto.randomBytes(8).toString('hex')}`);
+    const cache = await withCache(
+      scope,
+      async (cache) => {
+        await fs.cp(cache, copy, { recursive: true });
+        return cache;
+      },
+      signal
+    );
+    const target = path.join(repo, 'rr-cache');
+    const current = await fs.lstat(target).catch(() => undefined);
+    if (current && !current.isSymbolicLink()) {
+      await fs.rm(copy, { recursive: true, force: true });
+      throw new Error('The private resolution cache has an unexpected location.');
+    }
+    if (current) await fs.unlink(target);
+    await fs.symlink(copy, target, process.platform === 'win32' ? 'junction' : 'dir');
+    return async () => {
+      await fs.unlink(target).catch(() => {});
+      await fs.symlink(cache, target, process.platform === 'win32' ? 'junction' : 'dir').catch(() => {});
+      await fs.rm(copy, { recursive: true, force: true });
+    };
   }
   async function useFiles(scope: string, files: ConflictFile[], record: boolean, signal: AbortSignal) {
     if (!files.length) return new Map<string, string>();
@@ -97,6 +155,15 @@ export function createConflictMemory(directory: () => string) {
   return {
     apply: (scope: string, files: ConflictFile[], signal: AbortSignal) => useFiles(scope, files, false, signal),
     record: (scope: string, files: ConflictFile[], signal: AbortSignal) => useFiles(scope, files, true, signal),
+    snapshot,
+    /** Leftover preview copies (a quit during a dry run): the repository uses the shared memory again. */
+    async repair(scope: string, repo: string) {
+      const target = path.join(repo, 'rr-cache');
+      const link = await fs.readlink(target).catch(() => undefined);
+      if (link && isPreviewCopy(repo, link)) await withCache(scope, (cache) => attach(repo, cache));
+      for (const name of await fs.readdir(repo).catch(() => [] as string[]))
+        if (name.startsWith(PREVIEW_COPY)) await fs.rm(path.join(repo, name), { recursive: true, force: true });
+    },
     withRepository: <T>(scope: string, repo: string, task: () => Promise<T>) =>
       withCache(scope, async (cache) => {
         await attach(repo, cache);

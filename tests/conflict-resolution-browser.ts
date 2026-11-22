@@ -447,7 +447,7 @@ void app.whenReady().then(async () => {
     await js(`(()=>{
       window.conflictFixture.dependents=[121,122,123].map(n=>'https://github.com/klang/engine/pull/'+n);
       window.cascadeAsks=[];window.cascadeState={state:'checking'};
-      window.electronAPI.conflictCascade=async(id,version)=>{window.cascadeAsks.push(version);return structuredClone(window.cascadeState);};
+      window.electronAPI.conflictCascade=async(id,version,retry)=>{window.cascadeAsks.push({version,retry});return structuredClone(window.cascadeState);};
       window.electronAPI.onConflictCascadeChanged=cb=>{window.cascadeChanged=cb;return()=>{};};
     })()`);
     // Marking the last file reviewed goes straight to the confirmation, which shows the final update.
@@ -487,7 +487,7 @@ void app.whenReady().then(async () => {
     // The cascade preview: "Checking the stack…" while the dry run runs, then the sentence, which follows the result.
     await wait("document.querySelector('.conflict-confirm [data-cascade=checking]')?.textContent==='Checking the stack…'");
     assert.equal(
-      await js('window.cascadeAsks.at(-1)'),
+      await js('window.cascadeAsks.at(-1).version'),
       await js('window.conflictFixture.version'),
       'It asks for the saved draft version'
     );
@@ -515,6 +515,12 @@ void app.whenReady().then(async () => {
       await js<string>("document.querySelector('.conflict-confirm [data-cascade-outcome=clean]').textContent"),
       /Recreates 1 merge commit · Needs your review/
     );
+    // A failed check can be tried again from the confirmation.
+    await js(`(()=>{window.cascadeState={state:'failed',message:'GitHub did not answer.'};window.cascadeChanged(window.conflictFixture.id);})()`);
+    await wait("/Couldn’t check the stack: GitHub did not answer\\./.test(document.querySelector('.conflict-confirm [data-cascade=failed]')?.textContent ?? '')");
+    await js("window.cascadeState={state:'checking'}");
+    await js("[...document.querySelectorAll('.conflict-confirm [data-cascade=failed] button')].find(b=>b.textContent==='Check again').click()");
+    await wait("window.cascadeAsks.at(-1).retry===true && !!document.querySelector('.conflict-confirm [data-cascade=checking]')");
     assert.equal(await publishes(), 0, 'The preview pushes nothing');
     assert.equal(await js(`(${visibleButton('Push merge commit')}).disabled`), false, 'It is advisory: Push stays as it was');
     // Later replies have no dependents, so the rest of this check runs as before.

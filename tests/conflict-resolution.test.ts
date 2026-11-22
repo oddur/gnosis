@@ -2421,9 +2421,29 @@ async function cascadeStack(t: TestContext) {
   await f.git('merge', '--no-ff', '-m', 'Merge side', 'side');
   await f.git('checkout', 'main');
   const urls = [2, 3, 4].map((n) => `https://github.com/test/repo/pull/${n}`);
+  /** Holds the dry run inside its replay, at its read of the dependent PRs, until released. */
+  let gate: { reached: () => void; open: Promise<void> } | undefined;
+  const hold = () => {
+    let release = () => {};
+    let reached = () => {};
+    const arrived = new Promise<void>((resolve) => (reached = resolve));
+    gate = { reached, open: new Promise<void>((resolve) => (release = resolve)) };
+    return {
+      arrived,
+      release: () => {
+        gate = undefined;
+        release();
+      },
+    };
+  };
   const read = async (url: string) => {
     const index = [f.state.url, ...urls].indexOf(url);
-    assert.ok(index >= 0);
+    // Another PR of the same repository, on the same branches.
+    if (index < 0) return { ...f.state, url };
+    if (index === 1 && gate) {
+      gate.reached();
+      await gate.open;
+    }
     const branch = ['feature', 'child', 'mid', 'tip'][index],
       baseBranch = ['main', 'feature', 'child', 'mid'][index];
     return {
@@ -2454,7 +2474,7 @@ async function cascadeStack(t: TestContext) {
     worktrees: (await exec('git', ['worktree', 'list', '--porcelain'], { cwd: cache })).stdout,
     restacks: (await fs.readdir(cache)).filter((name) => name.startsWith('restack-')),
   });
-  return { ...f, deps, service, session, urls, refs };
+  return { ...f, deps, service, session, urls, refs, cache, hold };
 }
 void test('the cascade preview dry-runs the stack before the push and changes nothing (#445 item 22)', async (t) => {
   if (await nativeMergirafMissing(t)) return;
@@ -2541,4 +2561,83 @@ void test('a request of yours stops a running cascade preview, which gives way (
     )
   ).session;
   await assert.rejects(f.service.previewCascade(open.id, open.version, new AbortController().signal), /every file reviewed/);
+});
+void test('a running cascade preview never holds the resolution memory: other PRs of the repository open (#445 item 22)', async (t) => {
+  const f = await cascadeStack(t);
+  const held = f.hold();
+  const running = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  await held.arrived;
+  // The preview is inside its replay. Opening another PR of the repository uses the resolution memory.
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The open waited for the preview')), 20_000).unref());
+  const other = await Promise.race([
+    f.service.run({ kind: 'open', url: 'https://github.com/test/repo/pull/9' }, new AbortController().signal),
+    timeout,
+  ]);
+  assert.equal(other.session.files.length, 1);
+  held.release();
+  assert.ok(await running);
+  // The repository uses the shared memory again, and the private copy is gone.
+  const link = await fs.readlink(path.join(f.cache, 'rr-cache'));
+  assert.equal(path.dirname(path.resolve(f.cache, link)), path.join(f.deps.directory(), 'resolution-memory'));
+  assert.deepEqual((await fs.readdir(f.cache)).filter((name) => name.startsWith('rr-cache-preview-')), []);
+});
+void test('startup cleanup removes a dry run left by a quit, and restores the resolution memory (#445 item 22)', async (t) => {
+  if (await nativeMergirafMissing(t)) return;
+  const f = await cascadeStack(t);
+  assert.ok(await f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal));
+  const before = await f.refs();
+  // As a quit would leave it: a dry-run worktree, and rr-cache pointing at a private copy.
+  const leftover = path.join(f.cache, `restack-${'e'.repeat(16)}`);
+  await exec('git', ['worktree', 'add', '--detach', leftover, f.session.headSha], { cwd: f.cache });
+  const shared = await fs.readlink(path.join(f.cache, 'rr-cache'));
+  const copy = path.join(f.cache, 'rr-cache-preview-0123456789abcdef');
+  await fs.cp(path.resolve(f.cache, shared), copy, { recursive: true });
+  await fs.unlink(path.join(f.cache, 'rr-cache'));
+  await fs.symlink(copy, path.join(f.cache, 'rr-cache'));
+  Object.assign(f.deps.storage, { names: () => [`conflict-draft:tester:${f.session.id}`] });
+  await f.service.maintain();
+  assert.equal(await fs.stat(leftover).catch(() => undefined), undefined, 'The leftover worktree is gone');
+  assert.equal(await fs.stat(copy).catch(() => undefined), undefined, 'So is the memory copy');
+  // A full-history draft cache goes whole at startup (it is rebuilt); a shared-store one stays, cleaned.
+  if (await fs.stat(f.cache).catch(() => undefined)) {
+    assert.deepEqual(await f.refs(), before, 'Git no longer lists the worktree');
+    assert.equal(path.resolve(f.cache, await fs.readlink(path.join(f.cache, 'rr-cache'))), path.resolve(f.cache, shared));
+  } else assert.equal(process.env.GNOSIS_TEST_CONFLICT_SHALLOW, undefined);
+  // The draft still previews.
+  assert.ok(await f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal));
+});
+void test('a wait for the resolution memory stops on abort, and never lets two tasks run at once (#445 item 22)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-memory-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const memory = createConflictMemory(() => dir);
+  const repo = path.join(dir, 'repo');
+  await fs.mkdir(repo);
+  let release = () => {};
+  let running = 0;
+  let most = 0;
+  let started = () => {};
+  const holds = new Promise<void>((resolve) => (started = resolve));
+  const holding = memory.withRepository('scope', repo, async () => {
+    running++;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+      started();
+    });
+    running--;
+  });
+  await holds;
+  const controller = new AbortController();
+  const waiting = memory.snapshot('scope', repo, controller.signal);
+  controller.abort(new Error('stopped'));
+  await assert.rejects(waiting, /stopped/, 'The wait stops at once, while the lock is still held');
+  const after = memory.withRepository('scope', repo, () => {
+    most = Math.max(most, ++running);
+    running--;
+    return Promise.resolve();
+  });
+  release();
+  await holding;
+  await after;
+  assert.equal(most, 1, 'The next task ran only after the first let go');
+  assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), []);
 });

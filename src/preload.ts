@@ -444,8 +444,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
   // The cascade preview before a push (#445 item 22), and when it changes.
-  conflictCascade: (id: string, version: number): Promise<import('../lib/conflict-cascade').CascadeState | null> =>
-    ipcRenderer.invoke('conflict-cascade', id, version),
+  conflictCascade: (
+    id: string,
+    version: number,
+    retry = false
+  ): Promise<import('../lib/conflict-cascade').CascadeState | null> =>
+    ipcRenderer.invoke('conflict-cascade', id, version, retry),
   onConflictCascadeChanged: (callback: (id: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
     ipcRenderer.on('conflict-cascade-changed', handler);

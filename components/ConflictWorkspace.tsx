@@ -1426,7 +1426,7 @@ export function ConflictWorkspace({
                   )}
                 </li>
                 <li>Approvals may be dismissed if the repository requires it.</li>
-                <ConflictCascadeLine state={cascade} />
+                <ConflictCascadeLine cascade={cascade} />
                 <li>
                   Pushes only if the branch is still at <code>{session.headSha.slice(0, 7)}</code>. The PR stays open;
                   checks run again.
