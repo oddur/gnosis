@@ -1,10 +1,12 @@
 import { LoadingIndicator } from './LoadingState';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { CodeView, EditProvider } from '@pierre/diffs/react';
-import { ConflictDiff, ConflictResult } from './ConflictDiff';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import type { DiffLineAnnotation } from '@pierre/diffs';
+import { EditProvider } from '@pierre/diffs/react';
+import { ConflictDiff, ConflictFileDiff, ConflictResult } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
+  Check,
   CheckCheck,
   CircleAlert,
   CircleCheck,
@@ -24,16 +26,20 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { toast } from './ui/toast';
-import {
-  DiffColumns,
-  ResultEditor,
-  createEditor,
-  useCodeOptions,
-  useElementWidth,
-  type ConflictViewHandle,
-} from './ConflictBlocks';
+import { ResultEditor, createEditor, proposalWhat, useCodeOptions, type ConflictViewHandle } from './ConflictBlocks';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
-import { conflictLabels, type BlockPicks } from '../lib/conflict-blocks';
+import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
+import { cardAnchors } from '../lib/conflict-diff';
+import {
+  confirmCount,
+  confirmGroups,
+  needsYou,
+  patchNote,
+  wholeNote,
+  type ConfirmFile,
+  type ConfirmGroups,
+} from '../lib/conflict-confirm';
+import type { GapHunk } from '../lib/diff-gaps';
 import {
   canRetryStructural,
   conflictFileAction,
@@ -68,6 +74,7 @@ import {
   fileStatusLine,
   fileStatusParts,
   allMerged,
+  blockVerdict,
   summarySentence,
   type FileStatus,
   verifyProposals,
@@ -83,7 +90,8 @@ import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
-import { registerSettled } from '../lib/test-settled';
+import { registerSettled, useVirtualizerSettled } from '../lib/test-settled';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 const statusIcons = {
   decide: CircleAlert,
@@ -312,54 +320,6 @@ function ErrorPanel({
           </details>
         )}
       </div>
-    </div>
-  );
-}
-
-/** Estimated height for a virtualized diff list inside a scrolling card. */
-function diffHeight(files: { hunks: { additionCount: number; deletionCount: number }[] }[], max = 480) {
-  const lines = files.reduce(
-    (height, file) =>
-      height +
-      60 +
-      file.hunks.reduce((sum, hunk) => sum + Math.max(hunk.additionCount, hunk.deletionCount) + 1, 0) * 20,
-    0
-  );
-  return Math.min(max, Math.max(100, lines));
-}
-
-function PreviewDiff({
-  id,
-  files,
-  before,
-  after,
-}: {
-  id: string;
-  files: NonNullable<ConflictReply['preview']>['files'];
-  before: string;
-  after: string;
-}) {
-  const options = useCodeOptions();
-  const root = useRef<HTMLDivElement>(null);
-  const width = useElementWidth(root);
-  const split = width === 0 || width >= 720;
-  const diffOptions = useMemo(
-    () => ({ ...options, diffStyle: split ? ('split' as const) : ('unified' as const) }),
-    [options, split]
-  );
-  const items = useMemo(
-    () => files.map((fileDiff, i) => ({ id: `${id}:${i}`, type: 'diff' as const, fileDiff })),
-    [files, id]
-  );
-  return (
-    <div ref={root} className="conflict-preview-diff">
-      <DiffColumns split={split} before={before} after={after} />
-      <CodeView
-        className="conflict-preview selectable"
-        items={items}
-        options={diffOptions}
-        style={{ height: diffHeight(files), overflow: 'auto' }}
-      />
     </div>
   );
 }
@@ -728,6 +688,12 @@ export function ConflictWorkspace({
     apply(reply, first?.path ?? selectedRef.current, 'conflicts');
   }
   function confirm() {
+    // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
+    const waiting = sessionRef.current?.files.find((f) => needsYou(f));
+    if (waiting) {
+      setHint(`${waiting.path} still needs you. Review every file before you push.`);
+      return;
+    }
     void run(
       (s) => ({ kind: 'preview', id: s.id, version: s.version }),
       (reply) => {
@@ -1018,6 +984,21 @@ export function ConflictWorkspace({
       : describedError;
   // The preview lists every file the merge commit changes against the PR head. Push waits for the workflow permission.
   const pushNeedsWorkflow = conflictPushNeedsWorkflow(access?.scopes, preview?.files);
+  // The confirmation's three groups (#445 item 12), from the saved drafts the preview was made from.
+  const groups = useMemo(
+    () =>
+      preview && session
+        ? confirmGroups(
+            session.files.map((f) => ({
+              file: f,
+              buckets: savedBuckets.get(f.path) ?? [],
+              picks: picksOf(f),
+            })),
+            preview.files
+          )
+        : undefined,
+    [preview, session, savedBuckets]
+  );
   const workflowRefused = !!pushError && refusedAccess !== undefined;
   const signedInSinceRefusal = workflowRefused && refusedAccess !== accessKey;
   const recover = (copy: ConflictErrorCopy) =>
@@ -1382,8 +1363,13 @@ export function ConflictWorkspace({
               status="Nothing is pushed until you select Push."
               continueLabel={busy ? 'Pushing…' : 'Push merge commit'}
               continueDisabled={
-                !message.trim() || pushNeedsWorkflow || (failedKind === 'publish' && !signedInSinceRefusal)
+                !message.trim() ||
+                pushNeedsWorkflow ||
+                !groups ||
+                groups.pending.length > 0 ||
+                (failedKind === 'publish' && !signedInSinceRefusal)
               }
+              continueOnModEnter
               onContinue={() =>
                 void run(
                   (s) => ({ kind: 'publish', id: s.id, version: s.version, previewToken: preview.token, message }),
@@ -1435,7 +1421,16 @@ export function ConflictWorkspace({
                 Merge commit message
                 <input value={message} maxLength={2000} disabled={busy} onChange={(e) => setMessage(e.target.value)} />
               </label>
-              <ConfirmDiff session={session} preview={preview} />
+              {groups && (
+                <ConfirmDiff
+                  session={session}
+                  preview={preview}
+                  groups={groups}
+                  labels={labels}
+                  verdictOf={verdictOf}
+                  preferences={preferences}
+                />
+              )}
             </StepCard>
           </div>
         ) : !session.files.length ? (
@@ -1717,49 +1712,304 @@ export function ConflictWorkspace({
   );
 }
 
-/** The final update, split into the files you resolved and the changes Git merged from the base. */
+/** One file's part of a confirmation group, in the Conflicts view's diff, with a note under each conflict. */
+function ConfirmFileDiff({
+  part,
+  group,
+  session,
+  labels,
+  verdict,
+  preferences,
+}: {
+  part: ConfirmFile;
+  group: 'decided' | 'merged' | 'main';
+  session: ConflictSession;
+  labels: ConflictLabels;
+  verdict: Verdict | undefined;
+  preferences?: Preferences | null;
+}) {
+  const pins = useMemo(
+    () => part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
+    [part.blocks]
+  );
+  const annotate = useCallback(
+    (hunks: readonly GapHunk[]) => {
+      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
+      for (const anchor of cardAnchors(part.blocks, hunks)) {
+        const place = `${anchor.side}:${anchor.line}`;
+        const existing = byPlace.get(place);
+        if (existing) existing.metadata.indexes.push(anchor.index);
+        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
+      }
+      return [...byPlace.values()];
+    },
+    [part.blocks]
+  );
+  const saved = session.files.find((f) => f.path === part.path);
+  const total = useMemo(() => conflictCount(saved?.original ?? ''), [saved?.original]);
+  const note = (index: number) => {
+    const item = part.items.find((i) => i.index === index);
+    if (!item) return null;
+    const proposal = saved?.proposals?.[index];
+    const text =
+      item.how === 'merged'
+        ? `Merged · ${proposal ? proposalWhat(proposal, blockVerdict(verdict, index)) : 'Checked'}`
+        : item.how === 'proposal'
+          ? `Proposal you reviewed${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
+          : item.how === 'used'
+            ? `Used the proposal${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
+            : labels.kept[item.how];
+    const Icon = item.how === 'merged' ? CheckCheck : Check;
+    return (
+      <p key={index} className="conflict-confirm-note" data-confirm-how={item.how}>
+        <Icon size={13} aria-hidden="true" />
+        <span>
+          Conflict {index + 1} of {total} · {text}
+        </span>
+      </p>
+    );
+  };
+  const renderNotes = useCallback(
+    ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) => (
+      <div className="conflict-diff-cards">{metadata.indexes.map(note)}</div>
+    ),
+    // The notes read the part and the verdict; the diff re-renders its annotations with them.
+    [part, verdict, total, labels, saved]
+  );
+  return (
+    <div className="conflict-confirm-file" data-confirm-file={part.path} data-confirm-whole={part.whole}>
+      {part.whole && (
+        <p className="conflict-confirm-note" data-confirm-how={part.whole}>
+          <Check size={13} aria-hidden="true" />
+          <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
+        </p>
+      )}
+      <ConflictFileDiff
+        name={part.path}
+        previousPath={part.previousPath}
+        note={part.previousPath && part.before === part.after ? 'no line changes' : undefined}
+        before={part.before}
+        after={part.after}
+        fileKey={`confirm:${session.id}:${group}:${part.path}`}
+        pins={pins}
+        annotate={annotate}
+        renderAnnotation={renderNotes}
+        preferences={preferences}
+      />
+    </div>
+  );
+}
+
+/** A file's rough height before it is measured: its header and the rows of its hunks. */
+const estimate = (lines: number) => 60 + Math.min(lines, 400) * 20;
+const ARRIVING_MAX = 560;
+/**
+ * Arriving from main can hold hundreds of files (a clean merge of a busy base branch). Its list is virtualized in a
+ * height-capped scroller: a file's diff mounts only when it scrolls into view.
+ */
+function ArrivingList({
+  main,
+  incoming,
+  render,
+  session,
+  preferences,
+}: {
+  main: ConfirmFile[];
+  incoming: PreviewFile[];
+  render: (part: ConfirmFile) => React.ReactNode;
+  session: ConflictSession;
+  preferences?: Preferences | null;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const count = main.length + incoming.length;
+  const virtual = useVirtualizer({
+    count,
+    getScrollElement: () => scroller.current,
+    estimateSize: (i) => {
+      if (i < main.length) return estimate(Math.abs(main[i].after.split('\n').length - main[i].before.split('\n').length) + 8);
+      const f = incoming[i - main.length];
+      return estimate(f.hunks.reduce((n, h) => n + Math.max(h.additionCount, h.deletionCount) + 1, 0));
+    },
+    overscan: 2,
+    gap: 12,
+  });
+  useVirtualizerSettled('conflict-confirm-arriving', virtual);
+  const total = virtual.getTotalSize();
+  return (
+    <div
+      ref={scroller}
+      className="conflict-confirm-arriving"
+      data-confirm-arriving=""
+      style={{ height: Math.min(total, ARRIVING_MAX) }}
+    >
+      <div style={{ height: total, position: 'relative' }}>
+        {virtual.getVirtualItems().map((item) => {
+          const f = item.index >= main.length ? incoming[item.index - main.length] : undefined;
+          return (
+            <div
+              key={item.key}
+              ref={virtual.measureElement}
+              data-index={item.index}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
+            >
+              {f ? (
+                <ConflictFileDiff
+                  name={f.name}
+                  patch={f}
+                  note={patchNote(f)}
+                  fileKey={`confirm:${session.id}:incoming:${f.name}`}
+                  preferences={preferences}
+                />
+              ) : (
+                render(main[item.index])
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** A group of the confirmation: its heading is the disclosure, with what it counts. */
+function ConfirmSection({
+  id,
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  id: 'decided' | 'merged' | 'main';
+  title: string;
+  count: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="conflict-confirm-group" data-confirm-group={id}>
+      <h3>
+        <button type="button" className="conflict-disclosure" aria-expanded={open} onClick={onToggle}>
+          <ArrowRight size={14} aria-hidden="true" />
+          {title} · <span data-confirm-count="">{count}</span>
+        </button>
+      </h3>
+      {open && <div className="conflict-confirm-group-body">{children}</div>}
+    </section>
+  );
+}
+
+type PreviewFile = NonNullable<ConflictReply['preview']>['files'][number];
+/**
+ * The final update in three groups (#445 item 12): You decided (open), Merged for you and Arriving from main
+ * (collapsed). The three diffs add up to the update (lib/conflict-confirm.ts). While a file still needs you no group
+ * shows, so no count can hide it, and Push stays off.
+ */
 function ConfirmDiff({
   session,
   preview,
+  groups,
+  labels,
+  verdictOf,
+  preferences,
 }: {
   session: ConflictSession;
   preview: NonNullable<ConflictReply['preview']>;
+  groups: ConfirmGroups<PreviewFile>;
+  labels: ConflictLabels;
+  verdictOf: (f: ConflictFile) => Verdict | undefined;
+  preferences?: Preferences | null;
 }) {
-  const resolvedPaths = new Set(session.files.map((f) => f.path));
-  const yours = preview.files.filter((f) => resolvedPaths.has(f.name) || (f.prevName && resolvedPaths.has(f.prevName)));
-  const incoming = preview.files.filter((f) => !yours.includes(f));
-  const [showIncoming, setShowIncoming] = useState(!yours.length);
-  const before = `${session.headBranch} now`;
-  const after = 'After the merge commit';
+  const clean = !session.files.length;
+  // A clean merge has only main's changes: that group opens.
+  const [open, setOpen] = useState({ decided: true, merged: false, main: clean });
+  const toggle = (id: keyof typeof open) => setOpen((previous) => ({ ...previous, [id]: !previous[id] }));
+  const verdict = (path: string) => {
+    const f = session.files.find((file) => file.path === path);
+    return f ? verdictOf(f) : undefined;
+  };
+  if (groups.pending.length)
+    return (
+      <div className="conflict-error" role="alert" data-confirm-pending="">
+        <CircleAlert size={16} aria-hidden="true" />
+        <div>
+          <p className="conflict-error-title">
+            {groups.pending.length === 1
+              ? `${groups.pending[0].path} still needs you.`
+              : `${groups.pending.length} files still need you.`}
+          </p>
+          <p>Nothing is pushed until you decide every conflict and review every file. Go back to the files.</p>
+        </div>
+      </div>
+    );
+  const { decided, merged, main, incoming, counts } = groups;
+  const part = (group: 'decided' | 'merged' | 'main') => (p: ConfirmFile) => (
+    <ConfirmFileDiff
+      key={p.path}
+      part={p}
+      group={group}
+      session={session}
+      labels={labels}
+      verdict={group === 'main' ? undefined : verdict(p.path)}
+      preferences={preferences}
+    />
+  );
   return (
     <div className="conflict-confirm-diff">
-      {!!yours.length && (
-        <section>
-          <h3>
-            Your resolutions · {yours.length} {yours.length === 1 ? 'file' : 'files'}
-          </h3>
-          <PreviewDiff id="yours" files={yours} before={before} after={after} />
-        </section>
-      )}
-      <section>
-        <h3>
-          <button
-            type="button"
-            className="conflict-disclosure"
-            aria-expanded={showIncoming}
-            onClick={() => setShowIncoming(!showIncoming)}
-          >
-            <ArrowRight size={14} aria-hidden="true" />
-            Changes coming from {session.baseBranch} · {incoming.length} {incoming.length === 1 ? 'file' : 'files'}
-          </button>
-        </h3>
-        {showIncoming &&
-          (incoming.length ? (
-            <PreviewDiff id="incoming" files={incoming} before={before} after={after} />
+      {!clean && (
+        <ConfirmSection
+          id="decided"
+          title="You decided"
+          count={confirmCount(counts.decided, decided.length)}
+          open={open.decided}
+          onToggle={() => toggle('decided')}
+        >
+          {decided.length ? (
+            decided.map(part('decided'))
           ) : (
-            <p className="conflict-side-empty">No other files change.</p>
-          ))}
-      </section>
+            <p className="conflict-side-empty">You decided no conflicts. Each one was merged for you.</p>
+          )}
+        </ConfirmSection>
+      )}
+      {!clean && (
+        <ConfirmSection
+          id="merged"
+          title="Merged for you"
+          count={confirmCount(counts.merged, merged.length)}
+          open={open.merged}
+          onToggle={() => toggle('merged')}
+        >
+          {merged.length ? (
+            <>
+              <p className="conflict-confirm-lead">Proposals that passed every check. You didn’t change them.</p>
+              {merged.map(part('merged'))}
+            </>
+          ) : (
+            <p className="conflict-side-empty">No conflicts were merged for you.</p>
+          )}
+        </ConfirmSection>
+      )}
+      <ConfirmSection
+        id="main"
+        title={`Arriving from ${session.baseBranch}`}
+        count={confirmCount(0, counts.mainFiles)}
+        open={open.main}
+        onToggle={() => toggle('main')}
+      >
+        {counts.mainFiles ? (
+          <>
+            <p className="conflict-confirm-lead">
+              {main.length
+                ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
+                : `${session.baseBranch}’s changes that didn’t conflict.`}
+            </p>
+            <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
+          </>
+        ) : (
+          <p className="conflict-side-empty">No other files change.</p>
+        )}
+      </ConfirmSection>
       {preview.validation && (
         <details className="conflict-whitespace">
           <summary>Whitespace warnings</summary>

@@ -1,4 +1,5 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
+import { perfBudget, withinPerf } from './perf-budget';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -40,7 +41,7 @@ void app.whenReady().then(async () => {
   };
   const exists = (label: string) => js<boolean>(`!!(${visibleButton(label)})`);
   const key = async (value: string) => {
-    const named: Record<string, [string, number]> = { Enter: ['Enter', 13], Escape: ['Escape', 27] };
+    const named: Record<string, [string, number]> = { Enter: ['Enter', 13], Escape: ['Escape', 27], ' ': ['Space', 32] };
     const [code, vk] = named[value] ?? [
       /\d/.test(value) ? `Digit${value}` : `Key${value.toUpperCase()}`,
       value.toUpperCase().charCodeAt(0),
@@ -61,6 +62,27 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 150));
   };
   const publishes = () => js<number>("window.conflictCalls.filter(r=>r.kind==='publish').length");
+  /** Cmd+Enter on macOS, Ctrl+Enter elsewhere: the one key that presses a focused Push button. */
+  const modEnter = async (modifier?: 'meta' | 'ctrl') => {
+    const mac = await js<boolean>("window.electronAPI.platform==='darwin'");
+    const modifiers = (modifier ?? (mac ? 'meta' : 'ctrl')) === 'meta' ? 4 : 2;
+    for (const type of ['keyDown', 'keyUp'] as const)
+      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type,
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13,
+        modifiers,
+        ...(type === 'keyDown' ? { text: '\r' } : {}),
+      });
+    await new Promise((r) => setTimeout(r, 150));
+  };
+  /** The confirmation's groups (#445 item 12): each one's count and whether it is open. */
+  const confirmGroupsShown = () =>
+    js<Record<string, { count: string; open: string }>>(
+      "Object.fromEntries([...document.querySelectorAll('.conflict-confirm [data-confirm-group]')].map(g=>[g.dataset.confirmGroup,{count:g.querySelector('[data-confirm-count]').textContent,open:g.querySelector('.conflict-disclosure').getAttribute('aria-expanded')}]))"
+    );
+  const pushButton = () => js(`(${visibleButton('Push merge commit')}).focus()`);
   const calls = (kind: string) => js<number>(`window.conflictCalls.filter(r=>r.kind===${JSON.stringify(kind)}).length`);
   const dir = path.resolve('.impeccable/review/conflict-resolution');
   const capture = async (name: string) => {
@@ -432,15 +454,50 @@ void app.whenReady().then(async () => {
     const confirmText = await js<string>("document.querySelector('.conflict-confirm').innerText");
     assert.match(confirmText, /Pushes to (@\S+’s|your|the author’s) branch/);
     assert.match(confirmText, /Approvals may be dismissed if the repository requires it\./);
-    assert.match(confirmText, /Your resolutions · 1 file/);
-    assert.match(confirmText, /Changes coming from main · 1 file/);
+    // Three groups (#445 item 12): you edited the file, so both its conflicts are yours; main brings src/clock.ts.
+    // You decided is open, the other two are collapsed.
+    assert.deepEqual(await confirmGroupsShown(), {
+      decided: { count: '2 conflicts in 1 file', open: 'true' },
+      merged: { count: 'none', open: 'false' },
+      main: { count: '1 file', open: 'false' },
+    });
+    assert.match(confirmText, /You decided ·\s+2 conflicts in 1 file/);
+    assert.equal(
+      await js("document.querySelector('[data-confirm-group=decided] [data-confirm-file]')?.dataset.confirmWhole"),
+      'manual'
+    );
+    assert.doesNotMatch(confirmText, /Your resolutions|Changes coming from/);
     assert.equal((confirmText.match(/Nothing is pushed/g) ?? []).length, 1, 'Say “nothing pushed” once');
     await wait("document.activeElement?.classList.contains('step-card-body')");
+    // Its diff is the Conflicts view's (ConflictFileDiff over ChangesDiff), with Quiet off.
+    await wait(
+      "document.querySelector('[data-confirm-group=decided] .conflict-diff-file diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    assert.equal(await js("!!document.querySelector('[data-confirm-group=decided] [data-noise-stat]')"), false);
     await captureAll('confirm-push');
     await js("document.querySelector('.conflict-confirm .step-card-body').focus()");
     await key('Enter');
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(await publishes(), 0, 'Enter alone never pushes');
+    // Not on the Push button either: Enter and Space do nothing there, and neither does the wrong modifier.
+    await pushButton();
+    await key('Enter');
+    await key(' ');
+    await modEnter(await js<boolean>("window.electronAPI.platform==='darwin'") ? 'ctrl' : 'meta');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await publishes(), 0, 'Only a click or Cmd+Enter on Push pushes');
+    assert.equal(
+      await js(`(${visibleButton('Push merge commit')}).getAttribute('aria-keyshortcuts')`),
+      (await js<boolean>("window.electronAPI.platform==='darwin'")) ? 'Meta+Enter' : 'Control+Enter'
+    );
+    // Arriving from main opens to the clean file's diff, from the preview's patch.
+    await js("document.querySelector('[data-confirm-group=main] .conflict-disclosure').click()");
+    await wait(
+      "document.querySelector('[data-confirm-group=main] .conflict-diff-file[aria-label=\"src/clock.ts\"] diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    await captureAll('confirm-push-main');
+    await js("document.querySelector('[data-confirm-group=main] .conflict-disclosure').click()");
+    await wait("document.querySelector('[data-confirm-group=main] .conflict-disclosure').getAttribute('aria-expanded')==='false'");
 
     // A push rejected because the branch moved: plain copy, nothing resent, Load latest changes.
     await js('window.failPublish=true');
@@ -474,7 +531,10 @@ void app.whenReady().then(async () => {
     await click('Back to files');
     await wait("document.querySelector('.conflict-files')");
     await click('Review and push…');
-    await click('Push merge commit');
+    // Cmd+Enter (Ctrl+Enter off macOS) on the focused Push button pushes, once.
+    await wait(`(${visibleButton('Push merge commit')}) && !(${visibleButton('Push merge commit')}).disabled`);
+    await pushButton();
+    await modEnter();
 
     // Outcome: the branch is updated, with the commit, what changed, checks, Done and an undo hint.
     await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
@@ -662,10 +722,8 @@ void app.whenReady().then(async () => {
     await captureAll('clean-merge');
     await click('Review and push…');
     await wait("document.querySelector('.conflict-confirm .step-card')");
-    assert.match(
-      await js<string>("document.querySelector('.conflict-confirm').innerText"),
-      /Changes coming from main · 2 files/
-    );
+    // A clean merge has nothing to decide: only main's files, open.
+    assert.deepEqual(await confirmGroupsShown(), { main: { count: '2 files', open: 'true' } });
     await captureAll('clean-merge-confirm');
     await click('Close');
     await js(
@@ -800,13 +858,15 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-confirm .step-card')");
     assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true);
     assert.equal(await publishes(), 2, 'File review never publishes');
-    assert.match(
-      await js<string>("document.querySelector('.conflict-confirm').innerText"),
-      /Your resolutions · 2 files/
-    );
-    assert.match(
-      await js<string>("document.querySelector('.conflict-confirm').innerText"),
-      /Changes coming from main · 1 file/
+    // Two Keeps, one per file; main brings src/clock.ts.
+    assert.deepEqual(await confirmGroupsShown(), {
+      decided: { count: '2 conflicts in 2 files', open: 'true' },
+      merged: { count: 'none', open: 'false' },
+      main: { count: '1 file', open: 'false' },
+    });
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('[data-confirm-group=decided] [data-confirm-how]')].map(e=>e.textContent)"),
+      ['Conflict 1 of 1 · Kept main’s change', 'Conflict 1 of 1 · Kept PR change']
     );
     // File shortcuts pause in the confirmation, and Enter never pushes.
     await key('m');
@@ -1716,9 +1776,147 @@ void app.whenReady().then(async () => {
     await shot('p1-unsupported-unsafe');
     await click('Close');
     await js("window.conflictFixture.headBranch='feature/retry'");
+    // The confirmation's three groups (#445 item 12) on one draft: a Keep and a Check proposal you reviewed are yours,
+    // an untouched Merged proposal is merged for you, and main brings a line outside the conflicts and a clean file.
+    const mainLine = '// Retries back off from main.\n';
+    const mixed = [
+      { ...retry, original: mainLine + retry.original, theirs: mainLine + retry.theirs },
+      imports,
+    ].map(withResult);
+    const cleanFiles = patch.slice(patch.indexOf('diff --git a/src/clock.ts'));
+    await js(`(()=>{
+      window.conflictPreview=${JSON.stringify(
+        parsePatchFiles(
+          [retry, imports]
+            .map((f) => `diff --git a/${f.path} b/${f.path}\n--- a/${f.path}\n+++ b/${f.path}\n@@ -1 +1 @@\n-x\n+y\n`)
+            .join('') + cleanFiles
+        ).flatMap((p) => p.files)
+      )};
+      Object.assign(window.conflictFixture,{version:1,status:'editing',stale:false,files:${JSON.stringify(mixed)}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    await wait(`${block(0)}?.dataset.state==='open' && ${block(1)}?.dataset.bucket==='check'`);
+    await pick(0, 'theirs');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    // Review the result, then Mark reviewed: that reviews the Check proposal too. The Merged file needs only the mark.
+    await click('Review result');
+    await click('Mark reviewed & next file');
+    await wait("document.querySelector('.conflict-file-title strong')?.textContent==='src/imports.ts'");
+    await checksDone();
+    await click('Mark reviewed');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    assert.equal(await publishes(), 0);
+    assert.equal(await js("!!document.querySelector('[data-confirm-pending]')"), false);
+    assert.deepEqual(await confirmGroupsShown(), {
+      decided: { count: '2 conflicts in 1 file', open: 'true' },
+      merged: { count: '1 conflict in 1 file', open: 'false' },
+      main: { count: '2 files', open: 'false' },
+    });
+    const notesIn = (group: string) =>
+      js<string[]>(
+        `[...document.querySelectorAll('[data-confirm-group=${group}] [data-confirm-how]')].map(e=>e.dataset.confirmHow+': '+e.textContent)`
+      );
+    await wait("document.querySelectorAll('[data-confirm-group=decided] [data-confirm-how]').length===2");
+    const decidedNotes = await notesIn('decided');
+    assert.equal(decidedNotes[0], 'theirs: Conflict 1 of 2 · Kept main’s change');
+    assert.match(decidedNotes[1], /^proposal: Conflict 2 of 2 · Proposal you reviewed · /);
+    await shot('p1-confirm-groups', true);
+    // Collapsed groups render nothing until opened. Merged for you shows the proposal and its note.
+    assert.equal(await js("!!document.querySelector('[data-confirm-group=merged] .conflict-diff-file')"), false);
+    await js("document.querySelector('[data-confirm-group=merged] .conflict-disclosure').click()");
+    await wait("document.querySelectorAll('[data-confirm-group=merged] [data-confirm-how]').length===1");
+    assert.match((await notesIn('merged'))[0], /^merged: Conflict 1 of 1 · Merged · /);
+    // Arriving from main: the line main added to src/retry.ts outside its conflicts, then src/clock.ts.
+    await js("document.querySelector('[data-confirm-group=main] .conflict-disclosure').click()");
+    await wait(
+      "[...document.querySelectorAll('[data-confirm-group=main] .conflict-diff-file')].map(e=>e.getAttribute('aria-label')).join()==='src/retry.ts,src/clock.ts'"
+    );
+    await wait(
+      "[...document.querySelectorAll('[data-confirm-group=main] .conflict-diff-file')].every(e=>e.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-line]'))"
+    );
+    assert.match(
+      await js<string>(
+        "document.querySelector('[data-confirm-group=main] .conflict-diff-file[aria-label=\"src/retry.ts\"] diffs-container').shadowRoot.textContent"
+      ),
+      /Retries back off from main/
+    );
+    assert.doesNotMatch(
+      await js<string>(
+        "document.querySelector('[data-confirm-group=main] .conflict-diff-file[aria-label=\"src/retry.ts\"] diffs-container').shadowRoot.textContent"
+      ),
+      /return 11/,
+      'main’s group shows no conflict'
+    );
+    await shot('p1-confirm-groups-open', true);
+    // Enter never pushes, from the body or from Push.
+    await js("document.querySelector('.conflict-confirm .step-card-body').focus()");
+    await key('Enter');
+    await pushButton();
+    await key('Enter');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await publishes(), 0, 'Enter alone never pushes');
+    await click('Close');
+    // Use the proposal after Undo is your choice (#445 item 12): saved as the `proposal` pick, listed under You decided.
+    await js(`(()=>{
+      window.conflictPreview=[];
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([withResult(imports)])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await pick(0, 'proposal');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await wait("window.conflictCalls.some(r=>r.kind==='save'&&JSON.stringify(r.picks)==='[\"proposal\"]')");
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await checksDone();
+    await click('Mark reviewed');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    assert.deepEqual(await confirmGroupsShown(), {
+      decided: { count: '1 conflict in 1 file', open: 'true' },
+      merged: { count: 'none', open: 'false' },
+      main: { count: 'none', open: 'false' },
+    });
+    await wait("document.querySelector('[data-confirm-group=decided] [data-confirm-how]')");
+    assert.match((await notesIn('decided'))[0], /^used: Conflict 1 of 1 · Used the proposal · /);
+    await click('Close');
+    // A clean merge of 300 files: Arriving from main opens at once and mounts only the files in view.
+    const many = Array.from(
+      { length: 300 },
+      (_, i) => `diff --git a/src/f${i}.ts b/src/f${i}.ts\n--- a/src/f${i}.ts\n+++ b/src/f${i}.ts\n@@ -1 +1 @@\n-export const v = ${i};\n+export const v = ${i + 1};\n`
+    ).join('');
+    await js(`(()=>{
+      window.conflictPreview=${JSON.stringify(parsePatchFiles(many).flatMap((p) => p.files))};
+      Object.assign(window.conflictFixture,{version:1,files:[],preparation:'clean-merge'});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    const started = Date.now();
+    await click('Review and push…');
+    await wait(
+      "document.querySelector('[data-confirm-arriving] .conflict-diff-file diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    withinPerf('conflict confirmation, 300 files from main: open to the first diff', Date.now() - started, perfBudget(1500));
+    assert.deepEqual(await confirmGroupsShown(), { main: { count: '300 files', open: 'true' } });
+    const mounted = await js<number>("document.querySelectorAll('[data-confirm-arriving] .conflict-diff-file').length");
+    assert.ok(mounted > 0 && mounted < 30, `Only the files in view mount (${mounted} of 300)`);
+    // The list is capped in height and scrolls on its own; the last file mounts once it scrolls into view.
+    assert.ok(await js<boolean>("document.querySelector('[data-confirm-arriving]').getBoundingClientRect().height<=560.5"));
+    await js("document.querySelector('[data-confirm-arriving]').scrollTop=1e7");
+    await wait(
+      "document.querySelector('[data-confirm-arriving] .conflict-diff-file[aria-label=\"src/f299.ts\"] diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    await waitSettled(win.webContents, 'conflict-confirm-arriving');
+    await click('Close');
+    await js("window.conflictFixture.preparation='conflicts'");
     // The confirmation with a long diff: the title and Push stay in view; the body scrolls.
     const long = Array.from({ length: 160 }, (_, i) => `export const value${i} = ${i};`);
-    const confirmPatch = `diff --git a/src/retry.ts b/src/retry.ts\n--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1,160 +1,160 @@\n${long.map((l) => `-${l}\n+${l.replace(';', ' + 1;')}`).join('\n')}\n`;
+    const confirmPatch = `diff --git a/src/values.ts b/src/values.ts\n--- a/src/values.ts\n+++ b/src/values.ts\n@@ -1,160 +1,160 @@\n${long.map((l) => `-${l}\n+${l.replace(';', ' + 1;')}`).join('\n')}\n`;
     await js(`(()=>{
       window.conflictPreview=${JSON.stringify(parsePatchFiles(confirmPatch).flatMap((p) => p.files))};
       Object.assign(window.conflictFixture,{version:1,baseRepo:'klang/engine',files:[{path:'src/retry.ts',mode:'100644',base:'a\\n',ours:'b\\n',theirs:'c\\n',original:'<<<<<<< feature/retry\\nb\\n=======\\nc\\n>>>>>>> main\\n',result:'b\\nc\\n',resolved:true,source:'manual'}]});
@@ -1727,6 +1925,11 @@ void app.whenReady().then(async () => {
     await open();
     await click('Review and push…');
     await wait("document.activeElement?.classList.contains('step-card-body')");
+    // The long file arrives from main: open its group.
+    await js("document.querySelector('[data-confirm-group=main] .conflict-disclosure').click()");
+    await wait(
+      "document.querySelector('[data-confirm-group=main] .conflict-diff-file[aria-label=\"src/values.ts\"] diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
     const inView = () =>
       js<boolean>(
         `(()=>{const d=document.querySelector('.conflict-confirm').getBoundingClientRect();const t=document.querySelector('.conflict-confirm .step-card-title').getBoundingClientRect();const p=(${visibleButton('Push merge commit')}).getBoundingClientRect();return t.top>=d.top-0.5&&p.bottom<=d.bottom+0.5})()`

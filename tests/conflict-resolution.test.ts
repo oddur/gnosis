@@ -127,7 +127,9 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   ).session;
   // Your Keep choices are saved with the draft (#445 item 8), so a Keep never reads as Merged after a reopen.
   assert.deepEqual(session.files[0].picks, ['ours']);
-  assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal'] }));
+  assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['mine'] }));
+  // Use the proposal after another choice is a pick too (#445 item 12): the confirmation lists it as yours.
+  validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal', null] });
   const preview = (await f.run({ kind: 'preview', id: session.id, version: session.version })).preview;
   assert.ok(preview);
   assert.match(preview.patch, /from-main.txt/);

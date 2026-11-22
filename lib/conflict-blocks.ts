@@ -103,7 +103,7 @@ export function chosenText(block: ConflictBlock, choice: BlockChoice) {
   return first + block.theirs;
 }
 
-const pickText = (
+export const pickText = (
   segment: Extract<ConflictSegment, { kind: 'conflict' }>,
   pick: BlockPick | undefined,
   proposals?: BlockProposals
@@ -185,8 +185,11 @@ export function inferChoices(
   return choices;
 }
 
-/** The Keep choices you made in this view, by block index. Undefined: none, or the proposal. */
-export type BlockPicks = readonly (BlockChoice | undefined)[];
+/**
+ * The choices you made in this view, by block index: a Keep, or `proposal` when you chose Use the proposal after
+ * choosing something else. Undefined: none; an untouched proposal is never a pick.
+ */
+export type BlockPicks = readonly (BlockPick | undefined)[];
 /**
  * A choice you made is yours, whatever was proposed. The draft alone can't tell "Keep PR change" from a proposal with
  * the same text, or "Keep both" from one side when the other is empty, so a block takes your pick wherever the pick
@@ -204,7 +207,7 @@ export function withPicks(
     if (segment.kind !== 'conflict') continue;
     const pick = picks[segment.index];
     const read = next[segment.index];
-    if (pick && read && chosenText(segment.block, pick) === pickText(segment, read, proposals))
+    if (pick && read && pickText(segment, pick, proposals) === pickText(segment, read, proposals))
       next[segment.index] = pick;
   }
   return next;
