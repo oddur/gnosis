@@ -31,6 +31,14 @@ A conflict Gnosis can't write as text, such as a rename on both sides, a deletio
 
 Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
 
+### Lines Gnosis wrote
+
+A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them, such as "1 line written by Gnosis (neither side had it)". A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), in Review result, in a whole-file proposal before you use it, and in the confirmation's diffs. A screen reader reads "Written by Gnosis. Neither side had this line." for each marked line, and the line number shows the same tooltip.
+
+When in doubt, Gnosis marks the line. It compares each conflict's result with both sides' lines exactly, line endings included, so a re-indented line or a line changed from CRLF to LF is a new line. A result that has a line more often than both sides together marks every copy of that line. In a file written whole, a line is a side's only where a line diff against that side keeps it. When there is no time for that diff, for example in a confirmation of many large files, Gnosis marks every copy of a line the result has more often than the side with the most copies.
+
+Gnosis keeps the text the resolver wrote. When you then keep a conflict or edit the draft, the resolver's lines that neither side had stay marked. A line you type, saved or not, is never marked, and neither is a Keep or an open conflict. The mark never hides a line or its change colour.
+
 ### Keyboard
 
 | Key | Action |

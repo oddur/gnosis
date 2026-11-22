@@ -4229,6 +4229,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-diff-legend .conflict-side-label { padding:0;border:0;color:var(--foreground); }
 .conflict-diff-legend .conflict-side-label[data-mark=removed]::before { content:'− ';color:var(--color-danger); }
 .conflict-diff-legend .conflict-side-label[data-mark=added]::before { content:'+ ';color:var(--color-success); }
+/* Lines a resolver wrote (#445 item 10): the card's count, with a swatch of the diff's steady mark (lib/diff-here.ts),
+   on the code surface. */
+.conflict-written-legend { display:flex;align-items:center;gap:6px; }
+/* Its background is WRITTEN_SWATCH (lib/diff-here.ts), set inline: the same colours as the marked rows. */
+.conflict-written-swatch { flex:none;width:14px;height:12px;border-radius:2px; }
 .conflict-result-diff > .conflict-diff-file,.conflict-diff-view > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
 /* Compare with: PR · main · both (#445 item 9), in the file header: a pill switch like Markdown's Source · Preview. */
 .conflict-compare { display:inline-flex;align-items:center;gap:8px; }

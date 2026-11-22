@@ -27,6 +27,12 @@ export interface ConflictFile {
    * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
    */
   wholeFile?: ConflictProposal;
+  /**
+   * The whole draft a resolver last wrote for this file (#445 item 10): a remembered resolution, structural merge's
+   * result, a whole-file proposal you used, or a suggestion. It stays when you then keep or edit parts of the draft, so
+   * the lines the resolver wrote that neither side had stay marked, and lines you typed never are.
+   */
+  resolverText?: string;
   /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
   structuralNote?: string;
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
