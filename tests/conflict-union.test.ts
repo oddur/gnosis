@@ -106,7 +106,7 @@ void test('a union is never Merged: it is a ready proposal in Check, with a note
   assert.deepEqual(functions.buckets, ['check']);
   assert.equal(
     functions.verdict.note,
-    `Both sides added different definitions here. Gnosis kept both, the PR’s lines first. ${doesnt}`
+    `Both sides added different definitions here. Proposal: keep both, the PR’s lines first. ${doesnt}`
   );
   // Imports in TypeScript run module code in order.
   const imports = await check(
@@ -221,7 +221,7 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
     return text === f.result ? { ...read, errors: true, errorLines: undefined } : read;
   };
   const verdict = await verifyProposals(f, blind);
-  assert.deepEqual(verdict, { merged: false, note: 'The result doesn’t parse.' });
+  assert.deepEqual(verdict, { merged: false, note: 'With the proposals in place, the file doesn’t parse.' });
   assert.deepEqual(blockBuckets(f, f.result, verdict), ['check', 'check']);
   // A parse error in one proposal: that one goes to Check, the other stays Merged once the file parses without it.
   const unclosed = mergiraf(`${fn('eps')}${fn('mid2')}export function zeta() {\n  return 1;\n\n`);
@@ -229,7 +229,7 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
     conflict('src/math.ts', parts, [mergiraf(fn('beta') + fn('mid') + fn('gamma')), unclosed])
   );
   assert.deepEqual(traced.buckets, ['merged', 'check']);
-  assert.equal(traced.verdict.blocks?.[1]?.note, 'This result doesn’t parse.');
+  assert.equal(traced.verdict.blocks?.[1]?.note, 'This proposal doesn’t parse.');
   // With a conflict still undecided, a parse error is the whole file's, as before.
   const open = await check(
     conflict(
@@ -239,7 +239,7 @@ void test('a failure the checks can’t trace to a conflict keeps every proposal
     )
   );
   assert.deepEqual(open.buckets, ['check', 'check', 'decide']);
-  assert.equal(open.verdict.note, 'The result doesn’t parse.');
+  assert.equal(open.verdict.note, 'With the proposals in place, the file doesn’t parse.');
   // A duplicate whose copies are all in lines no proposal wrote.
   const outside = conflict(
     'src/math.ts',

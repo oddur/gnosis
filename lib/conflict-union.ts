@@ -297,7 +297,7 @@ const kindOf = (language: SyntaxLanguage, parent: string, unit: RangeUnit): Adde
  * plainest note.
  */
 export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined, theirs: RangeUnits | undefined) {
-  const kept = 'Gnosis kept both, the PR’s lines first.';
+  const kept = 'Proposal: keep both, the PR’s lines first.';
   const unknown = `Both sides added lines here. ${kept} Check that both belong, in this order.`;
   if (!ours || !theirs) return unknown;
   const read = (side: RangeUnits) => side.units.map((unit) => ({ unit, kind: kindOf(language, side.parent, unit) }));

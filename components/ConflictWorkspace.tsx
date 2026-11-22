@@ -92,7 +92,8 @@ import {
   blockVerdict,
   summarySentence,
   unchosenConflicts,
-  withoutUnchosen,
+  preparedDraft,
+  chooseFirst,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
@@ -105,7 +106,6 @@ import {
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
-import { withProposals } from '../lib/conflict-carry';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -918,9 +918,7 @@ export function ConflictWorkspace({
   function markReviewed() {
     if (!file || markersRemain || file.unsupported) return;
     if (unchosen.length) {
-      setHint(
-        `Choose for ${unchosen.length === 1 ? 'the conflict' : `the ${unchosen.length} conflicts`} in Check first: use the proposal, keep a side, or edit.`
-      );
+      setHint(chooseFirst(unchosen.length));
       view.current?.move(1);
       return;
     }
@@ -957,11 +955,7 @@ export function ConflictWorkspace({
   }, [showMerged, busy, error, confirming, session, verdicts]);
   // What preparation left: the original conflict with only the proposals nobody has to choose in place (the checks'
   // Merged ones, and remembered resolutions). Every other proposal stays on its card.
-  const resetTarget = (f: ConflictFile) => {
-    if (!f.proposals) return f.original;
-    const all = withProposals(f.original, f.proposals);
-    return withoutUnchosen({ ...f, result: all, picks: undefined, edits: undefined }, verdictOf(f)) ?? all;
-  };
+  const resetTarget = (f: ConflictFile) => preparedDraft(f, verdictOf(f));
   // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
@@ -1023,9 +1017,12 @@ export function ConflictWorkspace({
         setOutcome(
           engine === 'whole-file'
             ? 'The draft is the whole-file proposal now. Review it before you mark the file reviewed.'
-            : current?.explanation
-              ? `${who}: ${current.explanation}`
-              : `${who} proposed nothing new.`
+            : engine === 'mergiraf'
+              ? // Structural merge's own words already name it; a timeout says so in its note.
+                (current?.explanation ?? current?.structuralNote ?? 'Structural merge proposed nothing new.')
+              : current?.explanation
+                ? `${who}: ${current.explanation}`
+                : `${who} proposed nothing new.`
         );
         // Only using a whole-file result replaces your choices; a suggestion never overrides them.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;

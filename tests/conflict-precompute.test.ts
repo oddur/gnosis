@@ -328,3 +328,12 @@ void test('a run that found the PR busy, or gave way to you, is tried again on t
   yielded.observe(B, sha(2), 'conflicts');
   assert.equal(yielded.precompute.header(B, sha(2))?.state, 'checking');
 });
+
+void test('the header counts a Merged proposal you chose with Use the proposal as yours, as the Conflicts view does', () => {
+  const chosen = { ...proposed('a.ts', true), picks: ['proposal' as const] };
+  const header = conflictHeader([chosen], [], false);
+  assert.equal(header.state, 'ready');
+  // Yours, not Merged: it is not "reviewed for you", and the sentence says the file waits for review.
+  assert.equal(header.merged, false);
+  assert.doesNotMatch(conflictHeaderLine(header), /merged and checked/);
+});

@@ -4404,6 +4404,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .restack-conflict-file { display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:12px; }
 .restack-conflict-file h4 { display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:600;overflow-wrap:anywhere; }
 .restack-conflict-actions { display:flex;flex-wrap:wrap;gap:8px; }
+.restack-conflict-hint { align-self:center;color:var(--muted-foreground);font-size:var(--type-caption); }
 
 /* Stack summary: one dependency list, with independent review/check/branch evidence. */
 .stack-verdict-reasons { font-size:var(--type-caption);color:var(--muted-foreground); }

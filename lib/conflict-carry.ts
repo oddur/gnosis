@@ -306,6 +306,23 @@ export function blockProposals(original: string, output: string, source: Conflic
   return proposals?.some(Boolean) ? proposals : undefined;
 }
 
+/**
+ * The draft rebuilt from its conflicts' texts (blockResolutions), with the conflicts in `restore` back to their markers.
+ * Undefined when the draft isn't exactly its conflicts' texts: anything else is left as it is.
+ */
+export function restoreMarkers(
+  segments: readonly ConflictSegment[],
+  texts: readonly (string | undefined)[],
+  result: string,
+  restore: readonly number[]
+): string | undefined {
+  const draft = (back: readonly number[]) =>
+    segments
+      .map((s) => (s.kind === 'text' ? s.text : back.includes(s.index) ? s.block.raw : (texts[s.index] ?? s.block.raw)))
+      .join('');
+  return draft([]) === result ? draft(restore) : undefined;
+}
+
 /** Git's conflict with these proposals in place; other blocks keep their markers. */
 export function withProposals(original: string, proposals: readonly (ConflictProposal | null)[]) {
   return applyChoices(

@@ -1700,7 +1700,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${block(0)}.dataset.bucket`), 'check');
     assert.match(
       await js<string>(`${block(0)}.querySelector('.conflict-block-header').textContent`),
-      /Both sides changed the same lines\. Check that the result keeps both changes\./
+      /Both sides changed the same lines\. Check that the proposal keeps both changes\./
     );
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
@@ -1713,7 +1713,7 @@ void app.whenReady().then(async () => {
     assert.equal((await badges('.conflict-file-title'))[0][2], '1 merged');
     assert.match(
       await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`),
-      /^The PR only reformatted these lines and main changed them; the result keeps main’s change in the PR’s formatting\./
+      /^The PR only reformatted these lines and main changed them; the proposal keeps main’s change in the PR’s formatting\./
     );
     await captureAll('reformat-merged');
     await click('Close');
@@ -1767,7 +1767,7 @@ void app.whenReady().then(async () => {
     await wait(`${whole}.querySelector('p').textContent.startsWith('Mergiraf moved')`);
     assert.equal(
       await js<string>(`${whole}.querySelector('p').textContent`),
-      'Mergiraf moved lines outside the conflict. The result parses and keeps every change from both sides. Read it, then use it.'
+      'Mergiraf moved lines outside the conflict. The proposal parses and keeps every change from both sides. Read it, then use it.'
     );
     assert.equal(await js(`!!${block(0)}`), false, 'The conflicts wait behind the proposal');
     assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
@@ -1914,7 +1914,7 @@ void app.whenReady().then(async () => {
     await wait(`${whole}?.querySelector('p')?.textContent.startsWith('The PR moved orderTotal, and main edited it.')`);
     assert.match(
       await js<string>(`${whole}.querySelector('p').textContent`),
-      /Gnosis applied the edit at the new place\. .*Call sites in other files were not checked\./
+      /The proposal applies the edit at the new place\. .*Call sites in other files were not checked\./
     );
     assert.equal(await js(`${whole}.dataset.bucket`), 'check');
     assert.equal(await js("!!document.querySelector('[data-bucket=merged]')"), false, 'Never Merged');
