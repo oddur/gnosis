@@ -1925,7 +1925,8 @@ void test('the reopen pass has a short time budget, and a file that timed out is
     assert.equal(file.structuralRan, undefined);
   }
   for (const file of first.session.files) assert.equal(file.result, file.original, 'The pass never writes a draft');
-  assert.deepEqual(new Set(await stub.budgets()), new Set(['2000']), 'No retry with the Suggest budget');
+  // Each within what is left of the pass, and none with the Suggest budget: no retry.
+  assert.ok((await stub.budgets()).every((budget) => Number(budget) >= 250 && Number(budget) <= 2000));
   // The next reopen takes the other four; then nothing is left to wait for.
   const second = await reopen();
   assertPerf('conflict reopen: the 4 slow files left', second.ms, perfBudget(3000));
