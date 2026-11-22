@@ -185,6 +185,10 @@ export async function verifyProposals(
   const failed = new Map<number, string>();
   const fail = (index: number, note: string) => void (failed.has(index) || failed.set(index, note));
   const verdict = (passed: (index: number) => string): Verdict => {
+    // A model proposal (lib/conflict-model.ts) is never Merged: after every check it is still one to read. A check it
+    // failed says so first.
+    for (const s of proposed)
+      if (proposals[s.index]?.source === 'model') fail(s.index, `${MODEL_UNCHECKED} ${passed(s.index)}`);
     const blocks: (BlockVerdict | undefined)[] = [];
     for (const s of proposed) {
       const note = failed.get(s.index);
@@ -564,6 +568,8 @@ export async function verifyProposals(
   });
 }
 
+/** A model proposal's note when it passed every check: it is still never Merged. */
+export const MODEL_UNCHECKED = 'A model wrote this. Read it before you use it.';
 /** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
 export const SAME_LINES = 'Both sides changed the same lines. Check that the result keeps both changes.';
 /** The tokens `after` drops from `before` and the ones it adds, in order. */
@@ -1109,7 +1115,8 @@ export function blockBuckets(
     return blocks.map((s) => {
       const proposal = file.proposals?.[s.index];
       const text = texts?.[s.index];
-      if (proposal && text === proposal.text) return blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
+      if (proposal && text === proposal.text)
+        return proposal.source !== 'model' && blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
       if (proposal && text === undefined) return 'check';
       if (texts) return text === undefined ? 'decide' : 'decided';
       return open-- > 0 ? 'decide' : 'decided';
@@ -1117,7 +1124,9 @@ export function blockBuckets(
   }
   return blocks.map((s) => {
     const pick = choices[s.index];
-    if (pick === 'proposal') return blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
+    // A model proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
+    if (pick === 'proposal')
+      return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
     return pick ? 'decided' : 'decide';
   });
 }

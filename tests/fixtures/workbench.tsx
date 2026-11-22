@@ -944,6 +944,9 @@ const mocks = {
   // The PR header's conflict line (lib/use-conflict-header.ts): no background preparation in the fixture.
   conflictHeader: () => Promise.resolve(null),
   onConflictHeaderChanged: () => () => {},
+  // No model in the fixture: the conflict view asks nothing unless a suite mocks it (#445 items 6 and 7).
+  conflictModel: undefined,
+  cancelConflictModel: undefined,
   onActivityChanged: (callback: () => void) => {
     window.addEventListener('fixture-activity-change', callback);
     return () => window.removeEventListener('fixture-activity-change', callback);

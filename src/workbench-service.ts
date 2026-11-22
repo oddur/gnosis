@@ -2060,6 +2060,18 @@ export function createWorkbenchService(deps: Deps) {
       for (const brief of failed) brief.dismissed = true;
       if (failed.length) save();
     },
+    /** The provider's active pause, shared by briefings and conflict proposals (#445 item 7). */
+    providerPause(provider: ProviderPause['provider']): ProviderPause | undefined {
+      return activePause(load(), provider);
+    },
+    /** A pause another model task ran into: briefings wait for it too. */
+    noteProviderPause(pause: ProviderPause) {
+      const s = load();
+      const known = s.providerPauses?.[pause.provider];
+      if (known && known.until >= pause.until) return;
+      s.providerPauses = { ...s.providerPauses, [pause.provider]: pause };
+      save();
+    },
     /** Start automatic briefings again before a provider pause ends. */
     resumeAutomaticBriefings() {
       const s = load();
