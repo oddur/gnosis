@@ -6,6 +6,7 @@ import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
 import {
   conflictChecker,
+  definitionsOf,
   moveProposer,
   noiseAnswer,
   type CheckRequest,
@@ -34,6 +35,12 @@ port.on('message', (message: CheckRequest) => {
       for (const file of message.files) noise.push(await noiseAnswer(engine, file));
       port.postMessage({ id: message.id, noise } satisfies CheckResponse);
     })();
+    return;
+  }
+  if (message.kind === 'definitions') {
+    void definitionsOf(engine, message.path, message.text, message.disabled).then((definitions) =>
+      port.postMessage({ id: message.id, definitions } satisfies CheckResponse)
+    );
     return;
   }
   // A conflict file: the move rule's proposal (lib/conflict-moved.ts), or its checks.

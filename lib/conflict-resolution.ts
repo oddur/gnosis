@@ -33,6 +33,11 @@ export interface ConflictFile {
    * the lines the resolver wrote that neither side had stay marked, and lines you typed never are.
    */
   resolverText?: string;
+  /**
+   * Conflicts whose text was a model's proposal before main moved or the merge was prepared again
+   * (lib/conflict-carry.ts): they are open again, and their cards say to ask again. By block index of `original`.
+   */
+  modelStale?: number[];
   /** Why structural merge proposed nothing for this file during preparation, such as a timeout. */
   structuralNote?: string;
   /** Structural merge gave this file a result: proposals, a whole-file proposal, or a note that it couldn't. */
@@ -58,13 +63,22 @@ export interface ConflictFile {
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
  * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
  * A 'moved' proposal is only ever a whole-file proposal (`wholeFile`): one side moved or renamed a function and the
- * other edited it, and the edit is applied at the new place (lib/conflict-moved.ts). It is never Merged.
+ * other edited it, and the edit is applied at the new place (lib/conflict-moved.ts). It is never Merged. A 'model'
+ * proposal is one conflict's replacement from the selected model (lib/conflict-model.ts), checked like the others and
+ * never Merged either.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved' | 'model';
   text: string;
-  /** A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." */
+  /**
+   * A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." A 'model'
+   * proposal: how the model says its replacement keeps both sides.
+   */
   note?: string;
+  /** A 'model' proposal (lib/conflict-model.ts): the provider that wrote it, such as "Claude". */
+  by?: string;
+  /** A 'model' proposal: what the model says each side meant. The model's words, never checked. */
+  intents?: { pr: string; main: string };
 }
 export interface ConflictSession {
   id: string;
@@ -179,6 +193,11 @@ export type ConflictRequest =
       path: string;
       instructions?: string;
     }
+  /**
+   * Puts the model's proposal for conflict `index` (askModel in src/conflict-resolution-service.ts) into the draft and
+   * checks it. Only the conflict's own span changes, and only while it is still open.
+   */
+  | { kind: 'model'; id: string; version: number; path: string; index: number }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -288,6 +307,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     text('path', 4096) &&
     (r.instructions === undefined || text('instructions', 10000))
   )
+    return;
+  if (r.kind === 'model' && text('path', 4096) && Number.isSafeInteger(r.index) && Number(r.index) >= 0 && Number(r.index) < 10_000)
     return;
   if (r.kind === 'preview' || r.kind === 'discard' || r.kind === 'restack-prepare' || r.kind === 'restack-continue')
     return;

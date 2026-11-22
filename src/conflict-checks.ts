@@ -16,6 +16,7 @@ import {
   SYNTAX_MAX_CHARACTERS,
   syntaxLanguage,
   type createSyntaxEngine,
+  type SyntaxDefinition,
   type SyntaxLanguage,
 } from '../lib/syntax-scope';
 import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
@@ -158,6 +159,8 @@ export interface TreeSitterFiles {
  */
 export type CheckRequest =
   | { id: number; kind?: 'check' | 'moved'; file: CheckedFile; disabled: SyntaxLanguage[] }
+  /** A text's definitions, for a conflict's enclosing definition (lib/conflict-model.ts). */
+  | { id: number; kind: 'definitions'; path: string; text: string; disabled: SyntaxLanguage[] }
   | { id: number; kind: 'noise'; files: NoiseFile[] };
 /** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
 export type NoiseFile = Pick<NoiseRequest, 'language' | 'after' | 'hunks' | 'imports'>;
@@ -165,6 +168,7 @@ export type CheckResponse =
   | { id: number; verdict?: Verdict }
   | { id: number; proposal?: ConflictProposal }
   | { id: number; noise: (NoiseAnswer | null)[] }
+  | { id: number; definitions?: SyntaxDefinition[] }
   | { id: number; error: string };
 
 interface Job {
@@ -174,7 +178,30 @@ interface Job {
   timer?: ReturnType<typeof setTimeout>;
 }
 const jobLabel = (request: CheckRequest) =>
-  request.kind === 'noise' ? `${request.files.length} files' noise comparison` : request.file.path;
+  request.kind === 'noise'
+    ? `${request.files.length} files' noise comparison`
+    : request.kind === 'definitions'
+      ? request.path
+      : request.file.path;
+
+/**
+ * A text's tree-sitter definitions, as the checks read them. A language that is off in Settings, a text over the
+ * limits, or a file Gnosis has no grammar for has none.
+ */
+export async function definitionsOf(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'definitions'>,
+  path: string,
+  text: string,
+  disabled: readonly SyntaxLanguage[] = []
+): Promise<SyntaxDefinition[] | undefined> {
+  const language = syntaxLanguage(path);
+  if (!language || disabled.includes(language) || text.length > SYNTAX_MAX_CHARACTERS) return undefined;
+  try {
+    return (await engine.definitions(language, text)).definitions;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Reduce noise's comparison of one file in the worker: change block kinds, and import nodes when asked. */
 export async function noiseAnswer(
@@ -290,6 +317,12 @@ export function createConflictCheckWorker(
     async check(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<Verdict | undefined> {
       const response = await ask(file, disabled, 'check');
       return response && 'verdict' in response ? response.verdict : undefined;
+    },
+    /** A text's definitions (definitionsOf), in the same worker, one job at a time with the checks. */
+    async definitions(path: string, text: string, disabled: SyntaxLanguage[] = []) {
+      if (disposed) return undefined;
+      const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled });
+      return response && 'definitions' in response ? response.definitions : undefined;
     },
     /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
     async moved(file: CheckedFile, disabled: SyntaxLanguage[] = []): Promise<ConflictProposal | undefined> {
