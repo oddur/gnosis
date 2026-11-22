@@ -524,6 +524,11 @@ interface HeldEdit {
   text: string;
 }
 const heldEdits = new Map<string, HeldEdit>();
+/** Suggest and Review and push read the saved draft afresh on a version another window moved on; a push never. */
+const retriesOnReload = (request: ConflictRequest, error: unknown) =>
+  (request.kind === 'resolve' || request.kind === 'preview') &&
+  error instanceof Error &&
+  error.message.includes('The saved resolution changed');
 const draftChanged = (error: unknown) => error instanceof Error && error.message.includes(FILE_DRAFT_CHANGED);
 
 function ErrorPanel({
@@ -982,9 +987,22 @@ export function ConflictWorkspace({
     let kind: ConflictRequest['kind'] | undefined;
     try {
       const saved = await persist();
-      const request = build(saved);
+      let request = build(saved);
       kind = request.kind;
-      const reply = await window.electronAPI.conflictResolution(request);
+      const typed = contentsRef.current;
+      let reply: ConflictReply;
+      try {
+        reply = await window.electronAPI.conflictResolution(request);
+      } catch (e) {
+        // Another window reopened the PR and its reopen pass moved the draft on (#452). Your edits were saved just
+        // before, so with nothing typed since, the view reads the saved draft and asks once more. Never for a push.
+        if (!retriesOnReload(request, e) || contentsRef.current !== typed) throw e;
+        const latest = await window.electronAPI.conflictResolution({ kind: 'open', url });
+        if (contentsRef.current !== typed || latest.session.stale || latest.session.status !== 'editing') throw e;
+        apply(latest, selectedRef.current);
+        request = build(latest.session);
+        reply = await window.electronAPI.conflictResolution(request);
+      }
       after(reply, request);
       return true;
     } catch (e) {

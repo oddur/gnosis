@@ -2057,8 +2057,14 @@ void app.whenReady().then(async () => {
     await js(`${block(0)}.focus()`);
     await key('Enter');
     assert.equal(await calls('preview'), previews, 'Enter alone does not open the confirmation');
+    // A second window reopened the PR and its reopen pass moved the draft on (#452): with nothing unsaved, Review and
+    // push reads the saved draft and asks once more, with no error.
+    const opensBefore = await calls('open');
+    await js('window.conflictFixture.version+=3');
     await modEnter();
-    await wait(`!!document.querySelector('.conflict-confirm') && window.conflictCalls.filter(r=>r.kind==='preview').length===${previews + 1}`);
+    await wait(`!!document.querySelector('.conflict-confirm') && window.conflictCalls.filter(r=>r.kind==='preview').length===${previews + 2}`);
+    assert.equal(await calls('open'), opensBefore + 1, 'The view read the saved draft once');
+    assert.equal(await js("!!document.querySelector('.conflict-error, [data-error]')"), false);
     await wait("document.activeElement?.classList.contains('step-card-body')");
     await modEnter();
     await key('Enter');
