@@ -1306,7 +1306,9 @@ void test('the summary says what is left: review, a local merge tool, or nothing
   // The file list and the file header show the same badge for a file Gnosis can't merge.
   const unsupported = fileStatus({ ...f, unsupported: 'rename' }, '', 'conflicted', ['decide']);
   assert.deepEqual(fileStatusParts(unsupported), [{ tone: 'unsupported', text: 'Needs a local merge tool' }]);
-  assert.match(fileStatusLine(unsupported) ?? '', /on your computer/);
+  assert.equal(fileStatusLine(unsupported), 'Gnosis can’t merge this file. Merge the PR on your computer');
+  // With several such files, the footer names them all, never "this file".
+  assert.equal(fileStatusLine(unsupported, 3), 'Gnosis can’t merge these 3 files. Merge the PR on your computer');
 });
 
 void test('a choice or an edit beside a Merged conflict is never all-Merged: it is shown before Mark reviewed', () => {

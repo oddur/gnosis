@@ -1,8 +1,8 @@
 {
-  "description": "Both sides add a different changelog entry under Unreleased. Mergiraf knows Markdown; Gnosis has no Markdown grammar to check the result.",
+  "description": "Both sides add a different changelog entry under Unreleased. Mergiraf leaves the block conflicted and Gnosis has no Markdown grammar to check a union, so no safe proposal exists: Decide.",
   "language": "markdown",
   "category": "files/no-grammar",
   "expected": {
-    "CHANGELOG.md": "check"
+    "CHANGELOG.md": "decide"
   }
 }

@@ -3,6 +3,6 @@
   "language": "python",
   "category": "files/delete-modify",
   "expected": {
-    "lab/parse.py": "decide"
+    "lab/parse.py": "local"
   }
 }
