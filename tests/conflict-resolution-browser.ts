@@ -1534,6 +1534,137 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Close');
 
+    // The conflict keyboard map (#445 item 13): A accepts, U undoes, V cycles Compare with, G shows the merged
+    // conflicts and Cmd+Enter opens Review and push…, which never pushes. None of them acts while you type.
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify(counted)}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait("document.querySelector('.conflict-files button[aria-current=true] span')?.textContent==='src/retry.ts'");
+    await checksDone();
+    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    const footerSays = () => js<string>("document.querySelector('.conflict-footer-status')?.textContent ?? ''");
+    // The legend lists every key.
+    await js("document.querySelector('[data-conflict-keys]').focus()");
+    await wait("document.querySelector('.conflict-keys')?.textContent.includes('Review and push')");
+    assert.deepEqual(
+      await js("[...document.querySelector('.conflict-keys dl').querySelectorAll('dt')].map(d=>[...d.querySelectorAll('kbd')].map(k=>k.textContent).join(' '))"),
+      [
+        'J K',
+        'A',
+        '1 2 3',
+        'U',
+        'V',
+        'G',
+        'M',
+        'N P',
+        (await js<boolean>("window.electronAPI.platform==='darwin'")) ? '⌘ ↵' : 'Ctrl ↵',
+        'Esc',
+      ]
+    );
+    // With GNOSIS_CONFLICT_SHOTS set, the legend in light and dark prints as `CONFLICTSHOT <name> <base64 PNG>`.
+    if (process.env.GNOSIS_CONFLICT_SHOTS)
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.classList.toggle('dark', ${theme === 'dark'})`);
+        await js('document.fonts.ready');
+        await new Promise((r) => setTimeout(r, 300));
+        console.log(`CONFLICTSHOT keymap-legend-${theme} ${(await win.webContents.capturePage()).toPNG().toString('base64')}`);
+      }
+    await js("document.documentElement.classList.remove('dark')");
+    await js(`${block(0)}.focus()`);
+    await wait("!document.querySelector('.conflict-keys')");
+    // A on a conflict with no proposal changes nothing and says why.
+    const draft = () => js<string>("document.querySelector('.conflict-workspace') && window.conflictFixture.files[0].result");
+    await key('a');
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    assert.match(await footerSays(), /no proposal that needs you/);
+    // U is the card's Undo: the Check proposal goes, and the conflict waits in Decide with Use the proposal.
+    await js(`${block(1)}.focus()`);
+    await key('u');
+    await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
+    assert.equal(await activeBlock(), '1', 'Undo keeps focus on the conflict');
+    // A uses the proposal, and focus moves to the next conflict that needs you: past the last, back to the first.
+    await key('a');
+    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    assert.equal(await activeBlock(), '0');
+    // Keep one side on the first; focus returns to the Check proposal. A there leaves it in Check (the file's review
+    // accepts it), and with nothing else to decide, focus goes to the next action.
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    assert.equal(await activeBlock(), '1');
+    await key('a');
+    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'check', 'Accept never makes a proposal Merged');
+    // U on a kept conflict opens it again.
+    await js(`${block(0)}.focus()`);
+    await key('u');
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await key('1');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
+    // V cycles Compare with: PR, main, both, and back to PR.
+    for (const mode of ['main', 'both', 'pr']) {
+      await key('v');
+      await wait(`document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'`);
+    }
+    // Cmd+Enter while a file needs you opens nothing.
+    await key('j');
+    await modEnter();
+    assert.equal(await calls('preview'), 0, 'Cmd+Enter waits for every file');
+    assert.equal(await js("!!document.querySelector('.conflict-confirm')"), false);
+    assert.match(await footerSays(), /still needs you/);
+    // Keys are ignored in the in-place editor: they type there, and Escape leaves it with nothing changed.
+    const before = await draft();
+    await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
+    await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
+    for (const letter of ['a', 'u', 'v', 'g', 'm']) await key(letter);
+    assert.equal(await js("document.querySelector('.conflict-compare [aria-pressed=true]')?.dataset.compare"), 'pr');
+    assert.equal(await js(`${block(0)}.dataset.state`), 'editing');
+    assert.equal(await calls('preview'), 0);
+    await key('Escape');
+    await wait(`!document.querySelector('[data-conflict-inline-edit]') && ${block(0)}?.dataset.state==='kept'`);
+    assert.equal(await draft(), before, 'Nothing typed in the editor reached the draft');
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
+    // G turns Show me every merged conflict on, never off, and focuses it; J still works from there.
+    const showMergedInput = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
+    await js(`${showMergedInput}.click()`);
+    await wait(`!${showMergedInput}.checked`);
+    await wait("['src/imports.ts','docs/notes.md'].every(p=>window.conflictFixture.files.find(f=>f.path===p).resolved)");
+    await js(`${block(0)}.focus()`);
+    await key('g');
+    await wait(`${showMergedInput}.checked && document.activeElement===${showMergedInput}`);
+    await key('g');
+    assert.equal(await js(`${showMergedInput}.checked`), true, 'G never turns it off');
+    await key('j');
+    assert.equal(await activeBlock(), '1', 'Keys work from the switch');
+    // Every file reviewed: M opens the confirmation. Back, then Cmd+Enter opens it again, and only that.
+    await key('m');
+    await wait("!!document.querySelector('.conflict-confirm')");
+    await click('Back to files');
+    await wait("!document.querySelector('.conflict-confirm') && document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='confirm'");
+    const previews = await calls('preview');
+    await js(`${block(0)}.focus()`);
+    await key('Enter');
+    assert.equal(await calls('preview'), previews, 'Enter alone does not open the confirmation');
+    await modEnter();
+    await wait(`!!document.querySelector('.conflict-confirm') && window.conflictCalls.filter(r=>r.kind==='preview').length===${previews + 1}`);
+    await wait("document.activeElement?.classList.contains('step-card-body')");
+    await modEnter();
+    await key('Enter');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await publishes(), 0, 'Cmd+Enter never pushes from the view');
+    // G in the confirmation opens Merged for you; not from the commit message field.
+    await js("document.querySelector('.conflict-confirm-message input').focus()");
+    await key('g');
+    assert.equal((await confirmGroupsShown()).merged.open, 'false', 'G types in the message field');
+    await js("document.querySelector('.conflict-confirm .step-card-body').focus()");
+    await key('g');
+    await wait("document.querySelector('[data-confirm-group=merged] .conflict-disclosure')?.getAttribute('aria-expanded')==='true' && document.activeElement===document.querySelector('[data-confirm-group=merged] .conflict-disclosure')");
+    assert.equal(await publishes(), 0);
+    await click('Back to files');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+
     // oddur/gnosis-conflict-lab #99: the PR only reformats a call and main changes one argument. Mergiraf's result is
     // checked by its syntax tree and Merged. The trap beside it: the PR also changed a token while it reformatted, so
     // its proposal stays in Check, and the header shows the same "1 to check" as the file list, not "Resolved".

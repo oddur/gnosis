@@ -37,6 +37,7 @@ import {
 } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { nextCompare } from '../lib/conflict-shortcuts';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -547,7 +548,9 @@ export function ConflictDiff({
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
+  const cycleCompare = useRef<() => boolean>(undefined);
   const { root, model, total, choose, undo, editStart, saveEdit } = useConflictChoices({
+    cycleCompare,
     onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
@@ -659,6 +662,13 @@ export function ConflictDiff({
     focusSwitch.current = false;
     root.current?.querySelector<HTMLElement>(`.conflict-compare [data-compare=${mode}]`)?.focus();
   }, [mode, root]);
+  // V steps through the modes, as a click on the switch would (lib/conflict-shortcuts.ts).
+  cycleCompare.current = hideBlocks
+    ? undefined
+    : () => {
+        switchTo(nextCompare(mode, !hasConflicts));
+        return true;
+      };
   const switcher = (
     <CompareSwitch
       value={mode}

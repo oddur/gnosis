@@ -23,7 +23,7 @@ import { RestackReview } from './RestackReview';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
+import { CONFLICT_SHORTCUTS, isReviewAndPushKey } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
@@ -183,7 +183,7 @@ function KeyboardHelp() {
                 <dt>
                   {keys.split(/\s+/).map((k) => (
                     <kbd key={k} className="kbd">
-                      {k.toUpperCase()}
+                      {k.length === 1 ? k.toUpperCase() : k}
                     </kbd>
                   ))}
                 </dt>
@@ -436,6 +436,9 @@ export function ConflictWorkspace({
   const primary = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
+  const mergedToggle = useRef<HTMLInputElement>(null);
+  // G in the confirmation: each press opens Merged for you and focuses it.
+  const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
   const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
   // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
@@ -976,6 +979,23 @@ export function ConflictWorkspace({
     []
   );
 
+  /**
+   * Cmd+Enter (#445 item 13): Review and push… opens the confirmation, as its button does. Never while a file still
+   * needs you, the open draft included, and never a push: Push takes its own click or key.
+   */
+  function reviewAndPush() {
+    const waiting = fileStates.find((s) => s.stage !== 'reviewed');
+    if (waiting) setHint(`${waiting.file.path} still needs you. Review every file before you push.`);
+    else confirm();
+  }
+  /** G: the merged conflicts. Show me every merged conflict turns on, never off, and takes focus. */
+  function showMergedConflicts() {
+    const toggle = mergedToggle.current;
+    if (!toggle) return false;
+    if (!showMerged) void setShowMergedConflicts?.(repo, true);
+    toggle.focus();
+    return true;
+  }
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     // Escape leaves the view, as it closed the dialog. Drafts save first; nothing is pushed.
     if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -985,16 +1005,32 @@ export function ConflictWorkspace({
       void close();
       return;
     }
-    if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.defaultPrevented || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
-    // The in-place editor's card is yours while it is open: no key chooses, moves or marks from there (#445 item 11).
+    // No key acts while you type: in a field, a menu, the in-place editor's card (#445 item 11) or any editable text.
+    // A checkbox is not typing.
     if (
       origin.isContentEditable ||
       origin.closest(
-        'input,textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
+        'input:not([type=checkbox]),textarea,select,[contenteditable=true],[role=menu],.conflict-suggest-menu,.conflict-block[data-state=editing]'
       )
     )
       return;
+    // In the confirmation, G opens Merged for you. Cmd+Enter there is the Push button's own key, never this view's.
+    if (confirming) {
+      if (event.key === 'g' && !event.metaKey && !event.ctrlKey && groups && !groups.pending.length) {
+        event.preventDefault();
+        setOpenMerged((n) => n + 1);
+      }
+      return;
+    }
+    if (!shortcutsActive) return;
+    if (isReviewAndPushKey(event, window.electronAPI.platform === 'darwin')) {
+      event.preventDefault();
+      if (!event.repeat) reviewAndPush();
+      return;
+    }
+    if (event.metaKey || event.ctrlKey) return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {
@@ -1014,6 +1050,24 @@ export function ConflictWorkspace({
         stepFile(key === 'n' ? 1 : -1);
         return true;
       }
+      if (key === 'a') {
+        if (!canEdit || !view.current) return false;
+        if (view.current.accept()) setHint('');
+        else
+          setHint(
+            proposalOnly
+              ? 'A accepts one conflict’s proposal. Use this result takes the whole-file proposal.'
+              : 'Nothing to accept here: this conflict has no proposal that needs you.'
+          );
+        return true;
+      }
+      if (key === 'u') {
+        if (!canEdit) return false;
+        if (view.current?.undo()) setHint('');
+        return true;
+      }
+      if (key === 'v') return !!view.current?.cycleCompare();
+      if (key === 'g') return showMergedConflicts();
       return false;
     })();
     if (handled) event.preventDefault();
@@ -1205,7 +1259,9 @@ export function ConflictWorkspace({
               {session.files.some((f) => f.proposals) && (
                 <label>
                   <input
+                    ref={mergedToggle}
                     type="checkbox"
+                    aria-keyshortcuts="G"
                     checked={showMerged}
                     disabled={!setShowMergedConflicts}
                     onChange={(e) => void setShowMergedConflicts?.(repo, e.target.checked)}
@@ -1526,6 +1582,7 @@ export function ConflictWorkspace({
                   labels={labels}
                   verdictOf={verdictOf}
                   preferences={preferences}
+                  openMerged={openMerged}
                 />
               )}
             </StepCard>
@@ -1994,6 +2051,7 @@ function ConfirmDiff({
   labels,
   verdictOf,
   preferences,
+  openMerged = 0,
 }: {
   session: ConflictSession;
   preview: NonNullable<ConflictReply['preview']>;
@@ -2001,10 +2059,20 @@ function ConfirmDiff({
   labels: ConflictLabels;
   verdictOf: (f: ConflictFile) => Verdict | undefined;
   preferences?: Preferences | null;
+  /** Counts G presses: each opens Merged for you and focuses its heading. */
+  openMerged?: number;
 }) {
   const clean = !session.files.length;
   // A clean merge has only main's changes: that group opens.
   const [open, setOpen] = useState({ decided: true, merged: false, main: clean });
+  const root = useRef<HTMLDivElement>(null);
+  const pressed = useRef(openMerged);
+  useEffect(() => {
+    if (openMerged === pressed.current) return;
+    pressed.current = openMerged;
+    setOpen((previous) => ({ ...previous, merged: true }));
+    root.current?.querySelector<HTMLElement>('[data-confirm-group=merged] .conflict-disclosure')?.focus();
+  }, [openMerged]);
   const toggle = (id: keyof typeof open) => setOpen((previous) => ({ ...previous, [id]: !previous[id] }));
   const verdict = (path: string) => {
     const f = session.files.find((file) => file.path === path);
@@ -2037,7 +2105,7 @@ function ConfirmDiff({
     />
   );
   return (
-    <div className="conflict-confirm-diff">
+    <div ref={root} className="conflict-confirm-diff">
       {!clean && (
         <ConfirmSection
           id="decided"
