@@ -47,7 +47,7 @@ export function ConflictStatsSettings() {
               </>
             )}
           </p>
-          <table className="sync-health-table conflict-stats-table" aria-label="Conflicts by bucket">
+          <table className="conflict-stats-table" aria-label="Conflicts by bucket">
             <thead>
               <tr>
                 <th scope="col">Bucket</th>
