@@ -1,4 +1,4 @@
-import { changeBlocks, NOISE_MAX_CHARACTERS, patchHunks, type NoiseKind } from './semantic-noise';
+import { changeBlocks, NOISE_MAX_CHARACTERS, patchHunks, type NoiseBlock, type NoiseKind } from './semantic-noise';
 import { syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
 import { importBindings, type ImportNode } from './import-nodes';
 import {
@@ -151,6 +151,25 @@ export interface FileImports {
 /** The path a Rust or Java binding sits in: everything before its last segment. */
 const parentOf = (source: string, separator: string) => source.slice(0, Math.max(0, source.lastIndexOf(separator)));
 
+/** What the old file imports and names, read once per file: a file's hunks each ask (Quiet changes asks for hundreds). */
+const oldFiles = new WeakMap<FileImports, { language: SyntaxLanguage; text: string; value: ReturnType<typeof readOldFile> }>();
+function oldFile(language: SyntaxLanguage, imports: FileImports, beforeText: string) {
+  const known = oldFiles.get(imports);
+  if (known && known.language === language && known.text === beforeText) return known.value;
+  const value = readOldFile(language, imports, beforeText);
+  oldFiles.set(imports, { language, text: beforeText, value });
+  return value;
+}
+function readOldFile(language: SyntaxLanguage, imports: FileImports, beforeText: string) {
+  const oldBindings = imports.before.map((node) => importBindings(language, node.text));
+  return {
+    oldModules: new Set(oldBindings.map((b) => b.module).filter((m): m is string => !!m)),
+    oldPairs: new Set(oldBindings.flatMap((b) => b.pairs.map(([local, source]) => `${local}\n${source}`))),
+    oldParents: new Set(oldBindings.flatMap((b) => b.pairs.map(([, source]) => parentOf(source, language === 'rust' ? '::' : '.')))),
+    words: new Set(beforeText.match(/[\p{L}_$][\p{L}\p{N}_$]*/gu) ?? []),
+  };
+}
+
 /**
  * Whether `hunk` only widens imports the file already has, the one import change the rule can prove harmless: every
  * changed line is an addition lying alone in an import node, and each added binding is a plain name, new to the file
@@ -175,13 +194,7 @@ export function importOnlyHunk(
     touched.add(covering.reduce((a, b) => (b.endRow - b.startRow < a.endRow - a.startRow ? b : a)));
   }
   if (!touched.size) return false;
-  const oldBindings = imports.before.map((node) => importBindings(language, node.text));
-  const oldModules = new Set(oldBindings.map((b) => b.module).filter((m): m is string => !!m));
-  const oldPairs = new Set(oldBindings.flatMap((b) => b.pairs.map(([local, source]) => `${local}\n${source}`)));
-  const oldParents = new Set(
-    oldBindings.flatMap((b) => b.pairs.map(([, source]) => parentOf(source, language === 'rust' ? '::' : '.')))
-  );
-  const words = new Set(beforeText.match(/[\p{L}_$][\p{L}\p{N}_$]*/gu) ?? []);
+  const { oldModules, oldPairs, oldParents, words } = oldFile(language, imports, beforeText);
   let added = 0;
   for (const node of touched) {
     const { module, pairs } = importBindings(language, node.text);
@@ -210,6 +223,72 @@ export function importOnlyHunk(
     }
   }
   return added > 0;
+}
+
+/** A hunk as the noise comparison reads it (lib/semantic-noise.ts): starts already moved past a side with no lines. */
+interface RowHunk {
+  oldStart: number;
+  newStart: number;
+  rows: readonly { type: ' ' | '+' | '-'; text: string }[];
+}
+/** The hunk in diff form, for importOnlyHunk: a side with no lines names the line before it, as GitHub writes it. */
+function diffHunk(path: string, hunk: RowHunk): Hunk {
+  const oldCount = hunk.rows.filter((row) => row.type !== '+').length;
+  const newCount = hunk.rows.filter((row) => row.type !== '-').length;
+  const start = (line: number, count: number) => (count ? line : line - 1);
+  return {
+    id: '',
+    filePath: path,
+    fileStatus: 'modified',
+    hunkHeader: `@@ -${start(hunk.oldStart, oldCount)},${oldCount} +${start(hunk.newStart, newCount)},${newCount} @@`,
+    content: hunk.rows.map((row) => row.type + row.text).join('\n'),
+  };
+}
+
+/** Whether any of a modified file's hunks passes the import pre-filter: only then are its import nodes read. */
+export const importCandidates = (path: string, hunks: readonly RowHunk[]) => hunks.some((hunk) => importCandidate(diffHunk(path, hunk)));
+
+/**
+ * Quiet changes' Imports (#396), by the rule above: each code block of a hunk that only widens imports becomes
+ * `imports`. `hunks` are a modified file's, in order, as `blocks` were classified from them; `before` is the file's
+ * old text. Blocks that do not line up with the hunks, a file with no import nodes, and any other hunk stay as they are.
+ */
+export function importBlocks(
+  path: string,
+  hunks: readonly RowHunk[],
+  blocks: readonly NoiseBlock[],
+  imports: FileImports | undefined,
+  before: string | undefined
+): NoiseBlock[] {
+  const counts = hunks.map((hunk) => changeBlocks([hunk]).length);
+  if (!imports || before === undefined || counts.reduce((a, b) => a + b, 0) !== blocks.length) return [...blocks];
+  const result = [...blocks];
+  let at = 0;
+  hunks.forEach((hunk, i) => {
+    if (importOnlyHunk(diffHunk(path, hunk), imports, before))
+      for (let k = at; k < at + counts[i]; k++) if (result[k].kind === 'code') result[k] = { ...result[k], kind: 'imports' };
+    at += counts[i];
+  });
+  return result;
+}
+
+/**
+ * A noise comparison's blocks with the rule applied, as the syntax worker answers Changes and Explanation diffs. Whole
+ * hunks rebuild the old text, so its import nodes come from the comparison's trees. A topic's few hunks cannot: its
+ * old text comes from the view and is parsed here, and without it nothing changes.
+ */
+export async function withImportBlocks(
+  engine: { imports(language: SyntaxLanguage, text: string): Promise<ImportNode[] | undefined> },
+  language: SyntaxLanguage,
+  request: { path: string; before?: string },
+  hunks: readonly RowHunk[],
+  result: { blocks: NoiseBlock[]; imports?: FileImports & { beforeText: string } }
+): Promise<NoiseBlock[]> {
+  const found = result.imports;
+  if (!found) return result.blocks;
+  if (request.before === undefined) return importBlocks(request.path, hunks, result.blocks, found, found.beforeText);
+  const before = await engine.imports(language, request.before).catch(() => undefined);
+  return importBlocks(request.path, hunks, result.blocks, before && { before, after: found.after }, request.before);
 }
 
 // ── Rules: comments a tool reads ────────────────────────────────
@@ -321,7 +400,7 @@ export function classifiedNoise(requests: readonly NoiseRequest[], answers: read
 export type ClassifiedNoise = ReturnType<typeof classifiedNoise>;
 /** The reason a hunk is quiet, or undefined when any of its blocks is code. */
 export function quietReason(kinds: readonly NoiseKind[] | undefined): string | undefined {
-  if (!kinds?.length || kinds.some((kind) => kind === 'code')) return undefined;
+  if (!kinds?.length || kinds.some((kind) => kind === 'code' || kind === 'imports')) return undefined;
   if (kinds.every((kind) => kind === 'whitespace')) return 'whitespace';
   if (kinds.every((kind) => kind === 'whitespace' || kind === 'formatting')) return 'formatting';
   if (kinds.every((kind) => kind === 'comments')) return 'comments only';

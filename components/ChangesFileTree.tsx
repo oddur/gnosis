@@ -21,6 +21,7 @@ const TREE_WORDS: Record<string, string> = {
   'Formatting only': 'Format',
   Reformatted: 'Format',
   'Comments only': 'Comments',
+  'Imports only': 'Imports',
 };
 export interface ChangeTreeEntry {
   key: string;
@@ -104,7 +105,7 @@ export function ChangesFileTree({
               ]
             : []),
         ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: the code’s syntax is the same on both sides` : ''}${showCommentCount ? `. ${comments}` : ''}`,
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}${entry.quiet === 'Imports only' ? ': names from modules the file already imports' : ': the code’s syntax is the same on both sides'}` : ''}${showCommentCount ? `. ${comments}` : ''}`,
       };
     },
   });

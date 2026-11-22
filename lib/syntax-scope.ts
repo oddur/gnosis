@@ -879,7 +879,9 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       after: string,
       hunks: Parameters<typeof classifyNoise>[3],
       /** Also fingerprint the file's moved-symbol candidates, from the same two trees (lib/moved-symbols.ts). */
-      withSymbols = false
+      withSymbols = false,
+      /** Also read both sides' import nodes from the same two trees (lib/import-nodes.ts), for Quiet changes' Imports. */
+      withImports = false
     ): Promise<NoiseResult> {
       const loading = !languages.has(id);
       const t0 = performance.now();
@@ -889,13 +891,19 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       parser.setLanguage(language);
       let symbols: FilePrints | undefined;
       let symbolsError: string | undefined;
+      let imports: NoiseResult['imports'];
       const blocks = classifyNoise(
         { parse: (text, previous) => parse(text, previous) },
         id,
         after,
         hunks,
-        withSymbols
+        withSymbols || withImports
           ? (texts, beforeTree, afterTree) => {
+              if (withImports && beforeTree && afterTree) {
+                const nodes = { before: importNodes(beforeTree, id, texts.before), after: importNodes(afterTree, id, texts.after) };
+                if (nodes.before && nodes.after) imports = { before: nodes.before, after: nodes.after, beforeText: texts.before };
+              }
+              if (!withSymbols) return;
               try {
                 if (!beforeTree || !afterTree) throw Error('The file did not parse');
                 const sides = symbolSidesOf(texts);
@@ -914,7 +922,7 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       // No change blocks: nothing parsed, and nothing moved.
       if (withSymbols && !symbols && !blocks.length) symbols = { before: [], after: [] };
       if (withSymbols && !symbols) symbolsError ??= 'The file does not match its diff';
-      return { blocks, symbols, symbolsError, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
+      return { blocks, symbols, symbolsError, imports, classify: performance.now() - t1, ...(loading ? { load: t1 - t0 } : {}) };
     },
     /**
      * Moved and renamed symbols (lib/moved-symbols.ts): the fingerprints of a file's candidates, the definitions most
@@ -1048,6 +1056,8 @@ export interface NoiseResult {
   symbols?: FilePrints;
   /** Why the candidates were asked for and not found; the blocks stand regardless. */
   symbolsError?: string;
+  /** Both sides' import nodes and the old text, when asked for and both sides parse without errors. */
+  imports?: { before: ImportNode[]; after: ImportNode[]; beforeText: string };
   /** Milliseconds parsing both sides and comparing them; `load` is grammar loading, when this call loaded it. */
   classify: number;
   load?: number;

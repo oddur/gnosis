@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react';
-import { Brush, Pilcrow, SquareSlash } from 'lucide-react';
+import { Brush, Import, Pilcrow, SquareSlash } from 'lucide-react';
 import type { QuietHeader } from '../lib/quiet-changes-header';
 import { DiffStats } from './DiffStats';
 import { FileTypeIcon } from './FileTypeIcon';
@@ -117,8 +117,8 @@ export function FilePath({ path, old }: { path: string; old?: boolean }) {
   );
 }
 
-/** A quiet change's icon, beside its words: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
+/** A quiet change’s icon, beside its words: a pilcrow for whitespace, a brush for formatting, a slash for comments, an arrow in for imports. */
 function QuietIcon({ kind }: { kind: QuietHeader['kind'] }) {
-  const Icon = kind === 'comments' ? SquareSlash : kind === 'formatting' ? Brush : Pilcrow;
+  const Icon = kind === 'comments' ? SquareSlash : kind === 'formatting' ? Brush : kind === 'imports' ? Import : Pilcrow;
   return <Icon size={12} aria-hidden="true" />;
 }

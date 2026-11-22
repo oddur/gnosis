@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { DEFAULT_DIFF_APPEARANCE, noiseFilterOf, toggledQuietChanges, type QuietToggles } from './review-diff';
+import { noiseFilterOn } from './semantic-noise';
 import { publishDiffAppearance, currentDiffAppearance } from './use-diff-appearance';
 import { keepDiffLineInView } from './diff-layout';
 import { useKeyboardShortcuts } from './use-keyboard-shortcuts';
@@ -9,7 +10,7 @@ import { workspaceSections } from './interface-icons';
 import { toast } from '../components/ui/toast';
 
 /**
- * Quiet changes (#396), across every diff: the three toggles of Diff appearance, and `w`, which shows or hides them all
+ * Quiet changes (#396), across every diff: the toggles of Diff appearance, and `w`, which shows or hides them all
  * at once. `w` is free in every view's keymap today and in the one #406 proposes for diffs; it reads as "whitespace".
  */
 export const QUIET_CHANGES_KEY = 'w';
@@ -54,10 +55,10 @@ function toggle() {
   const appearance = currentDiffAppearance();
   const next = toggledQuietChanges(appearance, remembered);
   const filter = noiseFilterOf(appearance);
-  if (filter.whitespace || filter.formatting || filter.comments)
-    remembered = { hideWhitespace: filter.whitespace, hideFormatting: filter.formatting, hideComments: filter.comments };
+  if (noiseFilterOn(filter))
+    remembered = { hideWhitespace: filter.whitespace, hideFormatting: filter.formatting, hideComments: filter.comments, hideImports: filter.imports };
   saveQuietChanges(next);
-  const on = !!(next.hideWhitespace || next.hideFormatting || next.hideComments);
+  const on = noiseFilterOn(noiseFilterOf(next));
   toast.add({ title: on ? 'Quiet changes hidden' : 'Quiet changes shown', description: `Press ${QUIET_CHANGES_KEY} to ${on ? 'show' : 'hide'} them.` });
 }
 
@@ -86,7 +87,7 @@ export function useQuietChangesShortcut() {
                 label: 'Show or hide quiet changes',
                 hint: QUIET_CHANGES_KEY,
                 group: 'Diff',
-                keywords: 'whitespace formatting comments noise quiet hide filter',
+                keywords: 'whitespace formatting comments imports noise quiet hide filter',
                 perform: toggle,
               },
             ]

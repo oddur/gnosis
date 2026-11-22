@@ -23,6 +23,7 @@ export function useSemanticNoise({
   enabled,
   priority,
   whole,
+  imports,
 }: {
   fileKey: string;
   url: string;
@@ -34,6 +35,8 @@ export function useSemanticNoise({
   priority: RefObject<SyntaxPriority>;
   /** The hunks are the file's whole diff, not an Explanation topic's few. */
   whole: boolean;
+  /** A modified file's path, and its old text for a topic's few hunks: hunks that only widen imports compare as such. */
+  imports?: { path: string; before?: string };
 }): { blocks?: readonly NoiseBlock[]; kinds: ReadonlyMap<string, NoiseKind>; key?: string; pending: boolean } {
   const language = enabled && after !== undefined && hunks?.length ? syntaxLanguage(path) : undefined;
   const key = language && hunks ? noiseKey(fileKey, hunks) : undefined;
@@ -42,7 +45,7 @@ export function useSemanticNoise({
     if (!key || !language || after === undefined || !hunks) return;
     let cancelled = false;
     let show = () => {};
-    void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current, whole })
+    void readNoise({ fileKey, url, language, text: after, hunks, priority: priority.current, whole, imports })
       .catch(() => undefined)
       .then((blocks) => {
         // A comparison that lands while the reader scrolls renders once the scroll stops: it may fold hunks.
@@ -67,7 +70,7 @@ export interface QuietFile {
   /** Hidden lines, and lines that show. */
   hidden: number;
   shown: number;
-  lines: { whitespace: number; formatting: number; comments: number };
+  lines: { whitespace: number; formatting: number; comments: number; imports: number };
 }
 /** A list of files as the filter sees it: each compared file, and the totals over them. */
 export interface QuietSummary {
@@ -78,7 +81,7 @@ export interface QuietSummary {
   quiet: number;
   /** Files with some hidden lines. */
   touched: number;
-  lines: { whitespace: number; formatting: number; comments: number };
+  lines: { whitespace: number; formatting: number; comments: number; imports: number };
   /** Lines that show, in compared files. */
   shown: number;
 }
@@ -87,7 +90,8 @@ export interface QuietSummary {
  * would each make every list of files go through its files again, in the frames of the scroll.
  */
 const settledNoise = settledSubscription(onNoise, whenSettled);
-const EMPTY: QuietSummary = { files: new Map(), compared: 0, quiet: 0, touched: 0, lines: { whitespace: 0, formatting: 0, comments: 0 }, shown: 0 };
+const NO_LINES = { whitespace: 0, formatting: 0, comments: 0, imports: 0 };
+const EMPTY: QuietSummary = { files: new Map(), compared: 0, quiet: 0, touched: 0, lines: NO_LINES, shown: 0 };
 const SEP = '\u0000';
 
 /**
@@ -107,7 +111,7 @@ export function useQuietSummary(
       if (!blocks) continue;
       const noise = fileNoise(blocks, filter);
       const label = noise.all ? (noise.reformatted ? 'Reformatted' : noiseLabel(noise.kinds)) : '';
-      rows.push([entry.key, label, noise.lines.whitespace, noise.lines.formatting, noise.lines.comments, noise.shown].join(SEP));
+      rows.push([entry.key, label, noise.lines.whitespace, noise.lines.formatting, noise.lines.comments, noise.lines.imports, noise.shown].join(SEP));
     }
     return rows.join('\n');
   };
@@ -115,11 +119,11 @@ export function useQuietSummary(
   return useMemo(() => {
     if (!rowsText) return EMPTY;
     const map = new Map<string, QuietFile>();
-    const summary = { compared: 0, quiet: 0, touched: 0, lines: { whitespace: 0, formatting: 0, comments: 0 }, shown: 0 };
+    const summary = { compared: 0, quiet: 0, touched: 0, lines: { ...NO_LINES }, shown: 0 };
     for (const row of rowsText.split('\n')) {
-      const [key, label, whitespace, formatting, comments, shown] = row.split(SEP);
-      const lines = { whitespace: Number(whitespace), formatting: Number(formatting), comments: Number(comments) };
-      const hiddenLines = lines.whitespace + lines.formatting + lines.comments;
+      const [key, label, whitespace, formatting, comments, imports, shown] = row.split(SEP);
+      const lines = { whitespace: Number(whitespace), formatting: Number(formatting), comments: Number(comments), imports: Number(imports) };
+      const hiddenLines = lines.whitespace + lines.formatting + lines.comments + lines.imports;
       map.set(key, { label: label || undefined, hidden: hiddenLines, shown: Number(shown), lines });
       summary.compared++;
       if (label) summary.quiet++;
@@ -127,6 +131,7 @@ export function useQuietSummary(
       summary.lines.whitespace += lines.whitespace;
       summary.lines.formatting += lines.formatting;
       summary.lines.comments += lines.comments;
+      summary.lines.imports += lines.imports;
       summary.shown += Number(shown);
     }
     return { files: map, ...summary };

@@ -311,6 +311,26 @@ if (new URLSearchParams(location.search).has('noise-filter')) {
     mermaidDiagram: undefined,
     d2Diagram: undefined,
   };
+  // The second topic shows imports.ts's two import hunks and not its code hunk: a topic's few hunks, whose old text
+  // comes from the file, quiet the same import as Changes.
+  const imports = noiseFilterFiles.find((f) => f.path === NOISE_FILES.imports);
+  const importsPath = prefix + NOISE_FILES.imports;
+  review.changedFiles.push({ filename: importsPath, status: 'modified', additions: imports?.additions ?? 0, deletions: imports?.deletions ?? 0 });
+  review.slides[1] = {
+    ...review.slides[0],
+    id: 'slide-2',
+    slideNumber: 2,
+    title: 'Format sizes',
+    narrative: 'Sizes are formatted with the units helper.',
+    affectedFiles: [importsPath],
+    diffHunks: (imports?.patch ?? '')
+      .split(/\n(?=@@)/)
+      .slice(0, 2)
+      .map((hunk) => {
+        const [header, ...body] = hunk.split('\n');
+        return { filePath: importsPath, language: 'typescript', renderedHtml: '', hunkHeader: header, content: body.join('\n') };
+      }),
+  };
 }
 // Moved symbols in a slide (#398, tests/moved-symbols-browser.ts): the first topic shows queue.ts whole and only the
 // first two of store.ts's three hunks. The topic's file has the PR's revision key but some of its patch: moves are

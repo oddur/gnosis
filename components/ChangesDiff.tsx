@@ -28,7 +28,8 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { ArrowRightLeft, Brush, Pilcrow, SquareSlash } from 'lucide-react';
+import { ArrowRightLeft, Brush, Import, Pilcrow, SquareSlash } from 'lucide-react';
+import { quietKind } from '../lib/quiet-changes-header';
 import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
 import type { MoveMark } from '../lib/moved-symbols-store';
@@ -1047,10 +1048,10 @@ function MoveNote({ mark, words, onGo, lead }: { mark: MoveMark; words: MoveWord
   );
 }
 
-/** A quiet run's icon: a pilcrow for whitespace, a brush for formatting, a slash for comments. */
+/** A quiet run’s icon: a pilcrow for whitespace, a brush for formatting, a slash for comments, an arrow in for imports. */
 function NoiseIcon({ kinds }: { kinds: readonly NoiseKind[] }) {
-  const label = noiseLabel(kinds);
-  const Icon = label === 'Comments only' ? SquareSlash : label.startsWith('Formatting') ? Brush : Pilcrow;
+  const kind = quietKind(noiseLabel(kinds));
+  const Icon = kind === 'comments' ? SquareSlash : kind === 'formatting' ? Brush : kind === 'imports' ? Import : Pilcrow;
   return <Icon className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />;
 }
 
@@ -1396,7 +1397,7 @@ export function ChangesDiff<A>({
     });
     cache.current = next;
     return result;
-  }, [parts, file.name, file.prevName, file.status, quietKinds, noise?.filter.whitespace, noise?.filter.formatting, noise?.filter.comments]);
+  }, [parts, file.name, file.prevName, file.status, quietKinds, noise?.filter.whitespace, noise?.filter.formatting, noise?.filter.comments, noise?.filter.imports]);
   // Quiet lines in hunks that also change code: dimmed, not hidden.
   const noiseLines = useMemo(() => {
     const result = new Set<string>();

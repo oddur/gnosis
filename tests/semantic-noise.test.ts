@@ -410,7 +410,7 @@ void describe('semantic noise helpers', () => {
     assert.deepEqual(texts, { before: 'a\nb\nc\n', after: 'a\nB\nc\n', blocks: [{ oldRow: 1, oldCount: 1, newRow: 1, newCount: 1 }] });
   });
   void test('each kind hides by its own toggle; formatting hides whitespace too; mixed kinds need both toggles', () => {
-    const f = (whitespace: boolean, formatting: boolean, comments: boolean) => ({ whitespace, formatting, comments });
+    const f = (whitespace: boolean, formatting: boolean, comments: boolean) => ({ whitespace, formatting, comments, imports: false });
     assert.equal(hidden('whitespace', f(true, false, false)), true);
     assert.equal(hidden('whitespace', f(false, true, false)), true, 'Formatting includes whitespace');
     assert.equal(hidden('formatting', f(true, false, false)), false, 'Whitespace does not include formatting');
@@ -440,7 +440,7 @@ void describe('semantic noise helpers', () => {
       [blockKey({ oldStart: 1, newStart: 1 }), 'formatting'],
       [blockKey({ oldStart: 3, newStart: 3 }), 'code'],
     ]);
-    const filter = { whitespace: false, formatting: true, comments: false };
+    const filter = { whitespace: false, formatting: true, comments: false, imports: false };
     const mixed = hunkNoise(hunk, both, filter);
     assert.equal(mixed.hidden, false);
     assert.deepEqual(mixed.lines, [
@@ -459,7 +459,7 @@ void describe('semantic noise helpers', () => {
     assert.equal(noiseLabel(['formatting', 'comments']), 'Formatting and comments');
     assert.equal(noiseLabel(['whitespace-comments']), 'Whitespace and comments');
     assert.equal(noiseLabel(['formatting-comments', 'whitespace']), 'Formatting and comments');
-    const all = { whitespace: true, formatting: true, comments: true };
+    const all = { whitespace: true, formatting: true, comments: true, imports: true };
     const blocks = [
       { oldStart: 1, oldCount: 2, newStart: 1, newCount: 3, kind: 'formatting' as const },
       { oldStart: 5, oldCount: 1, newStart: 6, newCount: 1, kind: 'whitespace' as const },
@@ -478,19 +478,44 @@ void describe('semantic noise helpers', () => {
   });
 });
 
+void describe('quiet changes: imports', () => {
+  void test('imports hide only by their own toggle, and are never layout or comments', () => {
+    const f = (imports: boolean) => ({ whitespace: true, formatting: true, comments: true, imports });
+    assert.equal(hidden('imports', f(false)), false, 'Every other toggle on does not hide imports');
+    assert.equal(hidden('imports', { whitespace: false, formatting: false, comments: false, imports: true }), true);
+    assert.equal(noiseLabel(['imports']), 'Imports only');
+    assert.equal(noiseLabel(['formatting', 'imports']), 'Formatting and imports');
+    assert.equal(noiseLabel(['whitespace-comments', 'imports']), 'Whitespace, comments and imports');
+    const blocks = [
+      { oldStart: 1, oldCount: 0, newStart: 1, newCount: 2, kind: 'imports' as const },
+      { oldStart: 9, oldCount: 1, newStart: 11, newCount: 1, kind: 'whitespace' as const },
+    ];
+    const noise = fileNoise(blocks, f(true));
+    assert.deepEqual(noise.lines, { whitespace: 2, formatting: 0, comments: 0, imports: 2 });
+    assert.equal(noise.reformatted, false, 'Imports are not a formatter run');
+    assert.equal(noiseStat(noise), '2 whitespace · 2 imports');
+    assert.equal(quietHeader(fileNoise(blocks.slice(0, 1), f(true)), 2, 0).text, 'Imports only');
+    assert.equal(quietHeader(fileNoise(blocks.slice(0, 1), f(true)), 2, 0).kind, 'imports');
+    assert.equal(fileNoise(blocks, f(false)).shown, 2, 'With the toggle off, the import lines show');
+  });
+});
+
 void describe('quiet changes settings and words', () => {
   void test('saved preferences from before formatting had its own toggle keep hiding what they hid', () => {
-    assert.deepEqual(noiseFilterOf(undefined), { whitespace: true, formatting: true, comments: false }, 'Defaults');
-    assert.deepEqual(noiseFilterOf({ hideWhitespace: false }), { whitespace: false, formatting: false, comments: false }, 'Whitespace off meant formatting off');
-    assert.deepEqual(noiseFilterOf({ hideWhitespace: true, hideComments: true }), { whitespace: true, formatting: true, comments: true });
-    assert.deepEqual(noiseFilterOf({ hideWhitespace: true, hideFormatting: false }), { whitespace: true, formatting: false, comments: false });
+    assert.deepEqual(noiseFilterOf(undefined), { whitespace: true, formatting: true, comments: false, imports: false }, 'Defaults: imports shown');
+    assert.deepEqual(noiseFilterOf({ hideWhitespace: false }), { whitespace: false, formatting: false, comments: false, imports: false }, 'Whitespace off meant formatting off');
+    assert.deepEqual(noiseFilterOf({ hideWhitespace: true, hideComments: true }), { whitespace: true, formatting: true, comments: true, imports: false });
+    assert.deepEqual(noiseFilterOf({ hideWhitespace: true, hideFormatting: false }), { whitespace: true, formatting: false, comments: false, imports: false });
+    assert.deepEqual(noiseFilterOf({ hideWhitespace: false, hideImports: true }), { whitespace: false, formatting: false, comments: false, imports: true });
   });
   void test('w hides or shows every quiet change, and brings back the reader’s own choice', () => {
     const base = { ...DEFAULT_DIFF_APPEARANCE };
-    assert.deepEqual(toggledQuietChanges(base), { hideWhitespace: false, hideFormatting: false, hideComments: false });
-    const off = { ...base, hideWhitespace: false, hideFormatting: false, hideComments: false };
-    assert.deepEqual(toggledQuietChanges(off), { hideWhitespace: true, hideFormatting: true, hideComments: false }, 'Defaults');
+    const none = { hideWhitespace: false, hideFormatting: false, hideComments: false, hideImports: false };
+    assert.deepEqual(toggledQuietChanges(base), none);
+    const off = { ...base, ...none };
+    assert.deepEqual(toggledQuietChanges(off), { hideWhitespace: true, hideFormatting: true, hideComments: false, hideImports: false }, 'Defaults');
     assert.deepEqual(toggledQuietChanges(off, { hideWhitespace: true, hideFormatting: false, hideComments: true }), { hideWhitespace: true, hideFormatting: false, hideComments: true });
+    assert.deepEqual(toggledQuietChanges({ ...off, hideImports: true }), none, 'Imports alone count as on');
   });
   void test('number spelling reduces to the value only where the language makes it the same', () => {
     assert.equal(numberText('typescript', '1_000'), numberText('typescript', '1000'));
@@ -502,7 +527,7 @@ void describe('quiet changes settings and words', () => {
     assert.notEqual(numberText('rust', '1.50'), numberText('rust', '1.5'), 'Only JavaScript reduces to the value');
   });
   void test('a file header names a whole quiet file, or gives the code’s own counts first', () => {
-    const all = { whitespace: true, formatting: true, comments: true };
+    const all = { whitespace: true, formatting: true, comments: true, imports: true };
     const run = Array.from({ length: 4 }, (_, i) => ({ oldStart: i * 10 + 1, oldCount: 1, newStart: i * 10 + 1, newCount: 1, kind: 'formatting' as const }));
     assert.equal(quietHeader(fileNoise(run, all), 4, 4).text, 'Reformatted');
     const one = [{ oldStart: 1, oldCount: 1, newStart: 1, newCount: 1, kind: 'whitespace' as const }];

@@ -13,6 +13,8 @@ import type { SyntaxLanguage } from './syntax-scope';
  * - `comments` when the code is the same as written and only comments differ (doc comments too), at the same layout;
  * - `whitespace-comments` and `formatting-comments` when comments differ along with whitespace or formatting;
  * - `code` otherwise, and whenever the comparison is in doubt.
+ * - `imports` only when the caller asks for it, in place of `code`: a block of a hunk that only widens imports the
+ *   file already has, by Reduce noise's rule (importOnlyHunk, lib/explanation-noise.ts).
  *
  * The comparison is structural: each tree is read as a sequence of events (a node opens, a token, the node closes),
  * with comments left out, once with the equivalences and once as written. Comparing structure as well as tokens is
@@ -46,7 +48,7 @@ import type { SyntaxLanguage } from './syntax-scope';
  *
  * scripts/noise-audit.ts checks these on real code: formatter output must be quiet, and mutations must be code.
  */
-export type NoiseKind = 'whitespace' | 'formatting' | 'comments' | 'whitespace-comments' | 'formatting-comments' | 'code';
+export type NoiseKind = 'whitespace' | 'formatting' | 'comments' | 'whitespace-comments' | 'formatting-comments' | 'imports' | 'code';
 
 /** A run of changed lines. Starts are 1-based line numbers; a side with no lines names the line its change sits before. */
 export interface ChangeBlock {
@@ -1140,13 +1142,17 @@ export interface NoiseFilter {
   whitespace: boolean;
   formatting: boolean;
   comments: boolean;
+  /** Hunks that only add names from modules the file already imports. */
+  imports: boolean;
 }
-export const NO_NOISE_FILTER: NoiseFilter = { whitespace: false, formatting: false, comments: false };
-export const noiseFilterOn = (filter: NoiseFilter) => filter.whitespace || filter.formatting || filter.comments;
+export const NO_NOISE_FILTER: NoiseFilter = { whitespace: false, formatting: false, comments: false, imports: false };
+export const noiseFilterOn = (filter: NoiseFilter) => filter.whitespace || filter.formatting || filter.comments || filter.imports;
 
-/** The parts of a kind: its code's layout or spelling (whitespace or formatting), and comments. */
-function parts(kind: NoiseKind): { layout?: 'whitespace' | 'formatting'; comments: boolean } {
+/** The parts of a kind: its code's layout or spelling (whitespace or formatting), comments, and imports. */
+function parts(kind: NoiseKind): { layout?: 'whitespace' | 'formatting'; comments: boolean; imports?: boolean } {
   switch (kind) {
+    case 'imports':
+      return { comments: false, imports: true };
     case 'whitespace':
       return { layout: 'whitespace', comments: false };
     case 'formatting':
@@ -1165,28 +1171,34 @@ function parts(kind: NoiseKind): { layout?: 'whitespace' | 'formatting'; comment
 /** Whether the filter hides a block of this kind: a mixed kind only when the filter hides each of its parts. */
 export function hidden(kind: NoiseKind | undefined, filter: NoiseFilter): boolean {
   if (!kind || kind === 'code') return false;
+  if (kind === 'imports') return filter.imports;
   const { layout, comments } = parts(kind);
   const layoutHidden = !layout || (layout === 'whitespace' ? filter.whitespace || filter.formatting : filter.formatting);
   return layoutHidden && (!comments || filter.comments);
 }
 
 /**
- * A hidden run's label: "Whitespace only", "Formatting only", "Comments only", or with comments, "Whitespace and
- * comments" and "Formatting and comments". Formatting includes whitespace, so a run of both is formatting.
+ * A hidden run's label: "Whitespace only", "Formatting only", "Comments only", "Imports only", or the parts together,
+ * "Formatting and comments", "Whitespace, comments and imports". Formatting includes whitespace, so a run of both is
+ * formatting.
  */
 export function noiseLabel(kinds: Iterable<NoiseKind>): string {
   let whitespace = false,
     formatting = false,
-    comments = false;
+    comments = false,
+    imports = false;
   for (const kind of kinds) {
     const p = parts(kind);
     if (p.layout === 'whitespace') whitespace = true;
     if (p.layout === 'formatting') formatting = true;
     if (p.comments) comments = true;
+    if (p.imports) imports = true;
   }
-  const layout = formatting ? 'Formatting' : whitespace ? 'Whitespace' : '';
-  if (!layout) return 'Comments only';
-  return comments ? `${layout} and comments` : `${layout} only`;
+  const words = [formatting ? 'Formatting' : whitespace ? 'Whitespace' : '', comments ? 'comments' : '', imports ? 'imports' : ''].filter(Boolean);
+  if (!words.length) return 'Comments only';
+  const first = words[0][0].toUpperCase() + words[0].slice(1);
+  if (words.length === 1) return `${first} only`;
+  return `${[first, ...words.slice(1, -1)].join(', ')} and ${words.at(-1)}`;
 }
 /** Whether a run is comments alone, for its icon. */
 export const commentsOnly = (kinds: Iterable<NoiseKind>) => noiseLabel(kinds) === 'Comments only';
@@ -1234,7 +1246,7 @@ export interface FileNoise {
   added: number;
   deleted: number;
   /** Hidden lines by what they are: a block of formatting and comments counts as formatting. */
-  lines: { whitespace: number; formatting: number; comments: number };
+  lines: { whitespace: number; formatting: number; comments: number; imports: number };
   /** Lines of the changes that show: code, and noise the filter does not hide. */
   shown: number;
   /**
@@ -1252,7 +1264,7 @@ export function fileNoise(blocks: readonly NoiseBlock[], filter: NoiseFilter): F
     kinds: [],
     added: 0,
     deleted: 0,
-    lines: { whitespace: 0, formatting: 0, comments: 0 },
+    lines: { whitespace: 0, formatting: 0, comments: 0, imports: 0 },
     shown: 0,
     reformatted: false,
   };
@@ -1266,7 +1278,8 @@ export function fileNoise(blocks: readonly NoiseBlock[], filter: NoiseFilter): F
     result.kinds.push(block.kind);
     result.added += block.newCount;
     result.deleted += block.oldCount;
-    result.lines[parts(block.kind).layout ?? 'comments'] += lines;
+    const p = parts(block.kind);
+    result.lines[p.layout ?? (p.imports ? 'imports' : 'comments')] += lines;
   }
   const layoutOnly = result.kinds.every((kind) => kind === 'whitespace' || kind === 'formatting');
   result.reformatted =
@@ -1276,7 +1289,7 @@ export function fileNoise(blocks: readonly NoiseBlock[], filter: NoiseFilter): F
 
 /** The hidden lines in words, quietly, largest first: "90 formatting · 12 comments". */
 export function noiseStat(noise: Pick<FileNoise, 'lines'>): string | undefined {
-  const words = (['formatting', 'whitespace', 'comments'] as const)
+  const words = (['formatting', 'whitespace', 'comments', 'imports'] as const)
     .filter((key) => noise.lines[key] > 0)
     .sort((a, b) => noise.lines[b] - noise.lines[a])
     .map((key) => `${noise.lines[key].toLocaleString()} ${key}`);

@@ -10,6 +10,8 @@ import { patchOf } from './syntax-scope';
  *   change (it stays, its formatting line dimmed), and a comment-only hunk.
  * - `src/noise/indent.py`: a re-indented line that leaves a loop (code, never hidden), and a respaced signature.
  * - `config/noise.yaml`: a key re-indented out of its mapping (code, never hidden), and a respaced value.
+ * - `src/noise/imports.ts`: a name added from a module the file already imports (quiet once Imports is on), an import
+ *   of a package the file never imported (a new dependency, never hidden), and a code change.
  */
 const filler = (prefix: string, count: number, comment = '//') =>
   Array.from({ length: count }, (_, i) => (i % 5 === 4 ? `${comment} ${prefix} section ${i}.` : `const ${prefix}${i} = ${i};`));
@@ -172,6 +174,29 @@ const prettierAfter = [
   ...filler('u', 4),
 ];
 
+const importsBefore = [
+  "import { parseSize } from './units';",
+  ...filler('i', 12),
+  "export const size = parseSize('1kb');",
+  ...filler('j', 12),
+  'export function limit(count: number): number {',
+  '  return count * 2;',
+  '}',
+  ...filler('k', 4),
+];
+const importsAfter = [
+  "import { parseSize } from './units';",
+  "import { formatBytes } from './units';",
+  ...filler('i', 12),
+  "import { z } from 'zod';",
+  "export const size = parseSize('1kb');",
+  ...filler('j', 12),
+  'export function limit(count: number): number {',
+  '  return count * 3;',
+  '}',
+  ...filler('k', 4),
+];
+
 export const NOISE_FILES = {
   prettier: 'src/noise/prettier.ts',
   format: 'src/noise/format.ts',
@@ -179,6 +204,7 @@ export const NOISE_FILES = {
   mixed: 'src/noise/mixed.ts',
   python: 'src/noise/indent.py',
   yaml: 'config/noise.yaml',
+  imports: 'src/noise/imports.ts',
 } as const;
 const SOURCES: [string, string[], string[]][] = [
   [NOISE_FILES.format, formatBefore, formatAfter],
@@ -187,6 +213,7 @@ const SOURCES: [string, string[], string[]][] = [
   [NOISE_FILES.mixed, mixedBefore, mixedAfter],
   [NOISE_FILES.python, pythonBefore, pythonAfter],
   [NOISE_FILES.yaml, yamlBefore, yamlAfter],
+  [NOISE_FILES.imports, importsBefore, importsAfter],
 ];
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
 export const noiseFilterFiles: PrChangeFile[] = SOURCES.map(([path, before, after], i) => {

@@ -169,7 +169,8 @@ function compare({ key, snapshot, file }: SyntaxFile, side: PrFileSide, priority
   const language = syntaxLanguage(file.path);
   const hunks = patchHunks(file.patch);
   if (!language || !hunks || !allowed(file.path)) return;
-  void readNoise({ fileKey: key, url: snapshot.url, language, text: side.content, hunks, priority, whole: true }).catch(() => {});
+  const imports = file.status === 'modified' ? { path: file.path } : undefined;
+  void readNoise({ fileKey: key, url: snapshot.url, language, text: side.content, hunks, priority, whole: true, imports }).catch(() => {});
 }
 /**
  * The read for a file's scopes: the after side through the same cache and IPC as a gap reveal, or both sides for a

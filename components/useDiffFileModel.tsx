@@ -268,8 +268,8 @@ export function useDiffFileModel({
     enabled: parseable && (whole || afterMatches === true),
     priority: tier,
   });
-  // Formatting-only and comment-only changes (#396): compared in the worker once the after side agrees with the hunks,
-  // while the reader hides either. Added and deleted files have no other side to compare.
+  // Formatting-only, comment-only and import-only changes (#396): compared in the worker once the after side agrees with
+  // the hunks, while the reader hides any. Added and deleted files have no other side to compare.
   const noiseOn = noiseFilterOn(noiseFilter);
   const noise = useSemanticNoise({
     fileKey,
@@ -277,9 +277,11 @@ export function useDiffFileModel({
     path,
     after: afterText,
     hunks: baseHunks,
-    enabled: noiseOn && structure && active && !wholeSide && afterMatches === true,
+    // A topic's modified file waits for its old side too: its few hunks cannot rebuild what the file imported.
+    enabled: noiseOn && structure && active && !wholeSide && afterMatches === true && (!partial || status !== 'modified' || beforeAll !== undefined),
     priority: tier,
     whole: !partial,
+    imports: status === 'modified' ? { path, before: partial ? beforeAll : undefined } : undefined,
   });
   // Where the file is matters only while a side of it, or its comparison, waits: then it is watched, and a move
   // raises it.
@@ -304,7 +306,7 @@ export function useDiffFileModel({
       for (let i = 0; i < block.newCount; i++) lines.add(`a${block.newStart + i}`);
     }
     return lines.size ? lines : undefined;
-  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown]);
+  }, [noiseOn, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseFilter.imports, noiseShown]);
   const diffNoise = useMemo((): DiffNoise | undefined => {
     if (!noiseOn) return undefined;
     const file = noise.blocks ? fileNoise(noise.blocks, noiseFilter) : undefined;
@@ -326,7 +328,7 @@ export function useDiffFileModel({
       file,
       fileHidden: !!file?.all && !noise.blocks?.some((block) => noiseShown.has(blockKey(block))),
     };
-  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseShown, revealKey]);
+  }, [noiseOn, noise.kinds, noise.blocks, noiseFilter.whitespace, noiseFilter.formatting, noiseFilter.comments, noiseFilter.imports, noiseShown, revealKey]);
   // An added file has no old side, so every symbol in it is added; a deleted file has no new side, so every symbol in
   // it is removed.
   const fileDefinitions = useMemo(

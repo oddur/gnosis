@@ -396,6 +396,11 @@ type NoiseRequest = {
   hunks: NoiseHunks;
   priority?: SyntaxPriority;
   whole?: boolean;
+  /**
+   * A modified file's path, so hunks that only widen imports compare as `imports` (Quiet changes). Hunks that are some
+   * of the file's need its old text too; without it they compare as before.
+   */
+  imports?: { path: string; before?: string };
 };
 /**
  * A file's comparison, and with a whole file's, its moved-symbol candidates from the same two trees (#398): a file is
@@ -462,6 +467,7 @@ function compare(request: NoiseRequest): Promise<Comparison> {
           priority: entry?.priority ?? priority,
           side: 'noise',
           symbols,
+          imports: request.imports && (request.whole ? { path: request.imports.path } : request.imports.before !== undefined ? request.imports : undefined),
         } satisfies SyntaxRequest);
       })
   );

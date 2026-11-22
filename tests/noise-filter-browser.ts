@@ -17,6 +17,8 @@ import { app, BrowserWindow } from 'electron';
  * - A hunk that changes code and reformats a line beside it stays, its quiet line dimmed.
  * - Python and YAML indentation that changes structure is never hidden.
  * - An Explanation topic of the same file shows the same bars.
+ * - Imports are shown by default. On, a hunk that only adds a name from a module the file already imports is a bar
+ *   ("Imports only"); an import of a package the file never imported always shows.
  * - `?syntax-large`: comparisons run below breadcrumbs, and the numbers are printed.
  *
  * With GNOSIS_NOISE_SHOTS=1 it prints `NOISESHOT <name> <base64 PNG>` lines, light and dark.
@@ -105,12 +107,13 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('[role=dialog]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
     await wait(`!document.querySelector('[data-noise-toggle]')`);
   };
-  const setToggle = async (key: 'hideWhitespace' | 'hideFormatting' | 'hideComments', on: boolean) => {
+  const setToggle = async (key: 'hideWhitespace' | 'hideFormatting' | 'hideComments' | 'hideImports', on: boolean) => {
     await openMenu();
-    if ((await toggles())[key] !== on) await js(`document.querySelector('[data-noise-toggle=${key}]').click()`);
-    await wait(`window.electronAPI.loadPreferences().then(p=>(p.diffAppearance?.${key}??${key !== 'hideComments'})===${on})`);
+    const checked = () => js<boolean>(`document.querySelector('[data-noise-toggle=${key}]').checked`);
+    if ((await checked()) !== on) await js(`document.querySelector('[data-noise-toggle=${key}]').click()`);
+    await wait(`window.electronAPI.loadPreferences().then(p=>(p.diffAppearance?.${key}??${key === 'hideWhitespace' || key === 'hideFormatting'})===${on})`);
     await openMenu();
-    assert.equal((await toggles())[key], on, `${key} is ${on ? 'on' : 'off'}`);
+    assert.equal(await checked(), on, `${key} is ${on ? 'on' : 'off'}`);
   };
   /** Each hunk of a file: its header's counts, and whether it is a quiet bar and of what. */
   const hunks = (path: string) =>
@@ -254,6 +257,41 @@ void app.whenReady().then(async () => {
     assert.equal(await shownText('config/noise.yaml', 'host: example'), true, 'with its line');
     assert.equal(yaml[1].bar, 'Whitespace only', 'The respaced value is a bar');
 
+    // ── Imports: shown by default; on, a name from a module the file imports is a bar; a new package shows ──
+    const imports = 'src/noise/imports.ts';
+    await openMenu();
+    assert.equal(await js(`document.querySelector('[data-noise-toggle=hideImports]').checked`), false, 'Imports show by default');
+    await closeMenu();
+    await openFile(imports);
+    await js(`document.querySelector('[data-quiet-chip]').click()`);
+    await wait(`!!document.querySelector('.quiet-popover [data-noise-toggle=hideImports]')`);
+    await js(`document.querySelector('.quiet-popover [data-noise-toggle=hideImports]').click()`);
+    await wait(`window.electronAPI.loadPreferences().then(p=>p.diffAppearance?.hideImports===true)`);
+    await wait(`document.querySelector(${JSON.stringify(row(imports) + ' [data-noise-bar]')})?.getAttribute('data-noise-bar')==='Imports only'`, 500);
+    await wait(`[...document.querySelectorAll('[data-quiet-kind]')].some(e=>e.dataset.quietKind==='imports')`);
+    await capture('imports-summary', box('.quiet-popover', 6));
+    await js(`document.querySelector('.quiet-popover')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await wait(`!document.querySelector('.quiet-popover')`);
+    const importHunks = await hunks(imports);
+    console.log('Import hunks:', JSON.stringify(importHunks));
+    assert.equal(importHunks.length, 3, 'Three hunks');
+    assert.equal(importHunks[0].bar, 'Imports only', 'A name from a module the file imports is a bar, with its reason');
+    assert.match(importHunks[0].show ?? '', /^Show \d+ lines?$/, 'which offers to show its lines');
+    assert.equal(importHunks[1].bar, undefined, 'A package the file never imported shows: it is a new dependency');
+    assert.equal(await shownText(imports, "import { z } from 'zod';"), true, 'with its line');
+    assert.equal(importHunks[2].bar, undefined, 'The code change shows');
+    assert.match((await headerStat(imports)) ?? '', /code · 1 imports/, 'The header counts the quiet import line');
+    assert.equal(await js(`document.querySelector(${JSON.stringify(row(imports) + ' .changes-file-noise svg.lucide-import')})!==null`), true, 'with the imports icon');
+    await scrollTo(row(imports), 0);
+    await capture('imports-bar', box(row(imports) + ' .changes-file-header', 0, 140));
+    await capture('toolbar', box('.changes-toolbar', 0));
+    // One click shows it.
+    await js(`document.querySelector(${JSON.stringify(row(imports) + ' [data-noise-bar] [data-noise-show]')}).click()`);
+    await wait(`!document.querySelector(${JSON.stringify(row(imports) + ' [data-noise-bar]')})`);
+    await wait(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row(imports))})).some(e=>e.textContent.includes("import { formatBytes } from './units';")&&e.getBoundingClientRect().height>0)`);
+    await setToggle('hideImports', false);
+    await closeMenu();
+
     // ── Formatting off: formatting shows, whitespace stays hidden; then whitespace off too ──
     await openFile('src/noise/prettier.ts');
     await setToggle('hideFormatting', false);
@@ -360,6 +398,12 @@ void app.whenReady().then(async () => {
     await openFile('src/noise/mixed.ts');
     await wait(`document.querySelectorAll(${JSON.stringify(row('src/noise/mixed.ts') + ' [data-noise-bar]')}).length===3`, 500);
     const changesBars = await hunks('src/noise/mixed.ts');
+    // Imports on, for the second topic: imports.ts's two import hunks without its code hunk.
+    await setToggle('hideImports', true);
+    await closeMenu();
+    await openFile(imports);
+    await wait(`document.querySelector(${JSON.stringify(row(imports) + ' [data-noise-bar]')})?.getAttribute('data-noise-bar')==='Imports only'`, 500);
+    const changesImports = (await hunks(imports)).slice(0, 2);
     await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()");
@@ -379,6 +423,18 @@ void app.whenReady().then(async () => {
     await js(`(()=>{const s=document.querySelector('.explanation-document');const h=document.querySelector(${JSON.stringify(topic + ' [data-noise-bar]')});s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-120})()`);
     await settle();
     await capture('explanation-bar', `(()=>{const b=document.querySelector(${JSON.stringify(topic)}).getBoundingClientRect();const s=document.querySelector('.explanation-document').getBoundingClientRect();return {x:Math.round(b.left),y:Math.round(s.top),width:Math.round(b.width),height:Math.round(Math.min(420,s.height))}})()`);
+    // A topic's few hunks read the file's old text: the same import is quiet, and the new package shows.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '2')`);
+    const importsTopic = '[data-explanation-section="2"] .review-file-group';
+    await wait(`document.querySelector(${JSON.stringify(importsTopic + ' [data-noise-bar]')})?.getAttribute('data-noise-bar')==='Imports only'`, 500);
+    const topicImports = await js<{ counts?: string; bar?: string }[]>(`[...document.querySelectorAll(${JSON.stringify(importsTopic + ' .changes-diff > .diff-hunk')})].map(h=>({counts:h.querySelector('.diff-gap-counts > [aria-hidden]')?.textContent,bar:h.querySelector('[data-noise-bar]')?.getAttribute('data-noise-bar')??undefined}))`);
+    console.log('Imports topic hunks:', JSON.stringify(topicImports));
+    assert.deepEqual(
+      topicImports.map((h) => [h.counts, h.bar]),
+      changesImports.map((h) => [h.counts, h.bar]),
+      'The imports topic shows the same hunks, counts and bars as Changes'
+    );
+    assert.deepEqual(topicImports.map((h) => h.bar), ['Imports only', undefined], 'The widening is quiet; the new package shows');
 
     // ── Performance on the large PR: comparisons wait below breadcrumbs ──
     await js(`sessionStorage.setItem('fixture-diff-appearance', JSON.stringify({contextLines:3,indicators:'classic',inline:'word-alt',backgrounds:true,wrap:false,lineNumbers:true,hideWhitespace:true,hideFormatting:true,hideComments:true}))`);
