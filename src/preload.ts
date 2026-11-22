@@ -443,6 +443,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
+  // Settings › Diagnostics › Conflict resolution stats. A choice is sent without a reply, so it never waits.
+  recordConflictChoice: (choice: import('../lib/conflict-stats').ConflictChoice) => {
+    ipcRenderer.send('conflict-stats-choice', choice);
+  },
+  conflictStats: (): Promise<import('../lib/conflict-stats').ConflictStats> => ipcRenderer.invoke('conflict-stats'),
+  resetConflictStats: (): Promise<import('../lib/conflict-stats').ConflictStats> => ipcRenderer.invoke('conflict-stats-reset'),
   onConflictHeaderChanged: (callback: (url: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
     ipcRenderer.on('conflict-header-changed', handler);

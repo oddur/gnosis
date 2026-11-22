@@ -31,6 +31,7 @@ import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
 import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
@@ -105,6 +106,8 @@ interface Deps {
   disabledLanguages?: () => SyntaxLanguage[];
   /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
   backgroundDrafts?: number;
+  /** Settings › Diagnostics › Conflict resolution stats (src/conflict-stats-store.ts). Counts only; it never throws. */
+  stats?: { record(events: readonly ConflictStatsEvent[]): void };
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -155,10 +158,27 @@ export function createConflictResolutionService(deps: Deps) {
     }
   }
   const withStore = createStoreLocks();
+  /** A count never stops the action it counts: a failure is logged and counts nothing. */
+  function uncounted<T>(count: () => T): T | undefined {
+    try {
+      return count();
+    } catch (error) {
+      console.warn('[conflicts] Could not count:', error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
+  /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
+  const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
+  function withChoices(key: string, session: ConflictSession) {
+    for (const choice of pendingChoices.get(key) ?? []) markChoice(session, choice);
+    pendingChoices.delete(key);
+    return session;
+  }
   async function persist(session: ConflictSession) {
-    deps.storage.write(storageKey(session.account, session.id), session);
+    const key = storageKey(session.account, session.id);
+    deps.storage.write(key, withChoices(key, session));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -995,6 +1015,8 @@ export function createConflictResolutionService(deps: Deps) {
           file.structuralNote = old.structuralNote;
         }
         file.structuralRan = old.structuralRan;
+        // The same conflicts: they were counted as shown already (lib/conflict-stats.ts).
+        if (old.statsBlocks) file.statsBlocks = old.statsBlocks;
         if (old.proposals) {
           file.proposals = old.proposals;
           file.result = withProposals(file.original, old.proposals);
@@ -1472,6 +1494,31 @@ export function createConflictResolutionService(deps: Deps) {
       if (account) await dropBackground(account, hash(url));
     },
     /** Keeps the newest background drafts, of every account, and removes the others with their caches. */
+    /**
+     * An Undo or a different option in the workspace (lib/conflict-stats.ts `markChoice`): counted once per conflict,
+     * with the flag saved on the draft. Never throws, and nothing waits for it.
+     */
+    countChoice(choice: ConflictChoice) {
+      if (!deps.stats) return;
+      uncounted(() => {
+        const ctx = deps.context();
+        if (!ctx.account) return;
+        const key = storageKey(ctx.account, choice.id);
+        const saved = deps.storage.read(key) as ConflictSession | undefined;
+        if (!saved) return;
+        const pending = pendingChoices.get(key) ?? [];
+        for (const earlier of pending) markChoice(saved, earlier);
+        const event = markChoice(saved, choice);
+        if (!event) return;
+        deps.stats?.record([event]);
+        // A request holds the draft and will write its own copy: the flag goes with that write.
+        if (busy.has(key)) pendingChoices.set(key, [...pending, choice]);
+        else {
+          pendingChoices.delete(key);
+          deps.storage.write(key, saved);
+        }
+      });
+    },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
       for (const { account, id } of staleBackground(keep)) await dropBackground(account, id);
     },
@@ -1500,13 +1547,25 @@ export function createConflictResolutionService(deps: Deps) {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
         if (request.kind === 'open') {
+          // The draft before a fresh merge replaces it: Load latest reuses its counted conflicts.
+          const before = deps.stats && request.restart ? (deps.storage.read(key) as ConflictSession | undefined) : undefined;
           const session = await open(ctx, request.url, !!request.restart, !!request.keep, signal, report);
           // A draft prepared in the background becomes yours once you open it: it is no longer replaced or evicted.
           const stored = deps.storage.read(key) as ConflictSession | undefined;
+          // The conflicts you see now count as shown, once per conflict (lib/conflict-stats.ts).
+          const counted =
+            deps.stats && stored?.id === session.id && stored.version === session.version && !session.stale
+              ? uncounted(() => countOpened(before, stored, { restart: !!request.restart, keep: !!request.keep }, deps.disabledLanguages?.() ?? []))
+              : undefined;
           if (stored?.background) {
             delete stored.background;
             await persist(stored);
+          } else if (stored && counted?.changed) {
+            // Saved with the next write; the open never waits for it.
+            deps.storage.write(key, withChoices(key, stored));
           }
+          if (stored && counted?.changed) session.files = stored.files;
+          if (counted) deps.stats?.record(counted.events);
           delete session.background;
           return { session };
         }
@@ -1788,6 +1847,7 @@ export function createConflictResolutionService(deps: Deps) {
           );
           session.status = 'published';
           session.commitSha = sha;
+          if (deps.stats) deps.stats.record(uncounted(() => countPushed(session)) ?? []);
         }
         if (session.status !== 'published') {
           // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict

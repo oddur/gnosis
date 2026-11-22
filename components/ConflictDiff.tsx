@@ -30,6 +30,7 @@ import {
   type ConflictModel,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
+import { blockFingerprints } from '../lib/conflict-stats';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -465,6 +466,7 @@ export function ConflictDiff({
   wholeFile,
   picks,
   onPick,
+  onChoice,
 }: {
   name: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
@@ -487,8 +489,13 @@ export function ConflictDiff({
   onAllResolved?: () => void;
   picks?: BlockPicks;
   onPick?: (index: number, choice: BlockPick | undefined) => void;
+  /** Each choice with the one it replaces and the conflict's fingerprint, for the local stats. Undefined is Undo. */
+  onChoice?: (key: string | undefined, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
 }) {
+  // Once per file version, never on a click.
+  const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
   const { root, model, total, choose } = useConflictChoices({
+    onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
     proposals,
