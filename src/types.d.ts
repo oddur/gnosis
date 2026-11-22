@@ -222,6 +222,9 @@ declare global {
       cancelConflictModel?: (request: import('../lib/conflict-model').ConflictModelRequest) => Promise<void>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
+      conflictTypeCheck: (id: string) => Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null>;
+      cancelConflictTypeCheck: (id: string) => Promise<void>;
+      onConflictTypeCheckChanged: (callback: (id: string) => void) => () => void;
       conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
       /** Local counts for Settings › Diagnostics › Conflict resolution stats (lib/conflict-stats.ts). Fire and forget. */
       recordConflictChoice?: (choice: import('../lib/conflict-stats').ConflictChoice) => void;
@@ -315,6 +318,7 @@ declare global {
       getLocalClones: () => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
       connectLocalClone: (repo: string, directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
       disconnectLocalClone: (repo: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
+      setLocalCloneTypeCheck: (repo: string, on: boolean) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
       listRepoRefs: (
         repoPath: string,
       ) => Promise<{

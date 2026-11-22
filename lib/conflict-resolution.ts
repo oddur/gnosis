@@ -53,6 +53,11 @@ export interface ConflictFile {
    * that is present was counted as shown; null is one not counted yet.
    */
   statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
+  /**
+   * New type errors the opt-in type check found in this file (#445 item 24), for the proposals it checked
+   * (`typeCheckKey`). While the key matches, every Merged proposal in the file is Check with this note.
+   */
+  typeError?: { key: string; note: string };
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -232,6 +237,26 @@ export interface BaseMove {
   /** Files with new conflicts. */
   files: string[];
 }
+/**
+ * The opt-in type check of a prepared merge (#445 item 24): the PR's TypeScript compiler, from your linked clone, run on
+ * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
+ * fingerprint each was checked with (`typeCheckKey`).
+ */
+export type ConflictTypeCheck =
+  | { state: 'running' }
+  | { state: 'passed'; preExisting: number }
+  | {
+      state: 'errors';
+      count: number;
+      preExisting: number;
+      /** The first new errors, one line each: "path:line TS1234 message". */
+      errors: string[];
+      files: { path: string; key: string; note: string }[];
+    }
+  | { state: 'skipped'; reason: string }
+  /** The compiler ran but did not check types, such as for an options or syntax error. Never passed. */
+  | { state: 'unchecked'; reason: string }
+  | { state: 'cancelled' };
 export interface ConflictReply {
   session: ConflictSession;
   preview?: { patch: string; token: string; validation: string; files: import('@pierre/diffs').FileDiffMetadata[] };

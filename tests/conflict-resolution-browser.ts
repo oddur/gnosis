@@ -2,6 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workben
 import { perfBudget, withinPerf } from './perf-budget';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { typeCheckKey } from '../lib/conflict-verify';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -149,6 +150,11 @@ void app.whenReady().then(async () => {
       const original='export function retryDelay(attempt: number) {\\n<<<<<<< feature/retry\\n  return Math.min(attempt * 200, 5000);\\n||||||| ancestor\\n  return attempt * 200;\\n=======\\n  return Math.max(100, attempt * 200);\\n>>>>>>> main\\n}\\n<<<<<<< feature/retry\\nexport const retries = 5;\\n=======\\nexport const retries = 3;\\n>>>>>>> main\\n';
       window.conflictFixture={id:'a'.repeat(64),account:'oddur',url:'https://github.com/klang/engine/pull/120',title:'Bound retry delays',headRepo:'klang/engine',baseRepo:'klang/engine',headBranch:'feature/retry',baseBranch:'main',headSha:'a'.repeat(40),baseSha:'b'.repeat(40),tree:'c'.repeat(40),version:1,status:'editing',files:[{path:'src/retry.ts',mode:'100644',base:'export function retryDelay(attempt: number) {\\n  return attempt * 200;\\n}\\nexport const retries = 4;\\n',ours:'export function retryDelay(attempt: number) {\\n  return Math.min(attempt * 200, 5000);\\n}\\nexport const retries = 5;\\n',theirs:'export function retryDelay(attempt: number) {\\n  return Math.max(100, attempt * 200);\\n}\\nexport const retries = 3;\\n',original,result:original,resolved:false,source:'manual'}]};
       window.conflictCalls=[];
+      // The opt-in type check (#445 item 24): off until a step sets a status and tells the view it changed.
+      window.typeCheckState=null;window.typeCheckListeners=[];window.typeCheckCancels=0;
+      window.electronAPI.conflictTypeCheck=async()=>window.typeCheckState;
+      window.electronAPI.cancelConflictTypeCheck=async()=>{window.typeCheckCancels++;};
+      window.electronAPI.onConflictTypeCheckChanged=cb=>{window.typeCheckListeners.push(cb);return()=>{window.typeCheckListeners=window.typeCheckListeners.filter(x=>x!==cb);};};
       window.electronAPI.conflictResolution=async req=>{
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open'){if(window.failOpen)throw Error(window.failOpen);if(window.slowOpen)await new Promise(r=>setTimeout(r,window.slowOpen));return {session:structuredClone(s)};}
@@ -1288,6 +1294,62 @@ void app.whenReady().then(async () => {
     assert.match(
       await js<string>(`${block(1)}.querySelector('.conflict-block-header').textContent`),
       /^Conflict 2 of 2Checkexport function four\(\) \{ from main is missing from the result\./
+    );
+    // The opt-in type check (#445 item 24): one line in the summary for each state. Off, there is none.
+    assert.equal(await js("!!document.querySelector('.conflict-type-check')"), false, 'Off by default: no line');
+    const typeCheckShows = async (state: unknown, line: string | null) => {
+      await js(
+        `(()=>{window.typeCheckState=${JSON.stringify(state)};for(const cb of window.typeCheckListeners)cb(window.conflictFixture.id);})()`
+      );
+      await wait(
+        line === null
+          ? "!document.querySelector('.conflict-type-check')"
+          : `document.querySelector('.conflict-type-check')?.firstChild?.textContent===${JSON.stringify(line)}`
+      );
+    };
+    await typeCheckShows({ state: 'running' }, 'Type check: running…');
+    await captureAll('type-check-running');
+    await click('Stop');
+    assert.equal(await js('window.typeCheckCancels'), 1, 'Stop cancels the check');
+    await typeCheckShows({ state: 'cancelled' }, 'Type check: stopped');
+    await typeCheckShows({ state: 'passed', preExisting: 0 }, 'Type check: passed');
+    await typeCheckShows(
+      { state: 'skipped', reason: 'dependencies aren’t installed in your clone' },
+      'Type check: skipped (dependencies aren’t installed in your clone)'
+    );
+    // New errors: the one in src/imports.ts keeps its Merged conflict in Check, with the compiler's error. The one in
+    // a file without conflicts is information only.
+    const typeNote = "The type check found a new error in this file: src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.";
+    await typeCheckShows(
+      {
+        state: 'errors',
+        count: 2,
+        preExisting: 1,
+        errors: ["src/imports.ts:3 TS2305 Module './b' has no exported member 'b'.", "src/use.ts:1 TS2322 Type 'string' is not assignable to type 'number'."],
+        files: [{ path: 'src/imports.ts', key: typeCheckKey(counted[1] as Parameters<typeof typeCheckKey>[0]), note: typeNote }],
+      },
+      'Type check: 2 new errors'
+    );
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'"
+    );
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
+      ['1 to decide1 to check', '1 to check', '1 merged']
+    );
+    await js("document.querySelector('.conflict-type-check-detail').focus()");
+    await wait("document.querySelector('.conflict-type-check-errors')?.textContent.includes('src/use.ts:1 TS2322')");
+    assert.match(
+      await js<string>("document.querySelector('.conflict-type-check-errors').textContent"),
+      /keep its merged conflicts in Check\. Errors elsewhere are for your information\..*Not counted: 1 error the PR already has\./
+    );
+    await captureAll('type-check-errors');
+    await js(`${block(0)}.focus()`);
+    await wait("!document.querySelector('.conflict-type-check-errors')");
+    // Back to off for the steps below: the summary counts the Merged conflict again.
+    await typeCheckShows(null, null);
+    await wait(
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 2 of 4 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.'"
     );
     // J and K visit both conflicts that need you: the one to decide and the one to check.
     await js(`${block(0)}.focus()`);

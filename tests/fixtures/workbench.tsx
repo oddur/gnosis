@@ -944,6 +944,10 @@ const mocks = {
   // The PR header's conflict line (lib/use-conflict-header.ts): no background preparation in the fixture.
   conflictHeader: () => Promise.resolve(null),
   onConflictHeaderChanged: () => () => {},
+  // The opt-in type check (#445 item 24) is off in the fixture unless a suite mocks it.
+  conflictTypeCheck: () => Promise.resolve(null),
+  cancelConflictTypeCheck: () => Promise.resolve(),
+  onConflictTypeCheckChanged: () => () => {},
   // No model in the fixture: the conflict view asks nothing unless a suite mocks it (#445 items 6 and 7).
   conflictModel: undefined,
   cancelConflictModel: undefined,

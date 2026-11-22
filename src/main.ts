@@ -184,6 +184,7 @@ import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { disabledLanguages } from '../lib/conflict-verdict-key';
 import { createConflictCheckWorker } from './conflict-checks';
 import { createConflictPrecompute } from './conflict-precompute';
+import { runUtilityScript } from './utility-script';
 import { createCascadePreviews } from './conflict-cascade';
 import { mergeConflictState } from '../lib/merge-conflicts';
 import type { AttentionItem } from '../lib/attention';
@@ -2385,10 +2386,18 @@ const localCloneStore = createLocalCloneStore(() => path.join(app.getPath('userD
 ipcMain.handle('local-clones', () => localClones.status());
 ipcMain.handle('connect-local-clone', async (_event, repo: string, directory: string) => {
   localClones.configure(await localCloneStore.connect(repo, directory));
+  conflicts.typeCheckSettingsChanged();
+  return localClones.status();
+});
+ipcMain.handle('local-clone-type-check', (_event, repo: unknown, on: unknown) => {
+  if (typeof repo !== 'string' || typeof on !== 'boolean') throw new Error('Invalid type check setting.');
+  localClones.configure(localCloneStore.setTypeCheck(repo, on));
+  conflicts.typeCheckSettingsChanged();
   return localClones.status();
 });
 ipcMain.handle('disconnect-local-clone', (_event, repo: string) => {
   localClones.configure(localCloneStore.disconnect(repo));
+  conflicts.typeCheckSettingsChanged();
   return localClones.status();
 });
 
@@ -4270,6 +4279,10 @@ const conflicts = createConflictResolutionService({
     return getMergeBase(discussionClient(), owner, repo, base, head);
   },
   localClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase())?.path,
+  // The opt-in type check (#445 item 24): only a linked clone whose type check is on in Settings › Local clones.
+  typeCheckClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase() && entry.typeCheck)?.path,
+  runScript: runUtilityScript,
+  typeCheckChanged: id => broadcastToAllWindows('conflict-type-check-changed', id),
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
   read: async url => {
     const client = discussionClient();
@@ -4384,6 +4397,11 @@ ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
   // The renderer's head may lag: only status reads report head moves (observe).
   conflictPrecompute.opened(url, headSha);
   return conflictPrecompute.header(url, headSha) ?? null;
+});
+// The opt-in type check of a prepared merge (#445 item 24): its status, and Stop.
+ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheck(id) ?? null : null));
+ipcMain.handle('conflict-type-check-cancel', (_event, id: unknown) => {
+  if (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)) conflicts.cancelTypeCheck(id);
 });
 // The PR header's "Merged main into this PR · Undo this update": your pushed update while its merge commit is the head.
 ipcMain.handle('conflict-pushed', (_event, url: unknown, headSha: unknown) => {
