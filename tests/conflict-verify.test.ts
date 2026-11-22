@@ -994,13 +994,13 @@ void test('one file status for the file list, the header, the footer and the sum
   assert.deepEqual(status(both, both.result, ok), {
     value: { kind: 'buckets', decide: 0, check: 0, merged: 2 },
     parts: ['merged:2 merged'],
-    line: '2 merged in this file',
+    line: undefined,
   });
   // Check: no markers are left, but proposals wait to be read. Never "Resolved · needs review" (#99).
   assert.deepEqual(status(both, both.result, check), {
     value: { kind: 'buckets', decide: 0, check: 2, merged: 0 },
     parts: ['check:2 to check'],
-    line: '2 to check in this file',
+    line: undefined,
   });
   // Decide beside Check.
   const one = file([merged(imports), null]);
@@ -1022,7 +1022,7 @@ void test('one file status for the file list, the header, the footer and the sum
   assert.deepEqual(status(whole, original, passed), {
     value: { kind: 'proposal' },
     parts: ['proposal:Proposal ready'],
-    line: '1 proposal to check',
+    line: undefined,
   });
   assert.deepEqual(status(whole, ours, passed).value, { kind: 'resolved' }, 'After Use this result');
   // One that failed its checks: its conflicts are to decide.

@@ -38,11 +38,44 @@ void app.whenReady().then(async () => {
   // Button names without their keyboard hints.
   const visibleButton = (label: string) =>
     `[...document.querySelectorAll('button,a[data-slot=button]')].find(b=>{if(!b.checkVisibility())return false;const c=b.cloneNode(true);c.querySelectorAll('kbd').forEach(k=>k.remove());return c.textContent.trim()===${JSON.stringify(label)};})`;
+  // Every way back is an item of the band's Reset menu (#445 distill): `click` and `exists` open it for these.
+  const RESET_ITEMS = ['Reset file', 'Start from Git’s conflict', 'Try structural merge again', 'Start over with latest code…'];
+  const menuItem = (label: string) =>
+    `[...document.querySelectorAll('.conflict-reset-menu [role=menuitem]')].find(e=>e.textContent.trim()===${JSON.stringify(label)})`;
+  const resetMenu = async (open: boolean) => {
+    const shown = await js<boolean>("!!document.querySelector('.conflict-reset-menu')");
+    if (shown === open) return shown;
+    if (!open) {
+      await js("document.querySelector('.conflict-reset-menu').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('.conflict-reset-menu')");
+      return false;
+    }
+    if (!(await js<boolean>("!!document.querySelector('[data-conflict-reset]:not(:disabled)')"))) return false;
+    await js(
+      "(()=>{const b=document.querySelector('[data-conflict-reset]');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))})()"
+    );
+    await wait("!!document.querySelector('.conflict-reset-menu')");
+    return true;
+  };
+  const resetItem = async (label: string) => {
+    const found = (await resetMenu(true)) && (await js<boolean>(`!!(${menuItem(label)})`));
+    await resetMenu(false);
+    return found;
+  };
   const click = async (label: string) => {
+    if (RESET_ITEMS.includes(label) && !(await js<boolean>(`!!(${visibleButton(label)})`))) {
+      for (let n = 0; n < 200 && !(await resetItem(label)); n++) await new Promise((r) => setTimeout(r, 30));
+      await resetMenu(true);
+      await wait(`(${menuItem(label)}) && !(${menuItem(label)}).hasAttribute('data-disabled')`);
+      await js(`(${menuItem(label)}).click()`);
+      await wait("!document.querySelector('.conflict-reset-menu')");
+      return;
+    }
     await wait(`(${visibleButton(label)}) && !(${visibleButton(label)}).disabled`);
     await js(`(${visibleButton(label)}).click()`);
   };
-  const exists = (label: string) => js<boolean>(`!!(${visibleButton(label)})`);
+  const exists = (label: string) =>
+    RESET_ITEMS.includes(label) ? resetItem(label) : js<boolean>(`!!(${visibleButton(label)})`);
   const key = async (value: string) => {
     const named: Record<string, [string, number]> = { Enter: ['Enter', 13], Escape: ['Escape', 27], ' ': ['Space', 32] };
     const [code, vk] = named[value] ?? [
@@ -125,7 +158,7 @@ void app.whenReady().then(async () => {
       return buttons.length>0&&f.bottom<=d.bottom+0.5&&f.top>=d.top&&(!scroll||scroll.bottom<=f.top+0.5)&&
         buttons.every(b=>{const r=b.getBoundingClientRect();return r.top>=f.top-0.5&&r.bottom<=f.bottom+0.5&&r.left>=d.left-0.5&&r.right<=d.right+0.5;});
     })()`);
-  const stage = () => js<string>("document.querySelector('.conflict-file-title [data-stage]')?.dataset.stage");
+  const stage = () => js<string>("document.querySelector('.conflict-files [aria-current=true] [data-stage]')?.dataset.stage");
   const primary = () => js<string>("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary");
   /** Every proposal's checks have finished: no block or summary still says it is checking. */
   const checksDone = () =>
@@ -364,7 +397,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='kept'`);
     assert.equal(await stage(), 'resolved');
     assert.equal(
-      await js("document.querySelector('.conflict-file-title [data-stage]').textContent"),
+      await js("document.querySelector('.conflict-files [aria-current=true] [data-stage]').textContent"),
       'Resolved · needs review'
     );
     // The result is in the diff already: the next step is Mark reviewed, with no Review result mode in between.
@@ -1117,9 +1150,9 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelectorAll('.conflict-files button').length===2");
     await wait("document.activeElement?.closest('.conflict-block')");
-    assert.equal(await js("document.querySelector('.conflict-file-title strong').textContent"), 'package.json');
+    assert.equal(await js("document.querySelector('.conflict-files [aria-current=true] .conflict-path').textContent"), 'package.json');
     await key('n');
-    await wait("document.querySelector('.conflict-file-title strong')?.textContent==='scripts/test-workbench.mjs'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] .conflict-path')?.textContent==='scripts/test-workbench.mjs'");
     await wait("document.activeElement?.closest('.conflict-block')");
     assert.doesNotMatch(
       await js<string>("document.querySelector('.conflict-file-pane').innerText"),
@@ -1132,9 +1165,9 @@ void app.whenReady().then(async () => {
     assert.ok(await footerFits(), 'Long lines never push the footer out of view');
     await resize(1280, 900);
     await key('p');
-    await wait("document.querySelector('.conflict-file-title strong')?.textContent==='package.json'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] .conflict-path')?.textContent==='package.json'");
     await key('n');
-    await wait("document.querySelector('.conflict-file-title strong')?.textContent==='scripts/test-workbench.mjs'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] .conflict-path')?.textContent==='scripts/test-workbench.mjs'");
     // Reviewing one file advances without publishing; each file keeps its own saved content.
     await wait("document.activeElement?.closest('.conflict-block')");
     await key('1');
@@ -1144,7 +1177,7 @@ void app.whenReady().then(async () => {
       /Mark reviewed & next file/
     );
     await key('m');
-    await wait("document.querySelector('.conflict-file-title strong').textContent==='package.json'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] .conflict-path').textContent==='package.json'");
     assert.equal(await js('window.conflictFixture.files[1].resolved'), true);
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
     await wait("document.activeElement?.closest('.conflict-block')");
@@ -1210,7 +1243,7 @@ void app.whenReady().then(async () => {
     await click('Push merge commit');
     await wait("!document.querySelector('.conflict-confirm') && document.querySelector('.conflict-files')");
     assert.equal(await publishes(), 3);
-    assert.equal(await js("document.querySelector('.conflict-file-title strong').textContent"), 'package.json');
+    assert.equal(await js("document.querySelector('.conflict-files [aria-current=true] .conflict-path').textContent"), 'package.json');
     await wait("document.querySelectorAll('.conflict-block[data-state=open]').length===1");
     assert.equal(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
@@ -1400,7 +1433,7 @@ void app.whenReady().then(async () => {
     await wait(
       "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 2 of 4 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.'"
     );
-    const showMerged = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
+    const showMerged = "[...document.querySelectorAll('.conflict-summary-notes label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
     assert.equal(await js(`${showMerged}.checked`), true, 'Merged conflicts still show for review by default');
     assert.deepEqual(
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
@@ -1631,7 +1664,7 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved&&r.path==='src/retry.ts')"), false);
     assert.equal(await publishes(), 0);
-    await wait("document.querySelector('.conflict-file-title [data-stage]')?.dataset.stage==='reviewed'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] [data-stage]')?.dataset.stage==='reviewed'");
     await captureAll('buckets-skip-review');
     await js(`${showMerged}.click()`);
     await wait(`${showMerged}.checked`);
@@ -1700,14 +1733,12 @@ void app.whenReady().then(async () => {
       js<string[][]>(
         `[...document.querySelectorAll('${scope} [data-status]')].map(b=>[b.dataset.status,...[...b.querySelectorAll('svg')].map(s=>s.getAttribute('class')),b.textContent])`
       );
-    const listBadge = (index: number) => badges(`.conflict-files button:nth-child(${index + 1})`);
-    assert.deepEqual(await badges('.conflict-file-title'), await listBadge(0), 'The header and the file list agree');
     assert.deepEqual(
-      (await badges('.conflict-file-title')).map(([status, , text]) => [status, text]),
+      (await badges('.conflict-files [aria-current=true]')).map(([status, , text]) => [status, text]),
       [['buckets', '1 to check']]
     );
-    assert.match((await badges('.conflict-file-title'))[0][1], /circle-question-mark|circle-help/, 'The Check icon');
-    assert.equal(await js("!!document.querySelector('.conflict-file-title [data-status=resolved]')"), false);
+    assert.match((await badges('.conflict-files [aria-current=true]'))[0][1], /circle-question-mark|circle-help/, 'The Check icon');
+    assert.equal(await js("!!document.querySelector('.conflict-files [aria-current=true] [data-status=resolved]')"), false);
     await checksDone();
     assert.equal(await js(`${block(0)}.dataset.bucket`), 'check');
     assert.match(
@@ -1716,13 +1747,12 @@ void app.whenReady().then(async () => {
     );
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
-      /^1 to check in this file · 0 of 2 files reviewed$/
+      /^0 of 2 files reviewed$/
     );
     await captureAll('reformat-trap-check');
     await js("[...document.querySelectorAll('.conflict-files button')].find(b=>b.querySelector('span').textContent==='lab/reformat.cs').click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
-    assert.deepEqual(await badges('.conflict-file-title'), await listBadge(1), 'The header and the file list agree');
-    assert.equal((await badges('.conflict-file-title'))[0][2], '1 merged');
+    assert.equal((await badges('.conflict-files [aria-current=true]'))[0][2], '1 merged');
     assert.match(
       await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`),
       /^The PR only reformatted these lines and main changed them; the proposal keeps main’s change in the PR’s formatting\./
@@ -1767,7 +1797,7 @@ void app.whenReady().then(async () => {
       "document.querySelector('[data-conflict-summary]')?.textContent==='2 files have conflicts. 2 need you: 1 proposal to check, 1 to decide.'"
     );
     assert.deepEqual(
-      await js("[...document.querySelectorAll('.conflict-file-title [data-stage]')].map(b=>[b.dataset.stage,b.textContent])"),
+      await js("[...document.querySelectorAll('.conflict-files [aria-current=true] [data-stage]')].map(b=>[b.dataset.stage,b.textContent])"),
       [['proposal', 'Proposal ready']]
     );
     assert.deepEqual(
@@ -1788,7 +1818,7 @@ void app.whenReady().then(async () => {
     assert.equal(await primary(), 'use-proposal');
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
-      /^1 proposal to check · 0 of 2 files reviewed$/
+      /^0 of 2 files reviewed$/
     );
     // While the conflicts are hidden, the proposal is the file's one stop for J and K.
     await wait("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex==='-1'");
@@ -1806,6 +1836,8 @@ void app.whenReady().then(async () => {
       ['This PR · feature/retry', 'Proposed result']
     );
     assert.equal(await js(`[...${whole}.querySelectorAll('section')].filter(s=>s.hasAttribute('aria-label')).length`), 0);
+    // Using it is the footer's primary: the card has no second Use this result (#445 distill).
+    assert.equal(await js(`!!${whole}.querySelector('[data-choice=whole-file]')`), false);
     await captureAll('whole-file-check');
     // The link shows the conflicts below the proposal; J and K then visit both.
     await click('Resolve conflict by conflict instead (1)');
@@ -1815,7 +1847,7 @@ void app.whenReady().then(async () => {
     // The proposal still covers the conflicts: the footer says what the header and the file list say.
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
-      /^1 proposal to check · 0 of 2 files reviewed$/
+      /^0 of 2 files reviewed$/
     );
     await js(`${whole}.focus()`);
     await key('j');
@@ -1840,8 +1872,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Using it does not review it');
     // Now, and only now, it waits for Mark reviewed: the header and the file list say so together.
     assert.deepEqual(
-      await js("[...document.querySelectorAll('.conflict-file-title [data-status], .conflict-files button:first-child [data-status]')].map(b=>b.textContent)"),
-      ['Resolved · needs review', 'Resolved · needs review']
+      await js("[...document.querySelectorAll('.conflict-files button:first-child[aria-current=true] [data-status]')].map(b=>b.textContent)"),
+      ['Resolved · needs review']
     );
     // Used, the same lines stay marked in the draft's diff, each one in view: a marked line is pinned, never in a gap.
     await wait("!!document.querySelector('.conflict-compare-diff:not([hidden]) diffs-container')");
@@ -1858,10 +1890,10 @@ void app.whenReady().then(async () => {
     // Reset file brings the whole-file proposal back, and the footer drops the suggestion's note.
     await click('Reset file');
     await wait(`!!${whole}`);
-    assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Proposal ready');
+    assert.equal(await js("document.querySelector('.conflict-files [aria-current=true] [data-status]').textContent"), 'Proposal ready');
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
-      /^1 proposal to check · 0 of 2 files reviewed$/
+      /^0 of 2 files reviewed$/
     );
     await click('Use this result');
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
@@ -2023,7 +2055,7 @@ void app.whenReady().then(async () => {
     await pick(0, 'both');
     await wait(`${block(0)}?.dataset.state==='kept'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /^Kept both changes/);
-    assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Resolved · needs review');
+    assert.equal(await js("document.querySelector('.conflict-files [aria-current=true] [data-status]').textContent"), 'Resolved · needs review');
     await shot('p1-keep-both', true);
     // Undo returns the block to its proposal.
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
@@ -2052,7 +2084,7 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.conflict-files button')][1].click()");
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
-    assert.match(await js<string>("document.querySelector('.conflict-footer-status').textContent"), /^1 merged in this file · 0 of 3 files reviewed$/);
+    assert.match(await js<string>("document.querySelector('.conflict-footer-status').textContent"), /^0 of 3 files reviewed$/);
     await shot('p1-all-merged', true);
     await key('j');
     assert.equal(await js('document.activeElement?.dataset.conflictPrimary'), 'mark-reviewed');
@@ -2067,19 +2099,19 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Use the proposal');
     await wait(`${block(0)}?.dataset.bucket==='decided'`);
-    // The header keeps its layout whether "Start from Git's conflict" shows or not: the title and the view switch stay
-    // put. Only a narrow tools row may wrap below them.
+    // The band keeps its layout whether "Start from Git's conflict" is offered or not: it is an item of the Reset menu,
+    // so the code never moves.
     await js('document.querySelector(".conflict-workspace").style.width="900px"');
     const header = () =>
       js<number[]>(
-        "(()=>{const h=document.querySelector('.conflict-file-header').getBoundingClientRect();const t=document.querySelector('.conflict-file-title').getBoundingClientRect();const m=document.querySelector('.conflict-file-tools').getBoundingClientRect();return [t.top-h.top,t.height,m.top-h.top]})()"
+        "(()=>{const h=document.querySelector('.conflict-heading').getBoundingClientRect();const c=document.querySelector('.conflict-scroll').getBoundingClientRect();return [h.height,c.top-h.top]})()"
       );
     const withProposals = await header();
     await shot('p1-header-proposals-900');
     await js("[...document.querySelectorAll('.conflict-files button')][2].click()");
     await wait(`${block(0)}?.dataset.state==='open'`);
     assert.equal(await exists('Start from Git’s conflict'), false);
-    assert.deepEqual(await header(), withProposals, 'The file header does not jump');
+    assert.deepEqual(await header(), withProposals, 'The band does not jump');
     await shot('p1-header-plain-900');
     await js('document.querySelector(".conflict-workspace").style.width=""');
     await shot('p1-header-plain');
@@ -2132,7 +2164,7 @@ void app.whenReady().then(async () => {
     await checksDone();
     assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
     // Setting off: the file is not reviewed for you, and the summary still says it waits for your review.
-    const showMergedBox = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
+    const showMergedBox = "[...document.querySelectorAll('.conflict-summary-notes label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
     await js(`${showMergedBox}.click()`);
     await wait(`!${showMergedBox}.checked`);
     await checksDone();
@@ -2154,8 +2186,7 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('[data-conflict-summary]').textContent"),
       '3 files have conflicts. 3 files need a local merge tool.'
     );
-    assert.deepEqual(await badges('.conflict-file-title'), await listBadge(0), 'The header and the file list agree');
-    assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Needs a local merge tool');
+    assert.equal(await js("document.querySelector('.conflict-files [aria-current=true] [data-status]').textContent"), 'Needs a local merge tool');
     assert.match(
       await js<string>("document.querySelector('[data-conflict-local] pre').textContent"),
       /^git switch 'feature\/retry'\ngit pull\ngit fetch 'https:\/\/github\.com\/lab\/file-delete-vs-modify\.git' 'main'\ngit merge FETCH_HEAD$/
@@ -2209,7 +2240,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.bucket==='decided'`);
     assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Used the proposal/);
     await click('Mark reviewed & next file');
-    await wait("document.querySelector('.conflict-file-title strong')?.textContent==='src/imports.ts'");
+    await wait("document.querySelector('.conflict-files [aria-current=true] .conflict-path')?.textContent==='src/imports.ts'");
     await checksDone();
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");
@@ -2516,7 +2547,31 @@ void app.whenReady().then(async () => {
         Object.assign(f,spliced,{resolved:false});s.version++;return {session:structuredClone(s)};
       };
     })()`);
+    // Asking about every open conflict is the first entry of the one Ask menu (#445 distill).
+    const askMenu = async (open: boolean) => {
+      if (open) {
+        await wait("document.querySelector('.conflict-suggest-trigger:not(:disabled)')");
+        if (!(await js<boolean>("!!document.querySelector('.conflict-suggest-menu')")))
+          await js("document.querySelector('.conflict-suggest-trigger').click()");
+        await wait("!!document.querySelector('.conflict-suggest-menu')");
+      } else if (await js<boolean>("!!document.querySelector('.conflict-suggest-menu')")) {
+        await js("document.querySelector('.conflict-suggest-menu').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+        await wait("!document.querySelector('.conflict-suggest-menu')");
+      }
+    };
+    /** The menu's offer to ask about every open conflict, or null. */
+    const askOffer = async () => {
+      await askMenu(true);
+      const text = await js<string | null>("document.querySelector('[data-conflict-ask-model]')?.textContent ?? null");
+      await askMenu(false);
+      return text;
+    };
+    const waitOffer = async (test: (text: string | null) => boolean) => {
+      for (let n = 0; n < 200; n++) if (test(await askOffer())) return;
+      throw new Error(`Timed out waiting for the Ask offer: ${await askOffer()}`);
+    };
     const askModel = async () => {
+      await askMenu(true);
       await wait("document.querySelector('[data-conflict-ask-model]')");
       await js("document.querySelector('[data-conflict-ask-model]').click()");
     };
@@ -2542,19 +2597,21 @@ void app.whenReady().then(async () => {
     const modelLine = (index: number) => js<string | null>(`${block(index)}?.querySelector('.conflict-model-line')?.dataset.model ?? null`);
     await modelSession();
     await open();
-    await wait("document.querySelector('[data-conflict-ask-model]') && document.querySelector('.conflict-block[data-conflict-index=\"1\"]')");
+    await wait("document.querySelector('.conflict-block[data-conflict-index=\"1\"]')");
+    await askMenu(true);
     assert.match(
       await js<string>("document.querySelector('[data-conflict-ask-model]').textContent"),
       /^Ask .+ about 2 conflicts$/
     );
     assert.equal(await js("!!document.querySelector('[data-conflict-ask-model] svg.lucide-bot')"), true, 'AI uses the Bot icon');
+    await askMenu(false);
     // The view and its offer are on screen: nothing was sent with them.
     assert.equal(await js('window.modelAsks.length'), 0, 'Nothing is sent until you ask');
     assert.equal(await js("!!document.querySelector('.conflict-model-line')"), false);
     await capture('model-offer');
     await askModel();
     await wait('window.modelAsks.length===2');
-    await wait("!document.querySelector('[data-conflict-ask-model]')");
+    await waitOffer((text) => text === null);
     assert.deepEqual(
       await js('window.modelAsks.map(r=>[r.path,r.index])'),
       [
@@ -2627,12 +2684,12 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js(`${block(1)}.dataset.state`), 'open');
     // A failure can be asked about again.
-    await wait("document.querySelector('[data-conflict-ask-model]')?.textContent.endsWith('about 1 conflict')");
+    await waitOffer((text) => !!text?.endsWith('about 1 conflict'));
     // Preparing the merge again forgets the cards: they belonged to the old merge.
     await click('Start over with latest code…');
     await click('Start over');
     await wait("!document.querySelector('.conflict-model-line')");
-    await wait("document.querySelector('[data-conflict-ask-model]')?.textContent.endsWith('about 2 conflicts')");
+    await waitOffer((text) => !!text?.endsWith('about 2 conflicts'));
     // Closing cancels what is still running.
     await askModel();
     await wait('window.modelAsks.length===4');

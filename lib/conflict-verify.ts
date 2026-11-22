@@ -1404,16 +1404,13 @@ export function fileStatusParts(status: FileStatus): {
       return [{ tone: 'reviewed', text: 'Reviewed' }];
   }
 }
-/** The footer's words for the open file: "1 to check in this file", or nothing once it waits for Mark reviewed. */
+/**
+ * The footer's words for the open file, when it has something the counts don't say: a file Gnosis can't merge, or a
+ * stray marker. What is left is counted once, in the summary and the file list (#445 distill), never here.
+ */
 export function fileStatusLine(status: FileStatus): string | undefined {
   if (status.kind === 'unsupported') return 'Gnosis can’t merge this file. Merge the PR on your computer';
-  if (status.kind === 'proposal') return '1 proposal to check';
   if (status.kind === 'marker') return 'A conflict marker is left in the file. Check the result';
-  if (status.kind === 'conflicted') return `${fileStatusParts(status)[0].text} left in this file`;
-  if (status.kind === 'buckets')
-    return `${fileStatusParts(status)
-      .map((part) => part.text)
-      .join(', ')} in this file`;
 }
 
 export interface BucketSummary {

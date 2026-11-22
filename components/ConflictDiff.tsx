@@ -472,11 +472,20 @@ function ConflictCompareBoth({
 }
 
 const ConflictCards = createContext<(index: number) => ReactNode>(() => null);
-function Cards({ indexes }: { indexes: number[] }) {
-  const card = useContext(ConflictCards);
-  return <div className="conflict-diff-cards">{indexes.map(card)}</div>;
+/** The cards under one line, with how many of the shown version's lines above them are their conflict's (J reveals them). */
+interface CardsPlace {
+  indexes: number[];
+  rows: number;
 }
-const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) => <Cards indexes={metadata.indexes} />;
+function Cards({ indexes, rows }: CardsPlace) {
+  const card = useContext(ConflictCards);
+  return (
+    <div className="conflict-diff-cards" data-conflict-rows={rows}>
+      {indexes.map(card)}
+    </div>
+  );
+}
+const renderCards = ({ metadata }: DiffLineAnnotation<CardsPlace>) => <Cards {...metadata} />;
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
@@ -537,7 +546,16 @@ export function ConflictDiff({
   proposals?: readonly (ConflictProposal | null)[];
   verdict?: Verdict;
   note?: string;
-  wholeFile?: { proposal: ConflictProposal; ours: string; theirs: string; onUse: () => void; shown: boolean; onShow: () => void };
+  wholeFile?: {
+    proposal: ConflictProposal;
+    ours: string;
+    theirs: string;
+    onUse: () => void;
+    /** Use this result on the card too: off while the footer's primary is the same action. */
+    inlineUse?: boolean;
+    shown: boolean;
+    onShow: () => void;
+  };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
@@ -801,12 +819,17 @@ function CompareDiff({
   // updates them in place: a card that kept its DOM keeps its focus and its open details.
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
-      const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
+      const byPlace = new Map<string, DiffLineAnnotation<CardsPlace>>();
       for (const anchor of cardAnchors(shown.blocks, hunks)) {
         const place = `${anchor.side}:${anchor.line}`;
+        const block = shown.blocks.find((b) => b.index === anchor.index);
+        // A card under its conflict's last line has the conflict's lines above it; one placed elsewhere has none.
+        const rows = block && anchor.side === 'additions' && anchor.line === block.end ? block.end - block.start + 1 : 0;
         const existing = byPlace.get(place);
-        if (existing) existing.metadata.indexes.push(anchor.index);
-        else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index] } });
+        if (existing) {
+          existing.metadata.indexes.push(anchor.index);
+          existing.metadata.rows = Math.max(existing.metadata.rows, rows);
+        } else byPlace.set(place, { side: anchor.side, lineNumber: anchor.line, metadata: { indexes: [anchor.index], rows } });
       }
       return [...byPlace.values()];
     },
@@ -907,6 +930,7 @@ function WholeFile({
   ours,
   theirs,
   onUse,
+  inlineUse = true,
   verdict,
   labels,
   disabled,
@@ -921,6 +945,7 @@ function WholeFile({
   /** main's whole file: with the PR's, what the proposal's lines are compared with for their marks (#445 item 10). */
   theirs: string;
   onUse: () => void;
+  inlineUse?: boolean;
   verdict?: Verdict;
   labels: ConflictLabels;
   disabled: boolean;
@@ -961,11 +986,13 @@ function WholeFile({
         written={written}
         landmark={false}
       />
-      <div className="conflict-block-actions">
-        <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
-          Use this result
-        </Button>
-      </div>
+      {inlineUse && (
+        <div className="conflict-block-actions">
+          <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
+            Use this result
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
