@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { cascadePrLine, cascadeReviewLine, cascadeSentence, type CascadeState } from '../lib/conflict-cascade';
-import { hasConflictMarkers, type ConflictSession } from '../lib/conflict-resolution';
+import { markersLeft } from '../lib/conflict-markers';
+import type { ConflictSession } from '../lib/conflict-resolution';
 import { Button } from './ui/button';
 
 export interface ConflictCascade {
@@ -23,7 +24,7 @@ export function useConflictCascade(session: ConflictSession | undefined, busy: b
     !session.stale &&
     session.preparation !== 'up-to-date' &&
     !!session.dependents?.length &&
-    session.files.every((file) => !file.unsupported && file.resolved && !hasConflictMarkers(file.result));
+    session.files.every((file) => !file.unsupported && file.resolved && !markersLeft(file, file.result));
   const key = ready ? `${session.id}@${session.version}` : '';
   useEffect(() => {
     const api = window.electronAPI;

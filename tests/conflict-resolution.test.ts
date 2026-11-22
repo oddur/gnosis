@@ -11,9 +11,9 @@ import { composeCarried, replayBuckets, restackWorktreePath } from '../src/confl
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
 import { createConflictMemory } from '../src/conflict-rerere';
+import { conflictFileStage } from '../lib/conflict-markers';
 import {
   hasConflictMarkers,
-  conflictFileStage,
   validateConflictRequest,
   type ConflictFile,
   type ConflictSession,
@@ -1057,6 +1057,52 @@ void test('where structural merge leaves both sides’ new functions open, prepa
     f.run({ kind: 'resolve', id: f.session.id, version: f.session.version, engine: 'mergiraf', path: file.path }),
     /Structural merge already ran/
   );
+});
+
+// #457: a setext heading outside the conflicts is not a marker; Git's separator left behind still is.
+void test('a Markdown heading underlined with ======= can be reviewed, carried and pushed; a leftover separator cannot', async (t) => {
+  const f = await fixture(t, false, {
+    name: 'README.md',
+    base: 'Usage\n=======\n\nRun it 0 times.\n',
+    ours: 'Usage\n=======\n\nRun it 1 times.\n',
+    theirs: 'Usage\n=======\n\nRun it 2 times.\n',
+  });
+  const file = f.session.files[0];
+  assert.equal(conflictFileStage(file), 'conflicted');
+  // Git's separator left between both sides: refused, as in any file.
+  const leftover = file.original
+    .split('\n')
+    .filter((line) => !/^(<{7}|>{7}|\|{7})/.test(line))
+    .join('\n');
+  await assert.rejects(
+    f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: file.path, contents: leftover, resolved: true }),
+    /remaining conflict markers/
+  );
+  const resolved = 'Usage\n=======\n\nRun it 3 times.\n';
+  let session = (
+    await f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: file.path, contents: resolved, resolved: true })
+  ).session;
+  assert.equal(conflictFileStage(session.files[0]), 'reviewed');
+  // main moves elsewhere: the file stays reviewed, and the push carries the heading.
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'later.txt'), 'Another PR merged.\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  session = reply.session;
+  assert.equal(session.files[0].resolved, true);
+  assert.ok(reply.preview);
+  const published = await f.run({
+    kind: 'publish',
+    id: session.id,
+    version: session.version,
+    previewToken: reply.preview.token,
+    message: 'Merge main',
+  });
+  assert.equal(published.session.status, 'published');
+  assert.equal(await f.git('show', 'feature:README.md'), resolved.trimEnd());
 });
 
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {

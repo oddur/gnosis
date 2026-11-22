@@ -32,12 +32,8 @@ import {
   type Analyse,
   type Equivalent,
 } from '../lib/conflict-verify';
-import {
-  conflictFileStage,
-  hasConflictMarkers,
-  type ConflictFile,
-  type ConflictProposal,
-} from '../lib/conflict-resolution';
+import { conflictFileStage } from '../lib/conflict-markers';
+import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 
 /** Conflict buckets and their checks (phase 1 of the conflict redesign), with the real tree-sitter grammars. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockResolutions, carryFile, relabelMarkers, revisionChange } from '../lib/conflict-carry';
+import { blockResolutions, carryFile, markersLeft, relabelMarkers, revisionChange } from '../lib/conflict-carry';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { describeBaseMove, describeConflictError } from '../lib/conflict-flow';
 import type { ConflictFile } from '../lib/conflict-resolution';
@@ -172,4 +172,28 @@ void test('carry keeps Use the proposal as your choice on a block it reuses (#44
   assert.equal(carried.reused, 1);
   assert.equal(carried.file.result, 'x\nab\ny\n');
   assert.deepEqual(carried.file.picks, ['proposal']);
+});
+
+void test('a lone ======= in Markdown is a heading only when it is outside every conflict, all of them decided (#457)', () => {
+  const md = (original: string) => ({ path: 'docs/usage.md', original });
+  // The heading sits in Git's merged text; the conflict below it is decided.
+  const below = `Usage\n=======\n\n${block('one\n', 'zero\n', 'two\n')}`;
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n'), false);
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\ntwo\n'), false, 'Both sides');
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\nthree\n'), false, 'Your own text for the conflict');
+  // The same draft in a file that isn't Markdown, or a conflict still open: strict.
+  assert.equal(markersLeft({ ...md(below), path: 'docs/usage.txt' }, 'Usage\n=======\n\none\n'), true);
+  assert.equal(markersLeft(md(below), below), true);
+  // Your edit outside the conflicts: the draft can't be split, so nothing proves the line is the heading.
+  assert.equal(markersLeft(md(below), 'Usage!\n=======\n\none\n'), true);
+  // The PR's lines end with the heading's text: Git's separator sits right under it. Left behind, it still counts.
+  const heading = `Intro\n${block('Usage\n', 'Use\n', 'How to use\n')}\nMore\n`;
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n=======\nHow to use\n\nMore\n'), true);
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n\nMore\n'), false);
+  // An underline inside a conflict can't be told apart from the separator: it counts, even as one side's text.
+  const inside = `${block('Usage\n=======\n', 'Use\n', 'Usage\n-----\n')}text\n`;
+  assert.equal(markersLeft(md(inside), 'Usage\n=======\ntext\n'), true);
+  // The other markers count everywhere.
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n>>>>>>> main\n'), true);
+  assert.equal(markersLeft(md(''), 'text\n'), false);
 });

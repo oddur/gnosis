@@ -140,6 +140,27 @@ export function blockResolutions(segments: ConflictSegment[], result: string): (
   }
 }
 
+/** The lines Git writes to open and close a conflict, and before the common ancestor: never a heading underline. */
+const OPEN_CLOSE = /^(?:<{7,}|>{7,}|\|{7,})(?:\s|$)/m;
+const MARKDOWN = /\.(?:md|mdx|markdown|mdown|mkd)$/i;
+
+/**
+ * Conflict markers left in a file's draft (#457). The file status, Mark reviewed, the carry, remembered resolutions and
+ * every guard before a push use this one check.
+ *
+ * Every marker line counts, a lone `=======` too, with one exception that needs proof. In Markdown, `=======` under a
+ * line of text is a setext heading. It doesn't count when the draft splits into Git's conflicts with every conflict
+ * decided, and no conflict's text holds such a line: then each one is in Git's merged text outside the conflicts, as
+ * the PR and main wrote it, and never Git's separator. Anything else counts: a draft that can't be split, a conflict
+ * left open, or an underline inside a conflict, where it can't be told apart from the separator.
+ */
+export function markersLeft(file: Pick<ConflictFile, 'path' | 'original'>, contents: string): boolean {
+  if (!hasConflictMarkers(contents)) return false;
+  if (!MARKDOWN.test(file.path) || OPEN_CLOSE.test(contents)) return true;
+  const texts = blockResolutions(parseConflicts(file.original), contents);
+  return !texts || texts.some((text) => text === undefined || hasConflictMarkers(text));
+}
+
 export interface CarriedFile {
   file: ConflictFile;
   /** Conflict blocks that reuse the user's earlier result. */
@@ -266,7 +287,7 @@ export function withResult(old: ConflictFile, next: ConflictFile, result: string
   return {
     ...next,
     result,
-    resolved: resolved && !hasConflictMarkers(result),
+    resolved: resolved && !markersLeft(next, result),
     source: carried ? old.source : next.source,
     ...(carried && old.explanation ? { explanation: old.explanation } : {}),
     ...(resolver !== undefined ? { resolverText: resolver } : {}),

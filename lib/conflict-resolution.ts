@@ -290,24 +290,15 @@ export interface SavedBlockEdit {
   written?: number[];
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
-/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
+/** A line Git writes around a conflict. A lone `=======` counts in every text; a draft goes through markersLeft. */
 const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
 const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
-/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
+/** Any conflict marker line left in a text, such as a proposal's. A file's draft goes through markersLeft. */
 export function hasConflictMarkers(text: string) {
   return MARKER_LINES.test(text);
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
-/** Derive the stage from the displayed draft, including edits not saved yet. */
-export function conflictFileStage(
-  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>,
-  contents = file.result
-): ConflictFileStage {
-  if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
-  return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
-}
-
 const isPick = (pick: unknown) =>
   pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
 /** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */

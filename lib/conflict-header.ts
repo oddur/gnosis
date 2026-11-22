@@ -1,4 +1,5 @@
-import { conflictFileStage, type ConflictFile, type ConflictTypeCheck } from './conflict-resolution';
+import { conflictFileStage } from './conflict-markers';
+import type { ConflictFile, ConflictTypeCheck } from './conflict-resolution';
 import {
   allMerged,
   blockBuckets,
