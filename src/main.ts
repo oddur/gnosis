@@ -182,6 +182,7 @@ import { disabledLanguages } from '../lib/conflict-verdict-key';
 import { createConflictCheckWorker } from './conflict-checks';
 import { createConflictPrecompute } from './conflict-precompute';
 import { runUtilityScript } from './utility-script';
+import { createCascadePreviews } from './conflict-cascade';
 import { mergeConflictState } from '../lib/merge-conflicts';
 import type { AttentionItem } from '../lib/attention';
 import { createAppWindows } from './app-windows';
@@ -1146,6 +1147,8 @@ function saveBeforeQuit(): Promise<boolean> {
   if (cacheFlushed) return Promise.resolve(true);
   savingBeforeQuit ??= (async () => {
     try {
+      // A running cascade preview removes its private worktree first, for at most 3 seconds (#445 item 22).
+      await cascadePreviews.dispose();
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
       // Windows send their pending review state first, so the final flush includes it.
       await saveWorkBeforeQuit({
@@ -4317,11 +4320,24 @@ const conflictPrecompute = createConflictPrecompute({
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),
 });
-void app.whenReady().then(() => {
-  powerMonitor.on('on-battery', () => conflictPrecompute.power());
-  powerMonitor.on('on-ac', () => conflictPrecompute.power());
+// The cascade preview before a push (#445 item 22): a dry run of the stack, in the background, never on battery.
+const cascadePreviews = createCascadePreviews({
+  run: (id, version, signal) => withGitHubPriority('background', () => conflicts.previewCascade(id, version, signal), { automatic: true }),
+  onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
+  account: () => cachedLogin ?? '',
+  current: id => conflicts.draftVersion(id),
+  changed: id => broadcastToAllWindows('conflict-cascade-changed', id),
 });
-app.on('will-quit', () => conflictPrecompute.dispose());
+void app.whenReady().then(() => {
+  powerMonitor.on('on-battery', () => { conflictPrecompute.power(); cascadePreviews.power(); });
+  powerMonitor.on('on-ac', () => { conflictPrecompute.power(); cascadePreviews.power(); });
+});
+app.on('will-quit', () => { conflictPrecompute.dispose(); void cascadePreviews.dispose(); });
+ipcMain.handle('conflict-cascade', (_event, id: unknown, version: unknown, retry: unknown) => {
+  if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id) || !Number.isSafeInteger(version) || Number(version) < 1) return null;
+  if (!getResolvedToken() || !cachedLogin) return null;
+  return cascadePreviews.request(id, Number(version), retry === true);
+});
 preferencesSaved.push(() => conflictPrecompute.settingsChanged());
 // Undo and other choices in the workspace. Sent without a reply, so the choice never waits for the count.
 ipcMain.on('conflict-stats-choice', (_event, value: unknown) => {
@@ -4358,6 +4374,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
     if (request.kind === 'open') await conflictPrecompute.settle(request.url, controller.signal);
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
     // Discarded: not prepared again in the background for this head.
+    if (request.kind === 'discard' || result.session.status === 'published') cascadePreviews.forget(result.session.id);
     if (request.kind === 'discard') conflictPrecompute.dismiss(result.session.url, result.session.headSha);
     else conflictPrecompute.refresh(result.session.url);
     if ((request.kind === 'publish' && result.session.status === 'published') || request.kind === 'restack-publish') {

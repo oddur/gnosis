@@ -449,6 +449,13 @@ void app.whenReady().then(async () => {
     await click('Review result');
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
 
+    // Three PRs stack on this one: the cascade preview (#445 item 22) runs once every file is reviewed.
+    await js(`(()=>{
+      window.conflictFixture.dependents=[121,122,123].map(n=>'https://github.com/klang/engine/pull/'+n);
+      window.cascadeAsks=[];window.cascadeState={state:'checking'};
+      window.electronAPI.conflictCascade=async(id,version,retry)=>{window.cascadeAsks.push({version,retry});return structuredClone(window.cascadeState);};
+      window.electronAPI.onConflictCascadeChanged=cb=>{window.cascadeChanged=cb;return()=>{};};
+    })()`);
     // Marking the last file reviewed goes straight to the confirmation, which shows the final update.
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");
@@ -483,6 +490,47 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js("!!document.querySelector('[data-confirm-group=decided] [data-noise-stat]')"), false);
     await captureAll('confirm-push');
+    // The cascade preview: "Checking the stack…" while the dry run runs, then the sentence, which follows the result.
+    await wait("document.querySelector('.conflict-confirm [data-cascade=checking]')?.textContent==='Checking the stack…'");
+    assert.equal(
+      await js('window.cascadeAsks.at(-1).version'),
+      await js('window.conflictFixture.version'),
+      'It asks for the saved draft version'
+    );
+    const cascadeIs = (prs: string) =>
+      js(`(()=>{
+        const pr=(n,outcome,extra)=>({url:'https://github.com/klang/engine/pull/'+n,title:'PR '+n,outcome,merges:0,review:outcome!=='clean'&&outcome!=='merged',...extra});
+        window.cascadeState={state:'ready',preview:{version:window.conflictFixture.version,url:window.conflictFixture.url,prs:${prs}}};
+        window.cascadeChanged(window.conflictFixture.id);
+      })()`);
+    await cascadeIs("[pr(121,'merged'),pr(122,'clean'),pr(123,'conflicts',{conflicts:1})]");
+    const sentence = "document.querySelector('.conflict-confirm [data-cascade-sentence]')?.textContent";
+    await wait(`${sentence}==='Resolving #120 also settles #121 and #122. #123 has 1 new conflict.'`);
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-confirm [data-cascade-outcome]')].map(e=>e.textContent)"),
+      [
+        '#121 · Merged and checked · No review needed',
+        '#122 · Replays cleanly · No review needed',
+        '#123 · 1 new conflict to check or decide · Needs your review',
+      ]
+    );
+    await captureAll('confirm-cascade');
+    await cascadeIs("[pr(121,'merged'),pr(122,'clean',{merges:1,review:true}),pr(123,'carried')]");
+    await wait(`${sentence}==='Resolving #120 also settles #121, #122 and #123.'`);
+    assert.match(
+      await js<string>("document.querySelector('.conflict-confirm [data-cascade-outcome=clean]').textContent"),
+      /Recreates 1 merge commit · Needs your review/
+    );
+    // A failed check can be tried again from the confirmation.
+    await js(`(()=>{window.cascadeState={state:'failed',message:'GitHub did not answer.'};window.cascadeChanged(window.conflictFixture.id);})()`);
+    await wait("/Couldn’t check the stack: GitHub did not answer\\./.test(document.querySelector('.conflict-confirm [data-cascade=failed]')?.textContent ?? '')");
+    await js("window.cascadeState={state:'checking'}");
+    await js("[...document.querySelectorAll('.conflict-confirm [data-cascade=failed] button')].find(b=>b.textContent==='Check again').click()");
+    await wait("window.cascadeAsks.at(-1).retry===true && !!document.querySelector('.conflict-confirm [data-cascade=checking]')");
+    assert.equal(await publishes(), 0, 'The preview pushes nothing');
+    assert.equal(await js(`(${visibleButton('Push merge commit')}).disabled`), false, 'It is advisory: Push stays as it was');
+    // Later replies have no dependents, so the rest of this check runs as before.
+    await js('delete window.conflictFixture.dependents');
     await js("document.querySelector('.conflict-confirm .step-card-body').focus()");
     await key('Enter');
     await new Promise((r) => setTimeout(r, 300));

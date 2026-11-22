@@ -226,6 +226,9 @@ declare global {
       conflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;
       resetConflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;
       onConflictHeaderChanged: (callback: (url: string) => void) => () => void;
+      /** The cascade preview before a push (lib/conflict-cascade.ts); asking starts it once per draft version. */
+      conflictCascade?: (id: string, version: number, retry?: boolean) => Promise<import('../lib/conflict-cascade').CascadeState | null>;
+      onConflictCascadeChanged?: (callback: (id: string) => void) => () => void;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       /** Who may change the PR's reviewers, assignees, labels and milestone. */
       getPrPeopleAccess: (url: string) => Promise<import('../lib/pr-people').PrPeopleAccess>;
