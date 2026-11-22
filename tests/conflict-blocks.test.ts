@@ -395,10 +395,20 @@ void test('written lines: only proposal-filled conflicts mark lines, by their pl
   }
 });
 
-void test('written label: counts the lines in words', async () => {
-  const { writtenLabel } = await import('../lib/conflict-diff');
-  assert.equal(writtenLabel(1), '1 line written by Gnosis (neither side had it)');
-  assert.equal(writtenLabel(3), '3 lines written by Gnosis (neither side had them)');
+void test('written label: counts the lines in words and names who wrote them', async () => {
+  const { fileWriter, writerOf, writtenLabel } = await import('../lib/conflict-diff');
+  assert.equal(writtenLabel(1, 'structural merge'), '1 line written by structural merge (neither side had it)');
+  assert.equal(writtenLabel(3, 'Claude'), '3 lines written by Claude (neither side had them)');
+  // Gnosis is credited only for its own rules; an unknown writer is never called Gnosis.
+  assert.equal(writtenLabel(1), '1 line written by a resolver (neither side had it)');
+  assert.equal(writerOf('mergiraf'), 'structural merge');
+  assert.equal(writerOf('model', 'Claude'), 'Claude');
+  assert.equal(writerOf('model'), 'the model');
+  assert.equal(writerOf('union'), 'Gnosis’s rule');
+  assert.equal(writerOf('rerere'), 'you in an earlier merge');
+  assert.equal(writerOf('manual'), 'a resolver');
+  assert.equal(fileWriter({ wholeFile: { source: 'moved', text: '' }, source: 'manual' }), 'Gnosis’s rule');
+  assert.equal(fileWriter({ source: 'agent' }), 'the model');
 });
 
 // Review round 1 of #493: the user's rule is "when in doubt, mark".

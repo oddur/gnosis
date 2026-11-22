@@ -139,7 +139,7 @@ void test('a file edited by hand is yours, Merged proposals included, and its no
     assert.deepEqual(confirmWritten(g.decided[0]), [4, 5]);
     assert.doesNotMatch(wholeNote(source, 2, 'main'), /You edited/);
   }
-  assert.match(wholeNote('rerere', 1, 'main'), /remembered resolution/);
+  assert.match(wholeNote('rerere', 1, 'main'), /Your earlier resolution of this file was reused/);
   assert.match(wholeNote('agent', 1, 'main'), /suggestion/);
 });
 

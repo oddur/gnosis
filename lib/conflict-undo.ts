@@ -8,11 +8,12 @@ export const UNDO_DOCS_URL = 'https://github.com/oddur/gnosis/blob/main/docs/con
 
 // The service's refusals. Each says that nothing changed: an undo that is refused never pushes.
 export const UNDO_OFF =
-  'Undoing a conflict update is off for this repository. Nothing was changed. Turn it on in Repository settings, or revert the merge commit.';
+  'Undoing a conflict update is off for this repository. Nothing was changed. Turn it on in Repository settings.';
 export const UNDO_UNAVAILABLE = 'This update can no longer be undone from Gnosis. Nothing was changed.';
 export const UNDO_RESTACKED =
   'Dependent PRs were restacked onto this merge commit, so Gnosis can’t undo it. Nothing was changed.';
-export const UNDO_CLOSED = 'This PR is merged or closed, so Gnosis can’t undo the update. Nothing was changed.';
+export const UNDO_CLOSED =
+  'This PR is merged or closed, or its branch was deleted, so Gnosis can’t undo the update. Nothing was changed.';
 export const UNDO_MOVED = 'New commits are on the PR branch after the merge commit.';
 /**
  * An interrupted undo Gnosis could not settle: it says which check failed, only what it knows. Nothing is pushed from
@@ -75,6 +76,8 @@ export interface UndoErrorCopy {
   title: string;
   body?: string;
   details?: string;
+  /** Link to How to undo this update (UNDO_DOCS_URL): the other ways, and their caveats. */
+  docs?: boolean;
 }
 
 const strip = (text: string) => text.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim();
@@ -89,14 +92,21 @@ export function remoteMessage(raw: string) {
 }
 
 /** Plain copy for a failed undo. A failed push is never resent; the dialog only closes. */
-export function describeUndoError(error: string, branch: string): UndoErrorCopy {
+export function describeUndoError(
+  error: string,
+  update: Pick<PushedUpdate, 'headBranch' | 'headRepo' | 'headSha'>
+): UndoErrorCopy {
+  const branch = update.headBranch;
   const raw = strip(error);
   const git = /^Git could not complete this operation\./.test(raw);
+  // No revert to paste: a revert makes the PR undo main's changes, so merging it would drop them. The safe way left is
+  // the same reset by someone allowed to force-push, and the docs say what else there is.
   if (raw.startsWith(UNDO_MOVED) || /\bstale info\b|\(fetch first\)/i.test(raw))
     return {
       title: `${branch} has new commits after the merge commit.`,
-      body: 'Someone pushed, or a check added a commit, after your update. Nothing was changed. To undo it now, revert the merge commit instead.',
+      body: 'Someone pushed, or a check added a commit, after your update. Nothing was changed. Resetting the branch now would remove those commits too.',
       details: git ? raw : undefined,
+      docs: true,
     };
   if (
     /protected branch|GH006|GH013|pre-receive hook declined|hook declined|denying non-fast-forward|Cannot force-push/i.test(
@@ -106,11 +116,12 @@ export function describeUndoError(error: string, branch: string): UndoErrorCopy 
     const github = remoteMessage(raw);
     return {
       title: `GitHub refused to rewrite ${branch}.`,
-      body: `${github ? `GitHub says: “${github}” ` : ''}Nothing was changed. Revert the merge commit instead.`,
+      body: `${github ? `GitHub says: “${github}” ` : ''}Nothing was changed. Ask the PR’s author, or someone who can push to ${update.headRepo}, to reset ${branch} to ${update.headSha.slice(0, 7)}.`,
       details: raw,
+      docs: true,
     };
   }
-  if ([UNDO_OFF, UNDO_UNAVAILABLE, UNDO_RESTACKED, UNDO_CLOSED].includes(raw)) return { title: raw };
+  if ([UNDO_OFF, UNDO_UNAVAILABLE, UNDO_RESTACKED, UNDO_CLOSED].includes(raw)) return { title: raw, docs: raw !== UNDO_CLOSED };
   if (
     /Could not resolve host|unable to access|timed? ?out|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|Connection (?:refused|reset|closed)/i.test(
       raw

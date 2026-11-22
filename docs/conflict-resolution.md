@@ -6,7 +6,7 @@ The heading names the task, such as "Bring main into @ana's feature/retry". Belo
 
 ## Resolve each file
 
-**Nothing unproven is accepted for you.** A conflict is **Merged** only when the checks prove its proposal; that proposal is in the draft, with Undo. Every other proposal is **Check**: the draft keeps the conflict's markers, and the card shows the proposal as one of the choices, **Use the proposal**, beside the Keep actions and **Edit**. Until you choose, the file can't be marked reviewed: **Mark reviewed** and M wait (M says so and moves to the conflict), and so does **Review and push…**. A resolution you made before in this repository (a remembered resolution) is your own and doesn't wait. The same holds for every source: structural merge, the rules that keep both sides or the same change, the move rule, a model's proposal and a whole-file proposal.
+**Nothing unproven is accepted for you.** A conflict is **Merged** only when the checks prove its proposal; that proposal is in the draft, with **Decide myself** to take it out and choose yourself. Every other proposal is **Check**: the draft keeps the conflict's markers, and the card shows the proposal as one of the choices, **Use the proposal**, beside the Keep actions and **Edit**. Until you choose, the file can't be marked reviewed: **Mark reviewed** and M wait (M says so and moves to the conflict), and so does **Review and push…**. A resolution you made before in this repository (a remembered resolution) is your own and doesn't wait. The same holds for every source: structural merge, the rules that keep both sides or the same change, the move rule, a model's proposal and a whole-file proposal.
 
 Each conflict shows two labelled versions side by side: **This PR · branch** and the base branch. The common ancestor is under a collapsed **Before both changes**. Git's markers and commit IDs are never shown as labels.
 
@@ -38,15 +38,15 @@ Nothing goes to a model until you ask. The summary offers **Ask <model> about N 
 - **When the provider is paused:** a usage limit, a rate limit or an expired sign-in, the same pause that stops automatic briefings, skips the model. The summary says so once, such as "Claude is paused until 2:00 PM. Gnosis didn't ask it about these conflicts." A limit a conflict request runs into pauses briefings too.
 - **When main moves:** a conflict whose text in the draft was the model's proposal, not a Keep or an edit of yours, is never carried over as your decision. After a base move or **Load latest changes**, it is open again with both sides, and its card says "The model's proposal was from before main moved; ask again."
 
-When one side moved or renamed a function and the other side edited it, and structural merge proposed nothing for the file, Gnosis may propose the moved function with the other side's edit applied at its new place. It proposes this only when the move is unambiguous (one source, one target, the same body apart from the edit), every open conflict is at that function, the edit applies to lines the moving side did not change, and the result parses and keeps every line of both sides. The proposal covers the whole file and is always **Check**, never Merged: call sites in other files were not checked. **Use this result** puts it in the draft as it is. It is only an extra: a file with other proposals gets none, the draft stays as Git wrote it until you use it, and **Try structural merge again** stays where structural merge timed out. A move into another file is not proposed: that file merged cleanly and is not part of the resolution.
+When one side moved or renamed a function and the other side edited it, and structural merge proposed nothing for the file, Gnosis may propose the moved function with the other side's edit applied at its new place. It proposes this only when the move is unambiguous (one source, one target, the same body apart from the edit), every open conflict is at that function, the edit applies to lines the moving side did not change, and the result parses and keeps every line of both sides. The proposal covers the whole file and is always **Check**, never Merged: call sites in other files were not checked. The file list shows **Whole file to check**, and **Use the proposal for this file** puts it in the draft as it is. It is only an extra: a file with other proposals gets none, the draft stays as Git wrote it until you use it, and **Try structural merge again** stays where structural merge timed out. A move into another file is not proposed: that file merged cleanly and is not part of the resolution.
 
-A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
+A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so a note under the summary says at once to merge this PR on your computer, and the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
 
 Each file has one main action in the footer: **Next conflict**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge; Cancel has focus, so Enter never discards your resolutions.
 
-### Lines Gnosis wrote
+### Lines a resolver wrote
 
-A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them, such as "1 line written by Gnosis (neither side had it)". A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), in a whole-file proposal before you use it, and in the confirmation's diffs. A screen reader reads "Written by Gnosis. Neither side had this line." for each marked line, and the line number shows the same tooltip.
+A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them and names who wrote them: "1 line written by structural merge (neither side had it)", "…by Claude" for a model's proposal, "…by Gnosis's rule" for the rules, or "…by you in an earlier merge" for a remembered resolution. A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), in a whole-file proposal before you use it, and in the confirmation's diffs. A screen reader reads "Neither side had this line. Read it carefully." for each marked line, and the line number shows the same tooltip.
 
 When in doubt, Gnosis marks the line. It compares each conflict's result with both sides' lines exactly, line endings included, so a re-indented line or a line changed from CRLF to LF is a new line. A result that has a line more often than both sides together marks every copy of that line. In a file written whole, a line is a side's only where a line diff against that side keeps it. When there is no time for that diff, for example in a confirmation of many large files, Gnosis marks every copy of a line the result has more often than the side with the most copies.
 
@@ -76,9 +76,15 @@ Without a linked clone, with dependencies missing, or for a fork, there is no ty
 | Key | Action |
 | --- | --- |
 | J / K | Next / previous conflict |
-| 1 / 2 / 3 | Keep PR change / base change / both, for the focused conflict |
+| A | Use the proposal on the focused conflict and go to the next conflict that needs you |
+| 1 / 2 / 3 | Keep PR change / the base branch's change (such as main's) / both, for the focused conflict |
+| U | Undo: right after A, that choice; otherwise the choice on the focused conflict |
+| V | Compare with PR, the base branch or both |
+| G | Turn on **Review Merged-only files myself** |
 | M | Mark the file reviewed and open the next file |
 | N / P | Next / previous file |
+| Cmd+Enter (Ctrl+Enter) | **Review and push…**: opens the confirmation, never pushes |
+| Esc | Close the Conflicts view |
 
 Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, in a conflict's editor and in the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
 
@@ -120,35 +126,31 @@ When it is on, **Undo this update** opens a confirmation. The confirmation names
 Gnosis then reads the branch from the remote, which is the only head it trusts, and the PR from GitHub, for whether it is still open. It pushes the previous head back with `git push --force-with-lease=<branch>:<merge commit> <previous head>:<branch>`. It uses the same sign-in and push path as the update. The undo is refused, and nothing changes, when:
 
 - someone pushed to the branch after the merge commit, or CI added a commit. The lease refuses this too, if the commit arrives during the undo.
-- the PR is merged or closed.
+- the PR is merged or closed, or its branch was deleted. Gnosis checks this before the branch head, so a merged PR never reads as "someone pushed".
 - a restack of the dependent PRs is prepared, paused or pushed: it builds on the merge commit. Undo for a restack is not supported.
 - GitHub refuses the force push, for example on a protected branch. Gnosis shows GitHub's message.
 
+A refusal says what happened and links this section. Gnosis gives no commands to paste. When GitHub refused the force push, it asks you to have the PR's author, or someone who can push to the repository, reset the branch to the previous commit. When commits landed after the merge commit, a reset would remove them too, and the refusal says so.
+
 After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again, or select **Undo this update** again: Gnosis reads the branch on the remote, not GitHub's PR, which can lag. At the previous commit, the undo landed and Gnosis finishes it. At the merge commit, it never did. If Gnosis can't read the branch, or the branch is at another commit, the workspace says which, keeps your draft and offers no undo. **Keep my resolutions and start over** prepares the merge again on the branch as it is now and carries your choices over; **Discard** removes the draft. Neither pushes anything. Background preparation never replaces a draft while an undo is unsettled.
 
-To undo by hand, without a force push, revert the merge commit on the PR branch. This keeps the history:
+To undo by hand, the safe way is the same reset, by someone allowed to force-push the PR's branch: `git push --force-with-lease=<branch>:<merge commit> <head repository> <previous head>:<branch>`. The outcome shows both commits.
 
-```
-git fetch origin <branch>
-git switch <branch>
-git revert -m 1 <merge commit>
-git push origin <branch>
-```
-
-After a revert, merging the base branch again does not bring back the changes the reverted merge brought in. Revert the revert first when you merge again. If your team allows force pushes, you can reset the branch instead: `git push --force-with-lease=<branch>:<merge commit> origin <previous head>:<branch>`. The outcome shows both commits.
+Reverting the merge commit (`git revert -m 1 <merge commit>`) avoids the force push, but take care. The revert makes the PR undo the changes the merge brought in from the base branch, so merging the PR afterwards would remove them from the base branch. Merging the base branch into the PR again does not bring them back, and Gnosis can't prepare that merge for you. Revert the revert before you merge the base branch again.
 
 ## Other states
 
 - **Already up to date:** the PR branch already contains the base branch. There is nothing to merge.
 - **No conflicts to resolve:** Git merges cleanly. **Review and push…** opens the confirmation.
 - **The PR changed:** someone pushed to the PR branch, or the PR now targets another base branch. The draft cannot be pushed. **Load latest changes** prepares the merge again and keeps resolutions that still apply. New base commits alone do not make a draft stale.
-- **Preparing:** progress shows inline. After about five seconds the workspace says that preparation continues in Activity, where it can also be cancelled.
+- **Preparing:** progress shows inline. After about five seconds the workspace says that you can close the tab and preparation continues in Activity, where it can also be cancelled.
+- **Preparation failed:** the workspace says that nothing was changed and offers **Try again**. When it knows the PR's branches, it also gives the commands for a merge on your computer (**Copy commands**).
 
 ## Restack dependent PRs
 
 After the push, a stack can restack the PRs above this one. Each PR is replayed onto its updated parent, one commit at a time. When a commit conflicts, Gnosis runs the same steps as a fresh merge: your remembered resolutions, structural merge with its rules (both sides' additions, the same change on both sides, a moved function), your earlier choices for a conflict with the same text, then the checks. A commit whose every conflict is Merged by the checks, or settled by a choice of yours, is replayed without stopping.
 
-The restack pauses only on a conflict in Check or Decide. A paused restack uses the same conflict view, with **Updated parent** and **This PR** as the versions: the same diff, cards, line marks and **Edit** in place. Its switch reads **Compare with: Parent · This PR · both**. Merged conflicts in a paused file show as Merged. A choice you make in a pause is kept for the same conflict when you select **Prepare again**.
+The restack pauses only on a conflict in Check or Decide. A paused restack uses the same conflict view and the same words (Merged, Check, Decide, **Conflicts left**), with **Updated parent** and **This PR** as the versions: the same diff, cards, line marks and **Edit** in place. Its switch reads **Compare with: Parent · This PR · both**. Merged conflicts in a paused file show as Merged. A choice you make in a pause is kept for the same conflict when you select **Prepare again**.
 
 A PR update whose replay had no conflict, or whose every conflict the checks merged, says "Merged and checked · No review needed" (or "Replayed cleanly") and needs no tick. Every other update has its **Reviewed** checkbox at its header: one that paused, used a remembered resolution, carried a choice of yours, or recreated a merge commit. A recreated merge commit can lose what the original merge added even when Git reports no conflict, so the update says "Recreated 1 merge commit; check that nothing they added was lost." Those are your decisions, never Merged. Continue stays disabled, with the reason beside it, until each of those updates is reviewed. All branches are pushed together in one atomic push, or none are.
 
@@ -178,11 +180,11 @@ On startup, Gnosis removes cache directories that no saved session needs: discar
 
 ### Conflict resolution stats
 
-**Settings → Diagnostics → Conflict resolution stats** counts how the buckets fare, so a later version can decide whether verified Merged conflicts may skip review by default. Nothing changes a default yet. For Merged, Check and Decide it counts the conflicts shown, accepted as is, undone, and changed to another option. It also counts the sessions started, started over and pushed, and shows the Merged undo rate. **Reset** sets every count to zero. While saved data is still loading, Reset is refused.
+**Settings → Diagnostics → Conflict resolution stats** counts how the buckets fare, so a later version can decide whether verified Merged conflicts may skip review by default. Until then, **Review Merged-only files myself** in the summary row decides it per repository: on (the default), you mark every file reviewed; off, a file whose conflicts are all Merged is marked reviewed for you. Nothing changes a default yet. For Merged, Check and Decide it counts the conflicts shown, accepted as is, undone, and changed to another option. It also counts the sessions started, started over and pushed, and shows the Merged undo rate. **Reset** sets every count to zero. While saved data is still loading, Reset is refused.
 
 - **Shown:** each conflict of a fresh preparation that you open. Its bucket is saved with the draft, per conflict, so a reopen does not count it again. Load latest changes counts only the conflicts that changed, and it never counts as a new session.
 - **Accepted as is:** a conflict pushed with its proposal unchanged: its text is the proposal's and you did not choose a Keep for it. A result edited around the conflicts counts nothing. A whole-file proposal pushed as proposed counts its conflicts in Check.
-- **Undone:** Undo that removes Gnosis's proposal. Undoing your own Keep is not counted. Decide has no proposal, so its accepted and undone columns show "—".
+- **Undone:** **Decide myself** or **Remove proposal**, which take a proposal out of the draft. Undoing your own Keep is not counted. Decide has no proposal, so its accepted and undone columns show "—".
 - **Changed to another option:** a Keep over the proposal, another Keep, or the proposal again after a Keep.
 - Undone and changed count at most once per conflict. The main process saves that on the draft, so another window or a restart does not count a conflict twice.
 

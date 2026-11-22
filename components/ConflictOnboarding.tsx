@@ -233,14 +233,14 @@ export function ConflictNotes({
                     <CheckCheck size={13} aria-hidden="true" />
                     Merged
                   </dt>
-                  <dd>Gnosis resolved it and its checks passed. Nothing to do, but you can still change it.</dd>
+                  <dd>Structural merge or one of Gnosis’s rules resolved it, and the checks passed. Nothing to do, but you can still change it.</dd>
                 </div>
                 <div>
                   <dt className="conflict-bucket" data-bucket="check">
                     <CircleHelp size={13} aria-hidden="true" />
                     Check
                   </dt>
-                  <dd>Gnosis has a proposal it couldn’t prove. Nothing is chosen until you use it or pick a side.</dd>
+                  <dd>There is a proposal the checks couldn’t prove. Nothing is chosen until you use it or pick a side.</dd>
                 </div>
                 <div>
                   <dt className="conflict-bucket" data-bucket="decide">
@@ -260,7 +260,7 @@ export function ConflictNotes({
               <p className="conflict-guide-more conflict-guide-last">
                 <span data-conflict-guide-keys="">
                   <Keyboard size={13} aria-hidden="true" />
-                  <Keys keys={['J', 'K']} /> move · <Keys keys={['A']} /> accept · <Keys keys={['1', '2', '3']} /> keep
+                  <Keys keys={['J', 'K']} /> move · <Keys keys={['A']} /> use the proposal · <Keys keys={['1', '2', '3']} /> keep
                   · <Keys keys={['M']} /> mark reviewed ·{' '}
                   <button type="button" className="conflict-guide-link" onClick={onAllKeys}>
                     All keys
@@ -285,7 +285,7 @@ export function ConflictNotes({
       )}
       {allMerged && (
         <Note name="all-merged" icon={<CircleCheck size={13} aria-hidden="true" className="conflict-state-ok" />}>
-          Gnosis proved every conflict. Review and push, or look through them first.
+          The checks proved every conflict. Review and push, or look through them first.
         </Note>
       )}
       {!stale && summary.local > 0 && (
@@ -306,7 +306,7 @@ export function ConflictNotes({
       )}
       {!stale && (typeCheck?.state === 'unchecked' || typeCheck?.state === 'skipped') && (
         <Note name="type-check-unavailable" icon={<Info size={13} aria-hidden="true" />}>
-          The type check didn’t run on this draft. Merged results passed Gnosis’s other checks.
+          The type check didn’t run on this draft. Merged results passed the other checks.
         </Note>
       )}
     </div>
@@ -324,7 +324,7 @@ export function ConflictUndoTip({
   if (tips.seen('undo')) return null;
   return (
     <li className="conflict-note" data-conflict-note="undo">
-      <span>Undo after push is off for this repository, so you’d undo this push on GitHub or in Git.</span>
+      <span>Undo after push is off for this repository, so undoing this push would need someone who can force-push the branch.</span>
       {onSettings && (
         <Button size="xs" variant="link" className="conflict-note-link" onClick={onSettings}>
           <Settings aria-hidden="true" />

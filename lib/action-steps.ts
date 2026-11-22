@@ -150,7 +150,7 @@ export function conflictSteps(
     steps.push({
       id: 'restack',
       label: `Restack ${plural(dependents, 'dependent PR')}`,
-      detail: 'After the push. Rebases the PRs above this one.',
+      detail: 'After the push. Replays the PRs above this one onto it.',
       optional: true,
     });
   if (session.status === 'published')
@@ -166,7 +166,7 @@ export function conflictSteps(
   return sequence(steps, index, { running: options.running, failure: options.failure });
 }
 
-/** Rebase dependents onto the resolved PR, resolve any new conflicts, review, then push them together. */
+/** Restack dependents onto the resolved PR, resolve any new conflicts, review, then push them together. */
 export function restackSteps(
   session: ConflictSession,
   options: { confirming?: boolean; paused?: boolean; running?: boolean; failure?: StepFailure }
@@ -179,7 +179,7 @@ export function restackSteps(
   const steps: Omit<ActionStep, 'status'>[] = [
     {
       id: 'rebase',
-      label: `Rebase ${plural(urls.length, 'dependent PR')} onto ${session.headBranch}`,
+      label: `Restack ${plural(urls.length, 'dependent PR')} onto ${session.headBranch}`,
       detail:
         plan && plan.status !== 'blocked' && commits
           ? `${listSummary(urls.map(prNumber))} · ${plural(commits, 'commit')} · Nothing pushed`

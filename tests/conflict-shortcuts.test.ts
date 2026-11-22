@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CONFLICT_SHORTCUTS, hasGlyph, isReviewAndPushKey, nextCompare, nextNeedingYou, spokenKeys } from '../lib/conflict-shortcuts';
+import { CONFLICT_SHORTCUTS, conflictShortcuts, hasGlyph, isReviewAndPushKey, nextCompare, nextNeedingYou, spokenKeys } from '../lib/conflict-shortcuts';
 
 /** The conflict keyboard map (#445 item 13). */
 void test('Accept moves focus to the next conflict that needs you, wrapping round, then to the next action', () => {
@@ -53,6 +53,10 @@ void test('The legend names its glyphs for screen readers, and U says it undoes 
   assert.equal(hasGlyph('⌘ ↵'), true);
   assert.equal(hasGlyph('Ctrl ↵'), true);
   assert.equal(hasGlyph('j  k'), false);
-  assert.match(CONFLICT_SHORTCUTS.find((s) => s.keys === 'u')?.label ?? '', /right after A, that accept/);
-  assert.equal(CONFLICT_SHORTCUTS.find((s) => s.keys === 'g')?.label, 'Show me every merged conflict');
+  assert.match(CONFLICT_SHORTCUTS.find((s) => s.keys === 'u')?.label ?? '', /right after A, that choice/);
+  assert.equal(CONFLICT_SHORTCUTS.find((s) => s.keys === 'g')?.label, 'Turn on Review Merged-only files myself');
+  // The Keep and Compare labels name the base branch, as the buttons do; the overlay says "the base branch".
+  assert.equal(conflictShortcuts('main').find((s) => s.keys === '1  2  3')?.label, 'Keep PR change / main’s change / both');
+  assert.equal(conflictShortcuts('main').find((s) => s.keys === 'v')?.label, 'Compare with PR, main or both');
+  assert.match(CONFLICT_SHORTCUTS.find((s) => s.keys === '1  2  3')?.label ?? '', /the base branch’s change/);
 });

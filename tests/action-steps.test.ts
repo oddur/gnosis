@@ -205,7 +205,7 @@ void test('restack: rebase (skippable), conflicts only when Git pauses, review, 
   const published = session({ status: 'published', commitSha: 'd'.repeat(40), dependents: [url(2), url(3)] });
   const start = restackSteps(published, {});
   assert.deepEqual(ids(start), ['rebase', 'review', 'push']);
-  assert.equal(start.steps[0].label, 'Rebase 2 dependent PRs onto feature/retry');
+  assert.equal(start.steps[0].label, 'Restack 2 dependent PRs onto feature/retry');
   assert.equal(start.steps[0].optional, true, 'Restacking can be skipped before it starts');
   assert.equal(start.steps[2].pointOfNoReturn, true);
 
