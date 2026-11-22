@@ -124,7 +124,10 @@ export function ConflictCard({
   edit,
   onEdit,
   editor,
+  picked,
 }: {
+  /** Your pick for this conflict: `proposal` when you chose Use the proposal, which makes the proposal yours. */
+  picked?: BlockPick;
   /** Your in-place edit of this conflict, when `choice` is `edit` (#445 item 11). */
   edit?: BlockEdit;
   /** Opens the in-place editor on this conflict's lines; undefined where the draft can't be edited conflict by conflict. */
@@ -206,7 +209,7 @@ export function ConflictCard({
           )}
         </Button>
       ))}
-      {proposal && choice !== 'proposal' && (
+      {proposal && !(choice === 'proposal' && picked === 'proposal') && (
         <Button
           size="sm"
           variant="outline"
@@ -232,12 +235,34 @@ export function ConflictCard({
       Undo
     </Button>
   );
+  if (choice === 'proposal' && proposal && picked === 'proposal')
+    // Use the proposal, chosen by you: your decision, with Undo and Edit like a Keep.
+    return (
+      <section
+        className="conflict-block"
+        data-state="proposal"
+        data-bucket="decided"
+        data-conflict-index={index}
+        tabIndex={-1}
+        aria-label={`${title}. You used the proposal: ${proposalWhat(proposal)}.${writtenText}`}
+      >
+        <div className="conflict-kept">
+          <Check size={14} aria-hidden="true" />
+          <span>Used the proposal · {proposalWhat(proposal)}</span>
+          {undo && <span aria-hidden="true">·</span>}
+          {undo}
+          {editButton}
+        </div>
+        {writtenNote}
+      </section>
+    );
   if (choice === 'proposal' && proposal) {
     // A model proposal is never Merged, whatever a verdict says.
     const merged = !!verdict?.merged && proposal.source !== 'model';
     const note = verdict?.note ?? 'Checking the result…';
     const what = proposalWhat(proposal, verdict);
-    // Merged: one line, collapsed. Check: the proposal and both sides, with the Keep actions to override it.
+    // Merged: one line, collapsed. Check (a proposal in the draft nobody chose): the proposal and both sides, with Use
+    // the proposal and the Keep actions; nothing is accepted until you choose.
     return merged ? (
       <section
         className="conflict-block"
@@ -374,24 +399,47 @@ export function ConflictCard({
         </div>
       </section>
     );
+  // Open with a proposal: Check. The draft keeps the conflict's markers; the proposal is one of its choices, shown here.
+  const checking = !!proposal;
   return (
     <section
       className="conflict-block"
       data-state="open"
+      data-bucket={checking ? 'check' : undefined}
       data-conflict-index={index}
       tabIndex={0}
-      aria-label={`${title}, line ${block.line}. ${labels.ours} or ${labels.theirs}.`}
+      aria-label={
+        proposal
+          ? `${title}, line ${block.line}. ${checkLabel(proposal)}. ${verdict?.note ?? 'Checking the proposal…'} Nothing is chosen yet.`
+          : `${title}, line ${block.line}. ${labels.ours} or ${labels.theirs}.`
+      }
     >
       <header className="conflict-block-header">
         <strong>{title}</strong>
-        <span className="conflict-bucket" data-bucket="decide">
-          <CircleAlert size={13} aria-hidden="true" />
-          Decide
-        </span>
-        <span>Line {block.line}</span>
-        {note && <span className="conflict-block-note">{note}</span>}
+        {proposal ? (
+          <span className="conflict-bucket" data-bucket="check">
+            <CircleHelp size={13} aria-hidden="true" />
+            {checkLabel(proposal)}
+          </span>
+        ) : (
+          <span className="conflict-bucket" data-bucket="decide">
+            <CircleAlert size={13} aria-hidden="true" />
+            Decide
+          </span>
+        )}
+        <span>{proposal ? (verdict?.note ?? 'Checking the proposal…') : `Line ${block.line}`}</span>
+        {note && !proposal && <span className="conflict-block-note">{note}</span>}
       </header>
-      {model && <ModelLine card={model} />}
+      {model && !proposal && <ModelLine card={model} />}
+      {proposal && (
+        <>
+          <ModelIntents proposal={proposal} labels={labels} />
+          <div className="conflict-proposal-preview" data-conflict-proposal="">
+            <h4 className="conflict-side-label">Proposal · {proposalWhat(proposal)}</h4>
+            {proposal.text ? <CodeSnippet name={name} text={proposal.text} /> : <p className="conflict-side-empty">No lines</p>}
+          </div>
+        </>
+      )}
       {/* The diff above shows the two sides: against the PR, its lines removed and the base branch's added; against
           main, the other way round. In both, the rows above name them. Neither is chosen. */}
       <p className="conflict-diff-legend">

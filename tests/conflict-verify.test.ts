@@ -171,7 +171,8 @@ void test('buckets follow the draft: proposal, undone, kept by you, edited by ha
   assert.deepEqual(blockBuckets(f, f.result, ok), ['merged', 'decide']);
   assert.deepEqual(blockBuckets(f, f.result, { merged: false, note: 'x' }), ['check', 'decide']);
   assert.deepEqual(blockBuckets(f, f.result, undefined), ['check', 'decide'], 'Checking: not Merged yet');
-  assert.deepEqual(blockBuckets(f, original, ok), ['decide', 'decide'], 'Undo restores both sides');
+  // Undo restores both sides; the proposal stays on the card, one of the choices: Check, never accepted by default.
+  assert.deepEqual(blockBuckets(f, original, ok), ['check', 'decide'], 'Undo restores both sides');
   const keptPr = f.result.replace(/<<<<<<< feature\nexport function three[\s\S]*?>>>>>>> main\n/, three);
   assert.deepEqual(blockBuckets(f, keptPr, ok), ['merged', 'decided']);
   // Review probe: an edit elsewhere never turns an unreviewed proposal into a decision.
@@ -1247,8 +1248,8 @@ void test('a Keep choice is yours even when its text equals the proposal', () =>
   const empty = '<<<<<<< feature\n||||||| ancestor\na\n=======\nb\n>>>>>>> main\n';
   assert.deepEqual(conflictModel(empty, 'b\n').choices, ['theirs']);
   assert.deepEqual(conflictModel(empty, 'b\n', undefined, ['both']).choices, ['both']);
-  // Git's conflict back in place: picks have nothing to stand in for.
-  assert.deepEqual(blockBuckets(both, both.original, ok, ['both', 'both']), ['decide', 'decide']);
+  // The original conflict back in place: picks have nothing to stand in for, and each proposal waits on its card.
+  assert.deepEqual(blockBuckets(both, both.original, ok, ['both', 'both']), ['check', 'check']);
 });
 
 void test('the summary says what is left: review, a local merge tool, or nothing', () => {

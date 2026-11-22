@@ -91,6 +91,8 @@ import {
   allMerged,
   blockVerdict,
   summarySentence,
+  unchosenConflicts,
+  withoutUnchosen,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
@@ -671,10 +673,13 @@ export function ConflictWorkspace({
   const proposalOnly = ready && blocksShown !== viewKey;
   // The result is always on screen, in the diff (PR shows it against the PR's version): Mark reviewed needs no separate
   // step. The push confirmation shows the whole update once more before anything is pushed.
+  // Conflicts in Check with no choice of yours: nothing is accepted by default, so Mark reviewed waits for them.
+  const unchosen = file ? unchosenConflicts(file, contents, verdictOf(file), picksOf(file), editsOf(file)) : [];
   const action = conflictFileAction({
     stage: fileStage,
     otherFilesPending: !!nextPending(selected),
     unsupported: !!file?.unsupported,
+    unchosen: unchosen.length > 0,
   });
   const diffKey = `conflict:${session?.id ?? url}:${selected}`;
   const labels = useMemo(
@@ -912,6 +917,13 @@ export function ConflictWorkspace({
   }
   function markReviewed() {
     if (!file || markersRemain || file.unsupported) return;
+    if (unchosen.length) {
+      setHint(
+        `Choose for ${unchosen.length === 1 ? 'the conflict' : `the ${unchosen.length} conflicts`} in Check first: use the proposal, keep a side, or edit.`
+      );
+      view.current?.move(1);
+      return;
+    }
     const path = selected;
     let finished = false;
     void run(
@@ -943,7 +955,13 @@ export function ConflictWorkspace({
       (reply) => setSession(reply.session)
     );
   }, [showMerged, busy, error, confirming, session, verdicts]);
-  const resetTarget = (f: ConflictFile) => (f.proposals ? withProposals(f.original, f.proposals) : f.original);
+  // What preparation left: the original conflict with only the proposals nobody has to choose in place (the checks'
+  // Merged ones, and remembered resolutions). Every other proposal stays on its card.
+  const resetTarget = (f: ConflictFile) => {
+    if (!f.proposals) return f.original;
+    const all = withProposals(f.original, f.proposals);
+    return withoutUnchosen({ ...f, result: all, picks: undefined, edits: undefined }, verdictOf(f)) ?? all;
+  };
   // A new choice starts from the saved ones, so it never erases a Keep made before a reopen.
   const pickFor = (f: ConflictFile, index: number, choice: BlockPicks[number]) =>
     setPicks((previous) => {
@@ -1000,16 +1018,18 @@ export function ConflictWorkspace({
       (reply) => {
         const current = reply.session.files.find((f) => f.path === path);
         const who = engine === 'mergiraf' ? 'Structural merge' : model.replace(/^the /, 'The ');
+        // A suggestion is offered as proposals (fail closed): the service says what it offered, and what it left to your
+        // decisions.
         setOutcome(
           engine === 'whole-file'
             ? 'The draft is the whole-file proposal now. Review it before you mark the file reviewed.'
-            : current && hasConflictMarkers(current.result)
-              ? `${who} couldn’t resolve every conflict. Choose the rest yourself.`
-              : `${who} suggested a result. Review it before you mark the file reviewed.`
+            : current?.explanation
+              ? `${who}: ${current.explanation}`
+              : `${who} proposed nothing new.`
         );
-        // A suggestion that left the draft as it was (a timed-out retry) keeps your choices.
+        // Only using a whole-file result replaces your choices; a suggestion never overrides them.
         const before = sessionRef.current?.files.find((f) => f.path === path)?.result;
-        if (current?.result !== before) dropPicks(path);
+        if (engine === 'whole-file' && current?.result !== before) dropPicks(path);
         apply(reply, path);
       }
     );
@@ -1883,10 +1903,11 @@ export function ConflictWorkspace({
                   <span className="conflict-footer-status">
                     Start over with the latest code? Your current resolutions are replaced by a fresh merge.
                   </span>
-                  <Button size="sm" variant="ghost" onClick={() => setResetPrompt(false)}>
+                  {/* Cancel has focus: Enter or a stray Space never discards your resolutions. */}
+                  <Button size="sm" variant="ghost" autoFocus onClick={() => setResetPrompt(false)}>
                     Cancel
                   </Button>
-                  <Button size="sm" disabled={busy} onClick={() => void load(true)}>
+                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => void load(true)}>
                     Start over
                   </Button>
                 </>

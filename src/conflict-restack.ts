@@ -75,7 +75,9 @@ export function replayBuckets(file: ConflictFile, carried: readonly number[] = [
   );
   return blocks.map((segment, i) => {
     const text = texts?.[segment.index];
-    if (text === undefined || hasConflictMarkers(text)) return 'decide';
+    // Open with a proposal offered on its card: Check, nothing chosen yet (fail closed: never in the draft unchosen).
+    if (text === undefined) return file.proposals?.[segment.index] ? 'check' : 'decide';
+    if (hasConflictMarkers(text)) return 'decide';
     if (carried.includes(segment.index)) return 'yours';
     const bucket = buckets[i];
     return bucket === 'merged' || bucket === 'check' ? bucket : 'decide';

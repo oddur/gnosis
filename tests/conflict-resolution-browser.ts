@@ -185,7 +185,7 @@ void app.whenReady().then(async () => {
         if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
         if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
         if(req.kind==='resolve'&&req.engine==='whole-file'){const f=s.files.find(f=>f.path===req.path);if(!f?.wholeFile)throw Error('This file has no whole-file proposal.');f.result=f.wholeFile.text;f.resolverText=f.wholeFile.text;f.explanation='Mergiraf proposed a result. Review it before marking the file reviewed.';f.resolved=false;f.source=f.wholeFile.source==='mergiraf'?'mergiraf':'manual';}
-        else if(req.kind==='resolve'){s.files[0].result=s.files[0].resolverText='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\nexport const retries = 5;\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
+        else if(req.kind==='resolve'){s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run. It differed on 2 conflicts already decided; those keep their text.';}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
         if(req.kind==='publish'){if(window.failPublish)throw Error("Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. To github.com:klang/engine.git\\n ! [rejected]        feature/retry (stale info)\\nerror: failed to push some refs");s.status='published';s.commitSha='d'.repeat(40);}
         s.version++;return {session:structuredClone(s)};
@@ -489,7 +489,9 @@ void app.whenReady().then(async () => {
     );
     await capture('suggest-ask');
     await js("[...document.querySelectorAll('.conflict-suggest-form button')].at(-1).click()");
-    await wait("document.querySelector('.conflict-proposal')?.textContent.includes('Preserved the minimum')");
+    // A suggestion never overrides your choices (the service offers its parts only for open conflicts): both conflicts
+    // keep what you kept, and the footer says the suggestion differed.
+    await wait("document.querySelector('.conflict-footer-status')?.textContent.includes('Preserved the minimum')");
     assert.equal(await js("window.conflictCalls.find(r=>r.kind==='resolve').instructions"), 'Keep the minimum delay.');
     assert.equal(await js("window.conflictCalls.find(r=>r.kind==='resolve').path"), 'src/retry.ts');
     assert.equal(
@@ -499,9 +501,11 @@ void app.whenReady().then(async () => {
     );
     assert.match(
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
-      /suggested a result/
+      /already decided; those keep their text/
     );
-    // The suggestion is the draft, in the diff against the PR; the file waits only for Mark reviewed.
+    assert.equal(await js(`${block(0)}?.dataset.state`), 'kept');
+    assert.equal(await js(`${block(1)}?.dataset.state`), 'kept');
+    // Your draft, in the diff against the PR; the file waits only for Mark reviewed.
     await wait("!!document.querySelector('.conflict-compare-diff[data-compare=pr]:not([hidden]) diffs-container')");
     assert.equal(await stage(), 'resolved');
     assert.equal(await primary(), 'mark-reviewed');
@@ -527,17 +531,17 @@ void app.whenReady().then(async () => {
     const confirmText = await js<string>("document.querySelector('.conflict-confirm').innerText");
     assert.match(confirmText, /Pushes to (@\S+’s|your|the author’s) branch/);
     assert.match(confirmText, /Approvals may be dismissed if the repository requires it\./);
-    // Three groups (#445 item 12): the suggestion you asked for wrote the file, so both its conflicts are yours; main
-    // brings src/clock.ts. You decided is open, the other two are collapsed.
+    // Three groups (#445 item 12): you kept both conflicts (the suggestion never overrode them); main brings
+    // src/clock.ts. You decided is open, the other two are collapsed.
     assert.deepEqual(await confirmGroupsShown(), {
       decided: { count: '2 conflicts in 1 file', open: 'true' },
       merged: { count: 'none', open: 'false' },
       main: { count: '1 file', open: 'false' },
     });
     assert.match(confirmText, /You decided ·\s+2 conflicts in 1 file/);
-    assert.equal(
-      await js("document.querySelector('[data-confirm-group=decided] [data-confirm-file]')?.dataset.confirmWhole"),
-      'agent'
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('[data-confirm-group=decided] [data-confirm-how]')].map(e=>e.textContent)"),
+      ['Conflict 1 of 2 · Kept both changes', 'Conflict 2 of 2 · Kept main’s change']
     );
     assert.doesNotMatch(confirmText, /Your resolutions|Changes coming from/);
     assert.equal((confirmText.match(/Nothing is pushed/g) ?? []).length, 1, 'Say “nothing pushed” once');
@@ -1623,18 +1627,19 @@ void app.whenReady().then(async () => {
     await wait(
       "window.electronAPI.loadPreferences().then(p=>!p.repositorySettings?.['klang/engine'] || !('showMergedConflicts' in p.repositorySettings['klang/engine']))"
     );
-    // Undo moves a Merged conflict to Decide with both sides. It counts as a Merged undo, for Settings (#445 item 2).
+    // Undo takes a Merged conflict's proposal out of the draft: both sides, and the proposal waits on the card (Check).
+    // It counts as a Merged undo, for Settings (#445 item 2).
     const mergedUndone = () => js<number>('window.fixtureConflictStats.buckets.merged.undone');
     const undoneBefore = await mergedUndone();
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await wait(`window.fixtureConflictStats.buckets.merged.undone===${undoneBefore + 1}`);
     await wait(
-      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 1 to check, 2 to decide.'"
+      "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 2 to check, 1 to decide.'"
     );
-    // Review probe: the proposal is one click away from Decide, and Reset file returns to the proposals.
+    // Review probe: the proposal is one click away, and then it is your choice; Reset file returns to the proposals.
     await click('Use the proposal');
-    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await wait(`${block(0)}?.dataset.bucket==='decided'`);
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Reset file');
@@ -2049,7 +2054,7 @@ void app.whenReady().then(async () => {
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Use the proposal');
-    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await wait(`${block(0)}?.dataset.bucket==='decided'`);
     // The header keeps its layout whether "Start from Git's conflict" shows or not: the title and the view switch stay
     // put. Only a narrow tools row may wrap below them.
     await js('document.querySelector(".conflict-workspace").style.width="900px"');
@@ -2178,7 +2183,19 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open' && ${block(1)}?.dataset.bucket==='check'`);
     await pick(0, 'theirs');
     await wait(`${block(0)}?.dataset.state==='kept'`);
-    // Mark reviewed reviews the Check proposal too. The Merged file needs only the mark.
+    // Fail closed: the Check proposal is no choice of yours. Mark reviewed waits for one: M only says so and moves to it.
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='next-conflict'");
+    assert.equal(await exists('Mark reviewed & next file'), false);
+    await js(`${block(1)}.focus()`);
+    await key('m');
+    await wait("/in Check first/.test(document.querySelector('.conflict-footer-status')?.textContent ?? '')");
+    assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)"), false, 'M accepts nothing');
+    assert.equal(await activeBlock(), '1', 'M moves to the conflict that waits');
+    await captureAll('check-unchosen');
+    // Use the proposal is the explicit choice: then the file can be marked reviewed. The Merged file needs only the mark.
+    await js(`${block(1)}.querySelector('[data-choice=proposal]').click()`);
+    await wait(`${block(1)}?.dataset.bucket==='decided'`);
+    assert.match(await js<string>(`${block(1)}.querySelector('.conflict-kept').textContent`), /^Used the proposal/);
     await click('Mark reviewed & next file');
     await wait("document.querySelector('.conflict-file-title strong')?.textContent==='src/imports.ts'");
     await checksDone();
@@ -2198,7 +2215,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('[data-confirm-group=decided] [data-confirm-how]').length===2");
     const decidedNotes = await notesIn('decided');
     assert.equal(decidedNotes[0], 'theirs: Conflict 1 of 2 · Kept main’s change');
-    assert.match(decidedNotes[1], /^proposal: Conflict 2 of 2 · Proposal you reviewed · /);
+    assert.match(decidedNotes[1], /^used: Conflict 2 of 2 · Used the proposal · /);
     await shot('p1-confirm-groups', true);
     // Collapsed groups render nothing until opened. Merged for you shows the proposal and its note.
     assert.equal(await js("!!document.querySelector('[data-confirm-group=merged] .conflict-diff-file')"), false);
@@ -2247,7 +2264,7 @@ void app.whenReady().then(async () => {
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
     await pick(0, 'proposal');
-    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await wait(`${block(0)}?.dataset.bucket==='decided'`);
     await wait("window.conflictCalls.some(r=>r.kind==='save'&&JSON.stringify(r.picks)==='[\"proposal\"]')");
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     await checksDone();
@@ -2372,6 +2389,9 @@ void app.whenReady().then(async () => {
     await marksAre(prDiff, [combined]);
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     await checksDone();
+    // The union waits for a choice of yours (fail closed): use it, then the file can be marked reviewed.
+    await js(`${block(1)}.querySelector('[data-choice=proposal]').click()`);
+    await wait(`${block(1)}?.dataset.bucket==='decided'`);
     // The push confirmation marks the same line in the group that holds it.
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");

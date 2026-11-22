@@ -1151,12 +1151,71 @@ export function blockBuckets(
   }
   return blocks.map((s) => {
     const pick = choices[s.index];
-    // A model proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
-    if (pick === 'proposal')
+    if (pick === 'proposal') {
+      // Use the proposal, chosen by you, is your decision. Untouched, it is Merged only as the checks say; a model
+      // proposal is never Merged, whatever a verdict says (lib/conflict-model.ts).
+      if (picks?.[s.index] === 'proposal') return 'decided';
       return file.proposals?.[s.index]?.source !== 'model' && blockVerdict(verdict, s.index)?.merged ? 'merged' : 'check';
+    }
     if (pick === 'edit') return editOpen(edits?.[s.index]) ? 'decide' : 'decided';
-    return pick ? 'decided' : 'decide';
+    if (pick) return 'decided';
+    // Open with a proposal: Check, and nothing is chosen yet (Use the proposal is one of its choices). Without, Decide.
+    return file.proposals?.[s.index] ? 'check' : 'decide';
   });
+}
+
+/**
+ * The conflicts that wait for an explicit choice before the file can be marked reviewed: each in Check, whether its
+ * proposal is in the draft untouched or offered beside the conflict markers. A remembered resolution is your own and
+ * doesn't wait (`rerere`). Fail closed: the checks' Merged conflicts are the only proposals nobody has to choose.
+ */
+export function unchosenConflicts(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'>,
+  contents: string,
+  verdict: Verdict | undefined,
+  picks?: BlockPicks,
+  edits?: BlockEdits
+): number[] {
+  // Behind a whole-file proposal the draft is the original conflict: its markers wait already.
+  if (file.unsupported || (file.wholeFile && contents === file.original)) return [];
+  const buckets = blockBuckets(file, contents, verdict, picks, edits);
+  return parseConflicts(file.original)
+    .flatMap((s) => (s.kind === 'conflict' ? [s.index] : []))
+    .filter((index, i) => buckets[i] === 'check' && file.proposals?.[index]?.source !== 'rerere');
+}
+
+/**
+ * The draft without the proposals nobody chose that the checks didn't Merge: each such conflict gets its markers back,
+ * and its proposal stays, offered on its card (Use the proposal). A proposal the checks Merged, a remembered resolution,
+ * and a conflict you chose (a pick) or edited keep their text. Undefined when nothing changes, or when the draft doesn't
+ * split into its conflicts exactly. Fail closed: no verdict means nothing was Merged.
+ */
+export function withoutUnchosen(
+  file: Pick<ConflictFile, 'original' | 'result' | 'proposals' | 'picks' | 'edits'>,
+  verdict: Verdict | undefined
+): string | undefined {
+  const proposals = file.proposals;
+  if (!proposals?.some(Boolean)) return undefined;
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, file.result);
+  if (!texts) return undefined;
+  const restore = proposals.flatMap((proposal, index) =>
+    proposal &&
+    proposal.source !== 'rerere' &&
+    !(proposal.source !== 'model' && blockVerdict(verdict, index)?.merged) &&
+    texts[index] === proposal.text &&
+    !file.picks?.[index] &&
+    !file.edits?.[index]
+      ? [index]
+      : []
+  );
+  if (!restore.length) return undefined;
+  const draft = (back: readonly number[]) =>
+    segments
+      .map((s) => (s.kind === 'text' ? s.text : back.includes(s.index) ? s.block.raw : (texts[s.index] ?? s.block.raw)))
+      .join('');
+  // Only a draft that is exactly its conflicts' texts: anything else is left as it is.
+  return draft([]) === file.result ? draft(restore) : undefined;
 }
 
 /**

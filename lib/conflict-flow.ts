@@ -12,10 +12,12 @@ export function conflictFileAction(state: {
   /** Another file still needs resolving or review. */
   otherFilesPending: boolean;
   unsupported?: boolean;
+  /** A conflict in Check has no choice of yours yet (unchosenConflicts): nothing is accepted by default. */
+  unchosen?: boolean;
 }): ConflictFileAction {
   if (!state.stage) return 'none';
   if (state.unsupported) return state.otherFilesPending ? 'next-file' : 'none';
-  if (state.stage === 'conflicted') return 'next-conflict';
+  if (state.stage === 'conflicted' || (state.stage === 'resolved' && state.unchosen)) return 'next-conflict';
   if (state.stage === 'resolved') return 'mark-reviewed';
   return state.otherFilesPending ? 'next-file' : 'confirm';
 }

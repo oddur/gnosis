@@ -17,6 +17,7 @@ import {
   type SavedBlockEdit,
 } from '../lib/conflict-resolution';
 import { withProposals } from '../lib/conflict-carry';
+import { withoutUnchosen } from '../lib/conflict-verify';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
@@ -250,7 +251,11 @@ export function RestackReview({
             // Your edits as you make them, else the ones saved with the paused draft.
             const fileEdits = entry?.original === file.original ? entry.edits : file.edits;
             // Reset file returns to what the replay proposed, as in the main workspace: after Use this result too.
-            const resetTarget = file.proposals ? withProposals(file.original, file.proposals) : file.original;
+            // Only the proposals nobody has to choose (the checks' Merged ones) are in place; the rest wait on their cards.
+            const prepared = file.proposals ? withProposals(file.original, file.proposals) : file.original;
+            const resetTarget =
+              withoutUnchosen({ ...file, result: prepared, picks: undefined, edits: undefined }, file.verdict?.verdict) ??
+              prepared;
             const reset = () => {
               setPicks((previous) => ({ ...previous, [file.path]: [] }));
               setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: [] } }));

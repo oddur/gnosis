@@ -4221,6 +4221,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .conflict-side + .conflict-side { border-left:0;border-top:1px solid var(--border); }
 }
 .conflict-ancestor { border-top:1px solid var(--border); }
+/* A Check conflict's proposal, one of its choices: shown on its card, never in the draft until you use it. */
+.conflict-proposal-preview { border-top:1px solid var(--border); }
 .conflict-ancestor summary { padding:6px 12px;cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-ancestor[open] summary { border-bottom:1px solid var(--border); }
 .conflict-block-actions { display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--secondary) 50%,var(--card)); }
