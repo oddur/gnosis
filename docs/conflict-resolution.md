@@ -39,6 +39,22 @@ When in doubt, Gnosis marks the line. It compares each conflict's result with bo
 
 Gnosis keeps the text the resolver wrote. When you then keep a conflict or edit the draft, the resolver's lines that neither side had stay marked. A line you type, saved or not, is never marked, and neither is a Keep or an open conflict. The mark never hides a line or its change colour.
 
+### Type check (opt-in)
+
+A repository with a linked local clone can turn on **Type-check conflict resolutions** in **Settings → Local clones**. It is off by default, and choosing another folder turns it off again. When it is on, Gnosis type-checks the merge after it prepares it, in the background. The summary row shows one line: "Type check: running…", "passed", "3 new errors", "stopped" or "skipped (reason)". **Stop** ends a running check.
+
+Running a repository's type checker runs the repository's code, so the check is narrow:
+
+- Only TypeScript, with a `tsconfig.json` at the repository root. Other projects show "not supported yet".
+- Only the compiler that is already installed in your clone (`node_modules/typescript/lib/tsc.js`), with `--noEmit` and no build info. Gnosis never runs `npm install`, a package script or a shell. Without `node_modules` in the clone, the check is skipped: "dependencies aren't installed in your clone".
+- Never for a PR from a fork, and never when the clone has no GitHub remote for the PR's repository.
+- The compiler runs in a private worktree of the PR's Git cache at the merge result, with the clone's `node_modules` linked in. Your clone is only read. The worktree is removed afterwards.
+- The check stops after 2 minutes, and never blocks the view.
+
+A conflict that is still open is checked with the PR's side. When the merge has errors, Gnosis checks the PR head the same way, and only errors the head does not have count. An error is its file, code and message, because lines move in a merge. New errors in a conflicted file put that file's Merged conflicts in Check, with the first errors as the note. They stay in Check while the file's proposals are the ones that were checked. New errors in other files are information: the status line lists them on hover or focus.
+
+Without a linked clone, with dependencies missing, or for a fork, there is no type check: watch the PR's own checks after the push, and undo the push if they fail.
+
 ### Keyboard
 
 | Key | Action |
@@ -96,7 +112,7 @@ A PR update whose replay had no conflict, or whose every conflict the checks mer
 
 This version handles regular UTF-8 text files with a common ancestor and both branch versions. Binary, rename/delete, file-mode and repository-structure conflicts require a local merge tool. The workspace explains unsupported files and prevents publication until all conflicts can be resolved. Limits are 100 conflicted files, 1 MB per file version, and 12 MB of combined conflict text.
 
-Git 2.40 or newer must be installed and available to the app: preparation runs `git merge-tree --merge-base`. With an older Git, Resolve conflicts stops before it starts and says which version it found. Mergiraf 0.20.0 is bundled. Project tests are **not** run: agents receive the supplied ancestor, branch versions, current draft and PR context, without a checkout or test runner. The confirmation and proposal notes state this limitation.
+Git 2.40 or newer must be installed and available to the app: preparation runs `git merge-tree --merge-base`. With an older Git, Resolve conflicts stops before it starts and says which version it found. Mergiraf 0.20.0 is bundled. Project tests are **not** run, apart from the opt-in type check above: agents receive the supplied ancestor, branch versions, current draft and PR context, without a checkout or test runner. The confirmation and proposal notes state this limitation.
 
 ## Storage and publication
 

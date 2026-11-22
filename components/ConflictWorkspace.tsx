@@ -67,6 +67,7 @@ import {
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
+  type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
 import {
   conflictPushNeedsWorkflow,
@@ -90,6 +91,9 @@ import {
   verifyWholeFile,
   type ConflictBucket,
   type Verdict,
+  typeCheckKey,
+  typeErrorNote,
+  withTypeError,
 } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
@@ -190,6 +194,76 @@ function KeyboardHelp() {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  );
+}
+
+/** The type check's one line (#445 item 24), "Type check: …". */
+export function typeCheckLine(status: ConflictTypeCheck) {
+  switch (status.state) {
+    case 'running':
+      return 'Type check: running…';
+    case 'passed':
+      return 'Type check: passed';
+    case 'errors':
+      return `Type check: ${status.count} new ${status.count === 1 ? 'error' : 'errors'}`;
+    case 'skipped':
+      return `Type check: skipped (${status.reason})`;
+    case 'cancelled':
+      return 'Type check: stopped';
+  }
+}
+
+/**
+ * The opt-in type check's status in the summary row (#445 item 24). New errors list on hover or focus: those in a
+ * conflicted file keep its proposals in Check, the rest are for your information. A running check can be stopped.
+ */
+function TypeCheckStatus({ status, onStop }: { status: ConflictTypeCheck; onStop: () => void }) {
+  const line = typeCheckLine(status);
+  const detail =
+    status.state === 'errors'
+      ? status.errors
+      : status.state === 'passed' && status.preExisting
+        ? []
+        : undefined;
+  const already =
+    (status.state === 'errors' || status.state === 'passed') && status.preExisting
+      ? `Not counted: ${status.preExisting} ${status.preExisting === 1 ? 'error' : 'errors'} the PR already has.`
+      : undefined;
+  return (
+    <span className="conflict-type-check" role="status" data-type-check={status.state}>
+      {detail ? (
+        <TooltipProvider delayDuration={350}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="conflict-type-check-detail">
+                {line}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="conflict-type-check-errors">
+              {status.state === 'errors' && (
+                <>
+                  <p>Errors in a conflicted file keep its merged conflicts in Check. Errors elsewhere are for your information.</p>
+                  <ul>
+                    {detail.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                  {status.count > detail.length && <p>{status.count - detail.length} more not shown.</p>}
+                </>
+              )}
+              {already && <p>{already}</p>}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : (
+        line
+      )}
+      {status.state === 'running' && (
+        <Button size="xs" variant="ghost" onClick={onStop}>
+          Stop
+        </Button>
+      )}
+    </span>
   );
 }
 
@@ -431,10 +505,36 @@ export function ConflictWorkspace({
   const checking = useRef(new Map<string, string>());
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
+  // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
+  const [typeCheck, setTypeCheck] = useState<ConflictTypeCheck | null>(null);
+  const sessionId = session?.id;
+  useEffect(() => {
+    setTypeCheck(null);
+    if (!sessionId) return;
+    let active = true;
+    const refresh = () =>
+      void window.electronAPI.conflictTypeCheck(sessionId).then(
+        (value) => active && setTypeCheck(value),
+        () => {}
+      );
+    refresh();
+    const off = window.electronAPI.onConflictTypeCheckChanged((id) => id === sessionId && refresh());
+    return () => {
+      active = false;
+      off();
+    };
+  }, [sessionId, session?.version]);
+  // New type errors in a file keep its Merged proposals in Check: saved on the file, or just found by the check.
+  const typeNoteOf = (f: ConflictFile) =>
+    typeErrorNote(f) ??
+    (typeCheck?.state === 'errors'
+      ? typeCheck.files.find((x) => x.path === f.path && x.key === typeCheckKey(f))?.note
+      : undefined);
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence()))) return f.verdict.verdict;
+    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
+      return withTypeError(f.verdict.verdict, typeNoteOf(f));
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
-    return entry?.key === proposalKey(f) ? entry.verdict : undefined;
+    return entry?.key === proposalKey(f) ? withTypeError(entry.verdict, typeNoteOf(f)) : undefined;
   };
   useEffect(() => {
     for (const f of session?.files ?? []) {
@@ -477,7 +577,7 @@ export function ConflictWorkspace({
           return [f.path, buckets];
         })
       ),
-    [session?.files, verdicts, picks]
+    [session?.files, verdicts, picks, typeCheck]
   );
   const fileStates = useMemo(
     () =>
@@ -1166,6 +1266,12 @@ export function ConflictWorkspace({
                   />
                   Show me every merged conflict
                 </label>
+              )}
+              {typeCheck && (
+                <TypeCheckStatus
+                  status={typeCheck}
+                  onStop={() => void window.electronAPI.cancelConflictTypeCheck(session.id)}
+                />
               )}
               <span className="conflict-save-state" role="status">
                 {saveState === 'failed'

@@ -49,6 +49,22 @@ export interface Verdict extends BlockVerdict {
   /** Each conflict's own outcome, by block index. Absent: every proposal shares the file's. */
   blocks?: (BlockVerdict | undefined)[];
 }
+/**
+ * The verdict with the type check's new errors (#445 item 24): every Merged proposal in the file is Check, with the
+ * compiler's error as its note. A verdict without Merged proposals is unchanged.
+ */
+export function withTypeError(verdict: Verdict | undefined, note: string | undefined): Verdict | undefined {
+  if (!verdict || note === undefined || !(verdict.merged || verdict.blocks?.some((block) => block?.merged)))
+    return verdict;
+  return {
+    ...verdict,
+    merged: false,
+    note: verdict.merged ? note : verdict.note,
+    ...(verdict.blocks
+      ? { blocks: verdict.blocks.map((block) => (block?.merged ? { merged: false, note } : block)) }
+      : {}),
+  };
+}
 /** A conflict's own outcome: its entry in `blocks`, else the file's. Undefined while the checks run. */
 export const blockVerdict = (verdict: Verdict | undefined, index: number): BlockVerdict | undefined =>
   verdict && (verdict.blocks?.[index] ?? verdict);
@@ -1079,6 +1095,13 @@ export function proposalKey(
   }
   return key;
 }
+
+/** The proposals a type check result belongs to: Git's conflict and the proposals, never the draft. */
+export const typeCheckKey = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) =>
+  proposalKey({ original: file.original, proposals: file.proposals, wholeFile: file.wholeFile });
+/** The type check's note for a file, while its proposals are the ones it checked. */
+export const typeErrorNote = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'typeError'>) =>
+  file.typeError && file.typeError.key === typeCheckKey(file) ? file.typeError.note : undefined;
 
 /**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the

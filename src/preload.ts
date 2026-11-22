@@ -443,6 +443,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
+  // The opt-in type check of a prepared merge (#445 item 24).
+  conflictTypeCheck: (id: string): Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null> =>
+    ipcRenderer.invoke('conflict-type-check', id),
+  cancelConflictTypeCheck: (id: string): Promise<void> => ipcRenderer.invoke('conflict-type-check-cancel', id),
+  onConflictTypeCheckChanged: (callback: (id: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on('conflict-type-check-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('conflict-type-check-changed', handler);
+    };
+  },
   // Settings › Diagnostics › Conflict resolution stats. A choice is sent without a reply, so it never waits.
   recordConflictChoice: (choice: import('../lib/conflict-stats').ConflictChoice) => {
     ipcRenderer.send('conflict-stats-choice', choice);
@@ -598,6 +609,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('connect-local-clone', repo, directory),
   disconnectLocalClone: (repo: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> =>
     ipcRenderer.invoke('disconnect-local-clone', repo),
+  setLocalCloneTypeCheck: (repo: string, on: boolean): Promise<import('../lib/local-clone').LocalCloneStatus[]> =>
+    ipcRenderer.invoke('local-clone-type-check', repo, on),
   listRepoRefs: (
     repoPath: string
   ): Promise<{
