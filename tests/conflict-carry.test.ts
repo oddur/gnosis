@@ -173,3 +173,23 @@ void test('carry keeps Use the proposal as your choice on a block it reuses (#44
   assert.equal(carried.file.result, 'x\nab\ny\n');
   assert.deepEqual(carried.file.picks, ['proposal']);
 });
+
+void test('a block carry cannot reuse takes the fresh proposal only when the fresh draft holds it (#451)', () => {
+  const original = `x\n${block('a\n', 'o\n', 'b\n')}y\n${block('c\n', 'p\n', 'd\n')}z\n`;
+  // You decided the first block; the second is still Git's conflict.
+  const old = file(original, `x\na\ny\n${block('c\n', 'p\n', 'd\n')}z\n`);
+  const first = block('a\n', 'o\n', 'b\n', 'f'.repeat(40));
+  const second = block('c\n', 'p\n', 'd\n', 'f'.repeat(40));
+  const fresh = `x\n${first}y\n${second}z\n`;
+  const proposals = [null, { source: 'mergiraf' as const, text: 'cd\n' }];
+  // Stored beside the fresh draft, never applied: the open block keeps its markers and the proposal stays offered.
+  const beside = carryFile(old, { ...file(fresh), proposals }, false);
+  assert.equal(beside.reused, 1);
+  assert.equal(beside.open, 1);
+  assert.equal(beside.file.result, `x\na\ny\n${second}z\n`);
+  assert.deepEqual(beside.file.proposals, proposals);
+  // Applied by preparation: the open block shows it, as before.
+  const applied = carryFile(old, { ...file(fresh, `x\n${first}y\ncd\nz\n`), proposals }, false);
+  assert.equal(applied.open, 1);
+  assert.equal(applied.file.result, 'x\na\ny\ncd\nz\n');
+});

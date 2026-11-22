@@ -21,6 +21,7 @@ import {
   HEAD_MOVED,
   RETARGETED,
   blockProposals,
+  blockResolutions,
   carryFile,
   conflictKeys,
   relabelMarkers,
@@ -1481,7 +1482,13 @@ export function createConflictResolutionService(deps: Deps) {
         if (old.statsBlocks) file.statsBlocks = old.statsBlocks;
         if (old.proposals) {
           file.proposals = old.proposals;
-          file.result = withProposals(file.original, old.proposals);
+          // Only the proposals the old draft held. One stored beside it (the reopen pass, or a reset after a
+          // suggestion) was never applied, and a base move doesn't apply it either (#451).
+          const held = blockResolutions(parseConflicts(old.original), old.result);
+          file.result = withProposals(
+            file.original,
+            old.proposals.map((proposal, index) => (proposal && held?.[index] === proposal.text ? proposal : null))
+          );
           file.source = old.source;
         }
         return false;

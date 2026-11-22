@@ -216,6 +216,8 @@ export function carryFile(
   const edits: NonNullable<ConflictFile['edits']> = [];
   /** Conflicts whose earlier text was a model's proposal: open again, with Git's markers, to ask again. */
   const modelStale: number[] = [];
+  /** The text `next`'s draft holds for each block, read once and only when a proposal may fill a block (#451). */
+  let shown: (string | undefined)[] | undefined | null = null;
   const result = segments
     .map((segment) => {
       if (segment.kind === 'text') return segment.text;
@@ -230,9 +232,14 @@ export function carryFile(
       picks[segment.index] = carried?.pick ?? null;
       edits[segment.index] = carried?.edit ?? null;
       if (carried === undefined) {
-        // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
+        // Not carried: the fresh merge's proposal for it, only when preparation put it in the draft. A proposal stored
+        // beside the draft was never applied, so it stays offered and the conflict keeps its markers (#451). It still
+        // needs you.
         open++;
-        return next.proposals?.[segment.index]?.text ?? segment.block.raw;
+        const proposal = next.proposals?.[segment.index];
+        if (!proposal) return segment.block.raw;
+        if (shown === null) shown = blockResolutions(segments, next.result);
+        return shown?.[segment.index] === proposal.text ? proposal.text : segment.block.raw;
       }
       reused++;
       carriedBlocks.push(segment.index);
