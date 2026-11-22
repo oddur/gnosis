@@ -88,7 +88,6 @@ import { useGitHubAccess } from '../lib/use-github-access';
 import {
   blockBuckets,
   bucketSummary,
-  proposalKey,
   fileStatus,
   fileStatusLine,
   fileStatusParts,
@@ -110,6 +109,7 @@ import {
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
+import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -715,16 +715,21 @@ export function ConflictWorkspace({
   }, [sessionId, session?.version]);
   // New type errors keep Merged proposals in Check: the same overlay as the PR header's (lib/conflict-verify.ts).
   const typeNoteOf = (f: ConflictFile) => typeErrorOf(f, typeCheck);
+  // Settings › Code intelligence as it is now (#464): turning a language off while the dialog is open drops the verdicts
+  // made with it on, and the buckets follow at once.
+  const disabled = useMemo(
+    () => disabledLanguages(preferences ? codeIntelligenceSettings(preferences) : currentCodeIntelligence()),
+    [preferences?.codeIntelligence]
+  );
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict?.key === verdictKey(f, disabledLanguages(currentCodeIntelligence())))
-      return withTypeError(f.verdict.verdict, typeNoteOf(f));
+    if (f.verdict?.key === verdictKey(f, disabled)) return withTypeError(f.verdict.verdict, typeNoteOf(f));
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
-    return entry?.key === proposalKey(f) ? withTypeError(entry.verdict, typeNoteOf(f)) : undefined;
+    return entry?.key === verdictKey(f, disabled) ? withTypeError(entry.verdict, typeNoteOf(f)) : undefined;
   };
   useEffect(() => {
     for (const f of session?.files ?? []) {
       if (!f.proposals && !f.wholeFile) continue;
-      const key = proposalKey(f);
+      const key = verdictKey(f, disabled);
       if (verdictOf(f) || checking.current.get(f.path) === key) continue;
       checking.current.set(f.path, key);
       void (
@@ -739,7 +744,7 @@ export function ConflictWorkspace({
             setVerdicts((previous) => ({ ...previous, [f.path]: { key, verdict } }));
         });
     }
-  }, [session?.files]);
+  }, [session?.files, disabled]);
   const { settings: repositories, setShowMergedConflicts } = useRepositorySettings();
   // Undo and re-choice counts for Settings › Diagnostics (lib/conflict-stats.ts).
   const choiceStats = useConflictChoiceStats();
@@ -775,7 +780,7 @@ export function ConflictWorkspace({
           return [f.path, buckets];
         })
       ),
-    [session?.files, verdicts, picks, edits, typeCheck]
+    [session?.files, verdicts, picks, edits, typeCheck, disabled]
   );
   const fileStates = useMemo(
     () =>
