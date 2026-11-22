@@ -206,8 +206,8 @@ export function layoutMerge(block: Pick<ConflictBlock, 'base' | 'ours' | 'theirs
       continue;
     }
     if (i === base.tokens.length) break;
-    const own = formatted.tokens[counterpart[i]];
-    if (own) text += own.before + own.text;
+    // A trailing comma the reformat dropped (-1) is left out.
+    if (counterpart[i] >= 0) text += formatted.tokens[counterpart[i]].before + formatted.tokens[counterpart[i]].text;
     i++;
   }
   text += formatted.after;

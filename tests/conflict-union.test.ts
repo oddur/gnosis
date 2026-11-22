@@ -488,10 +488,16 @@ void test('one side only reformatted, the other edited: the edit in the reformat
   assert.equal(layoutMerge({ base: one, ours: wrapped, theirs: one.replace('(', '( ') }, false), undefined);
   assert.equal(layoutMerge({ base: 'f(a)\n', ours: 'f(\n  a,\n)\n', theirs: 'f(a, b)\n' }, false), undefined);
   // Inside a string or comment every character counts: a changed space there is code, not layout.
-  assert.equal(layoutMerge({ base: 'f("a b", 1)\n', ours: 'f("a  b", 1)\n', theirs: 'f("a b", 2)\n' }, false), undefined);
+  assert.equal(
+    layoutMerge({ base: 'f("a b", 1)\n', ours: 'f("a  b", 1)\n', theirs: 'f("a b", 2)\n' }, false),
+    undefined
+  );
   // In Python, a line's indentation outside brackets is code.
   assert.equal(
-    layoutMerge({ base: 'if a:\n    b()\nc()\n', ours: 'if a:\n    b()\n    c()\n', theirs: 'if a:\n    b(1)\nc()\n' }, true),
+    layoutMerge(
+      { base: 'if a:\n    b()\nc()\n', ours: 'if a:\n    b()\n    c()\n', theirs: 'if a:\n    b(1)\nc()\n' },
+      true
+    ),
     undefined
   );
   // A proposal the trees don't confirm is taken back: the conflict is yours to decide.
@@ -499,16 +505,25 @@ void test('one side only reformatted, the other edited: the edit in the reformat
   const wrong = { ...trap, proposals: [{ source: 'layout' as const, text: want.replace('5', '6') }] };
   wrong.result = withProposals(wrong.original, wrong.proposals);
   const back = withoutUnconfirmed(wrong, await check(wrong));
-  assert.equal(back?.result, wrong.original);
-  assert.equal(back?.proposals, undefined);
+  assert.ok(back);
+  assert.equal(back.result, wrong.original);
+  assert.equal(back.proposals, undefined);
 });
 
 void test('the layout rule replaces structural merge’s proposal only when that one lost the reformatted layout', () => {
   const block: [string, string, string] = ['  g(\n    1,\n  );\n', '  g(1);\n', '  g(2);\n'];
   const lost = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'mergiraf', text: '  g(2);\n' }]);
   assert.deepEqual(lost.proposals, [{ source: 'layout', text: '  g(\n    2,\n  );\n' }]);
-  const kept = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]);
+  const kept = conflict(
+    'src/x.ts',
+    ['function f() {\n', block, '}\n'],
+    [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]
+  );
   assert.deepEqual(kept.proposals, [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]);
-  const remembered = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'rerere', text: '  g(3);\n' }]);
+  const remembered = conflict(
+    'src/x.ts',
+    ['function f() {\n', block, '}\n'],
+    [{ source: 'rerere', text: '  g(3);\n' }]
+  );
   assert.deepEqual(remembered.proposals, [{ source: 'rerere', text: '  g(3);\n' }]);
 });
