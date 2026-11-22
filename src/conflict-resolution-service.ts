@@ -12,6 +12,7 @@ import {
   type ConflictRequest,
   type ConflictReply,
   type ConflictTypeCheck,
+  type TypeErrorMark,
   type BaseMove,
 } from '../lib/conflict-resolution';
 import {
@@ -357,23 +358,30 @@ export function createConflictResolutionService(deps: Deps) {
     pushedCache.delete(key);
     deps.storage.write(key, value);
   }
+  /** A file's new type errors from a finished type check (lib/conflict-resolution.ts `TypeErrorMark`). */
+  type TypedFile = TypeErrorMark & { path: string };
   /**
    * A type check's demotions that came while a request held the draft: saved with its next write, as choices are. Each
    * entry is a whole run's list, so it replaces the one before; an empty list clears them (a pass, or the check off).
    */
-  const pendingTypeErrors = new Map<string, { path: string; key: string; note: string }[]>();
+  const pendingTypeErrors = new Map<string, TypedFile[]>();
   /**
    * The type check's demotions as an overlay on the files (`typeError`): the files with new errors get theirs, every
    * other file loses its own. The checks' saved verdict is never changed; the view applies the overlay while the check
    * is on. Only for the proposals the type check saw.
    */
-  function applyTypeErrors(session: ConflictSession, files: readonly { path: string; key: string; note: string }[]) {
+  function applyTypeErrors(session: ConflictSession, files: readonly TypedFile[]) {
     let changed = false;
     if (session.status !== 'editing') return changed;
     for (const file of session.files) {
       const typed = files.find((x) => x.path === file.path && x.key === typeCheckKey(file));
-      if (typed && file.typeError?.note !== typed.note) {
-        file.typeError = { key: typed.key, note: typed.note };
+      const mark: TypeErrorMark | undefined = typed && {
+        key: typed.key,
+        note: typed.note,
+        ...(typed.blocks ? { blocks: typed.blocks } : {}),
+      };
+      if (mark && JSON.stringify(file.typeError) !== JSON.stringify(mark)) {
+        file.typeError = mark;
         changed = true;
       } else if (!typed && file.typeError) {
         delete file.typeError;
@@ -383,7 +391,7 @@ export function createConflictResolutionService(deps: Deps) {
     return changed;
   }
   /** Saves a run's demotions on the draft now, or with the next write while a request holds it. */
-  function saveTypeErrors(key: string, files: { path: string; key: string; note: string }[], match?: (saved: ConflictSession) => boolean) {
+  function saveTypeErrors(key: string, files: TypedFile[], match?: (saved: ConflictSession) => boolean) {
     if (busy.has(key)) {
       pendingTypeErrors.set(key, files);
       return;
@@ -2235,8 +2243,10 @@ export function createConflictResolutionService(deps: Deps) {
       for (const name of deps.storage.names?.() ?? []) {
         if (!name.startsWith('conflict-draft:')) continue;
         const saved = deps.storage.read(name) as ConflictSession | null | undefined;
-        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name)))
+        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name))) {
           saveTypeErrors(name, []);
+          deps.typeCheckChanged?.(saved.id);
+        }
       }
     },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
@@ -2750,6 +2760,14 @@ export function createConflictResolutionService(deps: Deps) {
         }
         session.version++;
         await persist(session);
+        // A changed draft is type checked again; until that run finishes, the demotions saved on its files stay. A check
+        // you stopped stays stopped until the next open.
+        const typed = typeChecks.get(key);
+        if (
+          (request.kind === 'resolve' || request.kind === 'save' || request.kind === 'model') &&
+          (!typed || (typed.status.state !== 'cancelled' && typed.fingerprint !== typeCheckFingerprint(session)))
+        )
+          startTypeCheck(ctx, session);
         return { session, ...(baseMoved ? { baseMoved } : {}) };
       } finally {
         release(key);

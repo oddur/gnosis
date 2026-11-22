@@ -54,10 +54,11 @@ export interface ConflictFile {
    */
   statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
   /**
-   * New type errors the opt-in type check found in this file (#445 item 24), for the proposals it checked
-   * (`typeCheckKey`). While the key matches, every Merged proposal in the file is Check with this note.
+   * New type errors the opt-in type check found in this file (#445 item 24), for the draft it checked (`typeCheckKey`).
+   * Every Merged proposal in the file is Check with this note, or only the conflicts in `blocks` when each error was
+   * inside a conflict. It stays until a finished run says otherwise, or the check is turned off (`typeErrorOf`).
    */
-  typeError?: { key: string; note: string };
+  typeError?: TypeErrorMark;
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -242,6 +243,15 @@ export interface BaseMove {
  * the merge result in a private worktree. `files` lists the conflicted files with new errors, with the proposals'
  * fingerprint each was checked with (`typeCheckKey`).
  */
+/**
+ * A file's new type errors: `note` for every Merged proposal in the file, or, with `blocks`, a note for each conflict
+ * (by block index) that holds an error. `blocks` is only set when every error was inside a conflict.
+ */
+export interface TypeErrorMark {
+  key: string;
+  note: string;
+  blocks?: (string | null)[];
+}
 export type ConflictTypeCheck =
   | { state: 'running' }
   | { state: 'passed'; preExisting: number }
@@ -251,7 +261,7 @@ export type ConflictTypeCheck =
       preExisting: number;
       /** The first new errors, one line each: "path:line TS1234 message". */
       errors: string[];
-      files: { path: string; key: string; note: string }[];
+      files: (TypeErrorMark & { path: string })[];
     }
   | { state: 'skipped'; reason: string }
   /** The compiler ran but did not check types, such as for an options or syntax error. Never passed. */

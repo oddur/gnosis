@@ -1,6 +1,6 @@
 import type { ConflictFile, ConflictSession } from './conflict-resolution';
 import { parseConflicts, type BlockPick } from './conflict-blocks';
-import { blockBuckets, type Verdict } from './conflict-verify';
+import { blockBuckets, typeErrorOf, withTypeError, type Verdict } from './conflict-verify';
 import { blockResolutions, withProposals } from './conflict-carry';
 import { verdictKey } from './conflict-verdict-key';
 import type { SyntaxLanguage } from './syntax-scope';
@@ -145,11 +145,15 @@ export function savedStatsBlock(file: Pick<ConflictFile, 'original' | 'statsBloc
   return block && block.key === blockFingerprints(file.original)[index] ? block : undefined;
 }
 /**
- * The main process's checks of the file as it is now (src/conflict-resolution-service.ts `check`). A copy: proposalKey
- * remembers its answer per object.
+ * The main process's checks of the file as it is now (src/conflict-resolution-service.ts `check`), with the type
+ * check's demotion saved on the file, as the conflict dialog and the PR header apply it. A copy: proposalKey remembers
+ * its answer per object.
  */
 const savedVerdict = (file: ConflictFile, disabled: readonly SyntaxLanguage[]): Verdict | undefined =>
-  file.verdict && file.verdict.key === verdictKey({ ...file }, disabled) ? file.verdict.verdict : undefined;
+  withTypeError(
+    file.verdict && file.verdict.key === verdictKey({ ...file }, disabled) ? file.verdict.verdict : undefined,
+    typeErrorOf(file, undefined)
+  );
 /**
  * Each conflict's bucket as preparation left it: its proposal checked (Merged), its proposal unchecked or a whole-file
  * proposal (Check), or nothing proposed (Decide). Undefined while the checks have not run, or for a file Gnosis

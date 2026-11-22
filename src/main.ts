@@ -4256,6 +4256,9 @@ async function chatPrContext({ key, ...input }: Omit<ChatContextInput, 'definiti
 }
 // Settings › Diagnostics › Conflict resolution stats: counts only, on this computer (#445 item 2).
 const conflictStats = createConflictStatsStore(appData);
+/** The opt-in type check (#445 item 24): only a linked clone whose type check is on in Settings › Local clones. */
+const typeCheckCloneFor = (repo: string) =>
+  localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase() && entry.typeCheck)?.path;
 const conflicts = createConflictResolutionService({
   stats: conflictStats,
   // Repository settings' "Allow undoing a conflict update with a force push": off unless set (#445 item 25).
@@ -4279,10 +4282,13 @@ const conflicts = createConflictResolutionService({
     return getMergeBase(discussionClient(), owner, repo, base, head);
   },
   localClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase())?.path,
-  // The opt-in type check (#445 item 24): only a linked clone whose type check is on in Settings › Local clones.
-  typeCheckClone: repo => localClones.status().find(entry => entry.repo.toLowerCase() === repo.toLowerCase() && entry.typeCheck)?.path,
+  typeCheckClone: typeCheckCloneFor,
   runScript: runUtilityScript,
-  typeCheckChanged: id => broadcastToAllWindows('conflict-type-check-changed', id),
+  typeCheckChanged: id => {
+    broadcastToAllWindows('conflict-type-check-changed', id);
+    // The PR header applies the type check's demotions too (lib/conflict-header.ts).
+    conflictPrecompute.typeCheckChanged(id);
+  },
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
   read: async url => {
     const client = discussionClient();
@@ -4352,6 +4358,8 @@ const conflictPrecompute = createConflictPrecompute({
   disabledLanguages: () => disabledLanguages(codeIntelligenceSettings(loadPreferences())),
   onBattery: () => app.isReady() && powerMonitor.isOnBatteryPower(),
   changed: url => broadcastToAllWindows('conflict-header-changed', url),
+  // Off: null, as the conflict dialog reads it. On but not run since the app started: the saved demotions apply.
+  typeCheck: draft => conflicts.typeCheck(draft.id) ?? (typeCheckCloneFor(draft.baseRepo) ? undefined : null),
 });
 // The cascade preview before a push (#445 item 22): a dry run of the stack, in the background, never on battery.
 const cascadePreviews = createCascadePreviews({

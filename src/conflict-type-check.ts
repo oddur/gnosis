@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parseConflicts } from '../lib/conflict-blocks';
-import type { ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
+import { inferChoices, parseConflicts, pickText } from '../lib/conflict-blocks';
+import type { ConflictFile, ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
 import { typeCheckKey } from '../lib/conflict-verify';
 
 /**
@@ -13,7 +13,7 @@ import { typeCheckKey } from '../lib/conflict-verify';
  *   runs, with `--noEmit`. Never `npm install`, never a package script, never a shell.
  * - The compiler runs in a private worktree of the session repository at the merge result, with the clone's
  *   `node_modules` linked in. Your clone is only read.
- * - The PR head is checked the same way, and only errors the head does not have count.
+ * - The PR head and the base are checked the same way, and only errors neither has count.
  */
 export const TYPE_CHECK_TIMEOUT = 120_000;
 /** Up to this many new errors are kept for the summary, and three per file for a Check note. */
@@ -72,11 +72,45 @@ export function parseDiagnostics(output: string): TypeDiagnostic[] {
   return diagnostics;
 }
 
-/** The merge's errors that the PR head does not have. Lines move in a merge, so an error is its file, code and text. */
-export function newErrors(merge: readonly TypeDiagnostic[], head: readonly TypeDiagnostic[]) {
-  const identity = (d: TypeDiagnostic) => `${d.file ?? ''}\0${d.code}\0${d.message}`;
+/**
+ * A type in a message with its union members in one order: the same union can print in another order in another
+ * program, such as `'"a" | "b"'` and `'"b" | "a"'`. Only the outermost union of each quoted type.
+ */
+export function sortedUnions(message: string) {
+  return message.replace(/'([^'\n]*)'/g, (_, type: string) => {
+    const members: string[] = [];
+    let depth = 0;
+    let quoted = false;
+    let start = 0;
+    for (let i = 0; i < type.length; i++) {
+      const char = type[i];
+      if (char === '"') quoted = !quoted;
+      else if (quoted) continue;
+      else if ('([{<'.includes(char)) depth++;
+      else if (')]}'.includes(char) || (char === '>' && type[i - 1] !== '=')) depth--;
+      else if (depth === 0 && type.startsWith(' | ', i)) {
+        members.push(type.slice(start, i));
+        start = i + 3;
+        i += 2;
+      }
+    }
+    members.push(type.slice(start));
+    return `'${members.sort().join(' | ')}'`;
+  });
+}
+/**
+ * The merge's errors that neither baseline has: the PR head, or the base. Lines move in a merge, so an error is its file,
+ * code and text, with unions in one order. An error that occurs more often than in either baseline counts its extra
+ * occurrences.
+ */
+export function newErrors(merge: readonly TypeDiagnostic[], ...baselines: (readonly TypeDiagnostic[])[]) {
+  const identity = (d: TypeDiagnostic) => `${d.file ?? ''}\0${d.code}\0${sortedUnions(d.message)}`;
   const known = new Map<string, number>();
-  for (const d of head) known.set(identity(d), (known.get(identity(d)) ?? 0) + 1);
+  for (const baseline of baselines) {
+    const counts = new Map<string, number>();
+    for (const d of baseline) counts.set(identity(d), (counts.get(identity(d)) ?? 0) + 1);
+    for (const [id, count] of counts) known.set(id, Math.max(known.get(id) ?? 0, count));
+  }
   return merge.filter((d) => {
     const left = known.get(identity(d)) ?? 0;
     if (left) known.set(identity(d), left - 1);
@@ -94,6 +128,35 @@ export function checkedText(result: string) {
     .join('');
 }
 
+/**
+ * Each conflict's lines (first and last, 1-based) in the checked text of the draft, by block index; undefined for a
+ * conflict that holds no text. Undefined when the draft can't be split into its conflicts, such as after an edit by
+ * hand: then no error can be traced to a conflict.
+ */
+export function conflictLines(file: Pick<ConflictFile, 'original' | 'proposals' | 'result'>) {
+  const segments = parseConflicts(file.original);
+  const choices = inferChoices(segments, file.result, file.proposals);
+  if (!choices) return undefined;
+  const spans: ([number, number] | undefined)[] = [];
+  let text = '';
+  let line = 1;
+  for (const segment of segments) {
+    // An open conflict is checked with the PR's side, as `checkedText` writes it.
+    const piece =
+      segment.kind === 'text'
+        ? segment.text
+        : choices[segment.index]
+          ? pickText(segment, choices[segment.index], file.proposals)
+          : segment.block.ours;
+    const breaks = piece.split('\n').length - 1;
+    if (segment.kind === 'conflict')
+      spans[segment.index] = piece ? [line, line + breaks - (piece.endsWith('\n') ? 1 : 0)] : undefined;
+    text += piece;
+    line += breaks;
+  }
+  return text === checkedText(file.result) ? spans : undefined;
+}
+
 /** Only what the compiler needs: no tokens, no Git variables, no NODE_OPTIONS. */
 function compilerEnvironment(): NodeJS.ProcessEnv {
   const keep = ['PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'LANG'];
@@ -106,19 +169,24 @@ function compilerEnvironment(): NodeJS.ProcessEnv {
  * their label.
  */
 export function withoutRoots(diagnostics: readonly TypeDiagnostic[], roots: readonly [string, string][]) {
+  const strip = rootStripper(roots);
+  return diagnostics.map((d) => ({ ...d, ...(d.file ? { file: strip(d.file) } : {}), message: strip(d.message) }));
+}
+/** `withoutRoots` for one text, with the roots ordered once: `--listFiles` can print many thousands of lines. */
+export function rootStripper(roots: readonly [string, string][]) {
   // Longest first, with both separators, so a worktree inside another root is stripped whole.
   const ordered = roots
     .flatMap(([root, label]) => [root, root.replaceAll('\\', '/')].map((value) => [value, label] as const))
     .filter(([root]) => root)
     .sort((a, b) => b[0].length - a[0].length);
-  const strip = (text: string) => {
+  return (text: string) => {
     for (const [root, label] of ordered) {
+      if (!text.includes(root)) continue;
       text = text.replaceAll(root + '/', label ? `${label}/` : '').replaceAll(root + '\\', label ? `${label}/` : '');
       text = text.replaceAll(root, label);
     }
     return text;
   };
-  return diagnostics.map((d) => ({ ...d, ...(d.file ? { file: strip(d.file) } : {}), message: strip(d.message) }));
 }
 
 /** The compiler's output did not arrive whole, or contradicts its exit code. Never compared: the check is skipped. */
@@ -177,9 +245,10 @@ async function compile(
       `${blocking.code}${blocking.file ? ` in ${blocking.file}` : ''}: ${blocking.message}`.slice(0, 200)
     );
   // The files the project checked: absolute paths in the worktree, outside node_modules.
+  const strip = rootStripper(roots);
   const own = result.stdout.split(/\r?\n/).filter((line) => {
     if (!path.isAbsolute(line)) return false;
-    const relative = withoutRoots([{ code: '', message: line }], roots)[0].message;
+    const relative = strip(line);
     return relative !== line && !relative.startsWith('<clone>') && !/(^|\/)node_modules\//.test(relative);
   });
   if (!own.length) throw new TypeCheckSkipped(REFERENCES);
@@ -226,7 +295,7 @@ export async function removeLeftovers(directory: string, git: (args: string[]) =
  * and its worktrees are removed afterwards, whatever happened. `timeout` covers the whole run.
  */
 export async function typeCheckMerge(options: {
-  session: Pick<ConflictSession, 'tree' | 'headSha' | 'files'>;
+  session: Pick<ConflictSession, 'tree' | 'headSha' | 'baseSha' | 'files'>;
   clone: string;
   directory: string;
   git: Git;
@@ -285,23 +354,44 @@ export async function typeCheckMerge(options: {
     let head: TypeDiagnostic[] = [];
     if (merged.length)
       head = await compile(options.run, compiler.tsc, await checkout('head', session.headSha), options.clone, signal, left());
+    // Errors the base already has are not new either, such as a generated import that isn't built. A base the compiler
+    // couldn't check is no baseline: its errors still count.
+    let base: TypeDiagnostic[] = [];
+    if (newErrors(merged, head).length)
+      base = await compile(options.run, compiler.tsc, await checkout('base', session.baseSha), options.clone, signal, left()).catch(
+        (error: unknown) => {
+          if (error instanceof TypeCheckUnchecked && !signal.aborted) return [];
+          throw error;
+        }
+      );
     // A run whose folder went meanwhile, such as for a new preparation, has nothing to say about this draft.
     if (!(await fs.stat(folder).catch(() => undefined))) throw new Error('The type check’s folder was removed.');
-    const fresh = newErrors(merged, head);
+    const fresh = newErrors(merged, head, base);
     const preExisting = merged.length - fresh.length;
     if (!fresh.length) return { state: 'passed', preExisting };
+    const count = (n: number, what: string) => (n === 1 ? `a new error in this ${what}` : `${n} new errors in this ${what}`);
+    const note = (own: readonly TypeDiagnostic[], what: string) => {
+      const shown = own.slice(0, ERRORS_PER_NOTE).map(formatDiagnostic).join(' · ');
+      const more = own.length > ERRORS_PER_NOTE ? ` · ${own.length - ERRORS_PER_NOTE} more` : '';
+      return `The type check found ${count(own.length, what)}: ${shown}${more}`;
+    };
     const files = session.files.flatMap((file) => {
       const own = fresh.filter((d) => d.file === file.path);
       if (!own.length || file.unsupported) return [];
-      const shown = own.slice(0, ERRORS_PER_NOTE).map(formatDiagnostic).join(' · ');
-      const more = own.length > ERRORS_PER_NOTE ? ` · ${own.length - ERRORS_PER_NOTE} more` : '';
-      return [
-        {
-          path: file.path,
-          key: typeCheckKey(file),
-          note: `The type check found ${own.length === 1 ? 'a new error' : `${own.length} new errors`} in this file: ${shown}${more}`,
-        },
-      ];
+      // Each error goes to the conflict whose lines hold it. One outside every conflict, or a draft that can't be
+      // split into its conflicts, keeps the whole file's Merged proposals in Check.
+      const spans = conflictLines(file);
+      const traced = own.map((d) =>
+        spans?.findIndex((span) => !!span && d.line !== undefined && d.line >= span[0] && d.line <= span[1])
+      );
+      const blocks =
+        spans && traced.every((index) => index !== undefined && index >= 0)
+          ? spans.map((_, index) => {
+              const inBlock = own.filter((_, i) => traced[i] === index);
+              return inBlock.length ? note(inBlock, 'conflict') : null;
+            })
+          : undefined;
+      return [{ path: file.path, key: typeCheckKey(file), note: note(own, 'file'), ...(blocks ? { blocks } : {}) }];
     });
     return {
       state: 'errors',

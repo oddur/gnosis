@@ -1341,7 +1341,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-type-check-errors')?.textContent.includes('src/use.ts:1 TS2322')");
     assert.match(
       await js<string>("document.querySelector('.conflict-type-check-errors').textContent"),
-      /keep its merged conflicts in Check\. Errors elsewhere are for your information\..*Not counted: 1 error the PR already has\./
+      /keep its merged conflicts in Check\. Errors elsewhere are for your information\..*Not counted: 1 error the PR or its base already has\./
     );
     await captureAll('type-check-errors');
     await js(`${block(0)}.focus()`);

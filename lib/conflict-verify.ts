@@ -15,6 +15,8 @@ import {
   type ConflictFile,
   type ConflictFileStage,
   type ConflictProposal,
+  type ConflictTypeCheck,
+  type TypeErrorMark,
 } from './conflict-resolution';
 import { commaUnion, layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
 import {
@@ -51,11 +53,26 @@ export interface Verdict extends BlockVerdict {
 }
 /**
  * The verdict with the type check's new errors (#445 item 24): every Merged proposal in the file is Check, with the
- * compiler's error as its note. A verdict without Merged proposals is unchanged.
+ * compiler's error as its note. With `blocks`, only the Merged proposals of the conflicts that hold an error. A verdict
+ * without such Merged proposals is unchanged.
  */
-export function withTypeError(verdict: Verdict | undefined, note: string | undefined): Verdict | undefined {
-  if (!verdict || note === undefined || !(verdict.merged || verdict.blocks?.some((block) => block?.merged)))
-    return verdict;
+export function withTypeError(
+  verdict: Verdict | undefined,
+  mark: Pick<TypeErrorMark, 'note' | 'blocks'> | undefined
+): Verdict | undefined {
+  if (!verdict || !mark) return verdict;
+  const { note, blocks } = mark;
+  if (blocks) {
+    const demoted = (index: number) => blocks[index] != null && !!blockVerdict(verdict, index)?.merged;
+    if (!blocks.some((_, index) => demoted(index))) return verdict;
+    // Every conflict gets its own entry, so the others keep the file's verdict when the file's own is no longer Merged.
+    const count = Math.max(blocks.length, verdict.blocks?.length ?? 0);
+    const own = Array.from({ length: count }, (_, index): BlockVerdict =>
+      demoted(index) ? { merged: false, note: blocks[index] as string } : (blockVerdict(verdict, index) as BlockVerdict)
+    );
+    return { ...verdict, merged: false, note: verdict.merged ? (own.find((b) => !b.merged)?.note ?? note) : verdict.note, blocks: own };
+  }
+  if (!(verdict.merged || verdict.blocks?.some((block) => block?.merged))) return verdict;
   return {
     ...verdict,
     merged: false,
@@ -1102,12 +1119,48 @@ export function proposalKey(
   return key;
 }
 
-/** The proposals a type check result belongs to: Git's conflict and the proposals, never the draft. */
-export const typeCheckKey = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile'>) =>
-  proposalKey({ original: file.original, proposals: file.proposals, wholeFile: file.wholeFile });
-/** The type check's note for a file, while its proposals are the ones it checked. */
-export const typeErrorNote = (file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'typeError'>) =>
-  file.typeError && file.typeError.key === typeCheckKey(file) ? file.typeError.note : undefined;
+/** What a type check key was computed from, by file object: a file can change in place, so its inputs are compared. */
+const typeCheckKeys = new WeakMap<object, { inputs: readonly unknown[]; key: string }>();
+/**
+ * The draft a type check result belongs to: Git's conflict, the proposals and the draft itself, so a fixed conflict is
+ * checked again. Remembered per file object while those are the same.
+ */
+export function typeCheckKey(file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'result'>) {
+  const inputs = [file.original, file.proposals, file.wholeFile, file.result] as const;
+  const known = typeCheckKeys.get(file);
+  if (known && known.inputs.every((value, index) => value === inputs[index])) return known.key;
+  const proposals = [...(file.proposals ?? []), ...(file.wholeFile ? [null, file.wholeFile] : [])];
+  const text = [
+    file.original,
+    ...proposals.map((p) => (p ? `${p.source}\u0001${p.text}` : '')),
+    `\u0002${file.result}`,
+  ].join('\u0000');
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  const key = `${(hash >>> 0).toString(36)}:${text.length}`;
+  typeCheckKeys.set(file, { inputs, key });
+  return key;
+}
+/**
+ * The type check's demotion of a file, the same for the Conflicts view, the PR header and the stats. `status` is the
+ * PR's type check: null when it is off, undefined when not known (not asked yet, or not run since the app started).
+ *
+ * - A run that passed demotes nothing; one that found errors demotes what it found for this draft.
+ * - Otherwise (running, skipped, stopped, not known, or a result for an older draft) the demotion saved on the file
+ *   stays: a demotion only goes when a finished run says so, or the check is turned off.
+ */
+export function typeErrorOf(
+  file: Pick<ConflictFile, 'path' | 'original' | 'proposals' | 'wholeFile' | 'result' | 'typeError'>,
+  status: ConflictTypeCheck | null | undefined
+): TypeErrorMark | undefined {
+  if (status === null || status?.state === 'passed') return undefined;
+  if (status?.state === 'errors') {
+    const own = status.files.find((x) => x.path === file.path);
+    if (!own) return undefined;
+    if (own.key === typeCheckKey(file)) return own;
+  }
+  return file.typeError;
+}
 
 /**
  * Each conflict block's bucket in the displayed draft. A block that still holds its proposal is Merged when the
