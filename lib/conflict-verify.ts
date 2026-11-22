@@ -21,7 +21,8 @@ import {
   type ConflictTypeCheck,
   type TypeErrorMark,
 } from './conflict-resolution';
-import { commaUnion, layoutTokens, orderFree, unionNote, unionOf } from './conflict-union';
+import { commaUnion, keepsLayout, orderFree, unionNote, unionOf } from './conflict-union';
+export { keepsLayout } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,
@@ -596,27 +597,6 @@ export async function verifyProposals(
 export const MODEL_UNCHECKED = 'A model wrote this. Read it before you use it.';
 /** The line check's note when both sides changed the same lines: the proposal combines them, so read it. */
 export const SAME_LINES = 'Both sides changed the same lines. Check that the proposal keeps both changes.';
-/** The tokens `after` drops from `before` and the ones it adds, in order. */
-function tokenChanges(before: readonly string[], after: readonly string[]) {
-  const removed: string[] = [];
-  const added: string[] = [];
-  for (const part of diffArrays([...before], [...after]))
-    if (part.removed) removed.push(...part.value);
-    else if (part.added) added.push(...part.value);
-  return `${removed.join('\u0000')}\u0001${added.join('\u0000')}`;
-}
-/**
- * The proposal is the reformatting side's text with exactly the editing side's token changes, spaces in them
- * included: the same whitespace, quotes and punctuation everywhere else. Any doubt (the two diffs pair tokens
- * differently) is a difference.
- */
-export function keepsLayout(block: { base: string; edited: string; formatted: string }, proposal: string) {
-  return (
-    tokenChanges(layoutTokens(block.base), layoutTokens(block.edited)) ===
-    tokenChanges(layoutTokens(block.formatted), layoutTokens(proposal))
-  );
-}
-
 /** The note of a conflict where both sides made the same change in different layouts (#445 item 15). */
 export const SAME_CHANGE = 'Both sides made the same change. Kept the PR’s layout.';
 /**

@@ -75,7 +75,7 @@ export interface ConflictFile {
  * never Merged either.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved' | 'model';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'layout' | 'moved' | 'model';
   text: string;
   /**
    * A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." A 'model'

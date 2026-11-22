@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { withProposals } from '../lib/conflict-carry';
-import { sameTokens, unionNote, unionOf, withUnions } from '../lib/conflict-union';
+import { layoutMerge, sameTokens, unionNote, unionOf, withUnions } from '../lib/conflict-union';
 import {
   blockBuckets,
   NOT_SAME,
@@ -457,4 +457,58 @@ void test('a same-change proposal its check didn’t Merge is taken back: Decide
   const back = settle(reviewed, await check(reviewed));
   assert.equal(back?.result, reviewed.original);
   assert.equal(back.resolved, false);
+});
+
+void test('one side only reformatted, the other edited: the edit in the reformatted layout, Merged on the trees’ word', async () => {
+  const check = conflictChecker(engine);
+  const one = '  return combine(value, total, 4);\n';
+  const wrapped = '  return combine(\n    value,\n    total,\n    4,\n  );\n';
+  const edited = '  return combine(value, total, 5);\n';
+  const want = '  return combine(\n    value,\n    total,\n    5,\n  );\n';
+  // Either side may be the one that reformatted; the result is always the edit in its layout.
+  assert.equal(layoutMerge({ base: one, ours: wrapped, theirs: edited }, false), want);
+  assert.equal(layoutMerge({ base: one, ours: edited, theirs: wrapped }, false), want);
+  for (const [ours, theirs] of [
+    [wrapped, edited],
+    [edited, wrapped],
+  ]) {
+    const f = conflict('src/x.ts', ['function f(value: number, total: number) {\n', [ours, one, theirs], '}\n']);
+    assert.deepEqual(f.proposals, [{ source: 'layout', text: want }]);
+    const verdict = await check(f);
+    assert.match(verdict?.note ?? '', /only reformatted these lines/);
+    assert.deepEqual(blockBuckets(f, f.result, verdict), ['merged']);
+  }
+  // Spacing, quote marks and an edit that inserts tokens: the new tokens keep the editing side's own spacing.
+  assert.equal(
+    layoutMerge({ base: 'f("a", b)\n', ours: "f( 'a', b )\n", theirs: 'f("a", b, c)\n' }, false),
+    "f( 'a', b, c )\n"
+  );
+  // Not this rule: both sides changed code, both only reformatted, or the edit is where the reformat added a comma.
+  assert.equal(layoutMerge({ base: one, ours: edited, theirs: one.replace('4', '6') }, false), undefined);
+  assert.equal(layoutMerge({ base: one, ours: wrapped, theirs: one.replace('(', '( ') }, false), undefined);
+  assert.equal(layoutMerge({ base: 'f(a)\n', ours: 'f(\n  a,\n)\n', theirs: 'f(a, b)\n' }, false), undefined);
+  // Inside a string or comment every character counts: a changed space there is code, not layout.
+  assert.equal(layoutMerge({ base: 'f("a b", 1)\n', ours: 'f("a  b", 1)\n', theirs: 'f("a b", 2)\n' }, false), undefined);
+  // In Python, a line's indentation outside brackets is code.
+  assert.equal(
+    layoutMerge({ base: 'if a:\n    b()\nc()\n', ours: 'if a:\n    b()\n    c()\n', theirs: 'if a:\n    b(1)\nc()\n' }, true),
+    undefined
+  );
+  // A proposal the trees don't confirm is taken back: the conflict is yours to decide.
+  const trap = conflict('src/x.ts', ['function f(value: number, total: number) {\n', [wrapped, one, edited], '}\n']);
+  const wrong = { ...trap, proposals: [{ source: 'layout' as const, text: want.replace('5', '6') }] };
+  wrong.result = withProposals(wrong.original, wrong.proposals);
+  const back = withoutUnconfirmed(wrong, await check(wrong));
+  assert.equal(back?.result, wrong.original);
+  assert.equal(back?.proposals, undefined);
+});
+
+void test('the layout rule replaces structural merge’s proposal only when that one lost the reformatted layout', () => {
+  const block: [string, string, string] = ['  g(\n    1,\n  );\n', '  g(1);\n', '  g(2);\n'];
+  const lost = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'mergiraf', text: '  g(2);\n' }]);
+  assert.deepEqual(lost.proposals, [{ source: 'layout', text: '  g(\n    2,\n  );\n' }]);
+  const kept = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]);
+  assert.deepEqual(kept.proposals, [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]);
+  const remembered = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'rerere', text: '  g(3);\n' }]);
+  assert.deepEqual(remembered.proposals, [{ source: 'rerere', text: '  g(3);\n' }]);
 });

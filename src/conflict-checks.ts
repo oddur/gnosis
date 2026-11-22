@@ -50,7 +50,7 @@ export function withoutUnconfirmed(
 ): Pick<ConflictFile, 'proposals' | 'result' | 'source' | 'structuralNote' | 'resolved'> | undefined {
   const proposals = file.proposals;
   const drop = (proposals ?? []).flatMap((p, index) =>
-    p?.source === 'same' && blockVerdict(verdict, index)?.merged !== true ? [index] : []
+    (p?.source === 'same' || p?.source === 'layout') && blockVerdict(verdict, index)?.merged !== true ? [index] : []
   );
   if (!proposals || !drop.length) return undefined;
   const kept = proposals.map((p, index) => (drop.includes(index) ? null : p));
