@@ -459,6 +459,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('conflict-type-check-changed', handler);
     };
   },
+  conflictPushed: (url: string, headSha: string): Promise<import('../lib/conflict-undo').PushedUpdate | null> =>
+    ipcRenderer.invoke('conflict-pushed', url, headSha),
   // The cascade preview before a push (#445 item 22), and when it changes.
   conflictCascade: (
     id: string,

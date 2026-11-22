@@ -27,6 +27,10 @@ import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 import { conflictChecker, createConflictCheckWorker, moveProposer } from '../src/conflict-checks';
 import { canRetryStructural } from '../lib/conflict-flow';
 import { cascadeSentence } from '../lib/conflict-cascade';
+import * as undoCopy from '../lib/conflict-undo';
+import { normalizeRepositorySettings } from '../lib/repository-settings';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -2680,4 +2684,333 @@ void test('a wait for the resolution memory stops on abort, and never lets two t
   await after;
   assert.equal(most, 1, 'The next task ran only after the first let go');
   assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), []);
+});
+
+// Undo this update (#445 item 25): the previous head goes back with a lease on the merge commit.
+async function undoFixture(t: TestContext, allowUndo: ((repo: string) => boolean) | null = () => true) {
+  const f = await fixture(t);
+  const saved = (
+    await f.run({
+      kind: 'save',
+      id: f.session.id,
+      version: f.session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 1;\n',
+      resolved: true,
+      picks: ['ours'],
+    })
+  ).session;
+  const { preview } = await f.run({ kind: 'preview', id: saved.id, version: saved.version });
+  assert.ok(preview);
+  const pushed = (await f.run({ kind: 'publish', id: saved.id, version: saved.version, previewToken: preview.token, message: 'Resolve' })).session;
+  const previous = f.state.headSha;
+  const merge = await f.git('rev-parse', 'feature');
+  assert.equal(pushed.commitSha, merge);
+  f.state.headSha = merge;
+  // null: the setting is not wired at all.
+  const service = createConflictResolutionService({ ...f.deps, ...(allowUndo ? { allowUndo } : {}) });
+  const undo = (report?: (text: string) => void) =>
+    service.run({ kind: 'undo-publish', id: pushed.id, version: pushed.version }, new AbortController().signal, report);
+  /** Someone pushes a commit on top of the merge commit. */
+  const pushOnTop = () => {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: f.remote }).toString().trim();
+    git('checkout', '-q', 'feature');
+    writeFileSync(path.join(f.remote, 'ci.txt'), 'Formatted by CI.\n');
+    git('add', 'ci.txt');
+    git('commit', '-qm', 'CI formatting');
+    git('checkout', '-q', 'main');
+    return git('rev-parse', 'feature');
+  };
+  const draft = () =>
+    f.deps.storage.read(`conflict-draft:tester:${pushed.id}`) as { status: string; commitSha?: string; undoing?: boolean };
+  return { ...f, service, undo, pushed, previous, merge, pushOnTop, draft };
+}
+void test('undo after a push moves the branch back to its previous head, and the draft is editable with its picks', async (t) => {
+  const f = await undoFixture(t);
+  assert.deepEqual(f.service.pushed(f.state.url, f.merge), {
+    id: f.pushed.id,
+    version: f.pushed.version,
+    url: f.state.url,
+    headRepo: 'test/repo',
+    baseRepo: 'test/repo',
+    headBranch: 'feature',
+    baseBranch: 'main',
+    headSha: f.previous,
+    commitSha: f.merge,
+  });
+  assert.equal(f.service.pushed(f.state.url, f.previous), undefined, 'Only while the merge commit is the head');
+  const steps: string[] = [];
+  const { session } = await f.undo((text) => steps.push(text));
+  assert.equal(await f.git('rev-parse', 'feature'), f.previous, 'The remote branch is back at the previous head');
+  assert.equal(session.status, 'editing');
+  assert.equal(session.commitSha, undefined);
+  assert.equal(session.undoing, undefined);
+  assert.equal(session.headSha, f.previous);
+  assert.deepEqual(session.files[0].picks, ['ours'], 'Your choices are intact');
+  assert.equal(session.files[0].resolved, true);
+  assert.equal(session.files[0].result, 'export const answer = 1;\n');
+  assert.ok(steps.some((step) => step.startsWith('Checking that the merge commit')));
+  assert.equal(f.service.pushed(f.state.url, f.merge), undefined, 'Nothing left to undo');
+  // GitHub sees the old head again: the reopened draft is the same, and it can be fixed and pushed again.
+  f.state.headSha = f.previous;
+  const signal = new AbortController().signal;
+  const reopened = (await f.service.run({ kind: 'open', url: f.state.url }, signal)).session;
+  assert.equal(reopened.status, 'editing');
+  assert.equal(reopened.stale, false);
+  assert.deepEqual(reopened.files[0].picks, ['ours']);
+  const fixed = (
+    await f.service.run(
+      { kind: 'save', id: reopened.id, version: reopened.version, path: 'sample.ts', contents: 'export const answer = 3;\n', resolved: true },
+      signal
+    )
+  ).session;
+  const { preview } = await f.service.run({ kind: 'preview', id: fixed.id, version: fixed.version }, signal);
+  assert.ok(preview);
+  const again = (
+    await f.service.run(
+      { kind: 'publish', id: fixed.id, version: fixed.version, previewToken: preview.token, message: 'Resolve again' },
+      signal
+    )
+  ).session;
+  assert.equal(again.status, 'published');
+  assert.equal(await f.git('show', 'feature:sample.ts'), 'export const answer = 3;');
+  assert.equal(await f.git('rev-parse', 'feature^1'), f.previous);
+});
+void test('undo is refused when someone pushed after the merge commit, and nothing changes', async (t) => {
+  const f = await undoFixture(t);
+  // GitHub's read lags, but the remote has a new commit: the live read refuses before any push.
+  const top = f.pushOnTop();
+  await assert.rejects(f.undo(), /New commits are on the PR branch/);
+  assert.equal(await f.git('rev-parse', 'feature'), top);
+  // GitHub reports the new head: refused too.
+  f.state.headSha = top;
+  await assert.rejects(f.undo(), /New commits are on the PR branch/);
+  assert.equal(await f.git('rev-parse', 'feature'), top);
+  assert.equal(f.draft().status, 'published');
+  assert.equal(f.draft().commitSha, f.merge);
+  assert.equal(f.draft().undoing, undefined);
+});
+void test('undo: the lease refuses a push that lands between the live read and the force push', async (t) => {
+  const f = await undoFixture(t);
+  let top = '';
+  // Right before the push, CI pushes on top. The lease on the merge commit refuses the force push.
+  const raced = f.undo((text) => {
+    if (text.startsWith('Moving ')) top = f.pushOnTop();
+  });
+  await assert.rejects(raced, (error: Error) => {
+    assert.equal(error.message, undoCopy.UNDO_MOVED);
+    assert.equal(undoCopy.describeUndoError(error.message, 'feature').title, 'feature has new commits after the merge commit.');
+    return true;
+  });
+  assert.ok(top);
+  assert.equal(await f.git('rev-parse', 'feature'), top, 'The commit on top stays');
+  assert.equal(f.draft().status, 'published');
+  assert.equal(f.draft().undoing, undefined, 'A refused undo leaves the update as it was');
+});
+void test('undo is refused when the repository does not allow it, when the PR closed, or after a restack', async (t) => {
+  for (const allow of [null, () => false]) {
+    const f = await undoFixture(t, allow);
+    await assert.rejects(f.undo(), (error: Error) => error.message === undoCopy.UNDO_OFF);
+    assert.equal(await f.git('rev-parse', 'feature'), f.merge, 'Nothing was pushed');
+  }
+  const f = await undoFixture(t);
+  for (const state of ['MERGED', 'CLOSED'] as const) {
+    f.state.state = state;
+    await assert.rejects(f.undo(), (error: Error) => error.message === undoCopy.UNDO_CLOSED);
+  }
+  assert.equal(await f.git('rev-parse', 'feature'), f.merge);
+  f.state.state = 'OPEN';
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  f.deps.storage.write(key, {
+    ...(f.deps.storage.read(key) as object),
+    restack: { token: 't', status: 'published', rootSha: f.merge, expected: [], branches: [] },
+  });
+  assert.equal(f.service.pushed(f.state.url, f.merge), undefined, 'A restacked push offers no undo');
+  await assert.rejects(f.undo(), (error: Error) => error.message === undoCopy.UNDO_RESTACKED);
+  assert.equal(await f.git('rev-parse', 'feature'), f.merge);
+});
+void test('undo shows GitHub’s message when branch protection refuses the force push', async (t) => {
+  const f = await undoFixture(t);
+  await fs.writeFile(
+    path.join(f.remote, '.git', 'hooks', 'pre-receive'),
+    '#!/bin/sh\necho "error: GH006: Protected branch update failed for refs/heads/feature." >&2\necho "error: Cannot force-push to this branch" >&2\nexit 1\n',
+    { mode: 0o755 }
+  );
+  await assert.rejects(f.undo(), (error: Error) => {
+    const copy = undoCopy.describeUndoError(error.message, 'feature');
+    assert.equal(copy.title, 'GitHub refused to rewrite feature.');
+    assert.match(
+      copy.body ?? '',
+      /GitHub says: “GH006: Protected branch update failed for refs\/heads\/feature\. Cannot force-push to this branch”/
+    );
+    return true;
+  });
+  assert.equal(await f.git('rev-parse', 'feature'), f.merge);
+  assert.equal(f.draft().status, 'published');
+  assert.equal(f.draft().undoing, undefined);
+});
+void test('reopening finishes an undo whose reply was lost, or drops it when the push never landed', async (t) => {
+  const f = await undoFixture(t);
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  const signal = new AbortController().signal;
+  // The push never landed: the merge commit is still the head, and the update stays.
+  f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  Object.assign(f.state, { mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  const kept = (await f.service.run({ kind: 'open', url: f.state.url }, signal)).session;
+  assert.equal(kept.status, 'published');
+  assert.equal(kept.undoing, undefined);
+  // It landed: GitHub reports the previous head, and the draft is editable with its picks.
+  f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  await f.git('update-ref', 'refs/heads/feature', f.previous);
+  Object.assign(f.state, { headSha: f.previous, mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  const finished = (await f.service.run({ kind: 'open', url: f.state.url }, signal)).session;
+  assert.equal(finished.status, 'editing');
+  assert.equal(finished.commitSha, undefined);
+  assert.deepEqual(finished.files[0].picks, ['ours']);
+});
+void test('undo copy and settings: off unless set, and the request validates', () => {
+  validateConflictRequest({ kind: 'undo-publish', id: 'a'.repeat(64), version: 3 });
+  assert.throws(() => validateConflictRequest({ kind: 'undo-publish', id: 'nope', version: 3 }));
+  assert.equal(undoCopy.undoAllowed(undefined), false);
+  assert.equal(undoCopy.undoAllowed({}), false);
+  assert.equal(undoCopy.undoAllowed({ allowConflictUndo: true }), true);
+  assert.deepEqual(
+    normalizeRepositorySettings({
+      'a/b': { allowConflictUndo: true },
+      'c/d': { allowConflictUndo: 'yes' },
+      'e/f': { allowConflictUndo: false },
+    }),
+    { 'a/b': { allowConflictUndo: true } }
+  );
+  assert.equal(
+    undoCopy.remoteMessage('To github.com:a/b.git\nremote: error: GH006: Protected branch update failed.\nremote: \n ! [remote rejected]'),
+    'GH006: Protected branch update failed.'
+  );
+  assert.equal(
+    undoCopy.describeUndoError(`Error invoking remote method 'conflict-resolution': Error: ${undoCopy.UNDO_OFF}`, 'x').title,
+    undoCopy.UNDO_OFF
+  );
+  assert.match(undoCopy.describeUndoError('Git could not complete this operation. fatal: unable to access', 'x').title, /lost the connection/);
+});
+void test('undo works after startup cleanup removed the PR’s private cache', async (t) => {
+  const f = await undoFixture(t);
+  await fs.rm(await conflictSessionDirectory(f.deps.directory(), 'tester', f.pushed.id), { recursive: true, force: true });
+  const { session } = await f.undo();
+  assert.equal(session.status, 'editing');
+  assert.equal(await f.git('rev-parse', 'feature'), f.previous);
+});
+void test('an interrupted undo is settled from the remote, never from GitHub’s lagging read, and never in the background', async (t) => {
+  const f = await undoFixture(t);
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  const signal = new AbortController().signal;
+  const pending = () => f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  // Background preparation, even with GitHub reporting conflicts, leaves a pending undo and its draft alone.
+  pending();
+  Object.assign(f.state, { mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  const before = JSON.stringify(f.deps.storage.read(key));
+  await f.service.prepareInBackground(f.state.url, signal);
+  assert.equal(JSON.stringify(f.deps.storage.read(key)), before, 'The background never replaces or settles it');
+  // The undo landed, but GitHub still reports the merge commit: the remote decides, and the draft is editable.
+  await f.git('update-ref', 'refs/heads/feature', f.previous);
+  const landed = (await f.service.run({ kind: 'open', url: f.state.url }, signal)).session;
+  assert.equal(landed.status, 'editing');
+  assert.equal(landed.stale, false, 'Not mistaken for someone else’s push');
+  assert.deepEqual(landed.files[0].picks, ['ours']);
+});
+void test('an interrupted undo whose branch is at neither commit keeps the draft and says so', async (t) => {
+  const f = await undoFixture(t);
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  // Someone moved the branch to a commit on the old head: neither the merge commit nor the commit before it.
+  const top = await f.git('commit-tree', `${f.previous}^{tree}`, '-p', f.previous, '-m', 'Someone else');
+  await f.git('update-ref', 'refs/heads/feature', top);
+  Object.assign(f.state, { headSha: top, mergeable: 'MERGEABLE', mergeState: 'CLEAN' });
+  const kept = (await f.service.run({ kind: 'open', url: f.state.url }, new AbortController().signal)).session;
+  assert.equal(kept.status, 'published');
+  assert.equal(kept.undoing, true, 'Still pending');
+  assert.equal(kept.undoUnsettled, 'elsewhere', 'The branch was read: it is at another commit');
+  assert.deepEqual(kept.files[0].picks, ['ours']);
+  assert.equal(undoCopy.undoTarget(kept), undefined, 'No undo is offered while one is unsettled');
+  assert.equal(await f.git('rev-parse', 'feature'), top);
+  // The way out: start over from the branch as it is, with your resolutions carried. Nothing is pushed.
+  const signal = new AbortController().signal;
+  Object.assign(f.state, { mergeable: 'CONFLICTING', mergeState: 'DIRTY' });
+  const fresh = (await f.service.run({ kind: 'open', url: f.state.url, restart: true, keep: true }, signal)).session;
+  assert.equal(fresh.status, 'editing');
+  assert.equal(fresh.undoing, undefined);
+  assert.equal(fresh.headSha, top);
+  assert.deepEqual(fresh.files[0].picks, ['ours'], 'Your choices carry onto the fresh preparation');
+  assert.equal(await f.git('rev-parse', 'feature'), top, 'Nothing was pushed');
+});
+void test('an unsettled undo whose branch can’t be read says so, and can be discarded without a push', async (t) => {
+  const f = await undoFixture(t);
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  const unreadable = createConflictResolutionService({ ...f.deps, remote: () => path.join(f.remote, 'missing') });
+  const signal = new AbortController().signal;
+  const kept = (await unreadable.run({ kind: 'open', url: f.state.url }, signal)).session;
+  assert.equal(kept.undoing, true);
+  assert.equal(kept.undoUnsettled, 'unread');
+  assert.match(undoCopy.unsettledUndoCopy('unread', 'feature'), /^Gnosis couldn’t read feature/);
+  assert.match(undoCopy.unsettledUndoCopy('elsewhere', 'feature'), /^feature is at another commit/);
+  await unreadable.run({ kind: 'discard', id: kept.id, version: kept.version }, signal);
+  assert.equal(f.deps.storage.read(key), null);
+  assert.equal(await f.git('rev-parse', 'feature'), f.merge, 'Nothing was pushed');
+});
+void test('undo trusts the remote, not GitHub’s lagging head, and matches the exact branch ref', async (t) => {
+  const f = await undoFixture(t);
+  // GitHub still reports the old head right after the push; the remote is at the merge commit: the undo goes ahead.
+  f.state.headSha = f.previous;
+  const { session } = await f.undo();
+  assert.equal(session.status, 'editing');
+  assert.equal(await f.git('rev-parse', 'feature'), f.previous);
+});
+void test('undo reads only the branch’s own ref when another ref ends the same way', async (t) => {
+  const f = await undoFixture(t);
+  // ls-remote matches `refs/heads/feature` as a suffix: this ref sorts first and points elsewhere.
+  await f.git('update-ref', 'refs/heads/a/refs/heads/feature', f.previous);
+  const { session } = await f.undo();
+  assert.equal(session.status, 'editing');
+  assert.equal(await f.git('rev-parse', 'refs/heads/feature'), f.previous);
+});
+void test('a retried undo after a lost reply finishes the undo that landed', async (t) => {
+  const f = await undoFixture(t);
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  f.deps.storage.write(key, { ...(f.deps.storage.read(key) as object), undoing: true });
+  await f.git('update-ref', 'refs/heads/feature', f.previous);
+  f.state.headSha = f.previous;
+  const { session } = await f.undo();
+  assert.equal(session.status, 'editing');
+  assert.equal(session.undoing, undefined);
+  assert.deepEqual(session.files[0].picks, ['ours']);
+  assert.equal(await f.git('rev-parse', 'feature'), f.previous);
+});
+void test('undo is refused while any restack plan exists, and pushed() is cached per head', async (t) => {
+  const f = await undoFixture(t);
+  assert.ok(f.service.pushed(f.state.url, f.merge));
+  const key = `conflict-draft:tester:${f.pushed.id}`;
+  let reads = 0;
+  const read = f.deps.storage.read;
+  const counting = createConflictResolutionService({
+    ...f.deps,
+    allowUndo: () => true,
+    storage: { ...f.deps.storage, read: (name: string) => (reads++, read(name)) },
+  });
+  counting.pushed(f.state.url, f.merge);
+  counting.pushed(f.state.url, f.merge);
+  assert.equal(reads, 1, 'One draft read per head');
+  for (const status of ['prepared', 'blocked'] as const) {
+    f.deps.storage.write(key, {
+      ...(f.deps.storage.read(key) as object),
+      restack: { token: 'a'.repeat(64), status, rootSha: f.merge, expected: [], branches: [] },
+    });
+    // A new service: the first one's cache has not seen this write, which went around it.
+    const service = createConflictResolutionService({ ...f.deps, allowUndo: () => true });
+    assert.equal(service.pushed(f.state.url, f.merge), undefined);
+    await assert.rejects(
+      service.run({ kind: 'undo-publish', id: f.pushed.id, version: f.pushed.version }, new AbortController().signal),
+      (error: Error) => error.message === undoCopy.UNDO_RESTACKED
+    );
+  }
+  assert.equal(await f.git('rev-parse', 'feature'), f.merge);
 });

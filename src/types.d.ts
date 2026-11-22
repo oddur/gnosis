@@ -225,6 +225,7 @@ declare global {
       conflictTypeCheck: (id: string) => Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null>;
       cancelConflictTypeCheck: (id: string) => Promise<void>;
       onConflictTypeCheckChanged: (callback: (id: string) => void) => () => void;
+      conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
       /** Local counts for Settings › Diagnostics › Conflict resolution stats (lib/conflict-stats.ts). Fire and forget. */
       recordConflictChoice?: (choice: import('../lib/conflict-stats').ConflictChoice) => void;
       conflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;

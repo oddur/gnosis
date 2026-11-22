@@ -118,6 +118,16 @@ export interface ConflictSession {
    * left to restack.
    */
   lastPush?: { commitSha: string; headSha: string; unrestacked?: string[] };
+  /**
+   * Undo this update (#445 item 25) pushed the previous head back, or is pushing it. Saved before the push, so a reopen
+   * finishes an undo whose reply or status write was lost.
+   */
+  undoing?: boolean;
+  /**
+   * Why a pending undo could not be settled when the workspace opened: the branch couldn't be read, or it is at
+   * another commit. Never saved.
+   */
+  undoUnsettled?: 'unread' | 'elsewhere';
 }
 export interface RestackPlan {
   token: string;
@@ -201,6 +211,8 @@ export type ConflictRequest =
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
+  /** Undo this update: push the previous head back with a lease on the merge commit. The draft returns to editing. */
+  | { kind: 'undo-publish'; id: string; version: number }
   | { kind: 'restack-prepare'; id: string; version: number }
   | { kind: 'restack-continue'; id: string; version: number }
   | {
@@ -312,7 +324,13 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     return;
   if (r.kind === 'model' && text('path', 4096) && Number.isSafeInteger(r.index) && Number(r.index) >= 0 && Number(r.index) < 10_000)
     return;
-  if (r.kind === 'preview' || r.kind === 'discard' || r.kind === 'restack-prepare' || r.kind === 'restack-continue')
+  if (
+    r.kind === 'preview' ||
+    r.kind === 'discard' ||
+    r.kind === 'undo-publish' ||
+    r.kind === 'restack-prepare' ||
+    r.kind === 'restack-continue'
+  )
     return;
   if (
     r.kind === 'restack-publish' &&
