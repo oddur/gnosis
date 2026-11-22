@@ -251,7 +251,7 @@ Every key in the object, old and new, must be different, and every child must be
 - Python enums and dicts: iteration follows the definition order, `auto()` and aliases depend on it, and a dict walked for the first match runs the first key that matches.
 - Go struct fields: `encoding/json`, `fmt`, `encoding/binary`, `reflect` and positional literals follow the order. Java and C# fields: initializers run in order, and serializers follow the order. Python dataclass fields: the order is the order of `__init__`'s parameters.
 - List and array items: the order is the value.
-- Match arms and switch cases: arms with distinct literals and no fall-through are order-free in Rust, Go, C# and Java. But the structural merge never writes them, and Gnosis's own proposal to keep both sides is never Merged, so they stay in Check. Python's `match` calls the subject's `__eq__`, which can match more than one literal. JavaScript and Java cases fall through.
+- Match arms and switch cases: an arm placed first wins when two arms can match, and a case without `break` or `return` falls through to the next one in JavaScript, TypeScript and Java. Arms with different literals, no guards and no fall-through would be order-free. But the structural merge never writes such a union, and Gnosis's own proposal to keep both sides is never Merged, so they stay in Check. Python's `match` also calls the subject's `__eq__`, which can match more than one literal.
 - Go `const` blocks: `iota` and a spec without a value follow the order, and Gnosis's own union is never Merged.
 - YAML keys: Gnosis doesn't know which tool reads the file.
 
