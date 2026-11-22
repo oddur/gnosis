@@ -54,7 +54,7 @@ void test('the header line reads a prepared draft with the conflict dialog’s o
     sentence: '3 files have conflicts. 2 of 3 conflicts are merged and checked. 1 to decide.',
     merged: false,
   });
-  // Every conflict Merged, but "Show me every merged conflict" is on: they are still to review, so no Review and push….
+  // Every conflict Merged, but "Review Merged-only files myself" is on: they are still to review, so no Review and push….
   const merged = conflictHeader([proposed('a.ts', true), proposed('b.ts', true)]);
   assert.equal(merged.state === 'ready' && merged.merged, false);
   assert.equal(
@@ -341,7 +341,7 @@ void test('the header counts a Merged proposal you chose with Use the proposal a
 });
 void test('the header line applies the type check’s demotions as the conflict dialog does, and is read again when it changes (#499)', async () => {
   let status: ConflictTypeCheck | null | undefined;
-  // "Show me every merged conflict" off: an all-Merged draft would offer Review and push….
+  // "Review Merged-only files myself" off: an all-Merged draft would offer Review and push….
   const h = harness({ showMerged: () => false, typeCheck: () => status });
   h.observe(A, sha(1), 'conflicts');
   await h.settle(A);

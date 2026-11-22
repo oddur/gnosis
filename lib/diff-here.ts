@@ -86,15 +86,15 @@ export const WRITTEN_CSS = `
 [data-line][data-written-line] { background-image: ${WRITTEN_LAYERS}; }`;
 
 /**
- * The steady mark as a swatch for the card's legend ("1 line written by Gnosis"): the same band, with the rail in the
- * app's primary blue. The legend sits on the card, outside the code's palette, where the code surface's colour is not
+ * The steady mark as a swatch for the card's legend ("1 line written by structural merge"): the same band, with the
+ * rail in the app's primary blue. The legend sits on the card, outside the code's palette, where the code surface's colour is not
  * defined: drawn over it, the swatch fell back to near-black in light mode (#445 critique). On the card the band is laid
  * twice, so the small square reads as the blue tint the rows wear over the code, in both themes.
  */
 export const WRITTEN_SWATCH = `linear-gradient(to right, var(--primary) 0 2px, transparent 2px), linear-gradient(rgb(${BAND} / 12%), rgb(${BAND} / 12%)), rgb(${BAND} / 12%)`;
 
 /** What a marked written line says to assistive technology, and in its line number's tooltip. */
-export const WRITTEN_LINE_DESCRIPTION = 'Written by Gnosis. Neither side had this line.';
+export const WRITTEN_LINE_DESCRIPTION = 'Neither side had this line. Read it carefully.';
 /**
  * Marks the new side's rows a conflict resolver wrote (#445 item 10, `data-written-line`), context or added, with their
  * gutter cells. Each marked row is described for assistive technology and its line number has the same tooltip.

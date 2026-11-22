@@ -699,8 +699,13 @@ export async function verifyWholeFile(
       note: `${proposal.note ?? 'One side moved this definition, and the other edited it.'} The proposal applies the edit at the new place. It parses and keeps every change from both sides. ${MOVED_UNCHECKED}`,
     };
   }
-  // The note names what wrote it: structural merge's whole-file result, a model's, or Gnosis's own.
-  const who = proposal.source === 'mergiraf' ? 'Mergiraf' : proposal.source === 'model' ? (proposal.by ?? 'The model') : 'Gnosis';
+  // The note names what wrote it: structural merge's whole-file result, a model's, or one of Gnosis's rules.
+  const who =
+    proposal.source === 'mergiraf'
+      ? 'Structural merge'
+      : proposal.source === 'model'
+        ? (proposal.by ?? 'The model')
+        : 'Gnosis’s rule';
   return verdict.merged
     ? {
         merged: false,
@@ -1276,7 +1281,8 @@ export function unchosenConflicts(
 export const chooseFirst = (count: number) =>
   `Choose for ${count === 1 ? 'the conflict' : `the ${count} conflicts`} in Check first: use the proposal, keep a side, or edit.`;
 /** Why a draft that can't be split into its conflicts waits: only Reset file gives the choices back. */
-export const UNSPLIT_HINT = 'Gnosis can’t tell your edits apart from the proposals here. Reset the file to choose again.';
+export const UNSPLIT_HINT =
+  'Gnosis can’t match your edits to this file’s conflicts, so it can’t tell which proposals you chose. Select Reset file to choose each conflict again; it removes your edits to this file.';
 /** The wording for conflicts that wait for a choice in `contents`: chooseFirst, or UNSPLIT_HINT for a draft that can't be split. */
 export const waitingHint = (file: Pick<ConflictFile, 'original'>, contents: string, count: number) =>
   blockResolutions(parseConflicts(file.original), contents) ? chooseFirst(count) : UNSPLIT_HINT;
@@ -1364,14 +1370,14 @@ export function fileStatus(
   return stage === 'conflicted' ? { kind: 'conflicted', conflicts } : { kind: 'resolved' };
 }
 /**
- * Every conflict in the file is Merged, with nothing you chose or edited beside it. Only then, with "Show me every
- * merged conflict" off, is the file reviewed for you. The summary and the automatic review use it.
+ * Every conflict in the file is Merged, with nothing you chose or edited beside it. Only then, with "Review Merged-only
+ * files myself" off, is the file reviewed for you. The summary and the automatic review use it.
  */
 export const allMerged = (buckets: readonly ConflictBucket[]) =>
   buckets.length > 0 && buckets.every((bucket) => bucket === 'merged');
 /**
- * The file needs nothing but Mark reviewed: no conflict left to decide or check, and not reviewed for you. With "Show me
- * every merged conflict" off, an all-Merged file is reviewed for you, so it waits for nobody.
+ * The file needs nothing but Mark reviewed: no conflict left to decide or check, and not reviewed for you. With "Review Merged-only
+ * files myself" off, an all-Merged file is reviewed for you, so it waits for nobody.
  */
 export function waitsForReview(status: FileStatus, buckets: readonly ConflictBucket[], showMerged: boolean) {
   const settled = status.kind === 'resolved' || (status.kind === 'buckets' && !status.decide && !status.check);
@@ -1386,7 +1392,7 @@ export function fileStatusParts(status: FileStatus): {
     case 'unsupported':
       return [{ tone: 'unsupported', text: 'Needs a local merge tool' }];
     case 'proposal':
-      return [{ tone: 'proposal', text: 'Proposal ready' }];
+      return [{ tone: 'proposal', text: 'Whole file to check' }];
     case 'buckets':
       return (['decide', 'check', 'merged'] as const)
         .filter((bucket) => status[bucket])
@@ -1513,13 +1519,14 @@ function needsYou(s: BucketSummary) {
   const check = s.needs - s.decide - s.wholeConflicts - s.markers - s.local;
   const covers = s.wholeConflicts > s.wholeFiles ? ` for ${s.wholeConflicts} conflicts` : '';
   const parts = [
-    ...(s.wholeFiles ? [`${s.wholeFiles} ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`] : []),
+    ...(s.wholeFiles
+      ? [`${s.wholeFiles} whole-file ${s.wholeFiles === 1 ? 'proposal' : 'proposals'} to check${covers}`]
+      : []),
     ...(check ? [`${check} to check`] : []),
     ...(s.decide ? [`${s.decide} to decide`] : []),
     ...(s.markers ? [`${s.markers} ${s.markers === 1 ? 'file' : 'files'} with a conflict marker left`] : []),
     ...(s.local ? [`${s.local} ${s.local === 1 ? 'file needs' : 'files need'} a local merge tool`] : []),
   ];
-  return parts.length === 1
-    ? ` ${parts[0]}.`
-    : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.`;
+  // What a file Gnosis can't write means for the push is the guide's note (ConflictOnboarding), not repeated here.
+  return parts.length === 1 ? ` ${parts[0]}.` : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.`;
 }

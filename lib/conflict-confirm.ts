@@ -279,12 +279,12 @@ export function wholeNote(how: ConfirmWhole, conflicts: number, baseBranch: stri
     case 'manual':
       return `You edited this file, so its ${conflicts} ${conflicts === 1 ? 'conflict is' : 'conflicts are'} yours.`;
     case 'whole-file':
-      return `You used the structural merge for the whole file. ${covers} and ${baseBranch}’s other lines in it.`;
+      return `You used structural merge’s result for the whole file. ${covers} and ${baseBranch}’s other lines in it.`;
     case 'mergiraf':
       return `You used the structural merge’s result for this file. ${covers}.`;
     case 'agent':
       return `You used the suggestion for this file. ${covers}.`;
     case 'rerere':
-      return `Gnosis applied a remembered resolution to this file, and you reviewed it. ${covers}.`;
+      return `Your earlier resolution of this file was reused, and you reviewed it. ${covers}.`;
   }
 }

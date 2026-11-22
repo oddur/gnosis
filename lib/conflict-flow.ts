@@ -43,8 +43,11 @@ export function canRetryStructural(
   return !!file.structuralNote || file.source === 'rerere' || !!file.proposals?.some((p) => p?.source === 'rerere');
 }
 
-/** A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`. */
-const SAFE_REF = /^[A-Za-z0-9._/-]+$/;
+/**
+ * A ref name that is safe to show in a shell command, even quoted: no spaces, quotes, `$`, backticks or `;`, and no
+ * leading `-`, which git would read as an option.
+ */
+const SAFE_REF = /^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/;
 /** One shell word: single quotes, with an embedded `'` closed, escaped and reopened. */
 export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 /**
@@ -63,12 +66,13 @@ export function localMergeCommands(session: {
   // A fork's clone has no remote for the base repository: fetch the base branch by URL.
   const base =
     headRepo === baseRepo
-      ? [`git fetch origin ${shellQuote(baseBranch)}`, `git merge ${shellQuote(`origin/${baseBranch}`)}`]
+      ? [`git fetch -- origin ${shellQuote(baseBranch)}`, `git merge -- ${shellQuote(`origin/${baseBranch}`)}`]
       : [
-          `git fetch ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
+          `git fetch -- ${shellQuote(`https://github.com/${baseRepo}.git`)} ${shellQuote(baseBranch)}`,
           'git merge FETCH_HEAD',
         ];
-  return [`git switch ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
+  // `--` ends the options wherever git takes it, so no name is ever read as one.
+  return [`git switch -- ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
 export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
@@ -80,6 +84,8 @@ export interface ConflictErrorCopy {
   recovery?: ConflictRecovery;
   /** The raw Git or service output, shown only under Details. */
   details?: string;
+  /** Commands to copy that do the work on your computer instead, when Gnosis can't. */
+  commands?: string;
 }
 
 const strip = (text: string) => text.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim();
@@ -90,7 +96,14 @@ const strip = (text: string) => text.replace(/^Error invoking remote method '[^'
  */
 export function describeConflictError(
   error: string,
-  context: { stage: 'prepare' | 'push' | 'other'; headBranch?: string; baseBranch?: string }
+  context: {
+    stage: 'prepare' | 'push' | 'other';
+    headBranch?: string;
+    baseBranch?: string;
+    /** With both branches, a failed preparation offers the commands for a local merge (localMergeCommands). */
+    headRepo?: string;
+    baseRepo?: string;
+  }
 ): ConflictErrorCopy {
   const raw = strip(error);
   const head = context.headBranch ?? 'the PR branch';
@@ -135,7 +148,7 @@ export function describeConflictError(
   )
     return {
       title: `Branch protection blocked the push to ${head}.`,
-      body: 'Nothing was pushed. Your resolutions are saved. Ask a repository admin, or resolve the conflicts on GitHub.',
+      body: `The repository’s rules don’t allow this push to ${head}. Nothing was pushed. Your resolutions are saved. Ask a repository admin to allow it, or resolve the conflicts on GitHub.`,
       recovery: 'check-again',
       details,
     };
@@ -145,7 +158,7 @@ export function describeConflictError(
       body:
         context.stage === 'push'
           ? 'Nothing was pushed. Your resolutions are saved.'
-          : 'Ask the author to allow edits from maintainers, or resolve the conflicts on GitHub.',
+          : 'Nothing was changed. Ask the author to allow edits from maintainers, or resolve the conflicts on GitHub.',
       recovery: context.stage === 'push' ? 'check-again' : undefined,
       details: git ? details : undefined,
     };
@@ -174,15 +187,35 @@ export function describeConflictError(
       recovery: 'check-again',
       details,
     };
-  if (context.stage === 'prepare')
+  if (context.stage === 'prepare') {
+    const { headRepo, baseRepo, headBranch, baseBranch } = context;
+    // Only a Git or merge failure points to a local merge. A busy PR or GitHub still reading the revisions passes on its
+    // own: Try again is the whole answer.
+    const merging = git || (/\b(?:Git|merge|conflict)/i.test(raw) && !/already running|not returned/i.test(raw));
+    const commands =
+      merging && headRepo && baseRepo && headBranch && baseBranch
+        ? localMergeCommands({ headRepo, baseRepo, headBranch, baseBranch })
+        : undefined;
+    const local = !merging
+      ? ''
+      : commands
+        ? ` If it fails again, merge on your computer: in a clone of ${headRepo}, run these commands.`
+        : ' If it fails again, merge on your computer.';
     return git
       ? {
           title: 'Gnosis couldn’t prepare this merge.',
-          body: 'Git stopped before the conflicts were ready. Nothing was changed. Try again, or resolve the conflicts in a local clone.',
+          body: `Git stopped before the conflicts were ready. Nothing was changed. Try again.${local}`,
           recovery: 'retry',
           details,
+          commands,
         }
-      : { title: 'Gnosis couldn’t prepare this merge.', body: raw, recovery: 'retry' };
+      : {
+          title: 'Gnosis couldn’t prepare this merge.',
+          body: `${raw.replace(/[^.!?]$/, '$&.')}${local}`,
+          recovery: 'retry',
+          commands,
+        };
+  }
   return git
     ? { title: 'Git couldn’t finish this step.', body: 'Your resolutions are saved. Nothing was pushed.', details }
     : { title: raw, body: '' };

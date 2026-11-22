@@ -290,6 +290,10 @@ void app.whenReady().then(async () => {
     await waitForWorkbenchQueue(contents);
     // The guide is open on first use; the gallery shows the workspace as people see it after that.
     await js("localStorage.setItem('gnosis-conflict-guide', 'dismissed')");
+    // Likewise the first-run panel and the Undo mention (components/ConflictOnboarding.tsx), for the lab account.
+    await js(
+      "localStorage.setItem('gnosis:conflict-tips:lab', JSON.stringify(['buckets','undo']))"
+    );
     await js(`(() => {
       window.conflictCalls = [];
       window.electronAPI.conflictResolution = async (request) => {
@@ -408,7 +412,7 @@ void app.whenReady().then(async () => {
               }
             else if (row.status === 'proposal') {
               if (!wholeFiles.get(file) || blocks.some((b) => b !== 'check'))
-                result.problems.push(`${file}: says Proposal ready, but the blocks are ${blocks.join(', ')}`);
+                result.problems.push(`${file}: says Whole file to check, but the blocks are ${blocks.join(', ')}`);
             } else if (row.status === 'resolved' && blocks.some((b) => b !== 'decided'))
               result.problems.push(`${file}: says ${row.statusText ?? ''}, but the blocks are ${blocks.join(', ')}`);
           }
@@ -419,14 +423,14 @@ void app.whenReady().then(async () => {
           const s = result.summary ?? '';
           const files = Number(/^(\d+) files? (?:has|have) conflicts\./.exec(s)?.[1]);
           const merged = /(\d+) of (\d+) conflicts? (?:is|are) merged and checked/.exec(s);
-          // "2 need you: …", "Nothing needs you.", or one part alone: "1 proposal to check for 2 conflicts.", "1 to decide."
+          // "2 need you: …", "Nothing needs you.", or one part alone: "1 whole-file proposal to check for 2 conflicts.", "1 to decide."
           // "1 file is ready for review.": every conflict is Merged, and the file waits only for your look.
           const needs = /Nothing needs you|ready for review/.test(s)
             ? 0
             : Number(
                 (/(\d+) needs? you/.exec(s) ??
                   /for (\d+) conflicts/.exec(s) ??
-                  /(\d+) (?:proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
+                  /(\d+) (?:whole-file proposals? to check|to check|to decide|files? with a conflict marker)/.exec(s))?.[1]
               );
           const want = {
             files: seen.size,
@@ -449,6 +453,13 @@ void app.whenReady().then(async () => {
             if (needs !== want.needs)
               result.problems.push(`Summary: "${s}", but ${want.needs} blocks are Check or Decide`);
           }
+          // "The checks proved every conflict" only when every block is Merged and nothing is still checking.
+          const allMerged = want.total > 0 && want.merged === want.total && !want.needs && !/Checking/.test(s);
+          const note = await js<boolean>("!!document.querySelector('[data-conflict-note=all-merged]')");
+          if (note !== allMerged)
+            result.problems.push(
+              note ? 'Says every conflict is proved, but not every block is Merged' : 'Every block is Merged, but no all-Merged note'
+            );
         } else result.notes.push(`No conflicted files: ${screen.state ?? screen.title ?? ''}`);
 
         if (INTERACT.includes(entry.id)) interactions.push(await interact(entry.id, all.length));
@@ -554,7 +565,7 @@ void app.whenReady().then(async () => {
           await shot('whole-file-proposal', (await read()).summary ?? '');
           // Use the whole-file result, look at it, then go back to the conflicts with Reset file.
           // Using it is the footer's primary while the proposal is the file's one stop (#445 distill).
-          await click('Use this result');
+          await click('Use the proposal for this file');
           await settle();
           const used = await read();
           await shot('use-this-result', `${used.header.text ?? ''} · ${used.footer ?? ''}`);
@@ -567,7 +578,7 @@ void app.whenReady().then(async () => {
           if (await js<boolean>(`!!${toggle}`)) await js(`${toggle}.click()`);
           else
             problems.push(
-              `Reset file after Use this result does not bring the whole-file proposal back: the file shows ${(await read()).header.text ?? 'nothing'}`
+              `Reset file after Use the proposal for this file does not bring the whole-file proposal back: the file shows ${(await read()).header.text ?? 'nothing'}`
             );
           await settle();
           await shot('conflict-by-conflict');
@@ -581,7 +592,7 @@ void app.whenReady().then(async () => {
           const merged = await js<string | null>(`${first('[data-bucket=merged]')}?.dataset.conflictIndex ?? null`);
           if (merged !== null) {
             await js(
-              `[...${first(`[data-conflict-index="${merged}"]`)}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo').click()`
+              `[...${first(`[data-conflict-index="${merged}"]`)}.querySelectorAll('button')].find((b) => ['Undo', 'Decide myself', 'Remove proposal'].includes(b.textContent.trim())).click()`
             );
             await settle();
             await shot('undo-merged');
@@ -600,7 +611,7 @@ void app.whenReady().then(async () => {
           await shot(`keep-${choice}`, now.startsWith('kept') ? line : `shown as ${now.trim()}: ${line}`);
           if (choice === 'both') break;
           if (!now.startsWith('kept')) continue;
-          await js(`[...${block}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo').click()`);
+          await js(`[...${block}.querySelectorAll('button')].find((b) => ['Undo', 'Decide myself', 'Remove proposal'].includes(b.textContent.trim())).click()`);
           await settle();
           await shot(
             `undo-${choice}`,
@@ -630,7 +641,7 @@ void app.whenReady().then(async () => {
           if (!/Edited by you/.test(edited)) problems.push(`After Save edit the card reads ${edited}`);
           await shot('inline-edited', edited);
           await shot('inline-edited-dark', undefined, true);
-          await js(`[...${card}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo').click()`);
+          await js(`[...${card}.querySelectorAll('button')].find((b) => ['Undo', 'Decide myself', 'Remove proposal'].includes(b.textContent.trim())).click()`);
           await until(`${card}?.dataset.state + ' ' + (${card}?.dataset.bucket ?? '') === ${JSON.stringify(was)}`, 'Undo to restore the choice');
           await settle();
           await shot('inline-edit-undo', `${was.trim()} again · ${draft}`);
@@ -643,8 +654,8 @@ void app.whenReady().then(async () => {
             await js(`${first('[data-state=open]')}.querySelector('[data-choice=ours]').click()`);
             await settle();
           }
-          if (await has('Use this result')) {
-            await click('Use this result');
+          if (await has('Use the proposal for this file')) {
+            await click('Use the proposal for this file');
             await settle();
             await shot('use-this-result');
           }
