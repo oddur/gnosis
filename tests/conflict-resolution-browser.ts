@@ -1661,7 +1661,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-conflict-keys]').focus()");
     await wait("document.querySelector('.conflict-keys')?.textContent.includes('Review and push')");
     assert.deepEqual(
-      await js("[...document.querySelector('.conflict-keys dl').querySelectorAll('dt')].map(d=>[...d.querySelectorAll('kbd')].map(k=>k.textContent).join(' '))"),
+      await js("[...document.querySelector('.conflict-keys dl').querySelectorAll('dt')].map(d=>[...d.querySelectorAll('kbd')].map(k=>(k.querySelector('[aria-hidden]')??k).textContent).join(' '))"),
       [
         'J K',
         'A',
@@ -1675,6 +1675,13 @@ void app.whenReady().then(async () => {
         'Esc',
       ]
     );
+    // The glyphs have words for screen readers, and the labels name the controls.
+    assert.deepEqual(
+      await js("[...document.querySelector('.conflict-keys dl').querySelectorAll('kbd .sr-only')].map(k=>k.textContent)"),
+      (await js<boolean>("window.electronAPI.platform==='darwin'")) ? ['Command', 'Enter'] : ['Enter']
+    );
+    assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /Show me every merged conflict/);
+    assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /right after A, that accept/);
     // With GNOSIS_CONFLICT_SHOTS set, the legend in light and dark prints as `CONFLICTSHOT <name> <base64 PNG>`.
     if (process.env.GNOSIS_CONFLICT_SHOTS)
       for (const theme of ['light', 'dark']) {
@@ -1692,19 +1699,53 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${block(0)}.dataset.state`), 'open');
     assert.match(await footerSays(), /no proposal that needs you/);
     // U is the card's Undo: the Check proposal goes, and the conflict waits in Decide with Use the proposal.
+    assert.equal(await js(`${block(1)}.querySelector('[aria-label^="Undo"]').getAttribute('aria-keyshortcuts')`), 'U');
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('.conflict-compare-diff:not([hidden]) .conflict-compare button')].map(b=>b.getAttribute('aria-keyshortcuts'))"),
+      ['V', 'V', 'V']
+    );
     await js(`${block(1)}.focus()`);
     await key('u');
     await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
     assert.equal(await activeBlock(), '1', 'Undo keeps focus on the conflict');
+    assert.equal(await js(`${block(1)}.querySelector('[data-choice=proposal]').getAttribute('aria-keyshortcuts')`), 'A');
     // A uses the proposal, and focus moves to the next conflict that needs you: past the last, back to the first.
     await key('a');
     await wait(`${block(1)}?.dataset.bucket==='check'`);
     assert.equal(await activeBlock(), '0');
-    // Keep one side on the first; focus returns to the Check proposal. A there leaves it in Check (the file's review
-    // accepts it), and with nothing else to decide, focus goes to the next action.
+    // U right after A undoes that A, not the conflict focus moved to.
+    await key('u');
+    await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    await wait(`document.activeElement===${block(1)}`);
+    // J to conflict 2, then V: focus is on the switch, and A still accepts conflict 2, not the first that needs you.
+    await key('j');
+    await key('j');
+    assert.equal(await activeBlock(), '1');
+    await key('v');
+    await wait("document.querySelector('.conflict-compare [data-compare=main]')?.getAttribute('aria-pressed')==='true'");
+    assert.equal(await activeBlock(), null, 'V moves focus to the switch');
+    await key('a');
+    await wait(`${block(1)}?.dataset.bucket==='check'`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open', 'A did not act on the first conflict');
+    assert.doesNotMatch(await footerSays(), /no proposal/);
+    // V cycles on: both, then back to PR.
+    for (const mode of ['both', 'pr']) {
+      await key('v');
+      await wait(`document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'`);
+    }
+    // Keep one side on the first; focus returns to the Check proposal.
     await key('1');
     await wait(`${block(0)}?.dataset.state==='kept'`);
-    assert.equal(await activeBlock(), '1');
+    await wait(`document.activeElement===${block(1)}`);
+    // G moves focus to its switch; U still undoes the card you were on.
+    await key('g');
+    await wait("document.activeElement?.type==='checkbox'");
+    await key('u');
+    await wait(`${block(1)}?.dataset.state==='open'`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'kept');
+    // A there, with nothing else to decide: focus goes to the next action. A never makes a proposal Merged.
+    await wait(`document.activeElement===${block(1)}`);
     await key('a');
     await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
     assert.equal(await js(`${block(1)}.dataset.bucket`), 'check', 'Accept never makes a proposal Merged');
@@ -1714,11 +1755,6 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await key('1');
     await wait(`${block(0)}?.dataset.state==='kept'`);
-    // V cycles Compare with: PR, main, both, and back to PR.
-    for (const mode of ['main', 'both', 'pr']) {
-      await key('v');
-      await wait(`document.querySelector('.conflict-compare [data-compare=${mode}]')?.getAttribute('aria-pressed')==='true'`);
-    }
     // Cmd+Enter while a file needs you opens nothing.
     await key('j');
     await modEnter();
@@ -1755,6 +1791,19 @@ void app.whenReady().then(async () => {
     await click('Back to files');
     await wait("!document.querySelector('.conflict-confirm') && document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='confirm'");
     const previews = await calls('preview');
+    // An open edit you haven't saved holds the confirmation: Cmd+Enter and Review and push… both say so.
+    await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
+    await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
+    await key('x');
+    await js(`${block(1)}.focus()`);
+    await modEnter();
+    assert.match(await footerSays(), /Save or cancel your edit first/);
+    await js(`(${visibleButton('Review and push…')}).click()`);
+    assert.equal(await calls('preview'), previews, 'Nothing opens while an edit is unsaved');
+    assert.equal(await js("!!document.querySelector('.conflict-confirm')"), false);
+    await js(`${inlineEditor(0)}.focus()`);
+    await key('Escape');
+    await wait(`!document.querySelector('[data-conflict-inline-edit]') && ${block(0)}?.dataset.state==='kept'`);
     await js(`${block(0)}.focus()`);
     await key('Enter');
     assert.equal(await calls('preview'), previews, 'Enter alone does not open the confirmation');

@@ -6,6 +6,8 @@ import {
   editConflict,
   pickText,
   type BlockChoice,
+  type BlockEdit,
+  type ConflictModel,
   type BlockEdits,
   type BlockPick,
   type BlockPicks,
@@ -33,8 +35,10 @@ export interface ConflictViewHandle {
    * action. False, and nothing changes, when the conflict needs you but has no proposal of its own.
    */
   accept: () => boolean;
-  /** U: the focused conflict's Undo. False when it has none. */
+  /** U: right after A, undoes that accept; otherwise the focused conflict's Undo. False when there is nothing to undo. */
   undo: () => boolean;
+  /** Any other key, a click or a focus move of yours: U no longer undoes the last accept. */
+  forgetAccept: () => void;
   /** V: the next Compare with mode. False while no switch shows. */
   cycleCompare: () => boolean;
 }
@@ -94,6 +98,16 @@ export function useConflictChoices({
   const pendingFocus = useRef<{ after?: number; at?: number; accepted?: boolean }>(undefined);
   // Conflicts whose proposal you accepted with A while it stays in Check: Accept's focus passes over them.
   const accepted = useRef(new Set<number>());
+  // The conflict card that last had focus: A and U act on it while focus is on the view's own controls (V's switch,
+  // G's checkbox, the next action).
+  const lastCard = useRef<number>(undefined);
+  // The last A, with what it replaced, until another key, a click or a focus move: U then undoes it.
+  const lastAccept = useRef<{
+    index: number;
+    choice: ConflictModel['choices'][number];
+    pick: BlockPick | undefined;
+    edit: BlockEdit | null | undefined;
+  }>(undefined);
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
   const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
@@ -131,6 +145,7 @@ export function useConflictChoices({
       const card = (event.target as Element).closest('.conflict-block');
       const index = card?.getAttribute('data-conflict-index');
       focused = card && index ? { index, card } : undefined;
+      if (index && Number(index) >= 0) lastCard.current = Number(index);
     };
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget) focused = undefined;
@@ -146,12 +161,16 @@ export function useConflictChoices({
         .querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)
         ?.focus({ preventScroll: true });
     });
+    // A click anywhere is yours: U no longer undoes the last accept.
+    const onPointerDown = () => (lastAccept.current = undefined);
     element.addEventListener('focusin', onFocusIn);
     element.addEventListener('focusout', onFocusOut);
+    document.addEventListener('pointerdown', onPointerDown, true);
     observer.observe(element, { childList: true, subtree: true });
     return () => {
       element.removeEventListener('focusin', onFocusIn);
       element.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       observer.disconnect();
     };
   }, []);
@@ -267,7 +286,11 @@ export function useConflictChoices({
   /** The conflict card with focus, in this file. */
   const focusedCard = () => {
     const card = document.activeElement?.closest<HTMLElement>('.conflict-block');
-    return card && root.current?.contains(card) && indexOf(card) >= 0 ? card : undefined;
+    if (card && root.current?.contains(card) && indexOf(card) >= 0) return card;
+    // Focus is on the view's own controls: the card you were on.
+    return lastCard.current === undefined
+      ? undefined
+      : (root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${lastCard.current}"]`) ?? undefined);
   };
   // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
   // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
@@ -310,25 +333,56 @@ export function useConflictChoices({
         const card = focusedCard() ?? openBlocks().find((block) => indexOf(block) >= 0);
         const index = indexOf(card ?? null);
         if (!card || index < 0 || !card.matches(pendingSelector) || !proposals?.[index]) return false;
+        const before = {
+          index,
+          choice: model.choices[index],
+          pick: picks?.[index],
+          edit: model.edits?.[index],
+        };
         if (model.choices[index] === 'proposal' && picks?.[index] === 'proposal') {
-          // You chose this proposal already: only focus moves on.
+          // You chose this proposal already: only focus moves on, and U brings it back.
+          lastAccept.current = before;
           accepted.current.add(index);
           whenCards(() => focusAfterAccept(index));
           return true;
         }
         // The same handler as the card's Use the proposal: one way to apply a proposal, as your explicit choice.
         choose(index, 'proposal');
+        lastAccept.current = before;
         accepted.current.add(index);
         pendingFocus.current = { after: index, accepted: true };
         return true;
       },
       undo() {
+        if (disabled) return false;
+        const last = lastAccept.current;
+        lastAccept.current = undefined;
+        if (last) {
+          // Back to what A replaced: its choice, your pick and your edit, with focus on that conflict again.
+          accepted.current.delete(last.index);
+          const next = [...model.choices];
+          next[last.index] = last.choice;
+          const edits = [...(model.edits ?? [])];
+          edits[last.index] = last.edit;
+          pendingFocus.current = { at: last.index };
+          if (next[last.index] === model.choices[last.index] && last.pick === picks?.[last.index]) {
+            reveal(root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${last.index}"]`));
+            return true;
+          }
+          if (last.edit !== model.edits?.[last.index]) onEdits?.(edits);
+          onPick?.(last.index, last.pick);
+          onChange(applyChoices(model.segments, next, proposals, edits));
+          return true;
+        }
         const card = focusedCard();
-        if (disabled || !card || !model.undoable) return false;
+        if (!card || !model.undoable) return false;
         const index = indexOf(card);
         if (model.choices[index] === undefined) return false;
         undo(index);
         return true;
+      },
+      forgetAccept() {
+        lastAccept.current = undefined;
       },
       cycleCompare: () => cycleCompare?.current?.() ?? false,
       focusFirst() {

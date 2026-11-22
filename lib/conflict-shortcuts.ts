@@ -1,22 +1,23 @@
 import type { CompareWith } from './conflict-diff';
 
-const mac = typeof window !== 'undefined' && window.electronAPI.platform === 'darwin';
+/** True on macOS, where Cmd is the push modifier; false in Node tests. */
+export const mac = typeof window !== 'undefined' && window.electronAPI.platform === 'darwin';
 
 /** The conflict workspace's keys: its keyboard help and the keyboard shortcut overlay list the same ones. */
 export const CONFLICT_SHORTCUTS: { keys: string; label: string }[] = [
   { keys: 'j  k', label: 'Next / previous conflict' },
   { keys: 'a', label: 'Accept the proposal and go to the next conflict that needs you' },
   { keys: '1  2  3', label: 'Keep PR change / base change / both' },
-  { keys: 'u', label: 'Undo the choice on this conflict' },
+  { keys: 'u', label: 'Undo: right after A, that accept; otherwise the choice on this conflict' },
   { keys: 'v', label: 'Compare with PR, base or both' },
-  { keys: 'g', label: 'Show every merged conflict' },
+  { keys: 'g', label: 'Show me every merged conflict' },
   { keys: 'm', label: 'Mark file reviewed and open the next file' },
   { keys: 'n  p', label: 'Next / previous file' },
   { keys: mac ? '⌘ ↵' : 'Ctrl ↵', label: 'Review and push… Opens the confirmation; never pushes' },
   { keys: 'Esc', label: 'Close the Conflicts view' },
 ];
 
-/** Cmd+Enter on macOS, Ctrl+Enter elsewhere, and no other modifier: the Review and push… key. */
+/** Cmd+Enter on macOS, Ctrl+Enter elsewhere, and no other modifier: Review and push…, and a focused Push button. */
 export const isReviewAndPushKey = (
   event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
   onMac: boolean
@@ -25,6 +26,14 @@ export const isReviewAndPushKey = (
   !event.altKey &&
   !event.shiftKey &&
   (onMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
+
+const SPOKEN: Record<string, string> = { '⌘': 'Command', '↵': 'Enter' };
+/** A key as a screen reader should say it: ⌘ is Command, ↵ is Enter. */
+export const spokenKey = (key: string) => SPOKEN[key] ?? key;
+/** A legend's keys as words, for the glyphs' text alternative. */
+export const spokenKeys = (keys: string) => keys.split(/\s+/).map(spokenKey).join(' ');
+/** The keys hold a glyph a screen reader can't name. */
+export const hasGlyph = (keys: string) => keys.split(/\s+/).some((key) => key in SPOKEN);
 
 /**
  * Where Accept sends focus (#445 item 13): the next conflict after `from` that still needs you, wrapping round, never

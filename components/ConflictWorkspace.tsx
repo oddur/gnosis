@@ -23,7 +23,7 @@ import { RestackReview } from './RestackReview';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS, isReviewAndPushKey } from '../lib/conflict-shortcuts';
+import { CONFLICT_SHORTCUTS, hasGlyph, isReviewAndPushKey, mac, spokenKey } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
@@ -189,7 +189,16 @@ function KeyboardHelp() {
                 <dt>
                   {keys.split(/\s+/).map((k) => (
                     <kbd key={k} className="kbd">
-                      {k.length === 1 ? k.toUpperCase() : k}
+                      {hasGlyph(k) ? (
+                        <>
+                          <span aria-hidden="true">{k}</span>
+                          <span className="sr-only">{spokenKey(k)}</span>
+                        </>
+                      ) : k.length === 1 ? (
+                        k.toUpperCase()
+                      ) : (
+                        k
+                      )}
                     </kbd>
                   ))}
                 </dt>
@@ -541,6 +550,8 @@ export function ConflictWorkspace({
   const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
   const mergedToggle = useRef<HTMLInputElement>(null);
+  // The in-place editor is open with text you haven't saved: the confirmation waits for it (confirm).
+  const editorDirty = useRef(false);
   // G in the confirmation: each press opens Merged for you and focuses it.
   const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
@@ -888,9 +899,18 @@ export function ConflictWorkspace({
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
+  /**
+   * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: every file
+   * reviewed in its draft on screen, none with a marker left or a local merge, and no unsaved edit in place.
+   */
   function confirm() {
-    // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
-    const waiting = sessionRef.current?.files.find((f) => needsYou(f));
+    if (editorDirty.current) {
+      setHint('Save or cancel your edit first.');
+      return;
+    }
+    const waiting = sessionRef.current?.files.find((f) =>
+      needsYou(f, f.path === selectedRef.current ? contentsRef.current : f.result)
+    );
     if (waiting) {
       setHint(`${waiting.path} still needs you. Review every file before you push.`);
       return;
@@ -1118,15 +1138,6 @@ export function ConflictWorkspace({
     []
   );
 
-  /**
-   * Cmd+Enter (#445 item 13): Review and push… opens the confirmation, as its button does. Never while a file still
-   * needs you, the open draft included, and never a push: Push takes its own click or key.
-   */
-  function reviewAndPush() {
-    const waiting = fileStates.find((s) => s.stage !== 'reviewed');
-    if (waiting) setHint(`${waiting.file.path} still needs you. Review every file before you push.`);
-    else confirm();
-  }
   /** G: the merged conflicts. Show me every merged conflict turns on, never off, and takes focus. */
   function showMergedConflicts() {
     const toggle = mergedToggle.current;
@@ -1144,6 +1155,9 @@ export function ConflictWorkspace({
       void close();
       return;
     }
+    // U right after A undoes that A; any other key ends that (Shift and the other modifiers alone don't).
+    if (event.key !== 'a' && event.key !== 'u' && !['Shift', 'Meta', 'Control', 'Alt'].includes(event.key))
+      view.current?.forgetAccept();
     if (event.defaultPrevented || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
     // No key acts while you type: in a field, a menu, the in-place editor's card (#445 item 11) or any editable text.
@@ -1164,9 +1178,10 @@ export function ConflictWorkspace({
       return;
     }
     if (!shortcutsActive) return;
-    if (isReviewAndPushKey(event, window.electronAPI.platform === 'darwin')) {
+    // Cmd+Enter opens the confirmation, as Review and push… does. It never pushes: Push takes its own click or key.
+    if (isReviewAndPushKey(event, mac)) {
       event.preventDefault();
-      if (!event.repeat) reviewAndPush();
+      if (!event.repeat) confirm();
       return;
     }
     if (event.metaKey || event.ctrlKey) return;
@@ -1879,6 +1894,7 @@ export function ConflictWorkspace({
                                 disabled={!canEdit}
                                 onChange={setContents}
                                 onAllResolved={() => primary.current?.focus()}
+                                onEditorDirty={(dirty) => (editorDirty.current = dirty)}
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
