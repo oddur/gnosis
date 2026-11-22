@@ -4136,7 +4136,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* One band over the code (#445 distill): the direction and what's left on the left, the file's tools and Close on the
    right. It wraps under the text when the pane is narrow; notes (a paused model, the last push, settings) take a row. */
 .conflict-heading { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 24px;padding:8px 16px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
-.conflict-heading-text { display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 32ch; }
+.conflict-heading-text { display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 22ch; }
 .conflict-heading h2 { font-size:var(--type-control);font-weight:600;line-height:1.4;text-wrap:balance; }
 .conflict-heading-text [data-conflict-summary] { line-height:1.4; }
 .conflict-heading-description { color:var(--muted-foreground); }
