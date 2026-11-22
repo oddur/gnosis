@@ -1786,6 +1786,24 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${showMergedInput}.checked`), true, 'G never turns it off');
     await key('j');
     assert.equal(await activeBlock(), '1', 'Keys work from the switch');
+    // An unsaved edit in place holds M, Mark reviewed and a file switch: the text stays, and the hint says why.
+    await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
+    await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
+    await key('z');
+    await wait(`${inlineEditor(0)}?.textContent.includes('z')`);
+    await js(`${block(1)}.focus()`);
+    await key('m');
+    assert.match(await footerSays(), /Save or cancel your edit first/);
+    await js("document.querySelector('[data-conflict-primary=mark-reviewed]').click()");
+    await key('n');
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Nothing was marked reviewed');
+    assert.equal(await js("document.querySelector('.conflict-files button[aria-current=true] span')?.textContent"), 'src/retry.ts');
+    assert.equal(await js(`${inlineEditor(0)}?.textContent.includes('z')`), true, 'Your unsaved text survives');
+    assert.match(await footerSays(), /Save or cancel your edit first/);
+    await js(`${inlineEditor(0)}.focus()`);
+    await key('Escape');
+    await wait(`!document.querySelector('[data-conflict-inline-edit]') && ${block(0)}?.dataset.state==='kept'`);
+    await js(`${block(1)}.focus()`);
     // Every file reviewed: M opens the confirmation. Back, then Cmd+Enter opens it again, and only that.
     await key('m');
     await wait("!!document.querySelector('.conflict-confirm')");

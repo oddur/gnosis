@@ -903,11 +903,13 @@ export function ConflictWorkspace({
    * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: every file
    * reviewed in its draft on screen, none with a marker left or a local merge, and no unsaved edit in place.
    */
+  /** An in-place edit with unsaved text holds every step that would leave or review the draft: says so, and true. */
+  function editHeld() {
+    if (editorDirty.current) setHint('Save or cancel your edit first.');
+    return editorDirty.current;
+  }
   function confirm() {
-    if (editorDirty.current) {
-      setHint('Save or cancel your edit first.');
-      return;
-    }
+    if (editHeld()) return;
     const waiting = sessionRef.current?.files.find((f) =>
       needsYou(f, f.path === selectedRef.current ? contentsRef.current : f.result)
     );
@@ -934,6 +936,7 @@ export function ConflictWorkspace({
     );
   }
   function markReviewed() {
+    if (editHeld()) return;
     if (!file || markersRemain || file.unsupported) return;
     const path = selected;
     let finished = false;
@@ -997,6 +1000,7 @@ export function ConflictWorkspace({
     focusIntent.current = true;
   }
   function chooseFile(path: string) {
+    if (path !== selected && editHeld()) return;
     if (!sessionRef.current || pending.current || path === selected) return;
     void persist()
       .then((saved) => select(path, saved))
@@ -1196,6 +1200,7 @@ export function ConflictWorkspace({
         return !!view.current?.choose(key === '1' ? 'ours' : key === '2' ? 'theirs' : 'both');
       }
       if (key === 'm') {
+        if (editHeld()) return true;
         if (markersRemain) setHint('Resolve the remaining conflicts first.');
         else markReviewed();
         return true;
