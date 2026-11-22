@@ -32,6 +32,11 @@ export interface RepositorySettings {
    * whose every conflict is Merged is marked reviewed for you.
    */
   showMergedConflicts?: boolean;
+  /**
+   * Resolve conflicts: offer Undo this update after a push, which force-pushes the previous head back (#445 item 25).
+   * Off unless set to true; only true is saved.
+   */
+  allowConflictUndo?: boolean;
 }
 export type RepositorySettingsMap = Record<string, RepositorySettings>;
 export type RepositoryDefaults = Pick<
@@ -82,6 +87,7 @@ export function normalizeRepositorySettings(input: unknown): RepositorySettingsM
       if (typeof v.color === 'string' && (REPOSITORY_COLORS as readonly string[]).includes(v.color))
         settings.color = v.color as RepositorySettings['color'];
       if (typeof v.showMergedConflicts === 'boolean') settings.showMergedConflicts = v.showMergedConflicts;
+      if (v.allowConflictUndo === true) settings.allowConflictUndo = true;
       if (v.notifications === 'all' || v.notifications === 'on-me' || v.notifications === 'none') settings.notifications = v.notifications;
       return Object.keys(settings).length ? [[repositoryKey(name), settings]] : [];
     })

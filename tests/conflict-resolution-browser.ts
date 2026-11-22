@@ -618,6 +618,104 @@ void app.whenReady().then(async () => {
     await open();
     await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
 
+    // Undo this update (#445 item 25). Off by default: only the manual steps are linked.
+    const undoAction = "document.querySelector('.conflict-outcome [data-conflict-undo]')";
+    assert.equal(await js(`!!${undoAction}`), false, 'The setting is off by default: no undo action');
+    assert.match(
+      await js<string>("document.querySelector('.conflict-outcome [data-conflict-undo-docs]')?.href ?? ''"),
+      /docs\/conflict-resolution\.md#undo-an-update$/
+    );
+    // On for klang/engine: the action replaces the link. (tests/pr-actions-browser.ts covers the PR header.)
+    const allowUndo = (allow: boolean) =>
+      js(`(async()=>{const p=await window.electronAPI.loadPreferences();const r={...p.repositorySettings?.['klang/engine']};if(${allow})r.allowConflictUndo=true;else delete r.allowConflictUndo;const next={...p,repositorySettings:{...p.repositorySettings,'klang/engine':r}};await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));})()`);
+    await allowUndo(true);
+    await wait(`!!${undoAction}`);
+    const undoRefusal =
+      "Error invoking remote method 'conflict-resolution': Error: Git could not complete this operation. remote: error: GH006: Protected branch update failed for refs/heads/feature/retry.\nremote: error: Cannot force-push to this branch\nerror: failed to push some refs";
+    await js(`(()=>{
+      window.beforeUndo=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        if(req.kind!=='undo-publish')return window.beforeUndo(req);
+        window.conflictCalls.push(req);const s=window.conflictFixture;
+        if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
+        if(window.refuseUndo)throw Error(${JSON.stringify(undoRefusal)});
+        s.status='editing';delete s.commitSha;s.version++;return {session:structuredClone(s)};
+      };
+    })()`);
+    const undoDialog = "document.querySelector('[data-conflict-undo-dialog]')";
+    await js(`${undoAction}.click()`);
+    await wait(`!!${undoDialog}`);
+    const confirmation = await js<string>(`${undoDialog}.innerText`);
+    assert.match(confirmation, /Undo the update to feature\/retry\?/);
+    assert.match(confirmation, /This force-pushes feature\/retry and rewrites its history\./);
+    assert.match(confirmation, /Moves\s+feature\/retry\s+back to\s+aaaaaaa/);
+    assert.match(confirmation, /still at the merge commit ddddddd/);
+    await wait("document.activeElement?.textContent.trim()==='Cancel'");
+    await captureAll('undo-confirm');
+    // Enter on Cancel only cancels; Enter or Space on the push button does nothing.
+    await key('Enter');
+    await wait(`!${undoDialog}`);
+    assert.equal(await calls('undo-publish'), 0, 'Enter alone never undoes');
+    await js(`${undoAction}.click()`);
+    await wait(`!!${undoDialog}`);
+    await js("document.querySelector('[data-conflict-undo-push]').focus()");
+    await key('Enter');
+    await key(' ');
+    assert.equal(await calls('undo-publish'), 0, 'Enter or Space on the button never undoes');
+    assert.ok(await js(`!!${undoDialog}`));
+    // GitHub refuses the force push: its message shows, and the undo is not sent again.
+    await js('window.refuseUndo=true');
+    await modEnter();
+    await wait("document.querySelector('[data-conflict-undo-error]')");
+    assert.equal(await calls('undo-publish'), 1);
+    const refused = await js<string>("document.querySelector('[data-conflict-undo-error]').innerText");
+    assert.match(refused, /GitHub refused to rewrite feature\/retry\./);
+    assert.match(refused, /GH006: Protected branch update failed for refs\/heads\/feature\/retry\. Cannot force-push to this branch/);
+    assert.ok(await js("document.querySelector('[data-conflict-undo-push]').disabled"), 'A refused undo is never resent');
+    await captureAll('undo-refused');
+    await key('Escape');
+    await wait(`!${undoDialog}`);
+    // Allowed: the branch goes back and the draft is editable again, with its files reviewed.
+    await js('window.refuseUndo=false');
+    await js(`${undoAction}.click()`);
+    await wait(`!!${undoDialog} && !document.querySelector('[data-conflict-undo-error]')`);
+    await js("document.querySelector('[data-conflict-undo-push]').click()");
+    await wait(`!${undoDialog} && !document.querySelector('.conflict-outcome') && !!document.querySelector('.conflict-files')`);
+    assert.equal(await calls('undo-publish'), 2);
+    await wait("document.querySelector('.conflict-footer')?.textContent.includes('feature/retry is back at aaaaaaa. Your resolutions are saved.')");
+    assert.match(await js<string>('document.body.innerText'), /feature\/retry is back at aaaaaaa/, 'A toast says so too');
+    assert.equal(await stage(), 'reviewed', 'Your choices are intact');
+    await captureAll('undone');
+    // Back to the published fixture for the restack.
+    await allowUndo(false);
+    await js(
+      "window.electronAPI.conflictResolution=window.beforeUndo;Object.assign(window.conflictFixture,{status:'published',commitSha:'d'.repeat(40)})"
+    );
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
+
+    // An undo Gnosis couldn't settle: it says what it knows and offers a way out, with no undo action.
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js("Object.assign(window.conflictFixture,{undoing:true,undoUnsettled:'elsewhere'})");
+    await open();
+    await wait("!!document.querySelector('[data-conflict-undo-unsettled=elsewhere]')");
+    assert.match(
+      await js<string>("document.querySelector('[data-conflict-undo-unsettled]').innerText"),
+      /feature\/retry is at another commit, neither the merge commit nor the commit before it/
+    );
+    assert.ok(await exists('Keep my resolutions and start over'));
+    assert.ok(await exists('Discard'));
+    assert.equal(await js("!!document.querySelector('.conflict-outcome [data-conflict-undo]')"), false);
+    await captureAll('undo-unsettled');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('delete window.conflictFixture.undoing; delete window.conflictFixture.undoUnsettled');
+    await open();
+    await wait("document.querySelector('.conflict-outcome h2')?.textContent==='feature/retry updated'");
+
     // Restacking is a separate, explicit preview-and-push flow after the root resolution.
     await js(`(()=>{
       window.conflictFixture.dependents=['https://github.com/klang/engine/pull/121','https://github.com/klang/engine/pull/122'];

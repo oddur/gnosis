@@ -27,6 +27,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
+import { ConflictUndo } from './ConflictUndo';
+import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import {
   ResultEditor,
@@ -728,6 +730,16 @@ export function ConflictWorkspace({
     const first = reply.session.files.find((f) => !f.resolved && !f.unsupported) ?? reply.session.files.at(0);
     apply(reply, first?.path ?? selectedRef.current, 'conflicts');
   }
+  /** Undo this update (#445 item 25) moved the branch back: the draft is editable again, with your choices. */
+  function undone(next: ConflictSession) {
+    setPicks({});
+    setPreview(undefined);
+    setConfirming(false);
+    setShown({});
+    setBaseNote('');
+    apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current, 'conflicts');
+    setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
+  }
   function confirm() {
     // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
     const waiting = sessionRef.current?.files.find((f) => needsYou(f));
@@ -894,6 +906,7 @@ export function ConflictWorkspace({
     });
   }, [session, selected, epoch, confirming, mode]);
   const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
+  const pushed = session ? undoTarget(session) : undefined;
   const reopened = !!session?.reopened;
   useEffect(() => {
     if ((session?.status === 'published' && !session.dependents?.length) || upToDate || reopened)
@@ -1192,7 +1205,7 @@ export function ConflictWorkspace({
                 {models.notice} Gnosis didn’t ask it about these conflicts.
               </p>
             )}
-            {session.lastPush && <LastPush session={session} push={session.lastPush} />}
+            {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
             <div className="conflict-summary-tools">
               {/* Nothing goes to the model until you ask (#445 item 7). The cards show both sides meanwhile. */}
               {models.waiting > 0 && (
@@ -1258,7 +1271,7 @@ export function ConflictWorkspace({
             <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
             <h2>Nothing to resolve</h2>
             <p>This PR merges cleanly with {session.baseBranch}.</p>
-            {session.lastPush && <LastPush session={session} push={session.lastPush} />}
+            {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
             <div className="conflict-state-actions">
               <Button ref={done} size="sm" onClick={() => void close()}>
                 Done
@@ -1314,8 +1327,37 @@ export function ConflictWorkspace({
                     </li>
                     <li>Checks restarting on GitHub</li>
                   </ul>
+                  {session.undoing && (
+                    <div className="conflict-undo-unsettled" data-conflict-undo-unsettled={session.undoUnsettled ?? ''}>
+                      <p role="status">{unsettledUndoCopy(session.undoUnsettled, session.headBranch)}</p>
+                      <div className="conflict-outcome-actions">
+                        <Button size="sm" disabled={busy} onClick={() => void load(true, true)}>
+                          Keep my resolutions and start over
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(
+                              (s) => ({ kind: 'discard', id: s.id, version: s.version }),
+                              () => onClose()
+                            )
+                          }
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <p className="conflict-outcome-undo">
                     To undo, reset {session.headBranch} to <CommitBadge sha={session.headSha} repo={session.headRepo} />
+                    {pushed && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <ConflictUndo update={pushed} onUndone={undone} />
+                      </>
+                    )}
                   </p>
                   <div className="conflict-outcome-actions">
                     {!session.dependents?.length && (
@@ -1516,7 +1558,7 @@ export function ConflictWorkspace({
                   {session.headBranch} already includes {session.baseBranch}
                 </h2>
                 <p>There’s nothing to merge. The PR is up to date with its base branch.</p>
-                {session.lastPush && <LastPush session={session} push={session.lastPush} />}
+                {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
                 <div className="conflict-state-actions">
                   <Button ref={done} size="sm" autoFocus onClick={() => void close()}>
                     Done
@@ -1533,7 +1575,7 @@ export function ConflictWorkspace({
                 <p>
                   Git can bring {session.baseBranch} into {session.headBranch} cleanly. Review the changes, then push.
                 </p>
-                {session.lastPush && <LastPush session={session} push={session.lastPush} />}
+                {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
                 <Button ref={primary} size="sm" disabled={busy} onClick={confirm}>
                   {busy ? 'Preparing…' : 'Review and push…'}
                 </Button>
@@ -2118,7 +2160,17 @@ function ConfirmDiff({
 }
 
 /** The push from an earlier session, as history: its merge commit, how to undo it, and a restack it left undone. */
-function LastPush({ session, push }: { session: ConflictSession; push: NonNullable<ConflictSession['lastPush']> }) {
+function LastPush({
+  session,
+  push,
+  onUndone,
+}: {
+  session: ConflictSession;
+  push: NonNullable<ConflictSession['lastPush']>;
+  onUndone: (session: ConflictSession) => void;
+}) {
+  // Only the saved push itself can be undone: a fresh preparation since has no choices to return to.
+  const update = session.commitSha === push.commitSha ? undoTarget(session) : undefined;
   return (
     <div className="conflict-state-muted" data-conflict-last-push="">
       <p>
@@ -2128,6 +2180,12 @@ function LastPush({ session, push }: { session: ConflictSession; push: NonNullab
       {(session.status !== 'editing' || session.headSha === push.commitSha) && (
         <p>
           To undo it, reset {session.headBranch} to <CommitBadge sha={push.headSha} repo={session.headRepo} />
+          {update && (
+            <>
+              {' · '}
+              <ConflictUndo update={update} onUndone={onUndone} />
+            </>
+          )}
         </p>
       )}
       {!!push.unrestacked?.length && (
