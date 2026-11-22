@@ -376,6 +376,19 @@ export function Block({
       </section>
     );
   }
+  // Undo of your edit: back to the choice it replaced.
+  const undoEdit = onUndo && (
+    <Button
+            size="xs"
+            variant="ghost"
+            disabled={disabled}
+            onClick={onUndo}
+            aria-label={`Undo your edit of conflict ${index + 1}`}
+          >
+            <Undo2 aria-hidden="true" />
+            Undo
+          </Button>
+  );
   // Your edit, with a conflict marker left in it: the conflict is still open, in Decide (#445 item 11).
   if (choice === 'edit' && editOpen(edit))
     return (
@@ -394,18 +407,7 @@ export function Block({
             Decide
           </span>
           <span>Your edit still has a conflict marker. Remove it, or choose a side.</span>
-          {onUndo && (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              onClick={onUndo}
-              aria-label={`Undo your edit of conflict ${index + 1}`}
-            >
-              <Undo2 aria-hidden="true" />
-              Undo
-            </Button>
-          )}
+          {undoEdit}
         </header>
         {actions}
       </section>
@@ -422,21 +424,8 @@ export function Block({
         <div className="conflict-kept">
           <Pencil size={14} aria-hidden="true" />
           <span>Edited by you</span>
-          {onUndo && (
-            <>
-              <span aria-hidden="true">·</span>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={disabled}
-                onClick={onUndo}
-                aria-label={`Undo your edit of conflict ${index + 1}`}
-              >
-                <Undo2 aria-hidden="true" />
-                Undo
-              </Button>
-            </>
-          )}
+          {undoEdit && <span aria-hidden="true">·</span>}
+          {undoEdit}
           {editButton}
         </div>
         {writtenNote}
@@ -715,10 +704,10 @@ export function useConflictChoices({
       return;
     }
     const next = [...model.choices];
-    next[index] = edit.before;
+    next[index] = edit.before ?? undefined;
     pendingFocus.current = { at: index };
     onEdits?.(editsWithout(index));
-    onPick?.(index, edit.pick);
+    onPick?.(index, edit.pick ?? undefined);
     onChange(applyChoices(model.segments, next, proposals, model.edits));
   }
   /** The text the in-place editor starts from: the conflict's lines, or both sides while it is open. */

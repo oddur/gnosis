@@ -87,6 +87,28 @@ export function LocalCloneSettings({ repo }: { repo: string }) {
           </>
         )}
       </div>
+      {clone && (
+        <label className="flex items-start gap-2 text-sm" data-local-clone-type-check>
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={!!clone.typeCheck}
+            disabled={busy}
+            onChange={(e) => {
+              const on = e.target.checked;
+              void change(() => window.electronAPI.setLocalCloneTypeCheck(repo, on));
+            }}
+          />
+          <span className="flex flex-col gap-1">
+            <span className="font-medium">Type-check conflict resolutions</span>
+            <span className="settings-description">
+              After Resolve conflicts prepares a merge, Gnosis runs the TypeScript compiler installed in this clone on a
+              private copy of the result. This runs the compiler from the clone’s node_modules. Gnosis never installs
+              packages or runs package scripts, and never checks PRs from forks.
+            </span>
+          </span>
+        </label>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"

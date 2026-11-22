@@ -9,6 +9,7 @@ import {
   type ConflictModelRequest,
   type ModelCard,
 } from './conflict-model';
+import type { EditTexts } from './conflict-blocks';
 import type { ConflictFile, ConflictSession } from './conflict-resolution';
 import { blockFingerprints } from './conflict-stats';
 
@@ -40,11 +41,14 @@ export function useConflictModel({
   busy,
   apply,
   root,
+  edits,
 }: {
   session: ConflictSession | undefined;
   /** The open file, whose draft on screen is `contents`. */
   file: ConflictFile | undefined;
   contents: string;
+  /** Your in-place edits of the open file, saved or not: an edited conflict is decided, the others stay askable. */
+  edits?: EditTexts;
   /** The model's name for the placeholders, such as "Claude". */
   label: string;
   /** A request of yours is running: proposals wait for it. */
@@ -107,19 +111,21 @@ export function useConflictModel({
   }, [notice]);
 
   // Each file's conflicts to ask about, once per file version and draft: a keystroke re-reads only the open file.
-  const targetCache = useRef(new WeakMap<ConflictFile, { draft: string; targets: number[] }>());
-  const targetsOf = (f: ConflictFile, draft: string) => {
+  const targetCache = useRef(
+    new WeakMap<ConflictFile, { draft: string; edits: EditTexts | undefined; targets: number[] }>()
+  );
+  const targetsOf = (f: ConflictFile, draft: string, own: EditTexts | undefined = f.edits) => {
     const hit = targetCache.current.get(f);
-    if (hit?.draft === draft) return hit.targets;
-    const targets = modelTargets({ ...f, result: draft });
-    targetCache.current.set(f, { draft, targets });
+    if (hit?.draft === draft && hit.edits === own) return hit.targets;
+    const targets = modelTargets({ ...f, result: draft, edits: own });
+    targetCache.current.set(f, { draft, edits: own, targets });
     return targets;
   };
   const open = !!window.electronAPI.conflictModel && session?.status === 'editing' && !session.stale;
   const waiting = useMemo(() => {
     if (!open) return [];
     return session.files.flatMap((f) =>
-      targetsOf(f, f.path === file?.path ? contents : f.result)
+      (f.path === file?.path ? targetsOf(f, contents, edits) : targetsOf(f, f.result))
         .filter((index) => {
           const card = cards[cardKey(f.path, f.original, index)] as ModelCard | undefined;
           // A failed request can be asked again; an answer or a request still running can't.
@@ -127,7 +133,7 @@ export function useConflictModel({
         })
         .map((index) => ({ path: f.path, original: f.original, index }))
     );
-  }, [open, session, file, contents, cards]);
+  }, [open, session, file, contents, cards, edits]);
 
   /** Asks about every conflict that waits: the one click that sends anything. */
   function askAll() {
@@ -177,10 +183,10 @@ export function useConflictModel({
   // Your choice on a conflict cancels its request, and a proposal waiting for it. Nothing to read when nothing waits.
   useEffect(() => {
     if (!file || (!live.current.size && !queue.entries.length)) return;
-    const openNow = openConflicts(file.original, contents, file.proposals);
+    const openNow = openConflicts(file.original, contents, file.proposals, edits);
     for (const [key, request] of [...live.current, ...queue.entries.map((entry) => [entry.key, entry] as const)])
       if (request.path === file.path && !openNow?.has(request.index)) cancel(key);
-  }, [file, contents]);
+  }, [file, contents, edits]);
 
   // Closing the view cancels every request. Another tab only hides it (React Activity runs this cleanup too, with the
   // view still in the document): requests keep running, and their proposals arrive when you come back.

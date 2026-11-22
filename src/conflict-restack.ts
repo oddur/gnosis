@@ -70,7 +70,8 @@ export function replayBuckets(file: ConflictFile, carried: readonly number[] = [
     file,
     file.result,
     file.verdict?.verdict,
-    file.picks?.map((pick) => pick ?? undefined)
+    file.picks?.map((pick) => pick ?? undefined),
+    file.edits
   );
   return blocks.map((segment, i) => {
     const text = texts?.[segment.index];
@@ -113,6 +114,7 @@ function carried(file: ConflictFile): ConflictFile {
     resolved: true,
     source: 'manual',
     ...(file.picks ? { picks: file.picks } : {}),
+    ...(file.edits ? { edits: file.edits } : {}),
   };
 }
 /** The newest carried files, at most 50 and 4 MB, one per conflict. */
@@ -447,7 +449,8 @@ export async function prepareRestack(
             file,
             file.result,
             file.verdict?.verdict,
-            file.picks?.map((pick) => pick ?? undefined)
+            file.picks?.map((pick) => pick ?? undefined),
+            file.edits
           );
           const own = buckets.filter((bucket) => bucket !== 'merged').length;
           merged += buckets.length - own;

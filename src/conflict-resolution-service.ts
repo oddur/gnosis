@@ -11,6 +11,7 @@ import {
   type ConflictSession,
   type ConflictRequest,
   type ConflictReply,
+  type ConflictTypeCheck,
   type BaseMove,
 } from '../lib/conflict-resolution';
 import {
@@ -49,7 +50,17 @@ import {
 } from '../lib/conflict-model';
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
-import type { Verdict } from '../lib/conflict-verify';
+import { typeCheckKey, type Verdict } from '../lib/conflict-verify';
+import {
+  FROM_FORK,
+  TYPE_CHECK_TIMEOUT,
+  TypeCheckSkipped,
+  TypeCheckUnchecked,
+  removeLeftovers,
+  typeCheckMerge,
+  type RunScript,
+} from './conflict-type-check';
+import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
@@ -152,6 +163,32 @@ interface Deps {
    * false, Undo this update is refused (#445 item 25).
    */
   allowUndo?: (repo: string) => boolean;
+  /**
+   * The linked clone of a repository whose type check is on in Settings › Local clones (#445 item 24). Undefined: the
+   * check is off, the default, and never runs.
+   */
+  typeCheckClone?: (repo: string) => string | undefined;
+  /** Whether the clone still has a GitHub remote for the repository (lib/local-clone.ts `inspectLocalClone`). */
+  cloneMatches?: (clone: string, repo: string) => Promise<boolean>;
+  /** Runs the clone's compiler: an Electron utility process in the app, Node in tests. */
+  runScript?: RunScript;
+  /** Milliseconds for the type check (TYPE_CHECK_TIMEOUT). Tests change it. */
+  typeCheckTimeout?: number;
+  /** A PR's type check status changed (`typeCheck`). */
+  typeCheckChanged?: (id: string) => void;
+}
+/** Node runs the compiler: the test runner's own binary. The app passes an Electron utility process instead. */
+const nodeScript: RunScript = async (script, args, options) => {
+  const result = await runConflictProcess(process.execPath, [script, ...args], options);
+  return { code: result.code, stdout: result.stdout.toString('utf8'), stderr: result.stderr };
+};
+async function cloneHasRemote(clone: string, repo: string) {
+  const real = (directory: string) => fs.realpath(directory).catch(() => directory);
+  const entries = await inspectLocalClone(clone).catch(() => []);
+  const root = await real(clone);
+  for (const entry of entries)
+    if (entry.repo.toLowerCase() === repo.toLowerCase() && (await real(entry.path)) === root) return true;
+  return false;
 }
 /** A single scope hash leaves room for Git's internal worktree paths on Windows. */
 export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
@@ -174,6 +211,9 @@ export function createConflictResolutionService(deps: Deps) {
   const waiters = new Map<string, (() => void)[]>();
   function release(key: string) {
     busy.delete(key);
+    // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
+    const queued = pendingTypeErrors.get(key);
+    if (queued) saveTypeErrors(key, queued);
     const waiting = waiters.get(key) ?? [];
     waiters.delete(key);
     for (const wake of waiting) wake();
@@ -305,6 +345,9 @@ export function createConflictResolutionService(deps: Deps) {
   function withChoices(key: string, session: ConflictSession) {
     for (const choice of pendingChoices.get(key) ?? []) markChoice(session, choice);
     pendingChoices.delete(key);
+    const typed = pendingTypeErrors.get(key);
+    if (typed) applyTypeErrors(session, typed);
+    pendingTypeErrors.delete(key);
     return session;
   }
   /** `pushed` per draft and head: a draft can be megabytes, so it is read once per change (#445 item 25). */
@@ -313,6 +356,158 @@ export function createConflictResolutionService(deps: Deps) {
   function write(key: string, value: unknown) {
     pushedCache.delete(key);
     deps.storage.write(key, value);
+  }
+  /**
+   * A type check's demotions that came while a request held the draft: saved with its next write, as choices are. Each
+   * entry is a whole run's list, so it replaces the one before; an empty list clears them (a pass, or the check off).
+   */
+  const pendingTypeErrors = new Map<string, { path: string; key: string; note: string }[]>();
+  /**
+   * The type check's demotions as an overlay on the files (`typeError`): the files with new errors get theirs, every
+   * other file loses its own. The checks' saved verdict is never changed; the view applies the overlay while the check
+   * is on. Only for the proposals the type check saw.
+   */
+  function applyTypeErrors(session: ConflictSession, files: readonly { path: string; key: string; note: string }[]) {
+    let changed = false;
+    if (session.status !== 'editing') return changed;
+    for (const file of session.files) {
+      const typed = files.find((x) => x.path === file.path && x.key === typeCheckKey(file));
+      if (typed && file.typeError?.note !== typed.note) {
+        file.typeError = { key: typed.key, note: typed.note };
+        changed = true;
+      } else if (!typed && file.typeError) {
+        delete file.typeError;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  /** Saves a run's demotions on the draft now, or with the next write while a request holds it. */
+  function saveTypeErrors(key: string, files: { path: string; key: string; note: string }[], match?: (saved: ConflictSession) => boolean) {
+    if (busy.has(key)) {
+      pendingTypeErrors.set(key, files);
+      return;
+    }
+    pendingTypeErrors.delete(key);
+    const saved = deps.storage.read(key) as ConflictSession | undefined;
+    if (saved && (!match || match(saved)) && applyTypeErrors(saved, files)) {
+      write(key, saved);
+      void deps.storage.flush();
+    }
+  }
+  /** Each PR's type check (#445 item 24), by draft key: its status, and what it checked. Kept while the app runs. */
+  interface TypeCheckRun {
+    status: ConflictTypeCheck;
+    fingerprint: string;
+    controller: AbortController;
+    /** The repository and the clone it runs with: a result counts only while Settings still links that clone. */
+    repo: string;
+    clone: string;
+    done: Promise<void>;
+  }
+  const typeChecks = new Map<string, TypeCheckRun>();
+  const typeCheckFingerprint = (session: ConflictSession) =>
+    hash(JSON.stringify([session.headSha, session.baseSha, session.tree, session.files.map((f) => [f.path, typeCheckKey(f)])]));
+  /**
+   * Stops a PR's type check and forgets it, before its folder goes (a new preparation, Discard). Waits a moment for it
+   * to let go of its worktree; a result that comes later is dropped.
+   */
+  async function stopTypeCheck(key: string, id: string) {
+    const run = typeChecks.get(key);
+    if (!run) return;
+    typeChecks.delete(key);
+    run.controller.abort();
+    deps.typeCheckChanged?.(id);
+    await Promise.race([run.done, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
+  }
+  /**
+   * Starts the type check of a prepared draft in the background, if the repository opted in: never for a fork, never
+   * when the clone's remote is another repository. The same draft keeps a result it has; a skipped or stopped check
+   * runs again, since its reason may be gone.
+   */
+  function startTypeCheck(ctx: Context, session: ConflictSession) {
+    const key = storageKey(ctx.account, session.id);
+    const clone =
+      session.status === 'editing' && session.preparation === 'conflicts' && !session.stale
+        ? deps.typeCheckClone?.(session.baseRepo)
+        : undefined;
+    const fingerprint = typeCheckFingerprint(session);
+    const previous = typeChecks.get(key);
+    if (
+      previous &&
+      previous.fingerprint === fingerprint &&
+      previous.clone === clone &&
+      ['running', 'passed', 'errors'].includes(previous.status.state)
+    ) {
+      // Start over made new files for the same proposals: they get the errors again with the next write.
+      if (previous.status.state === 'errors' && previous.status.files.length)
+        pendingTypeErrors.set(key, previous.status.files);
+      return;
+    }
+    previous?.controller.abort();
+    if (!clone) {
+      if (previous) {
+        typeChecks.delete(key);
+        deps.typeCheckChanged?.(session.id);
+      }
+      // The check is off: its demotions go with the next write.
+      if (session.files.some((f) => f.typeError)) pendingTypeErrors.set(key, []);
+      return;
+    }
+    // The draft as it was prepared: the reply that carries `session` goes on without waiting for the check.
+    const snapshot = structuredClone(session);
+    const controller = new AbortController();
+    const entry: TypeCheckRun = {
+      status: { state: 'running' },
+      fingerprint,
+      controller,
+      repo: session.baseRepo,
+      clone,
+      done: Promise.resolve(),
+    };
+    typeChecks.set(key, entry);
+    deps.typeCheckChanged?.(session.id);
+    const finish = (status: ConflictTypeCheck) => {
+      // A newer run, a stopped one, or a clone that is no longer linked with the check on: the result is dropped.
+      if (typeChecks.get(key) !== entry) return;
+      if (deps.typeCheckClone?.(entry.repo) !== entry.clone) {
+        typeChecks.delete(key);
+        deps.typeCheckChanged?.(session.id);
+        return;
+      }
+      entry.status = status;
+      // A finished run decides each file: its new errors demote it, and a file without any is clear again.
+      if (status.state === 'errors' || status.state === 'passed')
+        saveTypeErrors(key, status.state === 'errors' ? status.files : [], (saved) =>
+          saved.id === session.id && saved.headSha === session.headSha
+        );
+      deps.typeCheckChanged?.(session.id);
+    };
+    entry.done = (async (): Promise<ConflictTypeCheck> => {
+      if (session.headRepo.toLowerCase() !== session.baseRepo.toLowerCase())
+        return { state: 'skipped', reason: FROM_FORK };
+      if (!(await (deps.cloneMatches ?? cloneHasRemote)(clone, session.baseRepo)))
+        return { state: 'skipped', reason: `your clone has no remote for ${session.baseRepo}` };
+      controller.signal.throwIfAborted();
+      const dir = await directory(ctx.account, session.id);
+      return typeCheckMerge({
+        session: snapshot,
+        clone,
+        directory: dir,
+        git: (args, signal, cwd) => git(ctx, session.id, args, signal, undefined, [0], { cwd }),
+        // Cleanup needs no network and no account: it runs even after the account changed.
+        local: (args, signal) => runGit(dir, args, signal, { lazyFetch: false }),
+        run: deps.runScript ?? nodeScript,
+        signal: controller.signal,
+        timeout: deps.typeCheckTimeout ?? TYPE_CHECK_TIMEOUT,
+      });
+    })().then(finish, (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (controller.signal.aborted) finish({ state: 'cancelled' });
+      else if (error instanceof TypeCheckUnchecked) finish({ state: 'unchecked', reason: message });
+      else if (error instanceof TypeCheckSkipped) finish({ state: 'skipped', reason: message });
+      else finish({ state: 'skipped', reason: `couldn’t run: ${message.slice(0, 200)}` });
+    });
   }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
@@ -456,6 +651,8 @@ export function createConflictResolutionService(deps: Deps) {
   }
   /** Starts a session from an empty directory. A legacy-path directory moves to the current layout. */
   async function resetSession(ctx: Context, id: string) {
+    // A type check of the draft this preparation replaces stops first: its folder is about to go (#445 item 24).
+    await stopTypeCheck(storageKey(ctx.account, id), id);
     const dir = await directory(ctx.account, id);
     await dropStoreRefs(ctx.account, id, dir);
     await fs.rm(dir, { recursive: true, force: true });
@@ -1854,6 +2051,14 @@ export function createConflictResolutionService(deps: Deps) {
     }
     for (const account of await names(root)) await fs.rmdir(path.join(root, account)).catch(() => {});
     const signal = new AbortController().signal;
+    // Type check folders a quit or a crash left in the caches that stay (#445 item 24): the link to the clone's
+    // node_modules first, then the folder and its worktree entries. Never while a type check runs.
+    if (![...typeChecks.values()].some((run) => run.status.state === 'running'))
+      for (const dir of keep)
+        if (!(await busyDirectories()).has(dir))
+          await removeLeftovers(dir, (args) => runGit(dir, args, signal, { lazyFetch: false })).catch((error: unknown) =>
+            console.warn('[conflicts] Could not remove a type check folder.', error)
+          );
     for (const name of await names(path.join(root, STORES_DIRECTORY))) {
       const store = path.join(root, STORES_DIRECTORY, name);
       await withStore(store, async () => {
@@ -2003,6 +2208,36 @@ export function createConflictResolutionService(deps: Deps) {
           write(key, saved);
         }
       });
+    },
+    /** The PR's type check (#445 item 24), for the connected account. Undefined: off, or not run for this draft. */
+    typeCheck(id: string): ConflictTypeCheck | undefined {
+      const ctx = deps.context();
+      return ctx.account ? typeChecks.get(storageKey(ctx.account, id))?.status : undefined;
+    },
+    /** Stops a running type check. Nothing it found is applied. */
+    cancelTypeCheck(id: string) {
+      const ctx = deps.context();
+      if (ctx.account) typeChecks.get(storageKey(ctx.account, id))?.controller.abort();
+    },
+    /**
+     * Settings › Local clones changed: a type check whose clone is no longer linked with the check on, or is another
+     * folder now, stops at once, and nothing it finds is used.
+     */
+    typeCheckSettingsChanged() {
+      for (const [key, run] of [...typeChecks])
+        if (deps.typeCheckClone?.(run.repo) !== run.clone) {
+          typeChecks.delete(key);
+          run.controller.abort();
+          const id = /([a-f0-9]{64})$/.exec(key)?.[1];
+          if (id) deps.typeCheckChanged?.(id);
+        }
+      // Turned off: every draft of a repository without the check loses its demotions, queued ones included.
+      for (const name of deps.storage.names?.() ?? []) {
+        if (!name.startsWith('conflict-draft:')) continue;
+        const saved = deps.storage.read(name) as ConflictSession | null | undefined;
+        if (saved && !deps.typeCheckClone?.(saved.baseRepo) && (saved.files.some((f) => f.typeError) || pendingTypeErrors.has(name)))
+          saveTypeErrors(name, []);
+      }
     },
     async trimBackground(keep = deps.backgroundDrafts ?? BACKGROUND_DRAFTS) {
       for (const { account, id } of staleBackground(keep)) await dropBackground(account, id);
@@ -2163,6 +2398,8 @@ export function createConflictResolutionService(deps: Deps) {
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);
           delete session.background;
+          // The opt-in type check runs after the open, never before it returns (#445 item 24).
+          startTypeCheck(ctx, session);
           return { session };
         }
         const session = sessionFor(ctx, id);
@@ -2230,6 +2467,7 @@ export function createConflictResolutionService(deps: Deps) {
             file.result = request.contents;
             file.resolved = request.resolved;
             if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
+            if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
@@ -2277,6 +2515,7 @@ export function createConflictResolutionService(deps: Deps) {
           throw new Error('This resolution has already been published. Refresh the PR.');
         let baseMoved: BaseMove | undefined;
         if (request.kind === 'discard') {
+          await stopTypeCheck(key, id);
           await drop(ctx.account, id);
           return { session };
         }
@@ -2307,6 +2546,7 @@ export function createConflictResolutionService(deps: Deps) {
           file.result = request.contents;
           file.resolved = request.resolved;
           if (request.picks) file.picks = request.picks.some(Boolean) ? request.picks : undefined;
+          if (request.edits) file.edits = request.edits.some(Boolean) ? request.edits : undefined;
         } else if (request.kind === 'model') {
           // The model's proposal for one conflict, into that conflict's span only, while it is still open. The checks
           // below run on it; a model proposal is never Merged (lib/conflict-verify.ts).
@@ -2328,8 +2568,8 @@ export function createConflictResolutionService(deps: Deps) {
           file.proposals = spliced.proposals;
           file.resolved = false;
           // The draft a resolver wrote now holds the model's lines too: lines neither side had are marked (#445 item 10).
-          // The draft derives only from its conflicts' choices (spliceModelProposal), so no line you typed is in it.
-          file.resolverText = spliced.result;
+          // Its text leaves your in-place edits out (spliceModelProposal), so no line you typed is ever taken for it.
+          file.resolverText = spliced.resolver;
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent', 'whole-file'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -2340,7 +2580,7 @@ export function createConflictResolutionService(deps: Deps) {
               // "Use this result": the whole-file proposal preparation kept, structural merge's or the move rule's.
               const proposal = file.wholeFile;
               if (!proposal || hasConflictMarkers(proposal.text)) throw new Error('This file has no whole-file proposal.');
-              if (proposal.text !== file.result) file.picks = undefined;
+              if (proposal.text !== file.result) file.picks = file.edits = undefined;
               file.result = proposal.text;
               file.resolverText = proposal.text;
               file.explanation =
@@ -2369,7 +2609,7 @@ export function createConflictResolutionService(deps: Deps) {
                 if (typeof result.contents !== 'string' || Buffer.byteLength(result.contents) > CONFLICT_FILE_LIMIT)
                   throw new Error('The agent returned an invalid file.');
                 // Your Keep choices were for the draft this replaces.
-                if (result.contents !== file.result) file.picks = undefined;
+                if (result.contents !== file.result) file.picks = file.edits = undefined;
                 file.result = result.contents;
                 file.resolverText = result.contents;
               }
@@ -2402,7 +2642,7 @@ export function createConflictResolutionService(deps: Deps) {
                   continue;
                 }
               }
-              if (output !== file.result) file.picks = undefined;
+              if (output !== file.result) file.picks = file.edits = undefined;
               file.result = output;
               file.resolverText = output;
               file.explanation = hasConflictMarkers(file.result)
