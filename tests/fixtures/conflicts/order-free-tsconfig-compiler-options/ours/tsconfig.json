@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "strict": true,
+    "noUnusedLocals": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}

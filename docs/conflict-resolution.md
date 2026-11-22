@@ -209,7 +209,7 @@ When both sides insert whole definitions at the same place, Gnosis proposes both
 - Plain methods of a class, impl or interface (Go: methods with a receiver), without decorators, annotations or attributes. Calls find a method by its name.
 - TypeScript interface and type-literal members. They are types only.
 - Go, Rust and Java imports of one kind, and plain C# `using` lines. These languages don't run code when they import.
-- The keys of `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies` in `package.json`. Package managers read these lists as sets of names.
+- The keys of `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies` in `package.json`. Package managers read these lists as sets of names. See also known JSON files below.
 
 For every kind, each side must add at least one node, no name may be added twice, and no decorator or attribute may stand just before the insertion, where it would attach to whichever node comes first.
 
@@ -235,6 +235,25 @@ Rust has no reflection over variants, so nothing else can see their order.
 Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields.
 
 **TypeScript type imports.** An import runs its module, and modules run in the order they are imported. Nothing in a syntax tree shows that a module has no side effects, such as a polyfill or a registration. So JavaScript, TypeScript and Python imports are never order-free in general, and they stay in Check. The exception is `import type …`: TypeScript erases it whole from the output, also with `verbatimModuleSyntax`, so it runs nothing. Both sides' imports must all be `import type`, and they must bind different names. `import { type A } from './a'` is not an exception: it can leave `import {} from './a'`, which still runs the module.
+
+**Known JSON files.** A JSON object has no order of its own, but the tool that reads it can read the keys in order. Node matches `exports` in order, `npm-run-all` runs `scripts` globs in order, jest tries `moduleNameMapper` in order, and TypeScript tries `compilerOptions.paths` in order. So keys are order-free only in known files, in top-level objects that their tool reads by key:
+
+- `package.json`: the four dependency lists, `peerDependenciesMeta` (per package) and `engines` (per tool).
+- `tsconfig.json`, `tsconfig.<name>.json` and `jsconfig.json`: `compilerOptions` (per option). An object inside it, such as `paths`, is not covered.
+
+Every key in the object, old and new, must be different, and every child must be a key: a comment in the object stays in Check.
+
+**What stays in Check, and why.** Each of these kinds was checked, and its order can change what the program does:
+
+- TypeScript and JavaScript enums and objects: `Object.keys`, `Object.values`, `JSON.stringify` and `for…in` read keys in insertion order. A numeric enum's reverse mapping keeps the last member with a value.
+- C# enums: reflection (`GetFields`) returns members in declaration order in practice, and code that fills a list from it shows that order.
+- Java enums: `values()`, `ordinal()`, `compareTo`, `EnumSet` and `EnumMap` follow the order, and JPA stores the ordinal by default.
+- Python enums and dicts: iteration follows the definition order, `auto()` and aliases depend on it, and a dict walked for the first match runs the first key that matches.
+- Go struct fields: `encoding/json`, `fmt`, `encoding/binary`, `reflect` and positional literals follow the order. Java and C# fields: initializers run in order, and serializers follow the order. Python dataclass fields: the order is the order of `__init__`'s parameters.
+- List and array items: the order is the value.
+- Match arms and switch cases: arms with distinct literals and no fall-through are order-free in Rust, Go, C# and Java. But the structural merge never writes them, and Gnosis's own proposal to keep both sides is never Merged, so they stay in Check. Python's `match` calls the subject's `__eq__`, which can match more than one literal. JavaScript and Java cases fall through.
+- Go `const` blocks: `iota` and a spec without a value follow the order, and Gnosis's own union is never Merged.
+- YAML keys: Gnosis doesn't know which tool reads the file.
 
 ## Testing the resolvers
 

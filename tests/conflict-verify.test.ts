@@ -992,6 +992,41 @@ void test('#481: TypeScript `import type` lines are order-free; value and side-e
   assert.equal(js.merged, false);
 });
 
+void test('#481: known JSON files’ keyed objects are order-free; nested and unknown objects are Check', async () => {
+  const keyed = (owner: string, path: string, ours = '    "b": "2",\n', theirs = '    "c": "3",\n') =>
+    samePlace(path, `{\n  "${owner}": {\n    "a": "1",\n`, '    "z": "26"\n  }\n}\n', ours, theirs, ours + theirs);
+  for (const [owner, path] of [
+    ['engines', 'package.json'],
+    ['peerDependenciesMeta', 'packages/ui/package.json'],
+    ['compilerOptions', 'tsconfig.json'],
+    ['compilerOptions', 'tsconfig.build.json'],
+    ['compilerOptions', 'jsconfig.json'],
+  ]) {
+    const verdict = await keyed(owner, path);
+    assert.equal(verdict.merged, true, `${path} ${owner}: ${verdict.note}`);
+  }
+  // Keys read in order, or by tools Gnosis doesn't know: Check.
+  for (const [owner, path] of [
+    ['scripts', 'package.json'],
+    ['compilerOptions', 'config.json'],
+    ['include', 'tsconfig.json'],
+    ['moduleNameMapper', 'jest.config.json'],
+  ])
+    assert.equal((await keyed(owner, path)).merged, false, `${path} ${owner}`);
+  // `paths` inside compilerOptions: TypeScript tries its patterns, so it is not a top-level keyed object.
+  const paths = await samePlace(
+    'tsconfig.json',
+    '{\n  "compilerOptions": {\n    "paths": {\n      "@a/*": ["a/*"],\n',
+    '      "@z/*": ["z/*"]\n    }\n  }\n}\n',
+    '      "@b/*": ["b/*"],\n',
+    '      "@*": ["c/*"],\n',
+    '      "@b/*": ["b/*"],\n      "@*": ["c/*"],\n'
+  );
+  assert.equal(paths.merged, false);
+  // The same option on both sides: Check.
+  assert.equal((await keyed('compilerOptions', 'tsconfig.json', '    "strict": true,\n', '    "strict": false,\n')).merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

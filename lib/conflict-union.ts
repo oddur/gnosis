@@ -530,19 +530,37 @@ function jsonString(text: string | undefined) {
     return undefined;
   }
 }
-/** The package.json objects whose keys are package names only, at the top of the file. */
-const DEPENDENCIES = new Set(['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']);
 /**
- * package.json dependency lists (#476): both sides added whole pairs to one of the top-level dependency lists, and
- * every key in it, old and new, is different. No other JSON object: tools read keys in order (`exports`, `scripts`
- * globs, `moduleNameMapper`).
+ * Known JSON files and the top-level objects in them whose keys are looked up by name only, never read in order: per
+ * file name, the owning keys. package.json's dependency lists (#476), `peerDependenciesMeta` (per package) and
+ * `engines` (per tool); a tsconfig or jsconfig's `compilerOptions` (per option) (#481).
+ */
+const KEYED_OBJECTS: [RegExp, ReadonlySet<string>][] = [
+  [
+    /(^|[\\/])package\.json$/,
+    new Set([
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+      'peerDependenciesMeta',
+      'engines',
+    ]),
+  ],
+  [/(^|[\\/])(tsconfig(\.[\w-]+)?|jsconfig)\.json$/, new Set(['compilerOptions'])],
+];
+/**
+ * A known file's keyed object (KEYED_OBJECTS): both sides added whole pairs to one of its top-level objects that are
+ * read by key only, and every key in it, old and new, is different. No other JSON object: tools read keys in order
+ * (`exports`, `scripts` globs, `moduleNameMapper`, `compilerOptions.paths`).
  */
 function dependencies(ours: RangeUnits, theirs: RangeUnits, path: string) {
   const all = ours.all;
-  if (!/(^|[\\/])package\.json$/.test(path) || ours.parent !== 'object' || !all) return false;
+  const owners = KEYED_OBJECTS.find(([file]) => file.test(path))?.[1];
+  if (!owners || ours.parent !== 'object' || !all) return false;
   if (![...ours.units, ...theirs.units, ...all].every((u) => u.type === 'pair')) return false;
   const owner = ours.path?.map(jsonString);
-  if (owner?.length !== 1 || !DEPENDENCIES.has(owner[0] ?? '')) return false;
+  if (owner?.length !== 1 || !owners.has(owner[0] ?? '')) return false;
   const keys = all.flatMap((u) => jsonString(u.name) ?? []);
   return keys.length === all.length && new Set(keys).size === keys.length;
 }
