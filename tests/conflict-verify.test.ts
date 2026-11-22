@@ -940,6 +940,31 @@ void test('#481: Rust enum variants are order-free only with explicit, different
   assert.equal((await color('', '    Green = 2,\n', '    Green = 3,\n')).merged, false);
 });
 
+void test('#481: Rust struct fields are order-free only for scalar fields and order-blind derives', async () => {
+  const options = (head: string, ours = '    depth: i64,\n', theirs = '    weight: f64,\n') =>
+    samePlace('src/options.rs', `${head}pub struct Options {\n    pub width: u32,\n`, '}\n', ours, theirs, ours + theirs);
+  for (const head of ['', '#[derive(Clone, Copy, PartialEq, Default)]\n', '#[allow(dead_code)]\n'])
+    assert.equal((await options(head)).merged, true, head);
+  assert.equal((await options('', "    pub name: &'static str,\n", '    pub on: bool,\n')).merged, true);
+  // Debug prints fields in order, PartialOrd and Hash read them in order, serde writes them in order, repr lays them
+  // out in order: Check.
+  for (const head of [
+    '#[derive(Debug)]\n',
+    '#[derive(PartialEq, PartialOrd)]\n',
+    '#[derive(Hash)]\n',
+    '#[derive(Serialize)]\n',
+    '#[repr(C)]\n',
+  ])
+    assert.equal((await options(head)).merged, false, head);
+  // Fields are dropped in order: a type that may run code when dropped (String, a guard, any type of the crate): Check.
+  for (const field of ['    name: String,\n', '    guard: MutexGuard<\'static, ()>,\n', '    inner: Inner,\n', '    list: Vec<u8>,\n'])
+    assert.equal((await options('', field)).merged, false, field);
+  // A field attribute (serde renames, cfg on one field): Check.
+  assert.equal((await options('', '    #[serde(rename = "d")]\n    depth: i64,\n')).merged, false);
+  // The same field on both sides: Check.
+  assert.equal((await options('', '    depth: i64,\n', '    depth: u8,\n')).merged, false);
+});
+
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
   const block = (i: number) => `<<<<<<< feature\na${i}\n=======\nb${i}\n>>>>>>> main\n`;
   const blocks = Array.from({ length: 2500 }, (_, i) => block(i)).join('\n');

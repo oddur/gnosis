@@ -1,0 +1,8 @@
+{
+  "description": "#481: both sides add a field whose type may run code when dropped. Rust drops fields in declaration order, so the order of the flush and the unlock is the program.",
+  "language": "rust",
+  "category": "semantic/order",
+  "expected": {
+    "src/limits.rs": "any-but-merged"
+  }
+}

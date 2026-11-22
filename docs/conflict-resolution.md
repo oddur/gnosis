@@ -224,6 +224,16 @@ Each kind below has its own proof. A case that the proof does not cover stays in
 
 Rust has no reflection over variants, so nothing else can see their order.
 
+**Rust struct fields.** Rust drops fields in declaration order. `Debug` prints them in order, `PartialOrd`, `Ord` and `Hash` read them in order, serde writes them in order, and `#[repr]` lays them out in order. So the fields are order-free only when all of the following are true:
+
+- The struct has named fields. A tuple struct is built by position.
+- Every field, old and new, is an integer, a float, `bool`, `char` or `&str`. These types run no code when they are dropped.
+- No field has an attribute.
+- The struct and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Clone`, `Copy`, `PartialEq`, `Eq` and `Default`. On these types, these derives combine each field's result in a way that does not depend on the order.
+- The derive names are not renamed, as for enums.
+
+Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields.
+
 ## Testing the resolvers
 
 The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.

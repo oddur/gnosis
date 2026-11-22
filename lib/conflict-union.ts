@@ -334,13 +334,13 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 }
 
 /** What an order-free unit is: both sides' units must all be one kind. */
-type OrderKind = 'method' | 'member' | 'import' | 'variant';
+type OrderKind = 'method' | 'member' | 'import' | 'variant' | 'field';
 /**
  * Where order doesn't matter (#476), the provable core only: per language, the parent node that holds the units (and,
  * where the parent type is ambiguous, the node that holds it), the unit types, and their kind. Plain methods of a class,
  * impl or interface body (Go: methods with a receiver); TypeScript interface and type-literal members, which are types
  * only; imports in Go, Rust, Java and C#. Since #481, each with its own proof (`proved`, and docs/conflict-resolution.md):
- * Rust enum variants. Nothing else: no other fields, enum members, functions, keys, cases, list items or statements, no
+ * Rust enum variants and struct fields. Nothing else: no other fields, enum members, functions, keys, cases, list items or statements, no
  * JavaScript, TypeScript or Python imports.
  */
 const SCRIPT_ORDER_FREE = [
@@ -376,6 +376,7 @@ const ORDER_FREE: Partial<
     { parents: ['source_file'], types: ['use_declaration'], kind: 'import' },
     { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'], kind: 'import' },
     { parents: ['enum_variant_list'], containers: ['enum_item'], types: ['enum_variant'], kind: 'variant' },
+    { parents: ['field_declaration_list'], containers: ['struct_item'], types: ['field_declaration'], kind: 'field' },
   ],
 };
 /** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
@@ -473,6 +474,10 @@ function rustInteger(text: string | undefined) {
   const value = BigInt(digits.toLowerCase());
   return match[1] ? -value : value;
 }
+/** Derives that, on scalar fields, combine each field's result without an order: a copy, a default, `==` and `&&`. */
+const STRUCT_DERIVES = new Set(['Clone', 'Copy', 'PartialEq', 'Eq', 'Default']);
+/** Field types with no drop glue and nothing to run: Rust's scalars, and borrowed strings. */
+const SCALAR = /^(?:[iu](?:8|16|32|64|128|size)|f32|f64|bool|char|&(?:'[\p{L}_][\p{L}\p{N}_]* )?str)$/u;
 /** Derives that never read a fieldless enum's variant order once each variant has its own value. */
 const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash']);
 /**
@@ -483,10 +488,22 @@ const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash
  * variant with an explicit integer discriminant, all different; nothing but lint, `doc` and `cfg` attributes and
  * ENUM_DERIVES sit on the enum or around it, no variant has an attribute (`#[default]`, `#[serde(…)]`), and no `use`
  * could rename a derive. Rust has no reflection over variants.
+ *
+ * Rust struct fields: their order is the drop order, what `Debug`, `PartialOrd`, `Ord`, `Hash` and serde read, and,
+ * with `#[repr]`, the layout. So every field, old and new, is a named field of a scalar type or `&str` (no drop glue,
+ * nothing to run), with no attribute; and nothing but lint, `doc` and `cfg` attributes and STRUCT_DERIVES sit on the
+ * struct or around it. Without `#[repr]` the layout is unspecified (rustc reorders fields), and struct literals and
+ * patterns name their fields.
  */
 function proved(kind: OrderKind, units: RangeUnits) {
-  if (kind !== 'variant') return true;
+  if (kind !== 'variant' && kind !== 'field') return true;
   const owner = units.owner;
+  if (kind === 'field')
+    return (
+      !!owner &&
+      rustAttributes(owner, STRUCT_DERIVES) &&
+      owner.members.every((m) => !m.attributed && SCALAR.test(m.type ?? ''))
+    );
   if (!owner || !rustAttributes(owner, ENUM_DERIVES)) return false;
   const values = owner.members.map((m) => (m.fields || m.attributed ? undefined : rustInteger(m.value)));
   if (values.some((v) => v === undefined)) return false;

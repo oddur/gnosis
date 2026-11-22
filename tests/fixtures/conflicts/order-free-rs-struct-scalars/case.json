@@ -1,0 +1,8 @@
+{
+  "description": "#481: both sides add a scalar field to a Rust struct without repr whose derives never read field order. Either order is the same program.",
+  "language": "rust",
+  "category": "structure/both-add",
+  "expected": {
+    "src/limits.rs": "merged"
+  }
+}
