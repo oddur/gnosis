@@ -24,7 +24,7 @@ import {
 import { blockVerdict, type Verdict } from '../lib/conflict-verify';
 import {
   shortBranch,
-  type BlockChoice,
+  type BlockPick,
   type BlockPicks,
   type ConflictLabels,
   type ConflictModel,
@@ -65,6 +65,8 @@ export function ConflictFileDiff<A>({
   actions,
   bare = false,
   patch,
+  previousPath,
+  note,
 }: {
   name: string;
   before?: string;
@@ -87,10 +89,15 @@ export function ConflictFileDiff<A>({
   bare?: boolean;
   /** The file's change as a parsed patch, in place of `before` and `after`. */
   patch?: FileDiffMetadata;
+  /** The file's path before a rename. */
+  previousPath?: string;
+  /** What changes besides lines, in the header: "Binary file changed", "Mode 100644 → 100755". */
+  note?: string;
 }) {
   const before = patch ? '' : beforeText;
   const after = patch ? '' : afterText;
-  const status = patch ? patchStatus(patch) : 'modified';
+  const status = patch ? patchStatus(patch) : previousPath ? 'renamed' : 'modified';
+  const oldPath = patch?.prevName ?? previousPath;
   const sectionRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const appearance = useDiffAppearance(preferences?.diffAppearance);
@@ -177,8 +184,10 @@ export function ConflictFileDiff<A>({
         <DiffFileHeader
           headerRef={headerRef}
           path={name}
-          previousPath={patch?.prevName}
+          previousPath={oldPath}
           status={status}
+          stats={note && !hunks.length ? `${status} · ${note}` : undefined}
+          tags={note && hunks.length ? <span className="changes-file-noise">{note}</span> : undefined}
           additions={additions}
           deletions={deletions}
           countsLabel={label}
@@ -190,7 +199,7 @@ export function ConflictFileDiff<A>({
         {model.parts && model.parts.length > 0 && (
           <ChangesDiff
             parts={model.parts}
-            file={{ name, prevName: patch?.prevName, status }}
+            file={{ name, prevName: oldPath, status }}
             layout={layout}
             options={options}
             annotations={annotations}
@@ -477,7 +486,7 @@ export function ConflictDiff({
   handle?: Ref<ConflictViewHandle>;
   onAllResolved?: () => void;
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
 }) {
   const { root, model, total, choose } = useConflictChoices({
     original,

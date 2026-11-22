@@ -4289,6 +4289,9 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-confirm-group-body { display:flex;flex-direction:column;gap:12px;margin-top:10px; }
 .conflict-confirm-group-body > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
 .conflict-confirm-file { display:flex;flex-direction:column;gap:6px; }
+/* Arriving from main is virtualized in a scroller of its own, capped in height: hundreds of files open at once. */
+.conflict-confirm-arriving { overflow:auto;overscroll-behavior:contain;min-height:0; }
+.conflict-confirm-arriving .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
 .conflict-confirm-file > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
 .conflict-confirm-lead { color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-confirm-note { display:flex;align-items:center;gap:6px;font-size:var(--type-caption);font-weight:600; }

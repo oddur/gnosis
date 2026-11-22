@@ -18,9 +18,10 @@ export interface ConflictFile {
   proposals?: (ConflictProposal | null)[];
   /**
    * Your Keep choice per block of `original`, saved with the draft, so a Keep whose text equals the proposal still reads
-   * as yours, never as Merged, after the view closes or reopens (#445 item 8).
+   * as yours, never as Merged, after the view closes or reopens (#445 item 8). `proposal`: you chose Use the proposal
+   * after choosing something else, so the push confirmation lists it as yours (#445 item 12).
    */
-  picks?: ('ours' | 'theirs' | 'both' | null)[];
+  picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
   /**
    * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
    * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
@@ -116,7 +117,7 @@ export type ConflictRequest =
       contents: string;
       resolved: boolean;
       /** Your Keep choices per block (`ConflictFile.picks`); absent leaves the saved ones. */
-      picks?: ('ours' | 'theirs' | 'both' | null)[];
+      picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
     }
   | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
@@ -153,7 +154,10 @@ export function hasConflictMarkers(text: string) {
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
 /** Derive the stage from the displayed draft, including edits not saved yet. */
-export function conflictFileStage(file: ConflictFile, contents = file.result): ConflictFileStage {
+export function conflictFileStage(
+  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>,
+  contents = file.result
+): ConflictFileStage {
   if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
   return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
@@ -190,7 +194,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
       (r.kind === 'save' &&
         Array.isArray(r.picks) &&
         r.picks.length <= 10_000 &&
-        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both')))
+        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal')))
   )
     return;
   if (

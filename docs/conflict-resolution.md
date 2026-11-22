@@ -44,11 +44,11 @@ Opening a file focuses the first conflict that needs you, or the file's next act
 
 The confirmation is the only place that pushes. It names the author's branch and says that approvals may be dismissed if the repository requires it. It shows the final update in three groups, in the same diff as the Conflicts view, with Quiet off:
 
-- **You decided** (open): every conflict you resolved. That is a Keep, a file you edited, a whole-file proposal you used, or a proposal in Check in a file you marked reviewed. A note under each conflict says what you chose.
+- **You decided** (open): every conflict you resolved. That is a Keep, **Use the proposal** after another choice, a proposal in Check in a file you marked reviewed, or a file whose conflicts can't be told apart from the rest of its draft. A note under each conflict says what you chose. A whole file's note says what produced it: your edit, the suggestion or structural merge you used, or a remembered resolution.
 - **Merged for you** (collapsed): proposals that passed every check and that you didn't change. A Keep whose text is the same as the proposal is yours, and so is every conflict in a file you edited.
-- **Arriving from main** (collapsed): the base branch's changes that didn't conflict. First its lines outside the conflicts in the conflicted files, then the files Git merged on its own.
+- **Arriving from main** (collapsed): the base branch's changes that didn't conflict. First its lines outside the conflicts in the conflicted files, and its renames of them, then the files Git merged on its own. A binary or mode-only file says what changed, such as "Binary file changed" or "Mode 100644 → 100755". The list scrolls on its own, and a file's diff loads when it scrolls into view.
 
-Each heading counts what it holds, such as "You decided · 2 conflicts in 1 file". The three diffs add up to the update. While any file still needs you, the confirmation shows no counts and Push stays off. A clean merge shows only **Arriving from main**, open.
+Each heading counts what it holds, such as "You decided · 2 conflicts in 1 file". The three diffs add up to the update. A file needs you while it needs a local merge tool, has a conflict marker left or isn't marked reviewed; a reviewed file without markers is yours. **Review and push…** opens the confirmation only when no file needs you. If one does, the confirmation shows no counts and Push stays off. A clean merge shows only **Arriving from main**, open.
 
 Enter a commit message and select **Push merge commit**, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus. Enter alone never pushes, and Enter or Space on the button does nothing. The title and **Push merge commit** stay in view; only the diff between them scrolls.
 

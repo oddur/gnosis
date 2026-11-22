@@ -395,7 +395,7 @@ export function useConflictChoices({
   contents: string;
   proposals?: readonly (ConflictProposal | null)[];
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
   onChange: (contents: string) => void;
   disabled: boolean;
   handle?: Ref<ConflictViewHandle>;
@@ -485,7 +485,8 @@ export function useConflictChoices({
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
-    onPick?.(index, choice === 'proposal' ? undefined : choice);
+    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick.
+    onPick?.(index, choice);
     onChange(applyChoices(model.segments, next, proposals));
   }
   useEffect(() => {
@@ -595,7 +596,7 @@ export function ConflictView({
   onAllResolved?: () => void;
   /** Your Keep choices, so one that equals the proposal still reads as yours (withPicks). */
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
 }) {
   const { root, model, total, choose } = useConflictChoices({
     original,

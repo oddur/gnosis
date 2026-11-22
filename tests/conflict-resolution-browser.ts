@@ -1,4 +1,5 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
+import { perfBudget, withinPerf } from './perf-budget';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -461,7 +462,7 @@ void app.whenReady().then(async () => {
     assert.match(confirmText, /You decided ·\s+2 conflicts in 1 file/);
     assert.equal(
       await js("document.querySelector('[data-confirm-group=decided] [data-confirm-file]')?.dataset.confirmWhole"),
-      'edited'
+      'manual'
     );
     assert.doesNotMatch(confirmText, /Your resolutions|Changes coming from/);
     assert.equal((confirmText.match(/Nothing is pushed/g) ?? []).length, 1, 'Say “nothing pushed” once');
@@ -1796,6 +1797,62 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(await publishes(), 0, 'Enter alone never pushes');
     await click('Close');
+    // Use the proposal after Undo is your choice (#445 item 12): saved as the `proposal` pick, listed under You decided.
+    await js(`(()=>{
+      window.conflictPreview=[];
+      Object.assign(window.conflictFixture,{version:1,files:${JSON.stringify([withResult(imports)])}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await pick(0, 'proposal');
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    await wait("window.conflictCalls.some(r=>r.kind==='save'&&JSON.stringify(r.picks)==='[\"proposal\"]')");
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await checksDone();
+    await click('Mark reviewed');
+    await wait("document.querySelector('.conflict-confirm .step-card')");
+    assert.deepEqual(await confirmGroupsShown(), {
+      decided: { count: '1 conflict in 1 file', open: 'true' },
+      merged: { count: 'none', open: 'false' },
+      main: { count: 'none', open: 'false' },
+    });
+    await wait("document.querySelector('[data-confirm-group=decided] [data-confirm-how]')");
+    assert.match((await notesIn('decided'))[0], /^used: Conflict 1 of 1 · Used the proposal · /);
+    await click('Close');
+    // A clean merge of 300 files: Arriving from main opens at once and mounts only the files in view.
+    const many = Array.from(
+      { length: 300 },
+      (_, i) => `diff --git a/src/f${i}.ts b/src/f${i}.ts\n--- a/src/f${i}.ts\n+++ b/src/f${i}.ts\n@@ -1 +1 @@\n-export const v = ${i};\n+export const v = ${i + 1};\n`
+    ).join('');
+    await js(`(()=>{
+      window.conflictPreview=${JSON.stringify(parsePatchFiles(many).flatMap((p) => p.files))};
+      Object.assign(window.conflictFixture,{version:1,files:[],preparation:'clean-merge'});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    const started = Date.now();
+    await click('Review and push…');
+    await wait(
+      "document.querySelector('[data-confirm-arriving] .conflict-diff-file diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    withinPerf('conflict confirmation, 300 files from main: open to the first diff', Date.now() - started, perfBudget(1500));
+    assert.deepEqual(await confirmGroupsShown(), { main: { count: '300 files', open: 'true' } });
+    const mounted = await js<number>("document.querySelectorAll('[data-confirm-arriving] .conflict-diff-file').length");
+    assert.ok(mounted > 0 && mounted < 30, `Only the files in view mount (${mounted} of 300)`);
+    // The list is capped in height and scrolls on its own; the last file mounts once it scrolls into view.
+    assert.ok(await js<boolean>("document.querySelector('[data-confirm-arriving]').getBoundingClientRect().height<=560.5"));
+    await js("document.querySelector('[data-confirm-arriving]').scrollTop=1e7");
+    await wait(
+      "document.querySelector('[data-confirm-arriving] .conflict-diff-file[aria-label=\"src/f299.ts\"] diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+    );
+    await waitSettled(win.webContents, 'conflict-confirm-arriving');
+    await click('Close');
+    await js("window.conflictFixture.preparation='conflicts'");
     // The confirmation with a long diff: the title and Push stay in view; the body scrolls.
     const long = Array.from({ length: 160 }, (_, i) => `export const value${i} = ${i};`);
     const confirmPatch = `diff --git a/src/values.ts b/src/values.ts\n--- a/src/values.ts\n+++ b/src/values.ts\n@@ -1,160 +1,160 @@\n${long.map((l) => `-${l}\n+${l.replace(';', ' + 1;')}`).join('\n')}\n`;

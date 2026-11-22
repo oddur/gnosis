@@ -157,3 +157,19 @@ void test('carry keeps your Keep choice on each block it reuses, and drops it on
   // Nothing reused: no choices at all.
   assert.equal(carryFile({ ...old, picks: [null, null] }, next, false).file.picks, undefined);
 });
+
+void test('carry keeps Use the proposal as your choice on a block it reuses (#445 item 12)', () => {
+  const one = block('a\n', 'o\n', 'b\n');
+  const original = `x\n${one}y\n`;
+  // You chose Use the proposal for the block; its text is the draft's.
+  const old = {
+    ...file(original, 'x\nab\ny\n'),
+    proposals: [{ source: 'mergiraf' as const, text: 'ab\n' }],
+    picks: ['proposal' as const],
+  };
+  const next = file(`x\n${block('a\n', 'o\n', 'b\n', 'f'.repeat(40))}y\n`);
+  const carried = carryFile(old, next, false);
+  assert.equal(carried.reused, 1);
+  assert.equal(carried.file.result, 'x\nab\ny\n');
+  assert.deepEqual(carried.file.picks, ['proposal']);
+});

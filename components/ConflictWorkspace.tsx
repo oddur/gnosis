@@ -30,7 +30,15 @@ import { ResultEditor, createEditor, proposalWhat, useCodeOptions, type Conflict
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
 import { cardAnchors } from '../lib/conflict-diff';
-import { confirmCount, confirmGroups, type ConfirmFile, type ConfirmGroups } from '../lib/conflict-confirm';
+import {
+  confirmCount,
+  confirmGroups,
+  needsYou,
+  patchNote,
+  wholeNote,
+  type ConfirmFile,
+  type ConfirmGroups,
+} from '../lib/conflict-confirm';
 import type { GapHunk } from '../lib/diff-gaps';
 import {
   canRetryStructural,
@@ -82,7 +90,8 @@ import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
 import { GitHubScopeActions, GitHubScopePrompt } from './GitHubScopePrompt';
-import { registerSettled } from '../lib/test-settled';
+import { registerSettled, useVirtualizerSettled } from '../lib/test-settled';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 const statusIcons = {
   decide: CircleAlert,
@@ -680,7 +689,7 @@ export function ConflictWorkspace({
   }
   function confirm() {
     // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
-    const waiting = sessionRef.current?.files.find((f) => f.unsupported || conflictFileStage(f) !== 'reviewed');
+    const waiting = sessionRef.current?.files.find((f) => needsYou(f));
     if (waiting) {
       setHint(`${waiting.path} still needs you. Review every file before you push.`);
       return;
@@ -981,7 +990,6 @@ export function ConflictWorkspace({
             session.files.map((f) => ({
               file: f,
               buckets: savedBuckets.get(f.path) ?? [],
-              reviewed: conflictFileStage(f) === 'reviewed',
               picks: picksOf(f),
             })),
             preview.files
@@ -1746,7 +1754,9 @@ function ConfirmFileDiff({
         ? `Merged · ${proposal ? proposalWhat(proposal, blockVerdict(verdict, index)) : 'Checked'}`
         : item.how === 'proposal'
           ? `Proposal you reviewed${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
-          : labels.kept[item.how];
+          : item.how === 'used'
+            ? `Used the proposal${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
+            : labels.kept[item.how];
     const Icon = item.how === 'merged' ? CheckCheck : Check;
     return (
       <p key={index} className="conflict-confirm-note" data-confirm-how={item.how}>
@@ -1769,15 +1779,13 @@ function ConfirmFileDiff({
       {part.whole && (
         <p className="conflict-confirm-note" data-confirm-how={part.whole}>
           <Check size={13} aria-hidden="true" />
-          <span>
-            {part.whole === 'whole-file'
-              ? `You used the structural merge for the whole file. It covers ${part.conflicts} ${part.conflicts === 1 ? 'conflict' : 'conflicts'} and ${session.baseBranch}’s other lines in it.`
-              : `You edited this file, so its ${part.conflicts} ${part.conflicts === 1 ? 'conflict is' : 'conflicts are'} yours.`}
-          </span>
+          <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
         </p>
       )}
       <ConflictFileDiff
         name={part.path}
+        previousPath={part.previousPath}
+        note={part.previousPath && part.before === part.after ? 'no line changes' : undefined}
         before={part.before}
         after={part.after}
         fileKey={`confirm:${session.id}:${group}:${part.path}`}
@@ -1786,6 +1794,77 @@ function ConfirmFileDiff({
         renderAnnotation={renderNotes}
         preferences={preferences}
       />
+    </div>
+  );
+}
+
+/** A file's rough height before it is measured: its header and the rows of its hunks. */
+const estimate = (lines: number) => 60 + Math.min(lines, 400) * 20;
+const ARRIVING_MAX = 560;
+/**
+ * Arriving from main can hold hundreds of files (a clean merge of a busy base branch). Its list is virtualized in a
+ * height-capped scroller: a file's diff mounts only when it scrolls into view.
+ */
+function ArrivingList({
+  main,
+  incoming,
+  render,
+  session,
+  preferences,
+}: {
+  main: ConfirmFile[];
+  incoming: PreviewFile[];
+  render: (part: ConfirmFile) => React.ReactNode;
+  session: ConflictSession;
+  preferences?: Preferences | null;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const count = main.length + incoming.length;
+  const virtual = useVirtualizer({
+    count,
+    getScrollElement: () => scroller.current,
+    estimateSize: (i) => {
+      if (i < main.length) return estimate(Math.abs(main[i].after.split('\n').length - main[i].before.split('\n').length) + 8);
+      const f = incoming[i - main.length];
+      return estimate(f.hunks.reduce((n, h) => n + Math.max(h.additionCount, h.deletionCount) + 1, 0));
+    },
+    overscan: 2,
+    gap: 12,
+  });
+  useVirtualizerSettled('conflict-confirm-arriving', virtual);
+  const total = virtual.getTotalSize();
+  return (
+    <div
+      ref={scroller}
+      className="conflict-confirm-arriving"
+      data-confirm-arriving=""
+      style={{ height: Math.min(total, ARRIVING_MAX) }}
+    >
+      <div style={{ height: total, position: 'relative' }}>
+        {virtual.getVirtualItems().map((item) => {
+          const f = item.index >= main.length ? incoming[item.index - main.length] : undefined;
+          return (
+            <div
+              key={item.key}
+              ref={virtual.measureElement}
+              data-index={item.index}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
+            >
+              {f ? (
+                <ConflictFileDiff
+                  name={f.name}
+                  patch={f}
+                  note={patchNote(f)}
+                  fileKey={`confirm:${session.id}:incoming:${f.name}`}
+                  preferences={preferences}
+                />
+              ) : (
+                render(main[item.index])
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1923,16 +2002,7 @@ function ConfirmDiff({
                 ? `${session.baseBranch}’s changes that didn’t conflict: first its lines in the conflicted files, then the files Git merged on its own.`
                 : `${session.baseBranch}’s changes that didn’t conflict.`}
             </p>
-            {main.map(part('main'))}
-            {incoming.map((f) => (
-              <ConflictFileDiff
-                key={`${f.prevName ?? ''}:${f.name}`}
-                name={f.name}
-                patch={f}
-                fileKey={`confirm:${session.id}:incoming:${f.name}`}
-                preferences={preferences}
-              />
-            ))}
+            <ArrivingList main={main} incoming={incoming} render={part('main')} session={session} preferences={preferences} />
           </>
         ) : (
           <p className="conflict-side-empty">No other files change.</p>

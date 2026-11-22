@@ -1,4 +1,4 @@
-import { chosenText, type BlockProposals, type ConflictModel } from './conflict-blocks';
+import { chosenText, type BlockProposals, type ConflictModel, type ConflictSegment } from './conflict-blocks';
 import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
@@ -35,29 +35,42 @@ export function conflictDiffText(
   proposals?: BlockProposals,
   against: 'ours' | 'theirs' = 'ours'
 ): { after: string; blocks: ConflictDiffBlock[] } {
+  return segmentsText(model.segments, (segment) => {
+    const choice = model.choices[segment.index];
+    const proposal = proposals?.[segment.index];
+    return choice === 'proposal' && proposal
+      ? proposal.text
+      : choice && choice !== 'proposal'
+        ? chosenText(segment.block, choice)
+        : against === 'ours'
+          ? segment.block.theirs
+          : segment.block.ours;
+  });
+}
+
+/**
+ * A file built from its segments, each conflict as `text(conflict)`, with the lines of the conflicts `track` keeps
+ * (all by default). The Conflicts view's diff and the push confirmation's groups (lib/conflict-confirm.ts) use it.
+ */
+export function segmentsText(
+  segments: readonly ConflictSegment[],
+  text: (segment: Extract<ConflictSegment, { kind: 'conflict' }>) => string,
+  track: (index: number) => boolean = () => true
+): { after: string; blocks: ConflictDiffBlock[] } {
   let after = '';
   let line = 0;
   const blocks: ConflictDiffBlock[] = [];
-  for (const segment of model.segments) {
+  for (const segment of segments) {
     if (segment.kind === 'text') {
       after += segment.text;
       line += lineCount(segment.text);
       continue;
     }
-    const choice = model.choices[segment.index];
-    const proposal = proposals?.[segment.index];
-    const text =
-      choice === 'proposal' && proposal
-        ? proposal.text
-        : choice && choice !== 'proposal'
-          ? chosenText(segment.block, choice)
-          : against === 'ours'
-            ? segment.block.theirs
-            : segment.block.ours;
+    const part = text(segment);
     const start = line + 1;
-    after += text;
-    line += lineCount(text);
-    blocks.push({ index: segment.index, start, end: line });
+    after += part;
+    line += lineCount(part);
+    if (track(segment.index)) blocks.push({ index: segment.index, start, end: line });
   }
   // A conflict that shows no lines sits under the line before it, or under the first line at the top of the file.
   for (const block of blocks)
