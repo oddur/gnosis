@@ -266,6 +266,49 @@ void app.whenReady().then(async () => {
     assert.ok(await js("!!document.querySelector('[data-conflict-keys][aria-label=\"Keyboard shortcuts\"]')"));
     assert.equal(await js("document.querySelector('.conflict-save-state').textContent"), 'Saved');
 
+    // First run (components/ConflictOnboarding.tsx): the key to Merged, Check and Decide and a keys hint show under the
+    // summary, once per account, and never take focus from the first conflict.
+    const guide = "document.querySelector('[data-conflict-guide]')";
+    const note = (name: string) => `document.querySelector('[data-conflict-note="${name}"]')`;
+    const tipsSeen = async () =>
+      (JSON.parse((await js<string | null>("localStorage.getItem('gnosis:conflict-tips:oddur')")) ?? '[]') as string[]).sort();
+    assert.deepEqual(await js(`[...${guide}.querySelectorAll('dt')].map(e=>e.textContent)`), ['Merged', 'Check', 'Decide']);
+    assert.match(await js<string>(`${guide}.textContent`), /proposes only when you ask.*Nothing is pushed until you push\./);
+    assert.equal(await js(`!!${guide}.querySelector('.lucide-bot') && !document.querySelector('.conflict-workspace .lucide-sparkles')`), true);
+    assert.match(await js<string>(`${note('keys')}.textContent`), /^Keys: J K next and previous conflict/);
+    assert.equal(await activeBlock(), '0', 'The help never takes focus');
+    assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
+    // The type check is off and the PR is TypeScript: one quiet mention, with a link to the setting.
+    assert.match(await js<string>(`${note('type-check')}.textContent`), /type-check the merge.*It’s off\.Repository settings$/);
+    await captureAll('first-run');
+    await js(`${note('type-check')}.querySelector('.conflict-note-link').click()`);
+    await wait("[...document.querySelectorAll('[role=dialog] h2')].some(h=>h.textContent==='Repository settings')");
+    await key('Escape');
+    await wait("!document.querySelector('[role=dialog]') && !!document.querySelector('.conflict-workspace')");
+    await js(`${note('type-check')}.querySelector('[aria-label=Dismiss]').click()`);
+    await wait(`!${note('type-check')}`);
+    // Got it closes the key for good; the summary's help button brings it back on demand.
+    await click('Got it');
+    await wait(`!${guide}`);
+    assert.deepEqual(await tipsSeen(), ['buckets', 'type-check']);
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    await wait("document.activeElement?.closest('.conflict-block')");
+    assert.equal(await js(`!!${guide} || !!${note('type-check')}`), false, 'Dismissed help stays dismissed');
+    assert.equal(await js(`!!${note('keys')}`), true, 'The keys hint waits for a key');
+    await js("document.querySelector('[data-conflict-guide-toggle]').click()");
+    await wait(`!!${guide}`);
+    assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
+    await capture('guide-reopened');
+    await js("document.querySelector('[data-conflict-guide-toggle]').click()");
+    await wait(`!${guide}`);
+    // The first shortcut ends the keys hint: you have found them.
+    await js(`${block(0)}.focus()`);
+    await key('j');
+    await wait(`!${note('keys')}`);
+    assert.deepEqual(await tipsSeen(), ['buckets', 'keys', 'type-check']);
+
     // A physical pointer click must dismiss the notification, not the conflict workspace.
     await js(
       `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Conflict notification regression',description:'A background result is ready.',timeout:0});})()`
@@ -551,6 +594,8 @@ void app.whenReady().then(async () => {
       "document.querySelector('[data-confirm-group=decided] .conflict-diff-file diffs-container')?.shadowRoot?.querySelector('[data-line]')"
     );
     assert.equal(await js("!!document.querySelector('[data-confirm-group=decided] [data-noise-stat]')"), false);
+    // Undo after push is off for this repository: the confirmation says so once, with the setting.
+    assert.match(await js<string>(`${note('undo')}.textContent`), /^Undo after push is off for this repository.*Repository settings$/);
     await captureAll('confirm-push');
     // The cascade preview: "Checking the stack…" while the dry run runs, then the sentence, which follows the result.
     await wait("document.querySelector('.conflict-confirm [data-cascade=checking]')?.textContent==='Checking the stack…'");
@@ -1017,7 +1062,7 @@ void app.whenReady().then(async () => {
     await js(
       "window.conflictFixture.files=[];window.conflictFixture.stale=false;window.conflictFixture.preparation='clean-merge';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
     );
-    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='Git merged everything cleanly'");
     await noResolveChrome();
     await captureAll('clean-merge');
     await click('Review and push…');
@@ -1056,6 +1101,7 @@ void app.whenReady().then(async () => {
     );
     await capture('preparing');
     await wait("document.querySelector('.conflict-state')?.textContent.includes('continues in Activity')");
+    await wait("/^\\d+ s so far$/.test(document.querySelector('[data-conflict-elapsed]')?.textContent ?? '')");
     await capture('preparing-slow');
     await wait("!document.querySelector('.conflict-state .loading-indicator')");
     await click('Close');
@@ -1070,6 +1116,7 @@ void app.whenReady().then(async () => {
       'Gnosis couldn’t prepare this merge.'
     );
     assert.ok(await exists('Try again'));
+    assert.ok(await exists('Open PR on GitHub'), 'A failed preparation also points to GitHub');
     await capture('failure');
     await captureAll('prepare-failed');
     await js('window.failOpen=undefined');
@@ -1441,6 +1488,12 @@ void app.whenReady().then(async () => {
       { state: 'skipped', reason: 'dependencies aren’t installed in your clone' },
       'Type check: skipped (dependencies aren’t installed in your clone)'
     );
+    // A check that couldn't run says what decided Merged instead.
+    assert.equal(
+      await js(`${note('type-check-unavailable')}?.textContent`),
+      'The type check didn’t run on this draft. Merged results passed Gnosis’s other checks.'
+    );
+    await captureAll('type-check-skipped');
     // New errors: the compiler checks the whole program, so every Merged conflict in the PR is Check, with the first
     // error as the note. A result for this draft only: every file's key is the one it checked.
     const typeNote = 'The type check found 2 new errors, the first in src/imports.ts:3 (TS2305).';
@@ -2154,6 +2207,11 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('[data-conflict-summary]').textContent"),
       '3 files have conflicts. 3 files need a local merge tool.'
     );
+    // The consequence leads: Gnosis can't push any of this merge.
+    assert.equal(
+      await js(`${note('local')}.textContent`),
+      'Gnosis pushes only a complete merge, and 3 files here can’t be merged as text. Merge this PR on your computer.'
+    );
     assert.deepEqual(await badges('.conflict-file-title'), await listBadge(0), 'The header and the file list agree');
     assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Needs a local merge tool');
     assert.match(
@@ -2429,7 +2487,7 @@ void app.whenReady().then(async () => {
       window.conflictCalls=[];
     })()`);
     await open();
-    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='Git merged everything cleanly'");
     const started = Date.now();
     await click('Review and push…');
     await wait(
@@ -2650,7 +2708,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[data-conflict-model-notice]')");
     assert.equal(
       await js("document.querySelector('[data-conflict-model-notice]').textContent"),
-      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts.'
+      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them yourself.'
     );
     await wait(`!${block(0)}?.querySelector('.conflict-model-line') && !${block(1)}?.querySelector('.conflict-model-line')`);
     assert.equal(await calls('model'), 0);

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
+import { ConflictGuideButton, ConflictNotes, ConflictUndoTip, PreparingElapsed, useConflictTips } from './ConflictOnboarding';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -27,7 +28,7 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
-import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
+import { undoAllowed, undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import { WrittenLegend, proposalWhat } from './ConflictCard';
 import { useCodeOptions } from '../lib/use-code-options';
@@ -610,6 +611,16 @@ export function ConflictWorkspace({
   const repo = session ? repositoryKey(session.baseRepo) : '';
   // Unset means on: Merged conflicts still wait for your review.
   const showMerged = (repositories[repo] as RepositorySettings | undefined)?.showMergedConflicts !== false;
+  // First-run help, per account (components/ConflictOnboarding.tsx). The bucket key reopens from the summary row.
+  const tips = useConflictTips(session?.account);
+  const [guideAsked, setGuideAsked] = useState(false);
+  const guideOpen = guideAsked || !tips.seen('buckets');
+  const closeGuide = () => {
+    tips.dismiss('buckets');
+    setGuideAsked(false);
+  };
+  const { configure } = useRepositorySettings();
+  const openRepoSettings = configure && session ? () => configure(session.baseRepo) : undefined;
 
   const file = session?.files.find((f) => f.path === selected);
   // Saved drafts' buckets change only with the session or a check result; the open draft's follow each keystroke.
@@ -1346,7 +1357,8 @@ export function ConflictWorkspace({
             {models.notice && (
               <p className="conflict-model-notice" role="status" data-conflict-model-notice="">
                 <Bot size={13} aria-hidden="true" />
-                {models.notice} Gnosis didn’t ask it about these conflicts.
+                {models.notice} Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them
+                yourself.
               </p>
             )}
             {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
@@ -1382,15 +1394,31 @@ export function ConflictWorkspace({
                     ? 'Saving…'
                     : 'Saved'}
               </span>
+              <ConflictGuideButton open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
               <KeyboardHelp />
             </div>
           </div>
+        )}
+        {editing && summary.conflicts > 0 && (
+          <ConflictNotes
+            tips={tips}
+            guideOpen={guideOpen}
+            onCloseGuide={closeGuide}
+            model={model}
+            summary={summary}
+            paths={session.files.map((f) => f.path)}
+            typeCheck={typeCheck}
+            localPath={file?.unsupported ? undefined : session.files.find((f) => f.unsupported)?.path}
+            onShowLocal={chooseFile}
+            onSettings={openRepoSettings}
+          />
         )}
         {!session ? (
           busy ? (
             <div className="conflict-state" role="status">
               <LoadingIndicator announce={false}>Preparing the merge…</LoadingIndicator>
               <p>{activity?.detail || 'Reading the PR and its base branch.'}</p>
+              <PreparingElapsed since={activity?.startedAt} />
               {slow && (
                 <p className="conflict-state-muted">
                   Large repositories can take a minute. You can close this window; preparation continues in Activity.
@@ -1413,6 +1441,19 @@ export function ConflictWorkspace({
               ) : (
                 <p>The merge could not be prepared.</p>
               )}
+              <div className="conflict-state-actions">
+                {!errorCopy && (
+                  <Button size="sm" onClick={() => void load()}>
+                    Try again
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" asChild>
+                  <a href={url} target="_blank" rel="noreferrer">
+                    Open PR on GitHub
+                    <ExternalLink aria-hidden="true" />
+                  </a>
+                </Button>
+              </div>
             </div>
           )
         ) : session.reopened ? (
@@ -1672,6 +1713,7 @@ export function ConflictWorkspace({
                 </li>
                 <li>Approvals may be dismissed if the repository requires it.</li>
                 <ConflictCascadeLine cascade={cascade} />
+                {!undoAllowed(repositories[repo]) && <ConflictUndoTip tips={tips} onSettings={openRepoSettings} />}
                 <li>
                   Pushes only if the branch is still at <code>{session.headSha.slice(0, 7)}</code>. The PR stays open;
                   checks run again.
@@ -1723,9 +1765,10 @@ export function ConflictWorkspace({
             ) : (
               <>
                 <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
-                <h2>No conflicts to resolve</h2>
+                <h2>Git merged everything cleanly</h2>
                 <p>
-                  Git can bring {session.baseBranch} into {session.headBranch} cleanly. Review the changes, then push.
+                  Nothing needs you. Review what arrives from {session.baseBranch}, then push. Nothing is pushed until
+                  you push.
                 </p>
                 {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
                 <Button ref={primary} size="sm" disabled={busy} onClick={confirm}>
