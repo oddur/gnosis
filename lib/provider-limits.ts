@@ -116,6 +116,8 @@ export function expiredProviderFailure(provider: Provider, message: string | und
 }
 
 const LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
+/** The provider's name, such as "Claude". */
+export const providerName = (provider: Provider) => LABELS[provider];
 
 function when(until: number, now: number) {
   const date = new Date(until);
@@ -137,6 +139,11 @@ export function providerPauseNotice(pause: ProviderPause, now: number): string {
         ? `${name} is rate limiting requests.`
         : `${name} needs you to sign in again.`;
   return `${reason} Automatic briefings resume at ${when(pause.until, now)}. You can still generate one manually.`;
+}
+
+/** One line for conflict proposals (#445 item 7): the model is skipped until the pause ends, such as "Claude is paused until 14:00." */
+export function conflictPauseNotice(pause: Pick<ProviderPause, 'provider' | 'until'>, now: number): string {
+  return `${LABELS[pause.provider]} is paused until ${when(pause.until, now)}.`;
 }
 
 /**

@@ -441,6 +441,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictResolution: (
     request: import('../lib/conflict-resolution').ConflictRequest
   ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
+  conflictModel: (
+    request: import('../lib/conflict-model').ConflictModelRequest
+  ): Promise<import('../lib/conflict-model').ConflictModelOutcome> => ipcRenderer.invoke('conflict-model', request),
+  cancelConflictModel: (request: import('../lib/conflict-model').ConflictModelRequest): Promise<void> =>
+    ipcRenderer.invoke('conflict-model-cancel', request),
   conflictHeader: (url: string, headSha: string): Promise<import('../lib/conflict-header').ConflictHeader | null> =>
     ipcRenderer.invoke('conflict-header', url, headSha),
   conflictPushed: (url: string, headSha: string): Promise<import('../lib/conflict-undo').PushedUpdate | null> =>

@@ -2241,6 +2241,197 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
+    // The model, per conflict (#445 items 6 and 7), with a mocked provider that answers when the test says so. Nothing is
+    // sent until you ask; then each card shows both sides with a placeholder; proposals arrive one by one; your choice
+    // cancels a pending request; a provider pause says so. No model is called.
+    const modelOriginal =
+      'export function retryDelay(attempt: number) {\n<<<<<<< feature/retry\n  return Math.min(attempt * 200, 5000);\n||||||| ancestor\n  return attempt * 200;\n=======\n  return Math.max(100, attempt * 200);\n>>>>>>> main\n}\n<<<<<<< feature/retry\nexport const retries = 5;\n=======\nexport const retries = 3;\n>>>>>>> main\n';
+    const modelFile = {
+      path: 'src/retry.ts',
+      mode: '100644',
+      base: 'export function retryDelay(attempt: number) {\n  return attempt * 200;\n}\nexport const retries = 4;\n',
+      ours: 'export function retryDelay(attempt: number) {\n  return Math.min(attempt * 200, 5000);\n}\nexport const retries = 5;\n',
+      theirs: 'export function retryDelay(attempt: number) {\n  return Math.max(100, attempt * 200);\n}\nexport const retries = 3;\n',
+      original: modelOriginal,
+      result: modelOriginal,
+      resolved: false,
+      source: 'manual',
+    };
+    const modelSession = async () => {
+      await js(`(()=>{
+        Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],lastPush:undefined,files:[${JSON.stringify(modelFile)}]});
+        window.conflictCalls=[];window.modelAsks=[];window.modelCancels=[];window.modelAnswer={};window.refuseModel=undefined;
+      })()`);
+    };
+    await js(`(()=>{
+      window.electronAPI.conflictModel=req=>new Promise(resolve=>{window.modelAsks.push(req);window.modelAnswer[req.index]=resolve;});
+      // Cancelling only records: a late answer can still arrive, as from a slow provider.
+      window.electronAPI.cancelConflictModel=async req=>{window.modelCancels.push(req);};
+      const inner=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        if(req.kind!=='model')return inner(req);
+        window.conflictCalls.push(req);const s=window.conflictFixture;
+        if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
+        if(window.refuseModel===req.index)throw Error("Error invoking remote method 'conflict-resolution': Error: This conflict changed, so the proposal wasn’t used.");
+        const {spliceModelProposal}=await import('/lib/conflict-model.ts');
+        const f=s.files.find(f=>f.path===req.path);
+        const spliced=spliceModelProposal(f,req.index,{source:'model',text:'  return Math.min(Math.max(100, attempt * 200), 5000);\\n',by:'Claude',note:'Keeps the PR’s cap and main’s floor.',intents:{pr:'The PR caps the delay at 5 seconds.',main:'Main adds a 100 ms floor.'}});
+        if(!spliced)throw Error('You already decided this conflict, so the proposal wasn’t used.');
+        Object.assign(f,spliced,{resolved:false});s.version++;return {session:structuredClone(s)};
+      };
+    })()`);
+    const askModel = async () => {
+      await wait("document.querySelector('[data-conflict-ask-model]')");
+      await js("document.querySelector('[data-conflict-ask-model]').click()");
+    };
+    /** Answers the workspace has received and handled, used or not. */
+    const answers = () => js<number>("Number(document.querySelector('.conflict-workspace')?.dataset.modelAnswers ?? 0)");
+    /** Delivers an answer and waits until the workspace has handled it. */
+    const answer = async (index: number, outcome: string) => {
+      const before = await answers();
+      await js(`window.modelAnswer[${index}](${outcome})`);
+      await wait(`Number(document.querySelector('.conflict-workspace')?.dataset.modelAnswers ?? 0)>${before}`);
+    };
+    const showTab = async (name: string) => {
+      await js(
+        `(()=>{const t=[...document.querySelectorAll('.pr-overview-tabs [role=tab]')].find(t=>t.checkVisibility()&&t.textContent===${JSON.stringify(name)});t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click();})()`
+      );
+      // The view is hidden on another tab, never removed; on Conflicts it is visible again.
+      await wait(
+        name === 'Conflicts'
+          ? "document.querySelector('.conflict-workspace')?.checkVisibility()"
+          : "document.querySelector('.conflict-workspace') && !document.querySelector('.conflict-workspace').checkVisibility()"
+      );
+    };
+    const modelLine = (index: number) => js<string | null>(`${block(index)}?.querySelector('.conflict-model-line')?.dataset.model ?? null`);
+    await modelSession();
+    await open();
+    await wait("document.querySelector('[data-conflict-ask-model]') && document.querySelector('.conflict-block[data-conflict-index=\"1\"]')");
+    assert.match(
+      await js<string>("document.querySelector('[data-conflict-ask-model]').textContent"),
+      /^Ask .+ about 2 conflicts$/
+    );
+    assert.equal(await js("!!document.querySelector('[data-conflict-ask-model] svg.lucide-bot')"), true, 'AI uses the Bot icon');
+    // The view and its offer are on screen: nothing was sent with them.
+    assert.equal(await js('window.modelAsks.length'), 0, 'Nothing is sent until you ask');
+    assert.equal(await js("!!document.querySelector('.conflict-model-line')"), false);
+    await capture('model-offer');
+    await askModel();
+    await wait('window.modelAsks.length===2');
+    await wait("!document.querySelector('[data-conflict-ask-model]')");
+    assert.deepEqual(
+      await js('window.modelAsks.map(r=>[r.path,r.index])'),
+      [
+        ['src/retry.ts', 0],
+        ['src/retry.ts', 1],
+      ],
+      'Every open conflict is asked about at once'
+    );
+    await wait(`${block(0)}?.querySelector('.conflict-model-line[data-model=asking]') && ${block(1)}?.querySelector('.conflict-model-line[data-model=asking]')`);
+    // Both sides and the Keep actions are there while the model works: you can decide without waiting.
+    for (const index of [0, 1]) {
+      assert.equal(await js(`${block(index)}.dataset.state`), 'open');
+      assert.equal(
+        await js(`[...${block(index)}.querySelectorAll('.conflict-block-actions button')].every(b=>!b.disabled)`),
+        true
+      );
+      assert.match(await js<string>(`${block(index)}.querySelector('.conflict-model-line').textContent`), /^Asking .+ for a proposal… You can decide now\.$/);
+    }
+    assert.equal(await js("!!document.querySelector('.conflict-model-line svg.lucide-bot')"), true, 'AI uses the Bot icon');
+    await capture('model-asking');
+    // Another PR tab only hides the view: nothing is cancelled, and a proposal that arrives meanwhile is used.
+    await showTab('Summary');
+    assert.equal(await js('window.modelCancels.length'), 0, 'Leaving the tab cancels nothing');
+    await answer(0, "{status:'proposal'}");
+    await showTab('Conflicts');
+    await wait(`${block(0)}?.dataset.bucket==='check'`);
+    assert.equal(await js('window.modelCancels.length'), 0);
+    assert.equal(await calls('model'), 1);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-bucket').textContent`), /Check · Proposed by Claude/);
+    assert.deepEqual(
+      await js(`[...${block(0)}.querySelectorAll('.conflict-model-intents dd')].map(d=>d.textContent)`),
+      ['The PR caps the delay at 5 seconds.', 'Main adds a 100 ms floor.', 'Keeps the PR’s cap and main’s floor.']
+    );
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check', 'A model proposal is never Merged');
+    assert.equal(await modelLine(1), 'asking', 'The other conflict still waits');
+    await checksDone();
+    assert.equal(await js(`${block(0)}.dataset.bucket`), 'check', 'Still Check after the checks');
+    await capture('model-one-arrived');
+    // Your choice on the second conflict cancels its request; its late answer, delivered and handled, is not used.
+    await js(`${block(1)}.focus()`);
+    await key('2');
+    await wait(`${block(1)}?.dataset.state==='kept'`);
+    await wait("window.modelCancels.some(r=>r.index===1)");
+    await answer(1, "{status:'proposal'}");
+    assert.equal(await calls('model'), 1, 'A cancelled request’s proposal never reaches the draft');
+    assert.equal(await js(`${block(1)}.dataset.state`), 'kept');
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    assert.match(
+      await js<string>("window.conflictFixture.files[0].result"),
+      /return Math\.min\(Math\.max\(100, attempt \* 200\), 5000\);\n\}\nexport const retries = 3;\n$/
+    );
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+
+    // A question leaves the conflict to decide and says what was asked; a proposal the service refuses says why.
+    await modelSession();
+    await open();
+    await askModel();
+    await wait('window.modelAsks.length===2');
+    await answer(0, "{status:'question',question:'Should the floor apply before the cap?'}");
+    await wait(`${block(0)}?.querySelector('.conflict-model-line[data-model=question]')`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-model-line').textContent`), /asks: Should the floor apply before the cap\?$/);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    await js('window.refuseModel=1');
+    await answer(1, "{status:'proposal'}");
+    await wait(`${block(1)}?.querySelector('.conflict-model-line[data-model=failed]')`);
+    assert.equal(
+      await js(`${block(1)}.querySelector('.conflict-model-line').textContent`),
+      'This conflict changed, so the proposal wasn’t used.'
+    );
+    assert.equal(await js(`${block(1)}.dataset.state`), 'open');
+    // A failure can be asked about again.
+    await wait("document.querySelector('[data-conflict-ask-model]')?.textContent.endsWith('about 1 conflict')");
+    // Preparing the merge again forgets the cards: they belonged to the old merge.
+    await click('Start over with latest code…');
+    await click('Start over');
+    await wait("!document.querySelector('.conflict-model-line')");
+    await wait("document.querySelector('[data-conflict-ask-model]')?.textContent.endsWith('about 2 conflicts')");
+    // Closing cancels what is still running.
+    await askModel();
+    await wait('window.modelAsks.length===4');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await wait('window.modelCancels.filter(r=>r.index===0).length===1 && window.modelCancels.filter(r=>r.index===1).length===1');
+
+    // A provider pause skips the model and says so, once, above the conflicts, until an answer arrives.
+    await modelSession();
+    await open();
+    await askModel();
+    await wait('window.modelAsks.length===2');
+    for (const index of [0, 1])
+      await answer(index, `{status:'paused',notice:'Claude is paused until 14:00.',until:${Date.now() + 3_600_000}}`);
+    await wait("document.querySelector('[data-conflict-model-notice]')");
+    assert.equal(
+      await js("document.querySelector('[data-conflict-model-notice]').textContent"),
+      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts.'
+    );
+    await wait(`!${block(0)}?.querySelector('.conflict-model-line') && !${block(1)}?.querySelector('.conflict-model-line')`);
+    assert.equal(await calls('model'), 0);
+    await captureAll('model-paused');
+    // The limit reset: asking again works, and the notice leaves with the first answer.
+    await askModel();
+    await wait('window.modelAsks.length===4');
+    await answer(0, "{status:'question',question:'Which floor?'}");
+    await wait("!document.querySelector('[data-conflict-model-notice]')");
+    // A pause whose time has passed leaves on its own.
+    await answer(1, `{status:'paused',notice:'Claude is paused until 14:00.',until:${Date.now() + 1500}}`);
+    await wait("document.querySelector('[data-conflict-model-notice]')");
+    await wait("!document.querySelector('[data-conflict-model-notice]')");
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('window.electronAPI.conflictModel=undefined; window.electronAPI.cancelConflictModel=undefined');
+
     // Settings › Diagnostics › Conflict resolution stats shows the Merged undo count and rate, read-only, with Reset.
     const undone = await mergedUndone();
     assert.ok(undone >= 1);

@@ -216,6 +216,10 @@ declare global {
         }) => void
       ) => () => void;
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
+      /** Asks the selected model about one conflict (lib/conflict-model.ts). Each request answers on its own. */
+      conflictModel?: (request: import('../lib/conflict-model').ConflictModelRequest) => Promise<import('../lib/conflict-model').ConflictModelOutcome>;
+      /** Stops one conflict's model request, waiting or running. */
+      cancelConflictModel?: (request: import('../lib/conflict-model').ConflictModelRequest) => Promise<void>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
       conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
