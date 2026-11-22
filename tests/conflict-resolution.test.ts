@@ -2963,6 +2963,13 @@ void test('undo copy and settings: off unless set, and the request validates', (
     undoCopy.UNDO_OFF
   );
   assert.match(undoCopy.describeUndoError('Git could not complete this operation. fatal: unable to access', 'x').title, /lost the connection/);
+  // A refusal that leaves a revert gives its commands to copy; a closed PR has no branch to revert on.
+  const off = undoCopy.describeUndoError(undoCopy.UNDO_OFF, 'x', 'git revert -m 1 ddddddd');
+  assert.equal(off.commands, 'git revert -m 1 ddddddd');
+  assert.match(off.body ?? '', /Revert the merge commit instead: run these commands in your clone\./);
+  assert.equal(undoCopy.describeUndoError(undoCopy.UNDO_CLOSED, 'x', 'git revert').commands, undefined);
+  const refused = undoCopy.describeUndoError('remote: error: GH006: Protected branch update failed', 'x', 'git revert');
+  assert.equal(refused.commands, 'git revert');
 });
 void test('undo works after startup cleanup removed the PR’s private cache', async (t) => {
   const f = await undoFixture(t);

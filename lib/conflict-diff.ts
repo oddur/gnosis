@@ -415,6 +415,30 @@ export function holdsResolverLines(resolver: string, ours: string, theirs: strin
   return own.some((i) => lines[i].trim() !== '' && present.has(lines[i]));
 }
 
-/** "3 lines written by Gnosis (neither side had them)". */
-export const writtenLabel = (count: number) =>
-  `${count} ${count === 1 ? 'line' : 'lines'} written by Gnosis (neither side had ${count === 1 ? 'it' : 'them'})`;
+/**
+ * Who wrote a resolver's lines, for "written by …": structural merge, the model by name, one of Gnosis's rules, or you
+ * in an earlier merge. The writer is what tells the reader how carefully to read. Unknown is "a resolver", never Gnosis.
+ */
+export function writerOf(source: string | undefined, by?: string) {
+  switch (source) {
+    case 'model':
+    case 'agent':
+      return by ?? 'the model';
+    case 'mergiraf':
+      return 'structural merge';
+    case 'rerere':
+      return 'you in an earlier merge';
+    case 'union':
+    case 'same':
+    case 'moved':
+      return 'Gnosis’s rule';
+    default:
+      return 'a resolver';
+  }
+}
+/** Who wrote a file's resolver text: its whole-file proposal's writer, else the file's source. */
+export const fileWriter = (file: Pick<ConflictFile, 'wholeFile' | 'source'>) =>
+  file.wholeFile ? writerOf(file.wholeFile.source, file.wholeFile.by) : writerOf(file.source);
+/** "3 lines written by structural merge (neither side had them)". */
+export const writtenLabel = (count: number, by = 'a resolver') =>
+  `${count} ${count === 1 ? 'line' : 'lines'} written by ${by} (neither side had ${count === 1 ? 'it' : 'them'})`;

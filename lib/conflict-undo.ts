@@ -75,6 +75,8 @@ export interface UndoErrorCopy {
   title: string;
   body?: string;
   details?: string;
+  /** The revert, to copy, where a revert is the way left (revertCommands). */
+  commands?: string;
 }
 
 const strip = (text: string) => text.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim();
@@ -89,14 +91,19 @@ export function remoteMessage(raw: string) {
 }
 
 /** Plain copy for a failed undo. A failed push is never resent; the dialog only closes. */
-export function describeUndoError(error: string, branch: string): UndoErrorCopy {
+export function describeUndoError(error: string, branch: string, commands?: string): UndoErrorCopy {
   const raw = strip(error);
   const git = /^Git could not complete this operation\./.test(raw);
+  // A revert keeps the history and needs no force push: the way left when the undo is refused.
+  const revert = commands
+    ? 'Revert the merge commit instead: run these commands in your clone.'
+    : 'Revert the merge commit instead.';
   if (raw.startsWith(UNDO_MOVED) || /\bstale info\b|\(fetch first\)/i.test(raw))
     return {
       title: `${branch} has new commits after the merge commit.`,
-      body: 'Someone pushed, or a check added a commit, after your update. Nothing was changed. To undo it now, revert the merge commit instead.',
+      body: `Someone pushed, or a check added a commit, after your update. Nothing was changed. ${revert}`,
       details: git ? raw : undefined,
+      commands,
     };
   if (
     /protected branch|GH006|GH013|pre-receive hook declined|hook declined|denying non-fast-forward|Cannot force-push/i.test(
@@ -106,11 +113,15 @@ export function describeUndoError(error: string, branch: string): UndoErrorCopy 
     const github = remoteMessage(raw);
     return {
       title: `GitHub refused to rewrite ${branch}.`,
-      body: `${github ? `GitHub says: “${github}” ` : ''}Nothing was changed. Revert the merge commit instead.`,
+      body: `${github ? `GitHub says: “${github}” ` : ''}Nothing was changed. ${revert}`,
       details: raw,
+      commands,
     };
   }
-  if ([UNDO_OFF, UNDO_UNAVAILABLE, UNDO_RESTACKED, UNDO_CLOSED].includes(raw)) return { title: raw };
+  // A merged or closed PR has no branch to revert on; the other refusals leave a revert.
+  if (raw === UNDO_CLOSED) return { title: raw };
+  if ([UNDO_OFF, UNDO_UNAVAILABLE, UNDO_RESTACKED].includes(raw))
+    return { title: raw, ...(commands ? { body: revert, commands } : {}) };
   if (
     /Could not resolve host|unable to access|timed? ?out|ETIMEDOUT|ECONNRESET|ENOTFOUND|network|Connection (?:refused|reset|closed)/i.test(
       raw

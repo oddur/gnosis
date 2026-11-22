@@ -23,9 +23,10 @@ import { RestackReview } from './RestackReview';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
+import { conflictShortcuts } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
+import { CopyCommands } from './CopyCommands';
 import { ConflictUndo } from './ConflictUndo';
 import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
@@ -40,7 +41,7 @@ import {
   type BlockPicks,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
-import { cardAnchors, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
+import { cardAnchors, fileWriter, resolverBaseline, writerOf, writtenLabel } from '../lib/conflict-diff';
 import {
   WRITTEN_BUDGET_MS,
   confirmCount,
@@ -175,7 +176,7 @@ function FilePath({ path }: { path: string }) {
 }
 
 /** The workspace's shortcuts, on hover or focus: the same list as the keyboard shortcut overlay. */
-function KeyboardHelp() {
+function KeyboardHelp({ base }: { base?: string }) {
   return (
     <TooltipProvider delayDuration={350}>
       <Tooltip>
@@ -186,7 +187,7 @@ function KeyboardHelp() {
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end" className="conflict-keys">
           <dl>
-            {CONFLICT_SHORTCUTS.map(({ keys, label }) => (
+            {conflictShortcuts(base).map(({ keys, label }) => (
               <div key={keys}>
                 <dt>
                   {keys.split(/\s+/).map((k) => (
@@ -338,9 +339,13 @@ function LocalMerge({ session, reason }: { session: ConflictSession; reason: str
 
 /** The PR author, from the queue the app already holds. Unknown authors get neutral copy. */
 function findAuthor(url: string) {
+  return findMember(url)?.author;
+}
+/** The PR as the queue holds it: its branches name a local merge before any session exists. */
+function findMember(url: string) {
   const queue = workbenchStore.getQueue();
   for (const subject of [...queue.items.map((item) => item.subject), ...(queue.stacks ?? [])])
-    for (const member of subject.members) if (member.url === url && member.author) return member.author;
+    for (const member of subject.members) if (member.url === url) return member;
   return undefined;
 }
 
@@ -408,6 +413,7 @@ function ErrorPanel({
       <div>
         <p className="conflict-error-title">{copy.title}</p>
         {copy.body && <p>{copy.body}</p>}
+        {copy.commands && <CopyCommands commands={copy.commands} />}
         {actions && <div className="conflict-error-actions">{actions}</div>}
         {copy.details && (
           <details className="conflict-error-details">
@@ -942,7 +948,7 @@ export function ConflictWorkspace({
       if (ok && finished) confirm();
     });
   }
-  // With "Show me every merged conflict" off, a file whose every conflict is Merged needs no review from you.
+  // With "Review Merged-only files myself" off, a file whose every conflict is Merged needs no review from you.
   useEffect(() => {
     if (showMerged || busy || error || confirming || !session || session.stale || session.status !== 'editing') return;
     const ready = fileStates.find((s) => !s.file.resolved && s.contents === s.file.result && allMerged(s.buckets));
@@ -1109,8 +1115,8 @@ export function ConflictWorkspace({
         void persist().catch((e: unknown) =>
           toast.add({
             type: 'error',
-            title: `Could not save your conflict draft for ${committed.current.session?.title ?? url}`,
-            description: `${e instanceof Error ? e.message : String(e)} Open Resolve conflicts again before you push.`,
+            title: `Gnosis couldn’t save your conflict draft for ${committed.current.session?.title ?? url}`,
+            description: `${e instanceof Error ? e.message : String(e)} Your last changes may be lost. Open the Conflicts tab again and check the draft before you push.`,
             timeout: 0,
           })
         );
@@ -1162,7 +1168,7 @@ export function ConflictWorkspace({
         return !!view.current?.choose(key === '1' ? 'ours' : key === '2' ? 'theirs' : 'both');
       }
       if (key === 'm') {
-        if (markersRemain) setHint('Resolve the remaining conflicts first.');
+        if (markersRemain) setHint('Choose for every conflict in this file before you mark it reviewed.');
         else markReviewed();
         return true;
       }
@@ -1180,11 +1186,15 @@ export function ConflictWorkspace({
   const title = session
     ? `Bring ${session.baseBranch} into ${ownBranch ? `your ${session.headBranch}` : headLabel}`
     : 'Resolve conflicts';
+  // Before a session exists, the queue's copy of the PR names the branches for a local merge.
+  const member = error && !session ? findMember(url) : undefined;
   const describedError = error
     ? describeConflictError(error, {
         stage: failedKind === 'publish' ? 'push' : failedKind === 'open' ? 'prepare' : 'other',
-        headBranch: session?.headBranch,
-        baseBranch: session?.baseBranch,
+        headBranch: session?.headBranch ?? member?.headBranch,
+        baseBranch: session?.baseBranch ?? member?.baseBranch,
+        headRepo: session?.headRepo ?? member?.headRepo,
+        baseRepo: session?.baseRepo ?? member?.baseRepo,
       })
     : undefined;
   // A personal access token can't sign in again for the workflow permission: its instructions follow the copy.
@@ -1245,7 +1255,7 @@ export function ConflictWorkspace({
           disabled={!canEdit}
           onClick={() => suggest('whole-file')}
         >
-          Use this result
+          Use the proposal for this file
         </Button>
       );
     switch (action) {
@@ -1359,14 +1369,14 @@ export function ConflictWorkspace({
                 </Button>
               )}
               {session.files.some((f) => f.proposals) && (
-                <label>
+                <label title="On: you mark every file reviewed. Off: a file whose conflicts are all Merged is marked reviewed for you. Saved for this repository.">
                   <input
                     type="checkbox"
                     checked={showMerged}
                     disabled={!setShowMergedConflicts}
                     onChange={(e) => void setShowMergedConflicts?.(repo, e.target.checked)}
                   />
-                  Show me every merged conflict
+                  Review Merged-only files myself
                 </label>
               )}
               {typeCheck && (
@@ -1382,7 +1392,7 @@ export function ConflictWorkspace({
                     ? 'Saving…'
                     : 'Saved'}
               </span>
-              <KeyboardHelp />
+              <KeyboardHelp base={session.baseBranch} />
             </div>
           </div>
         )}
@@ -1393,7 +1403,7 @@ export function ConflictWorkspace({
               <p>{activity?.detail || 'Reading the PR and its base branch.'}</p>
               {slow && (
                 <p className="conflict-state-muted">
-                  Large repositories can take a minute. You can close this window; preparation continues in Activity.
+                  Large repositories can take a minute. You can close this tab; preparation continues in Activity.
                 </p>
               )}
               {slow && activity?.canCancel && (
@@ -1411,7 +1421,7 @@ export function ConflictWorkspace({
               {errorCopy ? (
                 <ErrorPanel copy={errorCopy} actions={recover(errorCopy)} focus />
               ) : (
-                <p>The merge could not be prepared.</p>
+                <p>Gnosis couldn’t prepare this merge. Nothing was changed. Try again from the PR’s actions.</p>
               )}
             </div>
           )
@@ -1505,7 +1515,7 @@ export function ConflictWorkspace({
                     {pushed && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <ConflictUndo update={pushed} onUndone={undone} />
+                        <ConflictUndo update={pushed} onUndone={undone} announce={false} />
                       </>
                     )}
                   </p>
@@ -1820,7 +1830,7 @@ export function ConflictWorkspace({
                                   : file.source === 'mergiraf'
                                     ? 'Suggested by structural merge'
                                     : `Suggested by ${model}`}{' '}
-                                · Not tested
+                                · Gnosis didn’t run your tests
                               </summary>
                               {file.explanation && <p>{file.explanation}</p>}
                             </details>
@@ -1850,6 +1860,7 @@ export function ConflictWorkspace({
                                 edits={editsOf(file)}
                                 onEdits={(next) => editsFor(file, next)}
                                 resolverText={resolverBaseline(file, contents)}
+                                writer={fileWriter(file)}
                                 onChoice={(key, before, after, picked) => choiceStats(session.id, file.path, key, before, after, picked)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
@@ -1996,7 +2007,7 @@ function ConfirmFileDiff({
         <Icon size={13} aria-hidden="true" />
         <span>
           Conflict {index + 1} of {total} · {text}
-          {wrote > 0 && ` · ${writtenLabel(wrote)}`}
+          {wrote > 0 && ` · ${writtenLabel(wrote, proposal ? writerOf(proposal.source, proposal.by) : saved && fileWriter(saved))}`}
         </span>
       </p>
     );
@@ -2016,7 +2027,7 @@ function ConfirmFileDiff({
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
         </p>
       )}
-      {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} />}
+      {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} by={saved && fileWriter(saved)} />}
       <ConflictFileDiff
         name={part.path}
         previousPath={part.previousPath}
@@ -2289,7 +2300,7 @@ function LastPush({
           {update && (
             <>
               {' · '}
-              <ConflictUndo update={update} onUndone={onUndone} />
+              <ConflictUndo update={update} onUndone={onUndone} announce={false} />
             </>
           )}
         </p>

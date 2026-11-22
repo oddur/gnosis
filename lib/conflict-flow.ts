@@ -71,6 +71,23 @@ export function localMergeCommands(session: {
   return [`git switch ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
+/**
+ * The commands that undo a pushed merge commit without a force push: revert it on the PR branch, which keeps the
+ * history. Undefined for a branch name a shell could read as code, or a commit that isn't a plain hex ID.
+ */
+export function revertCommands(update: { headBranch: string; commitSha: string }): string | undefined {
+  const { headBranch, commitSha } = update;
+  if (!SAFE_REF.test(headBranch) || !/^[0-9a-f]{7,64}$/i.test(commitSha)) return undefined;
+  const branch = shellQuote(headBranch);
+  return [
+    `git fetch origin ${branch}`,
+    `git switch ${branch}`,
+    'git pull --ff-only',
+    `git revert -m 1 ${commitSha}`,
+    `git push origin ${branch}`,
+  ].join('\n');
+}
+
 export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
 export interface ConflictErrorCopy {
   /** One plain sentence: what happened. */
@@ -80,6 +97,8 @@ export interface ConflictErrorCopy {
   recovery?: ConflictRecovery;
   /** The raw Git or service output, shown only under Details. */
   details?: string;
+  /** Commands to copy that do the work on your computer instead, when Gnosis can't. */
+  commands?: string;
 }
 
 const strip = (text: string) => text.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '').trim();
@@ -90,7 +109,14 @@ const strip = (text: string) => text.replace(/^Error invoking remote method '[^'
  */
 export function describeConflictError(
   error: string,
-  context: { stage: 'prepare' | 'push' | 'other'; headBranch?: string; baseBranch?: string }
+  context: {
+    stage: 'prepare' | 'push' | 'other';
+    headBranch?: string;
+    baseBranch?: string;
+    /** With both branches, a failed preparation offers the commands for a local merge (localMergeCommands). */
+    headRepo?: string;
+    baseRepo?: string;
+  }
 ): ConflictErrorCopy {
   const raw = strip(error);
   const head = context.headBranch ?? 'the PR branch';
@@ -135,7 +161,7 @@ export function describeConflictError(
   )
     return {
       title: `Branch protection blocked the push to ${head}.`,
-      body: 'Nothing was pushed. Your resolutions are saved. Ask a repository admin, or resolve the conflicts on GitHub.',
+      body: `The repository’s rules don’t allow this push to ${head}. Nothing was pushed. Your resolutions are saved. Ask a repository admin to allow it, or resolve the conflicts on GitHub.`,
       recovery: 'check-again',
       details,
     };
@@ -145,7 +171,7 @@ export function describeConflictError(
       body:
         context.stage === 'push'
           ? 'Nothing was pushed. Your resolutions are saved.'
-          : 'Ask the author to allow edits from maintainers, or resolve the conflicts on GitHub.',
+          : 'Nothing was changed. Ask the author to allow edits from maintainers, or resolve the conflicts on GitHub.',
       recovery: context.stage === 'push' ? 'check-again' : undefined,
       details: git ? details : undefined,
     };
@@ -174,15 +200,30 @@ export function describeConflictError(
       recovery: 'check-again',
       details,
     };
-  if (context.stage === 'prepare')
+  if (context.stage === 'prepare') {
+    const { headRepo, baseRepo, headBranch, baseBranch } = context;
+    const commands =
+      headRepo && baseRepo && headBranch && baseBranch
+        ? localMergeCommands({ headRepo, baseRepo, headBranch, baseBranch })
+        : undefined;
+    const local = commands
+      ? ` If it fails again, merge on your computer: in a clone of ${headRepo}, run these commands.`
+      : ' If it fails again, merge on your computer.';
     return git
       ? {
           title: 'Gnosis couldn’t prepare this merge.',
-          body: 'Git stopped before the conflicts were ready. Nothing was changed. Try again, or resolve the conflicts in a local clone.',
+          body: `Git stopped before the conflicts were ready. Nothing was changed. Try again.${local}`,
           recovery: 'retry',
           details,
+          commands,
         }
-      : { title: 'Gnosis couldn’t prepare this merge.', body: raw, recovery: 'retry' };
+      : {
+          title: 'Gnosis couldn’t prepare this merge.',
+          body: `${raw.replace(/[^.!?]$/, '$&.')}${local}`,
+          recovery: 'retry',
+          commands,
+        };
+  }
   return git
     ? { title: 'Git couldn’t finish this step.', body: 'Your resolutions are saved. Nothing was pushed.', details }
     : { title: raw, body: '' };

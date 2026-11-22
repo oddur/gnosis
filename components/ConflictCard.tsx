@@ -15,7 +15,7 @@ import {
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { ModelCard } from '../lib/conflict-model';
-import { writtenLabel, type CompareWith } from '../lib/conflict-diff';
+import { writerOf, writtenLabel, type CompareWith } from '../lib/conflict-diff';
 import { WRITTEN_SWATCH } from '../lib/diff-here';
 import { SAME_CHANGE, type BlockVerdict } from '../lib/conflict-verify';
 
@@ -32,10 +32,10 @@ export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict)
     : proposal.source === 'rerere'
       ? 'Same as you resolved before'
       : proposal.source === 'union'
-        ? 'Kept both sides’ additions'
+        ? 'Gnosis kept both sides’ additions'
         : proposal.source === 'same' || (verdict?.merged && verdict.note.startsWith(SAME_CHANGE))
-          ? 'Kept the PR’s version'
-          : 'Combined both sides’ changes';
+          ? 'Gnosis kept the PR’s version'
+          : 'Structural merge combined both sides’ changes';
 /** A Check label says where the proposal came from only when that is a fact; why to check it is the note beside it. */
 const checkLabel = (proposal: ConflictProposal) =>
   proposal.source === 'rerere'
@@ -170,8 +170,10 @@ export function ConflictCard({
       </section>
     );
   const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
-  const writtenNote = wrote && <WrittenLegend count={written} />;
-  const writtenText = wrote ? ` ${writtenLabel(written)}.` : '';
+  // The writer is the proposal's, also for its lines you left as they were in your edit.
+  const by = proposal ? writerOf(proposal.source, proposal.by) : undefined;
+  const writtenNote = wrote && <WrittenLegend count={written} by={by} />;
+  const writtenText = wrote ? ` ${writtenLabel(written, by)}.` : '';
   // Edit sits with the Keep actions on an open card, and on the line of a decided one.
   const editAction = (size: 'xs' | 'sm') =>
     onEdit && (
@@ -223,18 +225,15 @@ export function ConflictCard({
       {editAction('sm')}
     </div>
   );
-  const undo = onUndo && (
-    <Button
-      size="xs"
-      variant="ghost"
-      disabled={disabled}
-      onClick={onUndo}
-      aria-label={`Undo and decide conflict ${index + 1} yourself`}
-    >
-      <Undo2 aria-hidden="true" />
-      Undo
-    </Button>
-  );
+  // Each Undo says what it does: undo your Use the proposal, or take a proposal back so you decide yourself.
+  const undoAs = (label: string, aria: string) =>
+    onUndo && (
+      <Button size="xs" variant="ghost" disabled={disabled} onClick={onUndo} aria-label={aria}>
+        <Undo2 aria-hidden="true" />
+        {label}
+      </Button>
+    );
+  const undo = undoAs('Undo', `Undo: Used the proposal in conflict ${index + 1}`);
   if (choice === 'proposal' && proposal && picked === 'proposal')
     // Use the proposal, chosen by you: your decision, with Undo and Edit like a Keep.
     return (
@@ -275,8 +274,8 @@ export function ConflictCard({
         <div className="conflict-kept">
           <CheckCheck size={14} aria-hidden="true" />
           <span>Merged · {what}</span>
-          {undo && <span aria-hidden="true">·</span>}
-          {undo}
+          {onUndo && <span aria-hidden="true">·</span>}
+          {undoAs('Decide myself', `Remove the merged result and decide conflict ${index + 1} yourself`)}
           {editButton}
         </div>
         <p className="conflict-block-note-line">{note}</p>
@@ -298,7 +297,7 @@ export function ConflictCard({
             {checkLabel(proposal)}
           </span>
           <span>{note}</span>
-          {undo}
+          {undoAs('Remove proposal', `Remove the proposal and decide conflict ${index + 1} yourself`)}
         </header>
         <ModelIntents proposal={proposal} labels={labels} />
         {writtenNote}
@@ -471,14 +470,14 @@ export function ConflictCard({
 }
 
 /**
- * "3 lines written by Gnosis (neither side had them)" (#445 item 10), with a swatch of the diff's steady mark, so the
+ * "3 lines written by structural merge (neither side had them)" (#445 item 10), with a swatch of the diff's steady mark, so the
  * card says what the marked lines in the diff are.
  */
-export function WrittenLegend({ count }: { count: number }) {
+export function WrittenLegend({ count, by }: { count: number; by?: string }) {
   return (
     <p className="conflict-block-note-line conflict-written-legend" data-written={count}>
       <span className="conflict-written-swatch" style={{ background: WRITTEN_SWATCH }} aria-hidden="true" />
-      {writtenLabel(count)}
+      {writtenLabel(count, by)}
     </p>
   );
 }

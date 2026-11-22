@@ -23,6 +23,8 @@ import {
   isCompareWith,
   resolverBaseline,
   shownWritten,
+  fileWriter,
+  writerOf,
   writtenFileLines,
   type CompareWith,
   type ConflictCompareRows,
@@ -418,7 +420,7 @@ function ConflictCompareBoth({
       <DiffFileHeader
         path={name}
         status="modified"
-        stats={`${total} ${total === 1 ? 'conflict' : 'conflicts'} · each side against ${labels.base.toLowerCase()}`}
+        stats={`${total} ${total === 1 ? 'conflict' : 'conflicts'} · both sides and the result, each against the version ${labels.base.toLowerCase()}`}
         actions={actions}
       />
       {rows.map((row) => (
@@ -504,6 +506,7 @@ export function ConflictDiff({
   picks,
   onPick,
   resolverText,
+  writer,
   onChoice,
   models,
   edits,
@@ -526,6 +529,8 @@ export function ConflictDiff({
    * lines that neither side had are marked when they are this text's, never when you typed them (#445 item 10).
    */
   resolverText?: string;
+  /** Who wrote `resolverText` (writerOf), for its legend: "2 lines written by structural merge". */
+  writer?: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
   ours: string;
   /** The base branch's version of the file: the diff's old side in Compare with: main. */
@@ -675,8 +680,8 @@ export function ConflictDiff({
     />
   );
   const sides = useMemo(
-    () => (wholeWritten ? { ours, theirs, resolver: resolverText } : undefined),
-    [wholeWritten, ours, theirs, resolverText]
+    () => (wholeWritten ? { ours, theirs, resolver: resolverText, by: writer } : undefined),
+    [wholeWritten, ours, theirs, resolverText, writer]
   );
   const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
   return (
@@ -771,7 +776,7 @@ function CompareDiff({
   /** Each conflict's lines neither side had (conflictWritten). */
   written: ReadonlyMap<number, readonly number[]>;
   /** Both whole versions, when the draft is a resolver's whole file: its lines neither had are marked instead. */
-  sides?: { ours: string; theirs: string; resolver?: string };
+  sides?: { ours: string; theirs: string; resolver?: string; by?: string };
 }) {
   const last = useRef({ model, proposals, written, sides });
   if (live) last.current = { model, proposals, written, sides };
@@ -817,7 +822,7 @@ function CompareDiff({
       {/* A file with no lines left has nowhere to put a card: its cards come first. */}
       {live && shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
       {/* A resolver's whole file has no card per conflict: the count of its marked lines heads the diff. */}
-      {live && draft.sides && marks.size > 0 && <WrittenLegend count={marks.size} />}
+      {live && draft.sides && marks.size > 0 && <WrittenLegend count={marks.size} by={draft.sides.by} />}
       <ConflictCards.Provider value={live ? card : NO_CARDS}>
         <ConflictFileDiff
           name={name}
@@ -851,6 +856,7 @@ export function ConflictResult({
   file,
   picks,
   written: marked,
+  by,
   landmark,
 }: {
   name: string;
@@ -865,6 +871,8 @@ export function ConflictResult({
   picks?: BlockPicks;
   /** The marked lines, when the caller knows them (a whole-file proposal), in place of the file's. */
   written?: ReadonlySet<number>;
+  /** Who wrote the marked lines (writerOf), when the caller knows: else the file's writer. */
+  by?: string;
   landmark?: boolean;
 }) {
   const layout = useDiffLayout(preferences?.diffLayout);
@@ -880,7 +888,7 @@ export function ConflictResult({
         <p className="conflict-side-empty">The result is the same as {beforeLabel}.</p>
       ) : (
         <>
-          {written && written.size > 0 && <WrittenLegend count={written.size} />}
+          {written && written.size > 0 && <WrittenLegend count={written.size} by={by ?? (file && fileWriter(file))} />}
           <ConflictFileDiff
             name={name}
             before={before}
@@ -938,7 +946,7 @@ function WholeFile({
       data-bucket="check"
       data-conflict-index={-1}
       tabIndex={0}
-      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : 'structural merge combined both sides'}. ${note}`}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : `${writerOf(proposal.source, proposal.by)} combined both sides`}. ${note}`}
     >
       <header className="conflict-block-header">
         <strong>Whole file</strong>
@@ -959,11 +967,12 @@ function WholeFile({
         fileKey={`${fileKey}:whole-file`}
         preferences={preferences}
         written={written}
+        by={writerOf(proposal.source, proposal.by)}
         landmark={false}
       />
       <div className="conflict-block-actions">
         <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
-          Use this result
+          Use the proposal for this file
         </Button>
       </div>
     </section>

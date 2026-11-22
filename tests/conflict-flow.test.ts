@@ -5,6 +5,7 @@ import {
   conflictFileAction,
   describeConflictError,
   localMergeCommands,
+  revertCommands,
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
@@ -51,10 +52,31 @@ void test('errors use plain copy and keep the raw output for Details', () => {
   });
   assert.equal(prepare.title, 'Gnosis couldn’t prepare this merge.');
   assert.equal(prepare.recovery, 'retry');
+  assert.match(prepare.body, /Nothing was changed\. Try again\. If it fails again, merge on your computer\.$/);
+  assert.equal(prepare.commands, undefined, 'No branches known: no commands');
+  // With the PR's branches, a failed preparation says what to run instead (what happened, why, the next step).
+  const local = describeConflictError('Git could not complete this operation. fatal: bad object', {
+    stage: 'prepare',
+    headRepo: 'klang/engine',
+    baseRepo: 'klang/engine',
+    headBranch: 'feature/retry',
+    baseBranch: 'main',
+  });
+  assert.match(local.body, /in a clone of klang\/engine, run these commands\.$/);
+  assert.equal(local.commands, "git switch 'feature/retry'\ngit pull\ngit fetch origin 'main'\ngit merge 'origin/main'");
   assert.equal(
     describeConflictError('Select an unresolved text file.', { stage: 'other' }).title,
     'Select an unresolved text file.'
   );
+});
+
+void test('revert commands undo a pushed merge without a force push, and refuse unsafe names', () => {
+  assert.equal(
+    revertCommands({ headBranch: 'feature/retry', commitSha: 'ddddddd' }),
+    "git fetch origin 'feature/retry'\ngit switch 'feature/retry'\ngit pull --ff-only\ngit revert -m 1 ddddddd\ngit push origin 'feature/retry'"
+  );
+  assert.equal(revertCommands({ headBranch: 'x;rm -rf ~', commitSha: 'ddddddd' }), undefined);
+  assert.equal(revertCommands({ headBranch: 'feature', commitSha: '$(id)' }), undefined);
 });
 
 void test('local merge commands quote every name, and refuse names a shell could run', () => {

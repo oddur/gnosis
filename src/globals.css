@@ -4186,7 +4186,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-keys .kbd { color:inherit;background:transparent;border-color:color-mix(in srgb,currentColor 40%,transparent); }
 .conflict-local { display:flex;flex-direction:column;gap:10px;max-width:72ch;margin:24px auto;font-size:var(--type-control);line-height:1.6; }
 .conflict-local h2 { font-size:var(--type-section-title);font-weight:650; }
-.conflict-local pre { padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--secondary);font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere; }
+.conflict-commands { display:flex;flex-direction:column;gap:6px; }
+.conflict-local pre,.conflict-commands pre { padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--secondary);font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere; }
 .conflict-summary label { display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-bucket { display:inline-flex;align-items:center;gap:5px;width:fit-content;font-size:var(--type-caption);font-weight:600;white-space:nowrap; }
 .conflict-bucket[data-bucket=decide] { color:var(--color-danger); }

@@ -1215,7 +1215,7 @@ export function createConflictResolutionService(deps: Deps) {
         ],
         { cwd: temp, signal, timeout: timeout * 2 }
       );
-      if (result.code > 1) throw new Error('Mergiraf could not resolve this file. Use the manual editor or an agent.');
+      if (result.code > 1) throw new Error('Structural merge couldn’t combine this file. Choose each conflict yourself, or ask the model.');
       const output = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
       if (Buffer.byteLength(output) > CONFLICT_FILE_LIMIT) throw new Error('The proposed result is too large.');
       return output;
@@ -2736,10 +2736,10 @@ export function createConflictResolutionService(deps: Deps) {
               file.resolverText = proposal.text;
               file.explanation =
                 proposal.source === 'moved'
-                  ? 'Gnosis applied an edit where the other side moved the code. Review it before marking the file reviewed.'
+                  ? 'You used Gnosis’s rule for moved code: it applies one side’s edit where the other side moved the code. Review it before marking the file reviewed.'
                   : proposal.source === 'model'
-                    ? 'You used the model’s result for the whole file. Review it before marking the file reviewed.'
-                    : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
+                    ? `You used ${proposal.by ?? 'the model'}’s result for the whole file. Review it before marking the file reviewed.`
+                    : 'You used structural merge’s result for the whole file. Review it before marking the file reviewed.';
               file.source = proposal.source === 'mergiraf' ? 'mergiraf' : proposal.source === 'model' ? 'agent' : 'manual';
               // The draft no longer derives from the per-conflict proposals. The whole-file proposal stays, so Reset
               // file returns to Git's conflicts and the proposal is offered again; so is "Try structural merge again".
