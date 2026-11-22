@@ -483,7 +483,7 @@ const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) =>
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
- * under its lines. The cards are ConflictView's: Merged, Check and Decide read the same, with the same actions.
+ * under its lines: Merged, Check or Decide, with Keep, Use the proposal, Undo and Edit in place (#445 item 11).
  */
 export function ConflictDiff({
   name,

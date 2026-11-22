@@ -138,6 +138,7 @@ export function StepCard({
   showSteps = true,
   compactSteps = false,
   continueOnModEnter = false,
+  diffScroller = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -173,6 +174,8 @@ export function StepCard({
    * it does nothing, so no plain key press can reach the point of no return (a push).
    */
   continueOnModEnter?: boolean;
+  /** The body scrolls diffs (ChangesDiff): their file and hunk headers pin to its top (`data-diff-scroller`). */
+  diffScroller?: boolean;
 }) {
   const id = useId();
   const step = steps[current] as ActionStep | undefined;
@@ -252,6 +255,7 @@ export function StepCard({
           tabIndex={-1}
           aria-label={position}
           data-point-of-no-return={step?.pointOfNoReturn || undefined}
+          data-diff-scroller={diffScroller ? '' : undefined}
         >
           {children}
         </div>

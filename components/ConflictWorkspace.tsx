@@ -1554,7 +1554,7 @@ export function ConflictWorkspace({
                     (reply) => apply(reply)
                   )
                 }
-                onSave={(path, text, resolved, picks) =>
+                onSave={(path, text, resolved, picks, edits) =>
                   void run(
                     (s) => ({
                       kind: 'restack-save',
@@ -1564,6 +1564,7 @@ export function ConflictWorkspace({
                       contents: text,
                       resolved,
                       picks,
+                      edits,
                     }),
                     (reply) => apply(reply)
                   )
