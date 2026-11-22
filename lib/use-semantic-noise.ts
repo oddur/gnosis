@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type RefObject } from 'react';
 import { syntaxLanguage } from './syntax-scope';
-import { noiseKey, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax-scope-client';
+import type { RowHunk } from './explanation-noise';
+import { noiseFilterOf, type QuietToggles } from './review-diff';
+import { comparisonKey, noiseKey, onNoise, peekFileNoise, peekNoise, readNoise } from './syntax-scope-client';
 import { blockKey, fileNoise, noiseLabel, type NoiseBlock, type NoiseFilter, type NoiseKind } from './semantic-noise';
 import type { SyntaxPriority } from './syntax-parse-queue';
 import type { GapHunk } from './diff-gaps';
@@ -8,6 +10,14 @@ import { whenSettled } from './use-syntax-contents';
 import { settledSubscription } from './settled-subscription';
 
 const NO_KINDS: ReadonlyMap<string, NoiseKind> = new Map();
+
+/** What the reader hides (Diff appearance), kept while its toggles are the same. */
+export function useNoiseFilter(appearance?: QuietToggles): NoiseFilter {
+  return useMemo(
+    () => noiseFilterOf(appearance),
+    [appearance?.hideWhitespace, appearance?.hideFormatting, appearance?.hideComments, appearance?.hideImports]
+  );
+}
 
 /**
  * A file's formatting-only and comment-only changes (#396), compared in the worker from text the view already has: the
@@ -35,11 +45,18 @@ export function useSemanticNoise({
   priority: RefObject<SyntaxPriority>;
   /** The hunks are the file's whole diff, not an Explanation topic's few. */
   whole: boolean;
-  /** A modified file's path, and its old text for a topic's few hunks: hunks that only widen imports compare as such. */
-  imports?: { path: string; before?: string };
+  /**
+   * A modified file's path and patch hunks, and its old text for a topic's few hunks: patch hunks that only widen
+   * imports compare as such.
+   */
+  imports?: { path: string; patch: readonly RowHunk[]; before?: string };
 }): { blocks?: readonly NoiseBlock[]; kinds: ReadonlyMap<string, NoiseKind>; key?: string; pending: boolean } {
   const language = enabled && after !== undefined && hunks?.length ? syntaxLanguage(path) : undefined;
-  const key = language && hunks ? noiseKey(fileKey, hunks) : undefined;
+  const base = language && hunks ? noiseKey(fileKey, hunks) : undefined;
+  const key = useMemo(
+    () => (base && hunks ? comparisonKey({ fileKey, hunks, whole, imports }) : undefined),
+    [base, imports?.patch, imports?.before]
+  );
   const [state, setState] = useState<{ key: string; blocks?: NoiseBlock[] }>();
   useEffect(() => {
     if (!key || !language || after === undefined || !hunks) return;
@@ -57,7 +74,8 @@ export function useSemanticNoise({
     };
   }, [key, after]);
   const settled = !!key && state?.key === key;
-  const blocks = !key ? undefined : settled ? state.blocks : peekNoise(key);
+  // A topic's comparison with imports replaces the one without, once its old side is read: until it lands, the first shows.
+  const blocks = !key ? undefined : settled ? state.blocks : (peekNoise(key) ?? (base && base !== key ? peekNoise(base) : undefined));
   const kinds = useMemo(() => (blocks ? new Map(blocks.map((block) => [blockKey(block), block.kind])) : NO_KINDS), [blocks]);
   return { blocks, kinds, key, pending: !!key && !settled && !blocks };
 }

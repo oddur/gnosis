@@ -1,7 +1,7 @@
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxCheck, type SyntaxDefinition, type SyntaxLanguage, type SymbolsInput } from './syntax-scope';
 import type { NoiseBlock } from './semantic-noise';
-import { importCandidates, withImportBlocks } from './explanation-noise';
+import { importCandidates, withImportBlocks, type RowHunk } from './explanation-noise';
 import { matchMoves, type FilePrints, type MoveFile, type MovesResult } from './moved-symbols';
 import { createFollowers, createParseQueue, type SyntaxPriority } from './syntax-parse-queue';
 import { TAGS } from './syntax-tags';
@@ -47,10 +47,11 @@ export type SyntaxRequest =
       /** Also fingerprint the file's moved-symbol candidates from the same two trees (#398): no parse of its own. */
       symbols?: boolean;
       /**
-       * A modified file's path: also mark the blocks of hunks that only widen imports `imports` (Quiet changes). `before`
-       * is its old text when the hunks are some of the file's (an Explanation topic's), which cannot rebuild it.
+       * A modified file's path and patch hunks, as GitHub groups them: also mark the blocks of patch hunks that only
+       * widen imports `imports` (Quiet changes). `before` is its old text when the hunks are some of the file's (an
+       * Explanation topic's), which cannot rebuild it.
        */
-      imports?: { path: string; before?: string };
+      imports?: { path: string; patch: readonly RowHunk[]; before?: string };
     }
   /**
    * Moved and renamed symbols (#398): one file's candidates and their fingerprints (lib/moved-symbols.ts), from its
@@ -225,9 +226,9 @@ async function run(job: Job) {
   }
   if (job.type === 'noise') {
     try {
-      const imports = job.imports && importCandidates(job.imports.path, job.hunks) ? job.imports : undefined;
-      const result = await engine.noise(job.language, job.text, job.hunks, !!job.symbols, !!imports);
-      if (imports) result.blocks = await withImportBlocks(engine, job.language, imports, job.hunks, result);
+      const imports = job.imports && importCandidates(job.imports.path, job.imports.patch) ? job.imports : undefined;
+      const result = await engine.noise(job.language, job.text, job.hunks, !!job.symbols, imports ? (imports.before === undefined ? 'both' : 'after') : false);
+      if (imports) result.blocks = await withImportBlocks(engine, job.language, imports, result);
       noiseCache.set(job.key, { url: job.url, noise: result.blocks, symbols: result.symbols, symbolsError: result.symbolsError });
       for (const key of noiseCache.keys()) {
         if (noiseCache.size <= CACHE_ENTRIES) break;

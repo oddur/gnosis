@@ -1,5 +1,6 @@
 import type * as TreeSitter from 'web-tree-sitter';
 import type { SyntaxLanguage } from './syntax-scope';
+import { DIRECTIVE } from './semantic-noise';
 
 /**
  * Import statements from a file's syntax tree, for Reduce noise (lib/explanation-noise.ts). A line is part of an import
@@ -13,7 +14,8 @@ export interface ImportNode {
   alone: boolean;
   /**
    * Never import-only: an import run for its side effects (`import 'x'`, Go `_` and `.`, a bare Python module import,
-   * `from __future__`), or a re-export (`pub use`).
+   * `from __future__`), a re-export (`pub use`), or one with a tool directive in or after it (`// eslint-disable-line`,
+   * `// @ts-ignore`, `# noqa`): adding the line changes what a tool reports.
    */
   blocked: boolean;
   /** The import statement (or Go spec) as written. */
@@ -49,6 +51,14 @@ function blocked(node: TreeSitter.Node, language: SyntaxLanguage): boolean {
   }
 }
 
+/** Lint and type-check directives, beyond the comments the noise comparison counts as code (DIRECTIVE). */
+const LINT = /\beslint\b|\bjshint\b|\bglobals?\s|@ts-|prettier-ignore|biome-ignore|\bnoqa\b|\bpylint\b|type:\s*ignore|\bnolint\b|\bistanbul\b|\bc8\b/i;
+/** Whether any comment in `text` is a directive a tool reads. */
+function directed(text: string, language: SyntaxLanguage): boolean {
+  const comments = text.match(language === 'python' ? /#[^\n]*/g : /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g) ?? [];
+  return comments.some((comment) => DIRECTIVE.test(comment.trim()) || LINT.test(comment));
+}
+
 /** Every import node of a parsed text, or undefined when the tree has errors. */
 export function importNodes(tree: TreeSitter.Tree, language: SyntaxLanguage, text: string): ImportNode[] | undefined {
   const types = IMPORT_TYPES[language];
@@ -64,7 +74,8 @@ export function importNodes(tree: TreeSitter.Tree, language: SyntaxLanguage, tex
       const alone =
         node.type === 'import_spec' ||
         (!lines[start.row].slice(0, start.column).trim() && comment.test(lines[end.row]?.slice(end.column) ?? ''));
-      nodes.push({ startRow: start.row, endRow: end.row, alone, blocked: blocked(node, language), text: node.text });
+      const directive = directed(node.text + '\n' + (lines[end.row]?.slice(end.column) ?? ''), language);
+      nodes.push({ startRow: start.row, endRow: end.row, alone, blocked: directive || blocked(node, language), text: node.text });
       // Go specs sit inside their declaration; other imports hold no imports.
       if (language !== 'go') return;
     }

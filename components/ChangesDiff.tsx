@@ -28,9 +28,9 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { ArrowRightLeft, Brush, Import, Pilcrow, SquareSlash } from 'lucide-react';
-import { quietKind } from '../lib/quiet-changes-header';
-import { blockKey, changeBlocks, hunkNoise, noiseLabel, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
+import { ArrowRightLeft } from 'lucide-react';
+import { quietKindInfo } from '../lib/quiet-changes-header';
+import { blockKey, changeBlocks, hunkNoise, noiseLabel, quietKind, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
 import type { MoveMark } from '../lib/moved-symbols-store';
 import { MoveNavigation } from '../lib/use-moved-symbols';
@@ -1050,8 +1050,7 @@ function MoveNote({ mark, words, onGo, lead }: { mark: MoveMark; words: MoveWord
 
 /** A quiet run’s icon: a pilcrow for whitespace, a brush for formatting, a slash for comments, an arrow in for imports. */
 function NoiseIcon({ kinds }: { kinds: readonly NoiseKind[] }) {
-  const kind = quietKind(noiseLabel(kinds));
-  const Icon = kind === 'comments' ? SquareSlash : kind === 'formatting' ? Brush : kind === 'imports' ? Import : Pilcrow;
+  const { Icon } = quietKindInfo(quietKind(kinds));
   return <Icon className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />;
 }
 

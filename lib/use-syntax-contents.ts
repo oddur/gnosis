@@ -169,7 +169,7 @@ function compare({ key, snapshot, file }: SyntaxFile, side: PrFileSide, priority
   const language = syntaxLanguage(file.path);
   const hunks = patchHunks(file.patch);
   if (!language || !hunks || !allowed(file.path)) return;
-  const imports = file.status === 'modified' ? { path: file.path } : undefined;
+  const imports = file.status === 'modified' ? { path: file.path, patch: hunks } : undefined;
   void readNoise({ fileKey: key, url: snapshot.url, language, text: side.content, hunks, priority, whole: true, imports }).catch(() => {});
 }
 /**

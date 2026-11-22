@@ -880,8 +880,11 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
       hunks: Parameters<typeof classifyNoise>[3],
       /** Also fingerprint the file's moved-symbol candidates, from the same two trees (lib/moved-symbols.ts). */
       withSymbols = false,
-      /** Also read both sides' import nodes from the same two trees (lib/import-nodes.ts), for Quiet changes' Imports. */
-      withImports = false
+      /**
+       * Also read import nodes from the same two trees (lib/import-nodes.ts), for Quiet changes' Imports: both sides, or
+       * only the new one when the caller has the real old text (a topic's few hunks cannot rebuild it).
+       */
+      withImports: false | 'both' | 'after' = false
     ): Promise<NoiseResult> {
       const loading = !languages.has(id);
       const t0 = performance.now();
@@ -900,8 +903,9 @@ export function createSyntaxEngine(ts: typeof TreeSitter, files: SyntaxEngineFil
         withSymbols || withImports
           ? (texts, beforeTree, afterTree) => {
               if (withImports && beforeTree && afterTree) {
-                const nodes = { before: importNodes(beforeTree, id, texts.before), after: importNodes(afterTree, id, texts.after) };
-                if (nodes.before && nodes.after) imports = { before: nodes.before, after: nodes.after, beforeText: texts.before };
+                const after = importNodes(afterTree, id, texts.after);
+                const before = withImports === 'both' ? importNodes(beforeTree, id, texts.before) : undefined;
+                if (after && (before || withImports === 'after')) imports = { before, after, beforeText: texts.before };
               }
               if (!withSymbols) return;
               try {
@@ -1057,7 +1061,7 @@ export interface NoiseResult {
   /** Why the candidates were asked for and not found; the blocks stand regardless. */
   symbolsError?: string;
   /** Both sides' import nodes and the old text, when asked for and both sides parse without errors. */
-  imports?: { before: ImportNode[]; after: ImportNode[]; beforeText: string };
+  imports?: { before?: ImportNode[]; after: ImportNode[]; beforeText: string };
   /** Milliseconds parsing both sides and comparing them; `load` is grammar loading, when this call loaded it. */
   classify: number;
   load?: number;

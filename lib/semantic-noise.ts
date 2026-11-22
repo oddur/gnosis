@@ -340,7 +340,7 @@ const TUPLES = new Set(['tuple_expression', 'tuple_pattern', 'tuple_type', 'tupl
 const CLOSERS = new Set([')', ']', '}', '>']);
 
 /** Comments that tools read: changing one changes the build, the type check or the bundle. */
-const DIRECTIVE =
+export const DIRECTIVE =
   /^\/\/go:|^\/\/\s*\+build\b|^\/\/export\s|^\/\/line\s|@ts-(ignore|expect-error|nocheck|check)\b|^\/\/\/\s*<(reference|amd)|@jsx(Runtime|ImportSource|Frag)?\b|#__PURE__|@__PURE__|webpackChunkName|^#\s*type:|^#\s*-\*-|^#!|^#\s*(pyright|mypy):|^#\s*(noqa|pylint)\b|eslint-disable|prettier-ignore|^#\s*yaml-language-server|#cgo\b|#include\b|sourceMappingURL|@vite-ignore|webpack(Ignore|Mode|Prefetch|Preload)|@flow\b|(istanbul|c8) ignore|\bnolint\b|NOLINT|pragma: ?no ?cover|fmt: ?(off|on|skip)\b|@formatter:(off|on)|biome-ignore|deno-lint-ignore|oxlint-disable|#\s*nosec\b|@(jest|vitest)-environment\b/;
 /**
  * JSDoc that type-checks JavaScript (`checkJs`): its types are code to the checker, so a change to one is code. Prose
@@ -1177,12 +1177,9 @@ export function hidden(kind: NoiseKind | undefined, filter: NoiseFilter): boolea
   return layoutHidden && (!comments || filter.comments);
 }
 
-/**
- * A hidden run's label: "Whitespace only", "Formatting only", "Comments only", "Imports only", or the parts together,
- * "Formatting and comments", "Whitespace, comments and imports". Formatting includes whitespace, so a run of both is
- * formatting.
- */
-export function noiseLabel(kinds: Iterable<NoiseKind>): string {
+/** The kinds of quiet change a run holds, leading first: its layout (formatting includes whitespace), comments, imports. */
+export type QuietPart = 'whitespace' | 'formatting' | 'comments' | 'imports';
+export function quietParts(kinds: Iterable<NoiseKind>): QuietPart[] {
   let whitespace = false,
     formatting = false,
     comments = false,
@@ -1194,14 +1191,25 @@ export function noiseLabel(kinds: Iterable<NoiseKind>): string {
     if (p.comments) comments = true;
     if (p.imports) imports = true;
   }
-  const words = [formatting ? 'Formatting' : whitespace ? 'Whitespace' : '', comments ? 'comments' : '', imports ? 'imports' : ''].filter(Boolean);
+  const layout = formatting ? 'formatting' : whitespace ? 'whitespace' : undefined;
+  return [layout, comments ? 'comments' : undefined, imports ? 'imports' : undefined].filter((part): part is QuietPart => !!part);
+}
+/** The kind that leads a run, for its icon. */
+export const quietKind = (kinds: Iterable<NoiseKind>): QuietPart => quietParts(kinds)[0] ?? 'comments';
+
+/**
+ * A hidden run's label: "Whitespace only", "Formatting only", "Comments only", "Imports only", or the parts together,
+ * "Formatting and comments", "Whitespace, comments and imports".
+ */
+export function noiseLabel(kinds: Iterable<NoiseKind>): string {
+  const words = quietParts(kinds) as string[];
   if (!words.length) return 'Comments only';
   const first = words[0][0].toUpperCase() + words[0].slice(1);
   if (words.length === 1) return `${first} only`;
   return `${[first, ...words.slice(1, -1)].join(', ')} and ${words.at(-1)}`;
 }
 /** Whether a run is comments alone, for its icon. */
-export const commentsOnly = (kinds: Iterable<NoiseKind>) => noiseLabel(kinds) === 'Comments only';
+export const commentsOnly = (kinds: Iterable<NoiseKind>) => quietKind(kinds) === 'comments' && quietParts(kinds).length === 1;
 
 /** One hunk of a view, as the filter sees it: hidden when every change in it is, with what it hides. */
 export interface HunkNoise {

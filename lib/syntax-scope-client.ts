@@ -11,6 +11,7 @@ import jsonWasm from '../src/assets/tree-sitter/json.wasm?url';
 import yamlWasm from '../src/assets/tree-sitter/yaml.wasm?url';
 import { SYNTAX_MAX_CHARACTERS, type SyntaxCheck, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 import { blocksSignature, changeBlocks, NOISE_MAX_CHARACTERS, type NoiseBlock } from './semantic-noise';
+import { importCandidates, type RowHunk } from './explanation-noise';
 import type { SyntaxRequest, SyntaxResponse } from './syntax-scope.worker';
 import { onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
@@ -397,18 +398,38 @@ type NoiseRequest = {
   priority?: SyntaxPriority;
   whole?: boolean;
   /**
-   * A modified file's path, so hunks that only widen imports compare as `imports` (Quiet changes). Hunks that are some
-   * of the file's need its old text too; without it they compare as before.
+   * A modified file's path and its patch hunks, as GitHub groups them: patch hunks that only widen imports compare as
+   * `imports` (Quiet changes). Hunks that are some of the file's need its old text too; without it they compare as
+   * before.
    */
-  imports?: { path: string; before?: string };
+  imports?: { path: string; patch: readonly RowHunk[]; before?: string };
 };
 /**
  * A file's comparison, and with a whole file's, its moved-symbol candidates from the same two trees (#398): a file is
  * parsed once for both, whichever asks first.
  */
+/**
+ * What a comparison sends for Quiet changes' Imports: nothing unless a patch hunk could be import-only; for a topic,
+ * only with its old text, within the size limit.
+ */
+function importsPayload(request: NoiseRequest): NoiseRequest['imports'] {
+  const { imports } = request;
+  if (!imports || !importCandidates(imports.path, imports.patch)) return undefined;
+  if (request.whole) return { path: imports.path, patch: imports.patch };
+  return imports.before !== undefined && imports.before.length <= NOISE_MAX_CHARACTERS ? imports : undefined;
+}
+/**
+ * A comparison's key: a topic's with its old text is kept apart from the one without, which it replaces once the old
+ * side is read. A whole file's always reads its imports.
+ */
+export function comparisonKey(request: Pick<NoiseRequest, 'fileKey' | 'hunks' | 'whole' | 'imports'>): string {
+  const key = noiseKey(request.fileKey, request.hunks);
+  return !request.whole && importsPayload(request as NoiseRequest)?.before !== undefined ? `${key}:imports` : key;
+}
+
 function compare(request: NoiseRequest): Promise<Comparison> {
   if (!languageAllowed(request.language)) return Promise.reject(Error('This language is off in Settings'));
-  const key = noiseKey(request.fileKey, request.hunks);
+  const key = comparisonKey(request);
   // A whole file's comparison also fingerprints moved symbols, for a file the moves store tracks and wants: not a
   // commit range's, a stack comparison's, or a file of a language without functions.
   const symbols = !!request.whole && symbolsWanted(request.fileKey);
@@ -467,7 +488,7 @@ function compare(request: NoiseRequest): Promise<Comparison> {
           priority: entry?.priority ?? priority,
           side: 'noise',
           symbols,
-          imports: request.imports && (request.whole ? { path: request.imports.path } : request.imports.before !== undefined ? request.imports : undefined),
+          imports: importsPayload(request),
         } satisfies SyntaxRequest);
       })
   );

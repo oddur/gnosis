@@ -17,6 +17,7 @@ import {
   noiseLabel,
   noiseStat,
   numberText,
+  quietKind,
   type NoiseKind,
 } from '../lib/semantic-noise';
 
@@ -497,6 +498,12 @@ void describe('quiet changes: imports', () => {
     assert.equal(quietHeader(fileNoise(blocks.slice(0, 1), f(true)), 2, 0).text, 'Imports only');
     assert.equal(quietHeader(fileNoise(blocks.slice(0, 1), f(true)), 2, 0).kind, 'imports');
     assert.equal(fileNoise(blocks, f(false)).shown, 2, 'With the toggle off, the import lines show');
+    assert.equal(quietKind(['imports', 'whitespace']), 'whitespace', 'Layout leads');
+    assert.equal(quietKind(['imports']), 'imports');
+    const mixed = quietHeader(fileNoise(blocks, f(true)), 3, 1);
+    assert.equal(mixed.text, 'Whitespace and imports');
+    assert.match(mixed.title, /Whitespace: .*syntax is the same.* Imports: Names added from modules the file already imports/, 'Each part says its own why');
+    assert.doesNotMatch(quietHeader(fileNoise(blocks.slice(0, 1), f(true)), 2, 0).title, /syntax/, 'Imports never claim the syntax is the same');
   });
 });
 

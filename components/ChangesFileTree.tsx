@@ -105,7 +105,7 @@ export function ChangesFileTree({
               ]
             : []),
         ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}${entry.quiet === 'Imports only' ? ': names from modules the file already imports' : ': the code’s syntax is the same on both sides'}` : ''}${showCommentCount ? `. ${comments}` : ''}`,
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
       };
     },
   });

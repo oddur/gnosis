@@ -1,29 +1,15 @@
 import { useId } from 'react';
 import { Popover } from 'radix-ui';
-import { Brush, Import, Pilcrow, SquareSlash, type LucideIcon } from 'lucide-react';
+import { Pilcrow } from 'lucide-react';
 import { Button } from './ui/button';
 import type { QuietToggles } from '../lib/review-diff';
 import { noiseFilterOn, type NoiseFilter } from '../lib/semantic-noise';
 import type { QuietSummary } from '../lib/use-semantic-noise';
 import { QUIET_CHANGES_KEY } from '../lib/quiet-changes';
+import { QUIET_KINDS } from '../lib/quiet-changes-header';
 
-/** Each kind of quiet change: its icon and words, the same in bars, labels, the tree and this summary. */
-export const QUIET_KINDS: { key: 'whitespace' | 'formatting' | 'comments' | 'imports'; Icon: LucideIcon; label: string; detail: string }[] = [
-  { key: 'whitespace', Icon: Pilcrow, label: 'Whitespace', detail: 'Indentation, line breaks, spaces and blank lines.' },
-  {
-    key: 'formatting',
-    Icon: Brush,
-    label: 'Formatting',
-    detail: 'What a formatter writes: quote style, trailing commas, optional semicolons, parentheses and braces, number spelling.',
-  },
-  { key: 'comments', Icon: SquareSlash, label: 'Comments', detail: 'Comments and doc comments added, removed or edited.' },
-  {
-    key: 'imports',
-    Icon: Import,
-    label: 'Imports',
-    detail: 'Imports that only add names from modules the file already imports. A new module or package always shows.',
-  },
-];
+export { QUIET_KINDS };
+
 const lines = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`;
 
 /**

@@ -18,7 +18,7 @@ import {
   toolReadComment,
   withImportBlocks,
 } from '../lib/explanation-noise';
-import { changeBlocks, patchHunks } from '../lib/semantic-noise';
+import { blockKey, changeBlocks, patchHunks } from '../lib/semantic-noise';
 import { syntaxLanguage } from '../lib/syntax-scope';
 import { assertPerf, perfBudget } from './perf-budget';
 import { structuredPatch } from 'diff';
@@ -147,26 +147,34 @@ void describe('rules: imports are cut only when they widen', () => {
 });
 
 /**
- * Quiet changes in Changes and Explanation diffs (#396) take the same rule: the worker's comparison marks a hunk's
- * blocks `imports` only where layer 1 cuts it as "import only". `pick` compares only those hunks, as a topic does,
- * with the file's old text from the view.
+ * Quiet changes in Changes and Explanation diffs (#396) take the same rule: the worker's comparison marks a patch
+ * hunk's blocks `imports` only where layer 1 cuts it as "import only". The view's hunks follow its context lines; the
+ * rule reads the patch at GitHub's 3. `pick` compares only those patch hunks, as a topic does, with the file's old text
+ * from the view. The answer is per patch hunk.
  */
-async function quietImports(path: string, before: string, after: string, pick?: number[]) {
+async function quietImports(path: string, before: string, after: string, { pick, context = 3 }: { pick?: number[]; context?: number } = {}) {
   const lines = (t: string) => t.replace(/\n$/, '').split('\n');
   const prepared = prepareFixture(
     { id: 'case', title: 'T', description: 'D', source: '', files: [{ path, before: lines(before), after: lines(after), hunks: [] }] },
     false
   );
   const all = prepared.hunks.flatMap((h) => patchHunks(`${h.hunkHeader}\n${h.content}`) ?? []);
-  const hunks = pick ? pick.map((i) => all[i]) : all;
+  const patch = pick ? pick.map((i) => all[i]) : all;
+  const view = pick
+    ? patch
+    : structuredPatch('a', 'b', prepared.before[path], prepared.after[path], '', '', { context }).hunks.map((h) => ({
+        oldStart: h.oldLines === 0 ? h.oldStart + 1 : h.oldStart,
+        newStart: h.newLines === 0 ? h.newStart + 1 : h.newStart,
+        rows: h.lines.filter((l) => !l.startsWith('\\')).map((l) => ({ type: l[0] as ' ' | '+' | '-', text: l.slice(1) })),
+      }));
   const language = syntaxLanguage(path);
   assert.ok(language && all.length === prepared.hunks.length);
-  const result = await engine.noise(language, prepared.after[path], hunks, false, true);
-  const blocks = await withImportBlocks(engine, language, { path, before: pick ? prepared.before[path] : undefined }, hunks, result);
-  let at = 0;
-  return hunks.map((hunk) => {
-    const kinds = blocks.slice(at, (at += changeBlocks([hunk]).length)).map((block) => block.kind);
-    return kinds.length && kinds.every((kind) => kind === 'imports') ? 'import only' : kinds.includes('imports') ? 'part' : null;
+  const result = await engine.noise(language, prepared.after[path], view, false, pick ? 'after' : 'both');
+  const blocks = await withImportBlocks(engine, language, { path, patch, before: pick ? prepared.before[path] : undefined }, result);
+  const kinds = new Map(blocks.map((block) => [blockKey(block), block.kind]));
+  return patch.map((hunk) => {
+    const found = changeBlocks([hunk]).map((block) => kinds.get(blockKey(block)));
+    return found.length && found.every((kind) => kind === 'imports') ? 'import only' : found.includes('imports') ? 'part' : null;
   });
 }
 
@@ -204,6 +212,36 @@ void describe('quiet changes: the same import rule as Reduce noise', () => {
     assert.deepEqual(await quietImports('a.go', go(''), go('\t"github.com/acme/x"')), [null]);
     assert.deepEqual(await quietImports('src/A.java', text('package p;', 'import a.b.Alpha;', '', 'class A {}'), text('package p;', 'import a.b.Alpha;', 'import c.d.Gamma;', '', 'class A {}')), [null]);
   });
+  void test('round 1 of #512: an import with a tool directive in or after it is never quiet, nor cut', async () => {
+    for (const line of [
+      "import { beta } from './x'; // eslint-disable-line no-unused-vars",
+      "import { beta } from './x'; // @ts-ignore",
+      "import { beta } from './x'; /* biome-ignore lint: reason */",
+      "import { beta } from './x'; // prettier-ignore",
+    ]) {
+      assert.deepEqual(await quietImports('src/a.ts', ts(), ts(line)), [null], line);
+      assert.deepEqual(await cuts('src/a.ts', ts(), ts(line)), [null], line);
+    }
+    const multi = (...names: string[]) => text('import {', '  alpha,', ...names, "} from './x';", '', 'run(alpha);');
+    assert.deepEqual(await quietImports('src/a.ts', multi(), multi('  beta, // eslint-disable-line')), [null], 'Inside a multi-line import');
+    assert.deepEqual(await quietImports('src/a.ts', multi(), multi('  beta, // a note')), ['import only'], 'A plain comment is still prose');
+  });
+  void test('round 1 of #512: a value import from a module the file imported only as types is a new runtime dependency', async () => {
+    const typed = (...extra: string[]) => text("import type { Alpha } from './x';", ...extra, '', 'let a: Alpha;');
+    assert.deepEqual(await quietImports('src/a.ts', typed(), typed("import { beta } from './x';")), [null]);
+    assert.deepEqual(await cuts('src/a.ts', typed(), typed("import { beta } from './x';")), [null]);
+    const inline = (...extra: string[]) => text("import { type Alpha } from './x';", ...extra, '', 'let a: Alpha;');
+    assert.deepEqual(await quietImports('src/a.ts', inline(), inline("import { beta } from './x';")), [null], 'Every specifier a type');
+    const mixed = (...extra: string[]) => text("import { type Alpha, gamma } from './x';", ...extra, '', 'let a: Alpha = gamma;');
+    assert.deepEqual(await quietImports('src/a.ts', mixed(), mixed("import { beta } from './x';")), ['import only'], 'A module that loads at run time');
+  });
+  void test('round 1 of #512: the rule reads GitHub’s hunks, so a view’s context lines never change what is quiet', async () => {
+    const filler = ['const one = 1;', 'const two = 2;', 'const three = 3;', 'const four = 4;'];
+    const before = text("import { alpha } from './x';", ...filler, 'run(alpha);');
+    const after = text("import { alpha } from './x';", "import { beta } from './x';", ...filler, 'run(alpha, beta);');
+    for (const context of [1, 3]) assert.deepEqual(await quietImports('src/a.ts', before, after, { context }), [null], `context ${context}`);
+    assert.deepEqual(await cuts('src/a.ts', before, after), [null], 'Reduce noise keeps it too');
+  });
   void test('fails closed: a mixed hunk, a parse error, a removal stay code', async () => {
     assert.deepEqual(await quietImports('src/a.ts', ts(), text("import { alpha } from './x';", "import { beta } from './x';", 'const extra = beta;', '', 'run(alpha);')), [null], 'An import with code beside it');
     assert.deepEqual(await quietImports('src/a.ts', text("import { alpha } from './x';", '', 'run(alpha'), text("import { alpha } from './x';", "import { beta } from './x';", '', 'run(alpha')), [null], 'A file that does not parse');
@@ -215,9 +253,9 @@ void describe('quiet changes: the same import rule as Reduce noise', () => {
     // The first hunk imports a new package; the second takes another name from it.
     const after = text("import { alpha } from './x';", "import { a } from 'pkg';", ...filler, "import { b } from 'pkg';", '', 'run(alpha);');
     assert.deepEqual(await quietImports('src/a.ts', before, after), [null, null], 'Changes: both are a new package');
-    assert.deepEqual(await quietImports('src/a.ts', before, after, [1]), [null], 'A topic of the second hunk alone');
+    assert.deepEqual(await quietImports('src/a.ts', before, after, { pick: [1] }), [null], 'A topic of the second hunk alone');
     const widened = text("import { alpha } from './x';", ...filler, "import { beta } from './x';", '', 'run(alpha);');
-    assert.deepEqual(await quietImports('src/a.ts', before, widened, [0]), ['import only'], 'A topic quiets a real widening');
+    assert.deepEqual(await quietImports('src/a.ts', before, widened, { pick: [0] }), ['import only'], 'A topic quiets a real widening');
   });
   void test('perf: a large file with many import-only hunks stays instant', async () => {
     const modules = Array.from({ length: 300 }, (_, i) => `./m${i}`);
@@ -231,9 +269,9 @@ void describe('quiet changes: the same import rule as Reduce noise', () => {
     const t0 = performance.now();
     const plain = await engine.noise('typescript', after, hunks);
     const t1 = performance.now();
-    const result = await engine.noise('typescript', after, hunks, false, true);
+    const result = await engine.noise('typescript', after, hunks, false, 'both');
     const t2 = performance.now();
-    const blocks = await withImportBlocks(engine, 'typescript', { path: 'src/many.ts' }, hunks, result);
+    const blocks = await withImportBlocks(engine, 'typescript', { path: 'src/many.ts', patch: hunks }, result);
     const t3 = performance.now();
     assert.equal(blocks.filter((block) => block.kind === 'imports').length, plain.blocks.length);
     assertPerf('quiet imports: 300 import-only hunks, the rule after the comparison', t3 - t2, perfBudget(25));
