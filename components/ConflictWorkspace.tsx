@@ -29,7 +29,8 @@ import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
 import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
-import { WrittenLegend, proposalWhat, useCodeOptions, type ConflictViewHandle } from './ConflictBlocks';
+import { WrittenLegend, proposalWhat, useCodeOptions } from './ConflictCard';
+import type { ConflictViewHandle } from './useConflictChoices';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import {
   conflictCount,

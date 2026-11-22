@@ -44,15 +44,9 @@ import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
 import type { ModelCard } from '../lib/conflict-model';
-import {
-  Block,
-  DiffColumns,
-  InlineEdit,
-  WholeFile,
-  WrittenLegend,
-  useConflictChoices,
-  type ConflictViewHandle,
-} from './ConflictBlocks';
+import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
+import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
+import { CircleHelp } from 'lucide-react';
 
 /** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
 let mounts = 0;
@@ -483,7 +477,7 @@ const renderCards = ({ metadata }: DiffLineAnnotation<{ indexes: number[] }>) =>
 
 /**
  * A file's conflicts in the shared diff (#445 item 8): the PR's version against the draft, with each conflict's card
- * under its lines. The cards are ConflictView's: Merged, Check and Decide read the same, with the same actions.
+ * under its lines (components/ConflictCard.tsx): Merged, Check or Decide, with Keep, Undo and Edit in place.
  */
 export function ConflictDiff({
   name,
@@ -595,7 +589,7 @@ export function ConflictDiff({
     if (segment?.kind !== 'conflict') return null;
     const start = editing === index ? editStart(index) : '';
     return (
-      <Block
+      <ConflictCard
         edit={model.edits?.[index]}
         // Only a draft that is exactly its choices can be edited conflict by conflict.
         onEdit={
@@ -631,7 +625,6 @@ export function ConflictDiff({
           ) : undefined
         }
         key={`block-${index}`}
-        inDiff
         name={name}
         block={segment.block}
         index={index}
@@ -683,7 +676,17 @@ export function ConflictDiff({
   const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
   return (
     <div ref={root} className="conflict-view conflict-diff-view" data-undoable={model.undoable || undefined}>
-      {wholeFile && <WholeFile name={name} {...wholeFile} verdict={verdict} labels={labels} disabled={disabled} />}
+      {wholeFile && (
+        <WholeFile
+          name={name}
+          {...wholeFile}
+          verdict={verdict}
+          labels={labels}
+          disabled={disabled}
+          fileKey={fileKey}
+          preferences={preferences}
+        />
+      )}
       {hideBlocks ? (
         <button type="button" className="conflict-context-toggle" onClick={wholeFile.onShow}>
           Resolve conflict by conflict instead ({total})
@@ -879,6 +882,109 @@ export function ConflictResult({
           />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Structural merge's result for the whole file. It also changes lines outside the conflicts, so it is never Merged:
+ * you read it next to the PR and use it, or choose each conflict below yourself.
+ */
+function WholeFile({
+  name,
+  proposal,
+  ours,
+  theirs,
+  onUse,
+  verdict,
+  labels,
+  disabled,
+  fileKey,
+  preferences,
+}: {
+  name: string;
+  fileKey: string;
+  preferences?: Preferences | null;
+  proposal: ConflictProposal;
+  ours: string;
+  /** main's whole file: with the PR's, what the proposal's lines are compared with for their marks (#445 item 10). */
+  theirs: string;
+  onUse: () => void;
+  verdict?: Verdict;
+  labels: ConflictLabels;
+  disabled: boolean;
+}) {
+  const note = verdict?.note ?? 'Checking the result…';
+  // The proposal's lines neither side had are marked before you use it, as they are after (#445 item 10).
+  const written = useMemo(
+    () => writtenFileLines(proposal.text, ours, theirs, proposal.text),
+    [proposal.text, ours, theirs]
+  );
+  // Each marked line stays in view: a mark never sits in a hidden gap.
+  const pins = useMemo(() => lineRuns(written), [written]);
+  return (
+    <section
+      className="conflict-block conflict-whole-file"
+      data-state="whole-file"
+      data-bucket="check"
+      data-conflict-index={-1}
+      tabIndex={0}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : 'structural merge combined both sides'}. ${note}`}
+    >
+      <header className="conflict-block-header">
+        <strong>Whole file</strong>
+        <span className="conflict-bucket" data-bucket="check">
+          <CircleHelp size={13} aria-hidden="true" />
+          Check
+        </span>
+      </header>
+      <p>{note}</p>
+      {written.size > 0 && <WrittenLegend count={written.size} />}
+      {/* The proposal against the PR's version, in the same diff as the conflicts below it. */}
+      <ConflictFileDiff
+        name={name}
+        before={ours}
+        after={proposal.text}
+        fileKey={`${fileKey}:whole-file`}
+        pins={pins}
+        preferences={preferences}
+        label={`Proposed result against ${labels.ours}`}
+        written={written}
+      />
+      <div className="conflict-block-actions">
+        <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
+          Use this result
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** Column names for a diff, matching its split or unified layout. */
+export function DiffColumns({ split, before, after }: { split: boolean; before: string; after: string }) {
+  return split ? (
+    <div className="conflict-diff-columns" data-layout="split">
+      <span>
+        <span className="sr-only">Left column: </span>
+        {before}
+      </span>
+      <span>
+        <span className="sr-only">Right column: </span>
+        {after}
+      </span>
+    </div>
+  ) : (
+    <div className="conflict-diff-columns" data-layout="unified">
+      <span>
+        <span aria-hidden="true">− </span>
+        <span className="sr-only">Removed lines: </span>
+        {before}
+      </span>
+      <span>
+        <span aria-hidden="true">+ </span>
+        <span className="sr-only">Added lines: </span>
+        {after}
+      </span>
     </div>
   );
 }
