@@ -429,6 +429,7 @@ void test('written lines: a suggestion’s marks stay after you keep a conflict,
     theirs: 'head\ncall(a, timeout);\nmid\ny\ntail\n',
     proposals: undefined,
     wholeFile: undefined,
+    source: 'agent' as const,
     // The suggestion combined conflict 1, rewrote `mid`, and left conflict 2 open.
     resolverText: 'head\ncall(a, retries, timeout);\nmid();\n<<<<<<< pr\nx\n=======\ny\n>>>>>>> main\ntail\n',
   };
@@ -451,21 +452,21 @@ void test('written lines: the baseline is the resolver’s text, a whole-file pr
   const ours = 'a\ncall(a, retries);\nb\n';
   const theirs = 'a\ncall(a, timeout);\nb\n';
   const applied = 'a\ncall(a, retries, timeout);\nb\n';
-  assert.equal(resolverBaseline({ original, proposals }, applied), applied);
+  assert.equal(resolverBaseline({ original, proposals, source: 'mergiraf' }, applied), applied);
   // Structural merge's per-conflict draft, then an edit by hand elsewhere: its combined line stays marked.
   const edited = 'a\ncall(a, retries, timeout);\nb\n// note\n';
-  assert.deepEqual([...draftWritten({ original, ours, theirs, proposals }, edited, resolverBaseline({ original, proposals }, edited))], [2]);
+  assert.deepEqual([...draftWritten({ original, ours, theirs, proposals }, edited, resolverBaseline({ original, proposals, source: 'mergiraf' }, edited))], [2]);
   // A whole-file proposal: marked in its preview (the same rule, with the proposal as the baseline) and once used.
   const whole = { source: 'moved' as const, text: 'a\ncall(a, retries, timeout);\nb\n' };
-  assert.equal(resolverBaseline({ original, wholeFile: whole }, whole.text), whole.text);
-  assert.equal(resolverBaseline({ original, wholeFile: whole }, original), undefined);
-  assert.equal(resolverBaseline({ original, wholeFile: whole, resolverText: 'x\n' }, original), 'x\n');
+  assert.equal(resolverBaseline({ original, wholeFile: whole, source: 'manual' }, whole.text), whole.text);
+  assert.equal(resolverBaseline({ original, wholeFile: whole, source: 'manual' }, original), undefined);
+  assert.equal(resolverBaseline({ original, wholeFile: whole, resolverText: 'x\n', source: 'manual' }, original), 'x\n');
 });
 
-void test('written lines: a confirmation of 100 large whole-file drafts opens without freezing', async () => {
-  const { confirmGroups } = await import('../lib/conflict-confirm');
+void test('written lines: a confirmation of 100 large whole-file drafts opens in 300 ms, its marks come as files mount', async () => {
+  const { confirmGroups, confirmWritten } = await import('../lib/conflict-confirm');
   const { perfBudget, withinPerf } = await import('./perf-budget');
-  // Different enough on each side that a full line diff is slow: the shared budget marks the rest cautiously.
+  // Different enough on each side that a full line diff is slow.
   const lines = (seed: number) => Array.from({ length: 4000 }, (_, i) => `const v${(i * seed) % 4001} = ${i};\n`).join('');
   const files = Array.from({ length: 100 }, (_, n) => {
     const original = `<<<<<<< pr\n${lines(3)}=======\n${lines(7)}>>>>>>> main\n`;
@@ -488,9 +489,70 @@ void test('written lines: a confirmation of 100 large whole-file drafts opens wi
   });
   const started = performance.now();
   const groups = confirmGroups(files, []);
-  withinPerf('conflict confirmation, 100 large whole-file drafts: marks', performance.now() - started, perfBudget(1500));
+  withinPerf('conflict confirmation, 100 large whole-file drafts: open', performance.now() - started, perfBudget(300));
   assert.equal(groups.decided.length, 100);
-  assert.ok(groups.decided.every((f) => f.written.length > 0), 'every file is still marked');
+  assert.ok(groups.decided.every((f) => f.marks && !f.written.length), 'no line diff runs while the confirmation opens');
+  // As the files mount, one shared budget bounds their diffs; past it they are marked cautiously, never left unmarked.
+  const budget = { until: Date.now() + 300 };
+  assert.ok(groups.decided.every((f) => confirmWritten(f, budget).length > 0), 'every file is still marked');
+});
+
+void test('written lines: a diff that timed out on its own is cached; only a spent shared budget is retried', async () => {
+  const { writtenFileLines } = await import('../lib/conflict-diff');
+  const lines = (seed: number) => Array.from({ length: 6000 }, (_, i) => `let w${(i * seed) % 6007} = ${i};\n`).join('');
+  const [ours, theirs, result] = [lines(5), lines(13), lines(29)];
+  writtenFileLines(result, ours, theirs);
+  const again = performance.now();
+  const cached = writtenFileLines(result, ours, theirs);
+  assert.ok(performance.now() - again < 50, 'the second call reads the cache, timed out or not');
+  assert.ok(cached.size > 0);
+});
+
+void test('pins are clipped to the gaps: a pin that crosses a hunk shows its lines on both sides of it', async () => {
+  const { withPins } = await import('../lib/diff-gaps');
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}\n`);
+  const hunk = { oldStart: 8, newStart: 8, rows: [{ type: '-' as const, text: 'old\n' }, { type: '+' as const, text: 'line 8\n' }], noEofOld: false, noEofNew: false };
+  // Lines 5 to 12 pinned; the hunk shows line 8: 5–7 are pinned before it and 9–12 after it, none dropped.
+  const shown = withPins([hunk], [[5, 12]], lines);
+  assert.deepEqual(
+    shown.map((h) => [h.newStart, h.rows.filter((r) => r.type !== '-').length]),
+    [
+      [5, 3],
+      [8, 1],
+      [9, 4],
+    ]
+  );
+  // A pin inside the hunk adds nothing; one past the file's end is cut at its last line.
+  assert.equal(withPins([hunk], [[8, 8]], lines).length, 1);
+  assert.deepEqual(withPins([], [[19, 40]], lines).map((h) => [h.newStart, h.rows.length]), [[19, 2]]);
+});
+
+void test('a resolver’s text stays across a base move while the carried draft holds its lines', async () => {
+  const { withResult } = await import('../lib/conflict-carry');
+  const { draftWritten, resolverBaseline, holdsResolverLines } = await import('../lib/conflict-diff');
+  const old = {
+    path: 'a.ts',
+    mode: '100644',
+    base: 'a\n',
+    ours: 'b\n',
+    theirs: 'c\n',
+    original: '<<<<<<< pr\nb\n=======\nc\n>>>>>>> main\n',
+    result: 'b + c\n',
+    resolved: false,
+    source: 'agent' as const,
+    resolverText: 'b + c\n',
+  };
+  // main moved: a fresh merge with a new line of main's, and the suggestion's draft carried over it.
+  const next = { ...old, theirs: 'c\nd\n', original: '<<<<<<< pr\nb\n=======\nc\nd\n>>>>>>> main\n', result: '', resolverText: undefined, source: 'manual' as const };
+  const carried = withResult(old, next, 'b + c\nd\n', false);
+  assert.equal(carried.resolverText, 'b + c\n');
+  assert.deepEqual([...draftWritten(carried, carried.result, resolverBaseline(carried, carried.result))], [1]);
+  // A carried draft that no longer holds any of its lines drops it.
+  assert.equal(withResult(old, next, 'b\nd\n', false).resolverText, undefined);
+  assert.equal(holdsResolverLines('b\n', 'b\n', 'c\n', 'b\n'), false, 'a resolver text of side lines only holds none');
+  // An older draft with no resolver text, a resolver's: cautious, every line neither side had.
+  const older = { ...carried, resolverText: undefined, source: 'agent' as const };
+  assert.deepEqual([...draftWritten(older, older.result, resolverBaseline(older, older.result))], [1]);
 });
 
 void test('slice fingerprint: rows with the same count and different text differ, and a row break is part of it', async () => {

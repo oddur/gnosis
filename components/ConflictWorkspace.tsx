@@ -38,8 +38,10 @@ import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './C
 import { conflictCount, conflictLabels, type BlockPicks, type ConflictLabels } from '../lib/conflict-blocks';
 import { cardAnchors, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
+  WRITTEN_BUDGET_MS,
   confirmCount,
   confirmGroups,
+  confirmWritten,
   needsYou,
   patchNote,
   wholeNote,
@@ -1745,13 +1747,15 @@ function ConfirmFileDiff({
   verdict: Verdict | undefined;
   preferences?: Preferences | null;
 }) {
+  // The marked lines, computed as this file's diff mounts: opening the confirmation does no line diff (#445 item 10).
+  const marked = useMemo(() => confirmWritten(part, markBudget()), [part]);
   // Each conflict's lines, and every marked line, stay in view: a mark never sits in a hidden gap.
   const pins = useMemo(
     () => [
       ...part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
-      ...lineRuns(new Set(part.written)),
+      ...lineRuns(new Set(marked)),
     ],
-    [part.blocks, part.written]
+    [part.blocks, marked]
   );
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
@@ -1767,7 +1771,7 @@ function ConfirmFileDiff({
     [part.blocks]
   );
   const saved = session.files.find((f) => f.path === part.path);
-  const written = useMemo(() => new Set(part.written), [part.written]);
+  const written = useMemo(() => new Set(marked), [marked]);
   const total = useMemo(() => conflictCount(saved?.original ?? ''), [saved?.original]);
   const note = (index: number) => {
     const item = part.items.find((i) => i.index === index);
@@ -1782,7 +1786,7 @@ function ConfirmFileDiff({
             ? `Used the proposal${proposal ? ` · ${proposalWhat(proposal)}` : ''}`
             : labels.kept[item.how];
     const block = part.blocks.find((b) => b.index === index);
-    const wrote = block ? part.written.filter((line) => line >= block.start && line <= block.end).length : 0;
+    const wrote = block ? marked.filter((line) => line >= block.start && line <= block.end).length : 0;
     const Icon = item.how === 'merged' ? CheckCheck : Check;
     return (
       <p key={index} className="conflict-confirm-note" data-confirm-how={item.how}>
@@ -1809,7 +1813,7 @@ function ConfirmFileDiff({
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
         </p>
       )}
-      {part.whole && part.written.length > 0 && <WrittenLegend count={part.written.length} />}
+      {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} />}
       <ConflictFileDiff
         name={part.path}
         previousPath={part.previousPath}
@@ -1825,6 +1829,17 @@ function ConfirmFileDiff({
       />
     </div>
   );
+}
+
+/**
+ * The time the confirmation's files that mount together share for their marks' line diffs: it refills a second after
+ * it was opened, so a file scrolled into view later gets time of its own. Past it, the cautious rule marks.
+ */
+let marksWindow = { opened: 0, until: 0 };
+function markBudget() {
+  const now = Date.now();
+  if (now - marksWindow.opened > 1000) marksWindow = { opened: now, until: now + WRITTEN_BUDGET_MS };
+  return marksWindow;
 }
 
 /** A file's rough height before it is measured: its header and the rows of its hunks. */

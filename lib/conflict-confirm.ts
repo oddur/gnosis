@@ -14,6 +14,7 @@ import {
   writtenFileLines,
   writtenLines,
   type ConflictDiffBlock,
+  type WrittenBudget,
 } from './conflict-diff';
 import { conflictFileStage, type ConflictFile, type ConflictProposal } from './conflict-resolution';
 import type { ConflictBucket } from './conflict-verify';
@@ -58,10 +59,23 @@ export interface ConfirmFile {
   /** Conflicts this part accounts for. */
   conflicts: number;
   /**
-   * Lines of `after` a resolver wrote, which neither side had (#445 item 10): in a proposal's conflict, or anywhere
-   * in a file a resolver wrote whole. Empty for your Keeps and your own edits.
+   * Lines of `after` a resolver wrote, which neither side had (#445 item 10), in a proposal's conflict. Empty for your
+   * Keeps and your own edits. A whole file's marks need line diffs: they are `marks`, computed when its diff shows.
    */
   written: number[];
+  /** A file a resolver wrote whole: what its marks are computed from (confirmWritten), only once its diff mounts. */
+  marks?: { ours: string; theirs: string; resolver: string };
+}
+
+/**
+ * The marked lines of one part of the confirmation (#445 item 10): its conflicts' written lines, or for a file written
+ * whole, its lines of the resolver's text that neither side had. Called as each file's diff mounts, so opening the
+ * confirmation does no line diff; `budget` bounds the diffs of files that mount together, and past it the cautious rule
+ * marks (writtenFileLines).
+ */
+export function confirmWritten(part: Pick<ConfirmFile, 'after' | 'written' | 'marks'>, budget?: WrittenBudget): number[] {
+  if (!part.marks) return part.written;
+  return [...writtenFileLines(part.after, part.marks.ours, part.marks.theirs, part.marks.resolver, budget)];
 }
 export interface ConfirmGroups<P> {
   /** Every conflict you resolved: a Keep, an edit, a proposal you used or reviewed, a whole-file result you used. */
@@ -77,7 +91,7 @@ export interface ConfirmGroups<P> {
   counts: { decided: number; merged: number; mainFiles: number };
 }
 
-/** How long the confirmation's whole files may spend on line diffs for their marks, together. */
+/** How long the confirmation's whole files that mount together may spend on line diffs for their marks. */
 export const WRITTEN_BUDGET_MS = 300;
 
 /**
@@ -110,9 +124,6 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
   }[],
   preview: readonly P[]
 ): ConfirmGroups<P> {
-  // Whole files' marks share one time limit: a confirmation of many large files opens at once, marking cautiously
-  // what it had no time to diff (writtenFileLines).
-  const budget = { until: Date.now() + WRITTEN_BUDGET_MS };
   const groups: ConfirmGroups<P> = {
     decided: [],
     merged: [],
@@ -141,9 +152,9 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
         whole: how,
         conflicts: conflicts.length,
         // The resolver's lines neither side had are marked, also after you kept or edited parts of its draft; lines you
-        // typed never are.
-        written: ((resolver) =>
-          resolver === undefined ? [] : [...writtenFileLines(file.result, file.ours, file.theirs, resolver, budget)])(
+        // typed never are. They are computed as the file's diff mounts (confirmWritten).
+        written: [],
+        ...((resolver) => (resolver === undefined ? {} : { marks: { ours: file.ours, theirs: file.theirs, resolver } }))(
           resolverBaseline(file, file.result)
         ),
       });

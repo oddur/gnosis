@@ -773,7 +773,7 @@ export function ConflictResult({
   fileKey: string;
   preferences?: Preferences | null;
   /** The conflicted file the result is the draft of: its lines a resolver wrote are marked (#445 item 10). */
-  file?: Pick<ConflictFile, 'original' | 'ours' | 'theirs' | 'proposals' | 'wholeFile' | 'resolverText'>;
+  file?: Pick<ConflictFile, 'original' | 'ours' | 'theirs' | 'proposals' | 'wholeFile' | 'resolverText' | 'source'>;
   picks?: BlockPicks;
 }) {
   const layout = useDiffLayout(preferences?.diffLayout);

@@ -492,11 +492,6 @@ export interface DiffSlice {
 }
 
 /**
- * A hunk as one or more diffs for Pierre. A hunk longer than `limit` rows renders as slices of `size` rows, like the
- * Explanation view's (lib/review-diff.ts), so slices outside the viewport skip style and layout (#353). Source
- * numbers are kept, so line numbers, comments and jumps still address the original lines.
- */
-/**
  * A hunk's rows as a short fingerprint, for reusing its rendered slices only while its lines are the same: the rows'
  * total length and a 32-bit FNV-1a hash of each row's type and text, with a NUL between rows, so `ab`+`c` and `a`+`bc`
  * differ. A hunk whose lines change but not their count (a conflict's Keep or proposal) gets new slices.
@@ -517,6 +512,11 @@ export function hunkFingerprint(rows: readonly { type: string; text: string }[])
   return `${length}:${(hash >>> 0).toString(36)}`;
 }
 
+/**
+ * A hunk as one or more diffs for Pierre. A hunk longer than `limit` rows renders as slices of `size` rows, like the
+ * Explanation view's (lib/review-diff.ts), so slices outside the viewport skip style and layout (#353). Source
+ * numbers are kept, so line numbers, comments and jumps still address the original lines.
+ */
 export function hunkSlices(
   key: string,
   hunk: GapHunk,
@@ -659,8 +659,11 @@ export function pinLines(
   return { pin: [from, to], reveals: shifted };
 }
 
-/** The hunks with each pinned span of new lines as a hunk of unchanged lines, in order. A pin that is not inside a
- * gap is left out. */
+/**
+ * The hunks with each pinned span of new lines as a hunk of unchanged lines, in order. A pin is clipped to the gaps it
+ * crosses: the part a hunk already shows is left to the hunk, and the part on each side of it is pinned, so no pinned
+ * line (a line a resolver wrote, #445 item 10) stays hidden.
+ */
 export function withPins(hunks: GapHunk[], pins: readonly (readonly [number, number])[], lines: string[]): GapHunk[] {
   if (!pins.length) return hunks;
   const result: GapHunk[] = [];
@@ -669,19 +672,25 @@ export function withPins(hunks: GapHunk[], pins: readonly (readonly [number, num
   let previousOld = 0,
     previousNew = 0;
   const pinUntil = (next: number) => {
-    for (; p < sorted.length && sorted[p][0] < next; p++) {
+    while (p < sorted.length && sorted[p][0] < next) {
       const [from, to] = sorted[p];
-      if (from <= previousNew || to >= next || to > lines.length) continue;
-      const offset = previousOld - previousNew;
-      result.push({
-        oldStart: from + offset,
-        newStart: from,
-        rows: lines.slice(from - 1, to).map((text) => ({ type: ' ' as const, text })),
-        noEofOld: false,
-        noEofNew: false,
-      });
-      previousOld = to + offset;
-      previousNew = to;
+      const start = Math.max(from, previousNew + 1);
+      const end = Math.min(to, next - 1, lines.length);
+      if (start <= end) {
+        const offset = previousOld - previousNew;
+        result.push({
+          oldStart: start + offset,
+          newStart: start,
+          rows: lines.slice(start - 1, end).map((text) => ({ type: ' ' as const, text })),
+          noEofOld: false,
+          noEofNew: false,
+        });
+        previousOld = end + offset;
+        previousNew = end;
+      }
+      // A pin that runs on past the next hunk keeps its rest for the gap after it.
+      if (to >= next) break;
+      p++;
     }
   };
   for (const hunk of hunks) {

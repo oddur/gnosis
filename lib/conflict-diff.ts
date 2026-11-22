@@ -200,6 +200,15 @@ export interface WrittenBudget {
   /** Epoch milliseconds after which no line diff runs, and the cautious rule marks instead. */
   until: number;
 }
+/** A text as a short cache key: its length and a 32-bit FNV-1a hash. */
+function textFingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${text.length}:${(hash >>> 0).toString(36)}`;
+}
 /** The longest one line diff may take, when no budget says less. */
 const DIFF_MS = 150;
 /** Whole-file marks by their four texts: a file's draft version is diffed once, however often it renders. */
@@ -224,7 +233,7 @@ export function writtenFileLines(
   resolver?: string,
   budget?: WrittenBudget
 ): ReadonlySet<number> {
-  const key = [result, ours, theirs, resolver ?? '\u0001'].join('\0');
+  const key = [result, ours, theirs].map(textFingerprint).join('|') + (resolver === undefined ? '' : `|${textFingerprint(resolver)}`);
   const known = fileMarks.get(key);
   if (known) {
     fileMarks.delete(key);
@@ -233,14 +242,16 @@ export function writtenFileLines(
   }
   const lines = keys(result);
   let marked: number[] | undefined;
-  let cautious = false;
+  // The budget ran out, rather than a diff timing out on its own within its usual time.
+  let spent = false;
   const kept = new Set<number>();
   for (const side of [ours, theirs]) {
-    const left = Math.min(DIFF_MS, budget ? budget.until - Date.now() : DIFF_MS);
+    const remaining = budget ? budget.until - Date.now() : DIFF_MS;
+    const left = Math.min(DIFF_MS, remaining);
     const parts = left > 0 ? diffArrays(keys(side), lines, { timeout: left }) : undefined;
     if (!parts) {
       marked = cautiousLines(lines, ours, theirs);
-      cautious = true;
+      spent = remaining < DIFF_MS;
       break;
     }
     let at = 0;
@@ -253,9 +264,9 @@ export function writtenFileLines(
   marked ??= lines.flatMap((_, i) => (kept.has(i) ? [] : [i]));
   const own = resolver === undefined ? undefined : new Set(keys(resolver));
   const set = new Set(marked.filter((i) => !own || own.has(lines[i])).map((i) => i + 1));
-  // A cautious result for a spent budget is not kept: with time, the next call diffs the file properly. One whose diff
-  // timed out on its own is kept, so a render does not wait for that diff again.
-  if (!cautious || !budget) {
+  // A cautious result because the shared budget ran out is not kept: with time, the next call diffs the file properly.
+  // One whose diff timed out on its own is kept, so a render does not wait for that diff again.
+  if (!spent) {
     fileMarks.set(key, set);
     if (fileMarks.size > FILE_MARKS) fileMarks.delete(fileMarks.keys().next().value as string);
   }
@@ -303,12 +314,13 @@ export function shownWritten(
  * applied. Undefined when no resolver wrote anything for the file.
  */
 export function resolverBaseline(
-  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'resolverText'>,
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'wholeFile' | 'resolverText' | 'source'>,
   contents: string
 ): string | undefined {
   if (file.resolverText !== undefined) return file.resolverText;
   if (file.wholeFile && contents === file.wholeFile.text) return file.wholeFile.text;
-  if (!file.proposals?.some(Boolean)) return undefined;
+  // A draft a resolver wrote before Gnosis kept its text (an older session): cautious, every line neither side had.
+  if (!file.proposals?.some(Boolean)) return file.source === 'manual' ? undefined : contents;
   const segments = parseConflicts(file.original);
   // Choices are by conflict index, as the proposals are.
   const choices = file.proposals.map((proposal) => (proposal ? ('proposal' as const) : undefined));
@@ -339,6 +351,19 @@ export function draftWritten(
   const open = segmentsText(model.segments, (s) => s.block.raw).blocks;
   if (!open.length) return marked;
   return new Set([...marked].filter((line) => !open.some((b) => line >= b.start && line <= b.end)));
+}
+
+/**
+ * Whether `draft` still holds any line the resolver wrote that neither side had: while it does, the resolver's text
+ * stays the file's baseline (a base move carrying the draft, a save); once it doesn't, the text is dropped, so a line you
+ * type later is never taken for the resolver's.
+ */
+export function holdsResolverLines(resolver: string, ours: string, theirs: string, draft: string): boolean {
+  const own = writtenLines(resolver, ours, theirs);
+  if (!own.length) return false;
+  const lines = keys(resolver);
+  const present = new Set(keys(draft));
+  return own.some((i) => lines[i].trim() !== '' && present.has(lines[i]));
 }
 
 /** "3 lines written by Gnosis (neither side had them)". */

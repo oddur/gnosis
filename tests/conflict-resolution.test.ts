@@ -2016,3 +2016,43 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
   assert.equal(file.wholeFile, undefined);
   assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
 });
+
+// #493: the lines a resolver wrote keep their marks while its text is the baseline, and lose them once it isn't.
+void test('a suggestion that declines keeps the marks; Reset clears the resolver text, so a line you type is never marked', async (t) => {
+  const { draftWritten, resolverBaseline } = await import('../lib/conflict-diff');
+  // Structural merge combines both sides' arguments into one line neither side had.
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: 'export function run() {\n  return call(1, 2);\n}\n',
+    ours: 'export function run() {\n  return call(10, 2);\n}\n',
+    theirs: 'export function run() {\n  return call(1, 20);\n}\n',
+  });
+  const marks = (file: ConflictFile) => [...draftWritten(file, file.result, resolverBaseline(file, file.result))];
+  let file = f.session.files[0];
+  const prepared = marks(file);
+  assert.deepEqual(prepared, [2], 'structural merge wrote call(10, 20)');
+  // Whatever preparation wrote, a suggestion that declines keeps its draft, and its marks, once the proposals are gone.
+  f.deps.suggest = () => Promise.resolve({ explanation: 'Nothing to change.' } as never);
+  let session = (await f.run({ kind: 'resolve', engine: 'agent', id: f.session.id, version: f.session.version, path: file.path })).session;
+  file = session.files[0];
+  assert.equal(file.proposals, undefined);
+  assert.equal(file.resolverText, file.result, 'the declined draft is the baseline');
+  assert.deepEqual(marks(file), prepared);
+  // A suggestion that writes a line neither side had: marked.
+  f.deps.suggest = () => Promise.resolve({ contents: 'export function run() {\n  return call(10, 20);\n}\n', explanation: 'Both.' });
+  session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: file.path })).session;
+  file = session.files[0];
+  assert.equal(file.resolverText, file.result, 'a later resolver run replaces the baseline');
+  assert.deepEqual(marks(file), [2]);
+  // Reset to Git's conflict, then type the same line yourself: it is yours, never marked.
+  session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: file.original, resolved: false })).session;
+  assert.equal(session.files[0].resolverText, undefined, 'Reset clears the resolver text');
+  const typed = 'export function run() {\n  return call(10, 20);\n}\n';
+  session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: typed, resolved: false })).session;
+  assert.deepEqual(marks(session.files[0]), [], 'no typed line is marked');
+  // A save whose draft no longer holds the resolver's lines drops its text too.
+  session = (await f.run({ kind: 'resolve', engine: 'agent', id: session.id, version: session.version, path: file.path })).session;
+  assert.equal(session.files[0].resolverText, session.files[0].result);
+  session = (await f.run({ kind: 'save', id: session.id, version: session.version, path: file.path, contents: 'export function run() {\n  return call(10, 2);\n}\n', resolved: false })).session;
+  assert.equal(session.files[0].resolverText, undefined);
+});

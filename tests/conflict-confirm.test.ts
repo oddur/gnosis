@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { confirmCount, confirmGroups, needsYou, patchNote, wholeNote } from '../lib/conflict-confirm';
+import { confirmCount, confirmGroups, confirmWritten, needsYou, patchNote, wholeNote } from '../lib/conflict-confirm';
 import { blockBuckets, fileStatus, type Verdict } from '../lib/conflict-verify';
 import type { BlockPicks } from '../lib/conflict-blocks';
 import { conflictFileStage, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
@@ -118,7 +118,7 @@ void test('a whole-file proposal you used is yours as one file, with every confl
   assert.equal(groups.decided[0].after, whole);
   assert.deepEqual(groups.main, [], 'main’s lines are inside the proposal: never counted twice');
   // Its one line neither side had is marked.
-  assert.deepEqual(groups.decided[0].written, [5]);
+  assert.deepEqual(confirmWritten(groups.decided[0]), [5]);
 });
 
 void test('a file edited by hand is yours, Merged proposals included, and its note says what produced it', () => {
@@ -127,7 +127,7 @@ void test('a file edited by hand is yours, Merged proposals included, and its no
   assert.deepEqual(groups.counts, { decided: 2, merged: 0, mainFiles: 1 });
   assert.equal(groups.decided[0].whole, 'manual');
   // Your own edit is yours: the line you typed is never marked, and Mergiraf's combined line still is.
-  assert.deepEqual(groups.decided[0].written, [4]);
+  assert.deepEqual(confirmWritten(groups.decided[0]), [4]);
   assert.equal(groups.decided[0].before, 'a = 10\nb = 2\nx = 5\nc = 30\n');
   assert.equal(wholeNote('manual', 2, 'main'), 'You edited this file, so its 2 conflicts are yours.');
   // A suggestion or a remembered resolution is not your edit: the note names what produced the draft.
@@ -135,7 +135,7 @@ void test('a file edited by hand is yours, Merged proposals included, and its no
     const g = confirmGroups([entry({ ...f, source, resolverText: f.result }, merged, ['theirs'])], []);
     assert.equal(g.decided[0].whole, source);
     // A resolver's whole file: every line of its text neither side had is marked, its note line and Mergiraf's alike.
-    assert.deepEqual(g.decided[0].written, [4, 5]);
+    assert.deepEqual(confirmWritten(g.decided[0]), [4, 5]);
     assert.doesNotMatch(wholeNote(source, 2, 'main'), /You edited/);
   }
   assert.match(wholeNote('rerere', 1, 'main'), /remembered resolution/);
