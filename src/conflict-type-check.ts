@@ -100,64 +100,153 @@ function compilerEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(keep.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])));
 }
 
-async function compile(run: RunScript, tsc: string, cwd: string, signal: AbortSignal, timeout: number) {
-  // No emit and no build info: nothing is written, also not through the linked node_modules.
+/**
+ * Diagnostics without the folder they were checked in: the merge and the PR head are checked in different worktrees,
+ * and a message that names an absolute path must read the same in both. `roots` are replaced by `''` (the worktree) or
+ * their label.
+ */
+export function withoutRoots(diagnostics: readonly TypeDiagnostic[], roots: readonly [string, string][]) {
+  // Longest first, with both separators, so a worktree inside another root is stripped whole.
+  const ordered = roots
+    .flatMap(([root, label]) => [root, root.replaceAll('\\', '/')].map((value) => [value, label] as const))
+    .filter(([root]) => root)
+    .sort((a, b) => b[0].length - a[0].length);
+  const strip = (text: string) => {
+    for (const [root, label] of ordered) {
+      text = text.replaceAll(root + '/', label ? `${label}/` : '').replaceAll(root + '\\', label ? `${label}/` : '');
+      text = text.replaceAll(root, label);
+    }
+    return text;
+  };
+  return diagnostics.map((d) => ({ ...d, ...(d.file ? { file: strip(d.file) } : {}), message: strip(d.message) }));
+}
+
+/** The compiler's output did not arrive whole, or contradicts its exit code. Never compared: the check is skipped. */
+export const INCOMPLETE = 'the type checker’s output was incomplete';
+/** The root tsconfig checks no file of its own, such as a solution file with project references. */
+export const REFERENCES = 'not supported yet (project references)';
+/** The compiler process died, such as out of memory. */
+export const CRASHED = 'the type checker crashed';
+
+/** Thrown with a reason the status line shows as "skipped (reason)". */
+export class TypeCheckSkipped extends Error {}
+
+async function compile(
+  run: RunScript,
+  tsc: string,
+  cwd: string,
+  clone: string,
+  signal: AbortSignal,
+  timeout: number
+) {
+  // No emit and no build info: nothing is written, also not through the linked node_modules. `--listFiles` says which
+  // files were checked, so a project that checks none never reads as passed.
   const result = await run(
     tsc,
-    ['--noEmit', '--pretty', 'false', '--incremental', 'false', '--composite', 'false', '-p', 'tsconfig.json'],
+    ['--noEmit', '--pretty', 'false', '--incremental', 'false', '--composite', 'false', '--listFiles', '-p', 'tsconfig.json'],
     { cwd, env: compilerEnvironment(), signal, timeout, maxBytes: OUTPUT_LIMIT }
   );
-  const diagnostics = parseDiagnostics(result.stdout);
-  // 0: no errors. 1 and 2: errors, with or without output. Anything else, or errors without a single one parsed, is a
-  // compiler that didn't run as expected.
-  if (result.code !== 0 && (!diagnostics.length || result.code > 2))
-    throw new Error(
-      (result.stderr || result.stdout).trim().split('\n')[0]?.slice(0, 200) || `The compiler exited with ${result.code}.`
-    );
+  // tsc ends every line it writes; output that stops mid-line was cut off.
+  if (result.stdout && !result.stdout.endsWith('\n')) throw new TypeCheckSkipped(INCOMPLETE);
+  const roots: [string, string][] = [
+    [cwd, ''],
+    [await fs.realpath(cwd).catch(() => cwd), ''],
+    [clone, '<clone>'],
+    [await fs.realpath(clone).catch(() => clone), '<clone>'],
+  ];
+  const diagnostics = withoutRoots(parseDiagnostics(result.stdout), roots);
+  // 0: no errors, and none written. 1 and 2: errors, each written. Anything else, or a code that doesn't match the
+  // output, is a compiler that didn't run as expected.
+  if (result.code > 2) throw new TypeCheckSkipped(`couldn’t run: the type checker exited with ${result.code}`);
+  if ((result.code === 0) !== (diagnostics.length === 0)) throw new TypeCheckSkipped(INCOMPLETE);
   const project = diagnostics.find((d) => !d.file);
-  if (project) throw new Error(`TypeScript couldn’t read the project: ${project.code} ${project.message}`.slice(0, 240));
+  if (project) throw new TypeCheckSkipped(`couldn’t read the project: ${project.code} ${project.message}`.slice(0, 240));
+  // The files the project checked: absolute paths in the worktree, outside node_modules.
+  const own = result.stdout.split(/\r?\n/).filter((line) => {
+    if (!path.isAbsolute(line)) return false;
+    const relative = withoutRoots([{ code: '', message: line }], roots)[0].message;
+    return relative !== line && !relative.startsWith('<clone>') && !/(^|\/)node_modules\//.test(relative);
+  });
+  if (!own.length) throw new TypeCheckSkipped(REFERENCES);
   return diagnostics;
 }
 
+/** A worktree's administrative folder in the session repository, from its `.git` file. */
+async function adminFolder(worktree: string) {
+  const match = /^gitdir:\s*(.+)$/m.exec(await fs.readFile(path.join(worktree, '.git'), 'utf8').catch(() => ''));
+  return match ? path.resolve(worktree, match[1].trim()) : undefined;
+}
+/** Removes a worktree's link to your clone's node_modules: first, so nothing that removes the worktree reaches in. */
+async function unlinkModules(worktree: string) {
+  const modules = path.join(worktree, 'node_modules');
+  if ((await fs.lstat(modules).catch(() => undefined))?.isSymbolicLink())
+    await fs.unlink(modules).catch(() => fs.rmdir(modules).catch(() => undefined));
+}
+
+/** Where every run keeps its own folder, in the session directory. Startup cleanup removes what a crash left. */
+export const TYPE_CHECK_FOLDER = 'type-check';
+
 /**
- * Checks the session's draft. `git` runs in the session repository, which has the merge and the PR head. Each worktree
- * is removed afterwards, whatever happened.
+ * Removes what earlier runs left in a session directory: their links to the clone first, then the folders. Only while
+ * nothing runs, at startup. The session repository's worktree entries for them are pruned after.
+ */
+export async function removeLeftovers(directory: string, git: (args: string[]) => Promise<unknown>) {
+  const parent = path.join(directory, TYPE_CHECK_FOLDER);
+  const runs = await fs.readdir(parent).catch(() => [] as string[]);
+  if (!runs.length && !(await fs.stat(parent).catch(() => undefined))) return false;
+  for (const run of runs) {
+    // This build's layout (<run>/merge, <run>/head) and the first one's (<worktree>).
+    await unlinkModules(path.join(parent, run));
+    for (const name of await fs.readdir(path.join(parent, run)).catch(() => [] as string[]))
+      await unlinkModules(path.join(parent, run, name));
+  }
+  await fs.rm(parent, { recursive: true, force: true });
+  await git(['worktree', 'prune']).catch(() => undefined);
+  return true;
+}
+
+/**
+ * Checks the session's draft. `git` runs in the session repository, which has the merge and the PR head; it may fetch
+ * file contents. `local` runs Git there without the network or the account, for cleanup. The run has its own folder,
+ * and its worktrees are removed afterwards, whatever happened. `timeout` covers the whole run.
  */
 export async function typeCheckMerge(options: {
   session: Pick<ConflictSession, 'tree' | 'headSha' | 'files'>;
   clone: string;
   directory: string;
   git: Git;
+  local: Git;
   run: RunScript;
   signal: AbortSignal;
   timeout?: number;
 }): Promise<ConflictTypeCheck> {
-  const { session, git, signal } = options;
+  const { session, git } = options;
   const timeout = options.timeout ?? TYPE_CHECK_TIMEOUT;
-  const listed = await git(['ls-tree', '--name-only', session.tree, '--', 'tsconfig.json'], signal);
-  if (listed.stdout.toString().trim() !== 'tsconfig.json') return { state: 'skipped', reason: NOT_SUPPORTED };
-  const compiler = await findCompiler(options.clone);
-  if ('skipped' in compiler) return { state: 'skipped', reason: compiler.skipped };
-  const parent = path.join(options.directory, 'type-check');
-  await fs.mkdir(parent, { recursive: true, mode: 0o700 });
-  const worktrees: string[] = [];
+  const deadline = AbortSignal.timeout(timeout);
+  const signal = AbortSignal.any([options.signal, deadline]);
   const started = Date.now();
-  const left = () => {
-    const remaining = timeout - (Date.now() - started);
-    if (remaining <= 0) throw new Error(TIMED_OUT);
-    return remaining;
-  };
-  const checkout = async (commit: string) => {
-    const worktree = path.join(parent, crypto.randomBytes(6).toString('hex'));
-    worktrees.push(worktree);
-    await git(['worktree', 'add', '--detach', worktree, commit], signal);
-    // A linked node_modules, unless the tree has its own. A junction on Windows needs no privileges.
-    const modules = path.join(worktree, 'node_modules');
-    if (!(await fs.lstat(modules).catch(() => undefined)))
-      await fs.symlink(compiler.modules, modules, process.platform === 'win32' ? 'junction' : 'dir');
-    return worktree;
-  };
+  const left = () => Math.max(1, timeout - (Date.now() - started));
+  const folder = path.join(options.directory, TYPE_CHECK_FOLDER, crypto.randomBytes(8).toString('hex'));
+  const worktrees: { path: string; admin?: string }[] = [];
   try {
+    const listed = await git(['ls-tree', '--name-only', session.tree, '--', 'tsconfig.json'], signal);
+    if (listed.stdout.toString().trim() !== 'tsconfig.json') return { state: 'skipped', reason: NOT_SUPPORTED };
+    const compiler = await findCompiler(options.clone);
+    if ('skipped' in compiler) return { state: 'skipped', reason: compiler.skipped };
+    await fs.mkdir(folder, { recursive: true, mode: 0o700 });
+    const checkout = async (name: string, commit: string) => {
+      const worktree = path.join(folder, name);
+      const entry: { path: string; admin?: string } = { path: worktree };
+      worktrees.push(entry);
+      await git(['worktree', 'add', '--detach', worktree, commit], signal);
+      // Its entry in the session repository, known while the folder is there: cleanup removes exactly this one.
+      entry.admin = await adminFolder(worktree);
+      // A linked node_modules, unless the tree has its own. A junction on Windows needs no privileges.
+      const modules = path.join(worktree, 'node_modules');
+      if (!(await fs.lstat(modules).catch(() => undefined)))
+        await fs.symlink(compiler.modules, modules, process.platform === 'win32' ? 'junction' : 'dir');
+      return worktree;
+    };
     const commit = (
       await git(
         ['-c', 'user.name=Gnosis', '-c', 'user.email=gnosis@localhost', 'commit-tree', session.tree, '-m', 'Type check'],
@@ -166,20 +255,23 @@ export async function typeCheckMerge(options: {
     ).stdout
       .toString()
       .trim();
-    const merge = await checkout(commit);
+    const merge = await checkout('merge', commit);
     const real = await fs.realpath(merge);
     for (const file of session.files) {
       if (file.unsupported) continue;
       // Only a regular file inside the worktree: a path through a link the tree holds is never written.
       const target = path.resolve(merge, file.path);
-      const folder = await fs.realpath(path.dirname(target)).catch(() => undefined);
+      const parent = await fs.realpath(path.dirname(target)).catch(() => undefined);
       const stat = await fs.lstat(target).catch(() => undefined);
-      if (!folder || (folder !== real && !folder.startsWith(real + path.sep)) || (stat && !stat.isFile())) continue;
+      if (!parent || (parent !== real && !parent.startsWith(real + path.sep)) || (stat && !stat.isFile())) continue;
       await fs.writeFile(target, checkedText(file.result));
     }
-    const merged = await compile(options.run, compiler.tsc, merge, signal, left());
-    if (!merged.length) return { state: 'passed', preExisting: 0 };
-    const head = await compile(options.run, compiler.tsc, await checkout(session.headSha), signal, left());
+    const merged = await compile(options.run, compiler.tsc, merge, options.clone, signal, left());
+    let head: TypeDiagnostic[] = [];
+    if (merged.length)
+      head = await compile(options.run, compiler.tsc, await checkout('head', session.headSha), options.clone, signal, left());
+    // A run whose folder went meanwhile, such as for a new preparation, has nothing to say about this draft.
+    if (!(await fs.stat(folder).catch(() => undefined))) throw new Error('The type check’s folder was removed.');
     const fresh = newErrors(merged, head);
     const preExisting = merged.length - fresh.length;
     if (!fresh.length) return { state: 'passed', preExisting };
@@ -203,16 +295,24 @@ export async function typeCheckMerge(options: {
       errors: fresh.slice(0, ERRORS_SHOWN).map(formatDiagnostic),
       files,
     };
+  } catch (error) {
+    // The deadline, not you, stopped it: say so, whatever the step that stopped reported.
+    if (deadline.aborted && !options.signal.aborted) throw new TypeCheckSkipped(TIMED_OUT);
+    throw error;
   } finally {
+    // Only this run's worktrees and folder. Git without the network or the account, so an account change can't stop it.
     const cleanup = AbortSignal.timeout(30_000);
-    for (const worktree of worktrees) {
-      // The link goes first, so nothing that removes the worktree can reach into your clone's node_modules.
-      const modules = path.join(worktree, 'node_modules');
-      if ((await fs.lstat(modules).catch(() => undefined))?.isSymbolicLink())
-        await fs.unlink(modules).catch(() => fs.rmdir(modules).catch(() => undefined));
-      await git(['worktree', 'remove', '--force', worktree], cleanup).catch(() => undefined);
+    for (const { path: worktree, admin } of worktrees) {
+      await unlinkModules(worktree);
+      const removed = await options.local(['worktree', 'remove', '--force', worktree], cleanup).then(
+        () => true,
+        () => false
+      );
+      // Git couldn't remove it, such as when the folder is already gone: its own entry goes by hand, no other run's.
+      if (!removed && admin && path.basename(path.dirname(admin)) === 'worktrees')
+        await fs.rm(admin, { recursive: true, force: true }).catch(() => undefined);
     }
-    await fs.rm(parent, { recursive: true, force: true }).catch(() => undefined);
-    await git(['worktree', 'prune'], cleanup).catch(() => undefined);
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    await fs.rmdir(path.dirname(folder)).catch(() => undefined);
   }
 }

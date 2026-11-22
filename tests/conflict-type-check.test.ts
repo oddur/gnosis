@@ -7,8 +7,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import {
+  CRASHED,
   FROM_FORK,
+  INCOMPLETE,
   NO_DEPENDENCIES,
+  REFERENCES,
+  TypeCheckSkipped,
+  withoutRoots,
   NOT_SUPPORTED,
   TIMED_OUT,
   checkedText,
@@ -39,23 +44,32 @@ async function clone(t: TestContext, options: { remote?: string; modules?: boole
   await exec('git', ['init', '-q', '-b', 'main'], { cwd: dir });
   await exec('git', ['remote', 'add', 'origin', `https://github.com/${options.remote ?? 'test/repo'}.git`], { cwd: dir });
   if (options.modules === false) return dir;
-  const lib = path.join(dir, 'node_modules', 'typescript', 'lib');
-  await fs.mkdir(lib, { recursive: true });
-  if (options.tsc !== undefined) await fs.writeFile(path.join(lib, 'tsc.js'), options.tsc);
-  else {
-    const source = path.resolve('node_modules/typescript');
-    await fs.copyFile(path.join(source, 'package.json'), path.join(dir, 'node_modules', 'typescript', 'package.json'));
-    for (const name of await fs.readdir(path.join(source, 'lib')))
-      if (/^(_?tsc\.js|lib\..*\.d\.ts)$/.test(name)) await fs.copyFile(path.join(source, 'lib', name), path.join(lib, name));
-  }
+  await installCompiler(dir, options.tsc);
   return dir;
 }
+/** The repository's own TypeScript compiler, copied into a clone's node_modules, or `tsc` as given. */
+async function installCompiler(dir: string, tsc?: string) {
+  const lib = path.join(dir, 'node_modules', 'typescript', 'lib');
+  await fs.mkdir(lib, { recursive: true });
+  if (tsc !== undefined) return fs.writeFile(path.join(lib, 'tsc.js'), tsc);
+  const source = path.resolve('node_modules/typescript');
+  await fs.copyFile(path.join(source, 'package.json'), path.join(dir, 'node_modules', 'typescript', 'package.json'));
+  for (const name of await fs.readdir(path.join(source, 'lib')))
+    if (/^(_?tsc\.js|lib\..*\.d\.ts)$/.test(name)) await fs.copyFile(path.join(source, 'lib', name), path.join(lib, name));
+}
+/** Node runs the compiler, as the service does in tests. */
+const realRun: RunScript = async (script, args, o) => {
+  const { runConflictProcess } = await import('../src/conflict-process');
+  const r = await runConflictProcess(process.execPath, [script, ...args], o);
+  return { code: r.code, stdout: r.stdout.toString('utf8'), stderr: r.stderr };
+};
 
 async function fixture(
   t: TestContext,
   options: {
     clone?: string;
-    tsconfig?: boolean;
+    /** The root tsconfig.json; false: none. */
+    tsconfig?: boolean | string;
     headRepo?: string;
     /** Extra files: name → [base, PR, main]. */
     files?: Record<string, [string, string, string]>;
@@ -76,7 +90,8 @@ async function fixture(
     await fs.writeFile(path.join(remote, 'sample.ts'), [SAMPLE.base, SAMPLE.ours, SAMPLE.theirs][version]);
     for (const [name, texts] of Object.entries(options.files ?? {})) await fs.writeFile(path.join(remote, name), texts[version]);
   };
-  if (options.tsconfig !== false) await fs.writeFile(path.join(remote, 'tsconfig.json'), TSCONFIG);
+  if (options.tsconfig !== false)
+    await fs.writeFile(path.join(remote, 'tsconfig.json'), typeof options.tsconfig === 'string' ? options.tsconfig : TSCONFIG);
   await write(0);
   await git('add', '.');
   await git('commit', '-qm', 'ancestor');
@@ -107,14 +122,17 @@ async function fixture(
   const runs: string[] = [];
   const changed: string[] = [];
   let listener: (() => void) | undefined;
+  /** Settings › Local clones and the GitHub account, which a test may change while a check runs. */
+  const live = { clone: options.clone, account: 'tester' };
   const deps = {
     storage: {
       read: (key: string) => structuredClone(data.get(key)),
       write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
       flush: async () => {},
+      names: () => [...data.keys()],
     },
     directory: () => path.join(dir, 'cache'),
-    context: () => ({ account: 'tester', token: 'not-a-real-token' }),
+    context: () => ({ account: live.account, token: 'not-a-real-token' }),
     read: () => Promise.resolve({ ...state }),
     remote: () => remote,
     // The shallow path, as in the app: the worktree's checkout fetches file contents on demand.
@@ -123,16 +141,11 @@ async function fixture(
     suggest: () => Promise.resolve({ explanation: '' }),
     // Every proposal passes the syntax checks here: the type check is what demotes it.
     verify: () => Promise.resolve({ merged: true, note: 'Passed.' }),
-    typeCheckClone: (repo: string) => (repo === 'test/repo' ? options.clone : undefined),
+    typeCheckClone: (repo: string) => (repo === 'test/repo' ? live.clone : undefined),
     typeCheckTimeout: options.timeout,
-    runScript: (async (script, args, o) => {
+    runScript: ((script, args, o) => {
       runs.push(script);
-      const { runConflictProcess } = await import('../src/conflict-process');
-      const result = await (options.run ?? (async () => {
-        const r = await runConflictProcess(process.execPath, [script, ...args], o);
-        return { code: r.code, stdout: r.stdout.toString('utf8'), stderr: r.stderr };
-      }))(script, args, o);
-      return result;
+      return (options.run ?? realRun)(script, args, o);
     }) as RunScript,
     typeCheckChanged: (id: string) => {
       changed.push(id);
@@ -151,7 +164,13 @@ async function fixture(
   };
   const sessionDir = await conflictSessionDirectory(deps.directory(), 'tester', session.id);
   const saved = () => data.get(`conflict-draft:tester:${session.id}`) as ConflictSession;
-  return { service, session, settled, runs, changed, sessionDir, saved, state, deps };
+  /** Waits until the compiler has started `count` times. */
+  const started = async (count = 1) => {
+    for (let i = 0; i < 400 && runs.length < count; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.equal(runs.length, count, 'The compiler started');
+  };
+  const open = (restart = false) => service.run({ kind: 'open', url: state.url, restart }, new AbortController().signal);
+  return { service, session, settled, started, open, runs, changed, sessionDir, saved, state, deps, live };
 }
 
 /** No worktree is left behind: Git lists only the session repository, and the private folder is gone. */
@@ -159,7 +178,17 @@ async function cleanedUp(sessionDir: string) {
   const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], { cwd: sessionDir });
   assert.equal(stdout.split('\n').filter((line) => line.startsWith('worktree ')).length, 1, stdout);
   await assert.rejects(fs.stat(path.join(sessionDir, 'type-check')));
+  await assert.rejects(fs.stat(path.join(sessionDir, 'worktrees')), 'No worktree entry is left');
 }
+/** Waits for a check that was stopped to let go of its worktree. */
+async function eventuallyCleanedUp(sessionDir: string) {
+  for (let i = 0; i < 200; i++) {
+    if (!(await fs.stat(path.join(sessionDir, 'type-check')).catch(() => undefined))) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  await cleanedUp(sessionDir);
+}
+const HANG = 'setInterval(() => {}, 1000);\n';
 
 void test('type check: a Merged proposal that breaks types is demoted to Check with the error; errors elsewhere are information', async (t) => {
   const linked = await clone(t);
@@ -268,7 +297,7 @@ void test('type check: never runs for a fork, or with a clone whose remote is an
 });
 
 void test('type check: a compiler that hangs times out, and Stop cancels it; the worktree is removed either way', async (t) => {
-  const hang = 'setInterval(() => {}, 1000);\n';
+  const hang = HANG;
   const slow = await fixture(t, { clone: await clone(t, { tsc: hang }), timeout: 1500 });
   assert.deepEqual(await slow.settled(), { state: 'skipped', reason: TIMED_OUT } satisfies ConflictTypeCheck);
   await cleanedUp(slow.sessionDir);
@@ -281,6 +310,137 @@ void test('type check: a compiler that hangs times out, and Stop cancels it; the
   // Nothing was demoted.
   const saved = stopped.saved().files[0];
   assert.equal(saved.typeError, undefined);
+});
+
+void test('type check: each run has its own folder, and its cleanup touches nothing else (round 1, item 1)', async (t) => {
+  let other = '';
+  const f = await fixture(t, {
+    clone: await clone(t),
+    run: async (script, args, o) => {
+      // Another run's folder beside this one, made while this one runs.
+      other ||= path.join(o.cwd, '..', '..', 'other-run');
+      await fs.mkdir(other, { recursive: true });
+      await fs.writeFile(path.join(other, 'keep.txt'), 'another run');
+      return realRun(script, args, o);
+    },
+  });
+  assert.equal((await f.settled())?.state, 'errors');
+  assert.equal(await fs.readFile(path.join(other, 'keep.txt'), 'utf8'), 'another run');
+  assert.deepEqual(await fs.readdir(path.join(f.sessionDir, 'type-check')), ['other-run']);
+  await fs.rm(path.join(f.sessionDir, 'type-check'), { recursive: true });
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: a head run whose output is cut off, or whose exit code contradicts it, is skipped (item 4)', async (t) => {
+  let calls = 0;
+  const cut = await fixture(t, {
+    clone: await clone(t),
+    run: async (script, args, o) =>
+      ++calls === 1 ? realRun(script, args, o) : { code: 2, stdout: 'sample.ts(1,1): error TS1005: Cut', stderr: '' },
+  });
+  assert.deepEqual(await cut.settled(), { state: 'skipped', reason: INCOMPLETE });
+  assert.equal(cut.saved().files[0].typeError, undefined, 'Nothing is demoted on output that was cut off');
+  await cleanedUp(cut.sessionDir);
+  const contradicts = await fixture(t, {
+    clone: await clone(t),
+    run: () => Promise.resolve({ code: 0, stdout: 'sample.ts(1,1): error TS2322: Wrong.\n', stderr: '' }),
+  });
+  assert.deepEqual(await contradicts.settled(), { state: 'skipped', reason: INCOMPLETE });
+  // A crashed compiler (the utility process's 'error') is skipped too.
+  const crashed = await fixture(t, {
+    clone: await clone(t),
+    run: () => Promise.reject(new TypeCheckSkipped(CRASHED)),
+  });
+  assert.deepEqual(await crashed.settled(), { state: 'skipped', reason: CRASHED });
+  await cleanedUp(crashed.sessionDir);
+});
+
+void test('type check: a new preparation stops the running check before its folder goes (item 5)', async (t) => {
+  const f = await fixture(t, { clone: await clone(t, { tsc: HANG }) });
+  await f.started();
+  const { session } = await f.open(true);
+  // The new preparation's own check runs; the first one's result is never used.
+  await f.started(2);
+  assert.equal(f.service.typeCheck(session.id)?.state, 'running');
+  f.service.cancelTypeCheck(session.id);
+  assert.deepEqual(await f.settled(), { state: 'cancelled' });
+  await eventuallyCleanedUp(f.sessionDir);
+});
+
+void test('type check: a skipped check runs again on the next open (item 6)', async (t) => {
+  const linked = await clone(t, { modules: false });
+  const f = await fixture(t, { clone: linked });
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: NO_DEPENDENCIES });
+  await installCompiler(linked);
+  await f.open();
+  assert.equal((await f.settled())?.state, 'errors');
+  assert.equal(f.runs.length, 2);
+});
+
+void test('type check: turning the setting off, or another clone, stops the check at once (item 7)', async (t) => {
+  for (const next of [undefined, '/elsewhere']) {
+    const f = await fixture(t, { clone: await clone(t, { tsc: HANG }) });
+    await f.started();
+    f.live.clone = next;
+    f.service.typeCheckSettingsChanged();
+    assert.equal(f.service.typeCheck(f.session.id), undefined, 'Gone at once');
+    await eventuallyCleanedUp(f.sessionDir);
+    assert.equal(f.service.typeCheck(f.session.id), undefined, 'No late result');
+  }
+});
+
+void test('type check: a solution tsconfig that checks no file of its own is not supported yet (item 8)', async (t) => {
+  const f = await fixture(t, {
+    clone: await clone(t),
+    tsconfig: JSON.stringify({ files: [], references: [{ path: './tsconfig.lib.json' }] }),
+    files: {
+      'tsconfig.lib.json': Array(3).fill(
+        JSON.stringify({ compilerOptions: { composite: true, strict: true, types: [], lib: ['es2020'] }, include: ['*.ts'] })
+      ) as [string, string, string],
+    },
+  });
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: REFERENCES });
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: the time limit covers Git too (item 9)', async (t) => {
+  const f = await fixture(t, { clone: await clone(t), timeout: 1 });
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: TIMED_OUT });
+  assert.equal(f.runs.length, 0, 'Stopped before the compiler');
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: cleanup survives an account change, and startup removes leftovers (item 10)', async (t) => {
+  const linked = await clone(t, { tsc: HANG });
+  const f = await fixture(t, { clone: linked, timeout: 1500 });
+  await f.started();
+  // The account changes while the compiler runs; the run times out and still removes its worktree.
+  f.live.account = 'someone-else';
+  await eventuallyCleanedUp(f.sessionDir);
+  f.live.account = 'tester';
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: TIMED_OUT });
+  // What a crash leaves: a worktree with its link to the clone, and a folder of the first layout with one.
+  const leftover = path.join(f.sessionDir, 'type-check', 'crashed', 'merge');
+  await exec('git', ['worktree', 'add', '--no-checkout', '--detach', leftover, f.state.headSha], { cwd: f.sessionDir });
+  await fs.symlink(path.join(linked, 'node_modules'), path.join(leftover, 'node_modules'));
+  await fs.mkdir(path.join(f.sessionDir, 'type-check', 'legacy'));
+  await fs.symlink(path.join(linked, 'node_modules'), path.join(f.sessionDir, 'type-check', 'legacy', 'node_modules'));
+  await f.service.maintain();
+  await cleanedUp(f.sessionDir);
+  assert.ok((await fs.stat(path.join(linked, 'node_modules', 'typescript', 'lib', 'tsc.js'))).isFile(), 'The clone is untouched');
+});
+
+void test('type check: paths are compared without the folder they were checked in (item 2)', () => {
+  const merge = [{ file: 'a.ts', line: 1, code: 'TS2307', message: "Cannot find module '/tmp/s/type-check/r1/merge/gen/x'." }];
+  const head = [{ file: 'a.ts', line: 3, code: 'TS2307', message: "Cannot find module '/tmp/s/type-check/r1/head/gen/x'." }];
+  const clean = (d: typeof merge, root: string) => withoutRoots(d, [[root, ''], ['/clone', '<clone>']]);
+  assert.deepEqual(clean(merge, '/tmp/s/type-check/r1/merge')[0].message, "Cannot find module 'gen/x'.");
+  assert.deepEqual(newErrors(clean(merge, '/tmp/s/type-check/r1/merge'), clean(head, '/tmp/s/type-check/r1/head')), []);
+  assert.equal(
+    withoutRoots([{ file: '/clone/node_modules/x.d.ts', code: 'TS1', message: 'In /clone/node_modules/x.d.ts' }], [['/clone', '<clone>']])[0]
+      .message,
+    'In <clone>/node_modules/x.d.ts'
+  );
 });
 
 void test('type check: diagnostics, new errors and the checked text', () => {

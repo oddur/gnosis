@@ -45,13 +45,14 @@ A repository with a linked local clone can turn on **Type-check conflict resolut
 
 Running a repository's type checker runs the repository's code, so the check is narrow:
 
-- Only TypeScript, with a `tsconfig.json` at the repository root. Other projects show "not supported yet".
+- Only TypeScript, with a `tsconfig.json` at the repository root that checks files of its own. Other projects show "not supported yet", and so does a solution tsconfig with only project references: a check of no files never reads as passed.
 - Only the compiler that is already installed in your clone (`node_modules/typescript/lib/tsc.js`), with `--noEmit` and no build info. Gnosis never runs `npm install`, a package script or a shell. Without `node_modules` in the clone, the check is skipped: "dependencies aren't installed in your clone".
 - Never for a PR from a fork, and never when the clone has no GitHub remote for the PR's repository.
-- The compiler runs in a private worktree of the PR's Git cache at the merge result, with the clone's `node_modules` linked in. Your clone is only read. The worktree is removed afterwards.
-- The check stops after 2 minutes, and never blocks the view.
+- The compiler runs in a private worktree of the PR's Git cache at the merge result, with the clone's `node_modules` linked in. Your clone is only read. Each run has its own folder, and removes only its own worktrees, also after the account changed. Startup removes what a quit or crash left.
+- The whole run, Git included, stops after 2 minutes, and never blocks the view. A new preparation, Discard, turning the setting off, or another clone folder stops a running check at once, and nothing it finds is used.
+- Output that is cut off, an exit code that doesn't match the output, or a compiler that crashes skips the check; it never counts as errors. A skipped or stopped check runs again the next time the conflicts open.
 
-A conflict that is still open is checked with the PR's side. When the merge has errors, Gnosis checks the PR head the same way, and only errors the head does not have count. An error is its file, code and message, because lines move in a merge. New errors in a conflicted file put that file's Merged conflicts in Check, with the first errors as the note. They stay in Check while the file's proposals are the ones that were checked. New errors in other files are information: the status line lists them on hover or focus.
+A conflict that is still open is checked with the PR's side. When the merge has errors, Gnosis checks the PR head the same way, and only errors the head does not have count. An error is its file, code and message, without the folder it was checked in, because lines move in a merge. New errors in a conflicted file put that file's Merged conflicts in Check, with the first errors as the note. They stay in Check while the file's proposals are the ones that were checked. New errors in other files are information: the status line lists them on hover or focus.
 
 Without a linked clone, with dependencies missing, or for a fork, there is no type check: watch the PR's own checks after the push, and undo the push if they fail.
 

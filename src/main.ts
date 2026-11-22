@@ -2383,15 +2383,18 @@ const localCloneStore = createLocalCloneStore(() => path.join(app.getPath('userD
 ipcMain.handle('local-clones', () => localClones.status());
 ipcMain.handle('connect-local-clone', async (_event, repo: string, directory: string) => {
   localClones.configure(await localCloneStore.connect(repo, directory));
+  conflicts.typeCheckSettingsChanged();
   return localClones.status();
 });
 ipcMain.handle('local-clone-type-check', (_event, repo: unknown, on: unknown) => {
   if (typeof repo !== 'string' || typeof on !== 'boolean') throw new Error('Invalid type check setting.');
   localClones.configure(localCloneStore.setTypeCheck(repo, on));
+  conflicts.typeCheckSettingsChanged();
   return localClones.status();
 });
 ipcMain.handle('disconnect-local-clone', (_event, repo: string) => {
   localClones.configure(localCloneStore.disconnect(repo));
+  conflicts.typeCheckSettingsChanged();
   return localClones.status();
 });
 
