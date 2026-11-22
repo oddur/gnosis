@@ -943,7 +943,6 @@ const mocks = {
   onPreferencesChanged: () => () => {},
   // The PR header's conflict line (lib/use-conflict-header.ts): no background preparation in the fixture.
   conflictHeader: () => Promise.resolve(null),
-  conflictPushed: () => Promise.resolve(null),
   onConflictHeaderChanged: () => () => {},
   onActivityChanged: (callback: () => void) => {
     window.addEventListener('fixture-activity-change', callback);

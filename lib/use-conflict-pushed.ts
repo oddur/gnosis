@@ -12,7 +12,7 @@ export function useConflictPushed(url: string, headSha: string, enabled: boolean
     if (!enabled || !url.startsWith('https://github.com/') || !/^[a-f0-9]{40,64}$/.test(headSha)) return;
     let live = true;
     const read = () =>
-      window.electronAPI.conflictPushed(url, headSha).then(
+      (window.electronAPI.conflictPushed?.(url, headSha) ?? Promise.resolve(null)).then(
         (value) => {
           if (live) setPushed({ key, value: value ?? undefined });
         },

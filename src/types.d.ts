@@ -218,12 +218,15 @@ declare global {
       conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest) => Promise<import('../lib/conflict-resolution').ConflictReply>;
       /** The PR header's conflict line (lib/conflict-header.ts); asking also prepares the PR's conflicts in the background. */
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
-      conflictPushed: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
+      conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
       /** Local counts for Settings › Diagnostics › Conflict resolution stats (lib/conflict-stats.ts). Fire and forget. */
       recordConflictChoice?: (choice: import('../lib/conflict-stats').ConflictChoice) => void;
       conflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;
       resetConflictStats?: () => Promise<import('../lib/conflict-stats').ConflictStats>;
       onConflictHeaderChanged: (callback: (url: string) => void) => () => void;
+      /** The cascade preview before a push (lib/conflict-cascade.ts); asking starts it once per draft version. */
+      conflictCascade?: (id: string, version: number, retry?: boolean) => Promise<import('../lib/conflict-cascade').CascadeState | null>;
+      onConflictCascadeChanged?: (callback: (id: string) => void) => () => void;
       getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
       /** Who may change the PR's reviewers, assignees, labels and milestone. */
       getPrPeopleAccess: (url: string) => Promise<import('../lib/pr-people').PrPeopleAccess>;
