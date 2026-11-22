@@ -25,6 +25,8 @@ The switch never hides a conflict. Each Check and Decide card stays under its co
 
 Structural merge runs on every file while the merge is prepared, so there is no engine to choose. **Ask <model>…** (the Bot icon) asks the selected model about the open file, with optional instructions. Its result is a draft: it never marks a file reviewed. The model gets the three versions, your draft and the PR context, without a checkout or test runner.
 
+When one side moved or renamed a function and the other side edited it, and structural merge proposed nothing for the file, Gnosis may propose the moved function with the other side's edit applied at its new place. It proposes this only when the move is unambiguous (one source, one target, the same body apart from the edit), every open conflict is at that function, the edit applies to lines the moving side did not change, and the result parses and keeps every line of both sides. The proposal covers the whole file and is always **Check**, never Merged: call sites in other files were not checked. **Use this result** puts it in the draft as it is. It is only an extra: a file with other proposals gets none, the draft stays as Git wrote it until you use it, and **Try structural merge again** stays where structural merge timed out. A move into another file is not proposed: that file merged cleanly and is not part of the resolution.
+
 A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
 
 Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
@@ -42,7 +44,15 @@ Opening a file focuses the first conflict that needs you, or the file's next act
 
 ## Confirm and push
 
-The confirmation is the only place that pushes. It shows the final update in two parts: **Your resolutions** (the files you resolved) and **Changes coming from the base branch** (files Git merged cleanly). It names the author's branch and says that approvals may be dismissed if the repository requires it. Enter a commit message and select **Push merge commit**. Enter alone never pushes. The title and **Push merge commit** stay in view; only the diff between them scrolls.
+The confirmation is the only place that pushes. It names the author's branch and says that approvals may be dismissed if the repository requires it. It shows the final update in three groups, in the same diff as the Conflicts view, with Quiet off:
+
+- **You decided** (open): every conflict you resolved. That is a Keep, **Use the proposal** after another choice, a proposal in Check in a file you marked reviewed, or a file whose conflicts can't be told apart from the rest of its draft. A note under each conflict says what you chose. A whole file's note says what produced it: your edit, the suggestion or structural merge you used, or a remembered resolution.
+- **Merged for you** (collapsed): proposals that passed every check and that you didn't change. A Keep whose text is the same as the proposal is yours, and so is every conflict in a file you edited.
+- **Arriving from main** (collapsed): the base branch's changes that didn't conflict. First its lines outside the conflicts in the conflicted files, and its renames of them, then the files Git merged on its own. A binary or mode-only file says what changed, such as "Binary file changed" or "Mode 100644 → 100755". The list scrolls on its own, and a file's diff loads when it scrolls into view.
+
+Each heading counts what it holds, such as "You decided · 2 conflicts in 1 file". The three diffs add up to the update. A file needs you while it needs a local merge tool, has a conflict marker left or isn't marked reviewed; a reviewed file without markers is yours. **Review and push…** opens the confirmation only when no file needs you. If one does, the confirmation shows no counts and Push stays off. A clean merge shows only **Arriving from main**, open.
+
+Enter a commit message and select **Push merge commit**, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus. Enter alone never pushes, and Enter or Space on the button does nothing. The title and **Push merge commit** stay in view; only the diff between them scrolls.
 
 After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit. **Done** closes the workspace.
 
@@ -116,7 +126,7 @@ The preparation reads the live target branch tip (`baseRef.target.oid`), not the
 
 The conflict lab (`tests/fixtures/conflicts`, `npm run conflict-lab`) runs real conflicts through the conflict service and checks the bucket of each conflict. Its README describes the cases and the generated matrix.
 
-The resolver audit checks the checks. Each resolver and rule runs over the lab's cases as the service runs it: Mergiraf, unions of both sides' additions, the PR's version of a change both sides made, the rule for a side that only reformatted, earlier resolutions (each case's known-correct resolution, replayed as rerere would replay it) and whole-file proposals. Each result that passes the checks is then changed in one wrong way at a time:
+The resolver audit checks the checks. Each resolver and rule runs over the lab's cases as the service runs it: Mergiraf, unions of both sides' additions, the PR's version of a change both sides made, the rule for a side that only reformatted, earlier resolutions (each case's known-correct resolution, replayed as rerere would replay it), whole-file proposals and the move rule's proposals (`moved`, also run without structural merge). Each result that passes the checks is then changed in one wrong way at a time:
 
 | Mutation | What changes |
 | --- | --- |

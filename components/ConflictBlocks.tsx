@@ -27,7 +27,7 @@ import type { CompareWith } from '../lib/conflict-diff';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
 /** What the proposal is. A Merged one the same-change rule decided is the PR's version, whoever proposed it. */
-const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
+export const proposalWhat = (proposal: ConflictProposal, verdict?: BlockVerdict) =>
   proposal.source === 'rerere'
     ? 'Same as you resolved before'
     : proposal.source === 'union'
@@ -396,14 +396,17 @@ export function useConflictChoices({
   contents: string;
   proposals?: readonly (ConflictProposal | null)[];
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
   onChange: (contents: string) => void;
   disabled: boolean;
   handle?: Ref<ConflictViewHandle>;
   onAllResolved?: () => void;
   verdict?: Verdict;
-  /** Each choice with the one it replaces, for the local stats (lib/conflict-stats.ts). Undefined is Undo. */
-  onChoice?: (index: number, before: BlockPick | undefined, after: BlockPick | undefined) => void;
+  /**
+   * Each choice with the one it replaces and your saved pick for it, for the local stats (lib/conflict-stats.ts).
+   * Undefined is Undo.
+   */
+  onChoice?: (index: number, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const model = useMemo(
@@ -488,8 +491,9 @@ export function useConflictChoices({
     const next = [...model.choices];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
-    onChoice?.(index, model.choices[index], choice);
-    onPick?.(index, choice === 'proposal' ? undefined : choice);
+    onChoice?.(index, model.choices[index], choice, picks?.[index]);
+    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick.
+    onPick?.(index, choice);
     onChange(applyChoices(model.segments, next, proposals));
   }
   useEffect(() => {
@@ -599,7 +603,7 @@ export function ConflictView({
   onAllResolved?: () => void;
   /** Your Keep choices, so one that equals the proposal still reads as yours (withPicks). */
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
 }) {
   const { root, model, total, choose } = useConflictChoices({
     original,
@@ -685,7 +689,7 @@ export function WholeFile({
       data-bucket="check"
       data-conflict-index={-1}
       tabIndex={0}
-      aria-label={`Whole file. Check: structural merge combined both sides. ${note}`}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : 'structural merge combined both sides'}. ${note}`}
     >
       <header className="conflict-block-header">
         <strong>Whole file</strong>

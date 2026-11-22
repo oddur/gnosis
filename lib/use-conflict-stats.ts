@@ -8,8 +8,15 @@ import type { BlockPick } from './conflict-blocks';
  */
 export function useConflictChoiceStats() {
   return useCallback(
-    (id: string, path: string, key: string | undefined, before: BlockPick | undefined, after: BlockPick | undefined) => {
-      const count = choiceEvent(before, after);
+    (
+      id: string,
+      path: string,
+      key: string | undefined,
+      before: BlockPick | undefined,
+      after: BlockPick | undefined,
+      picked: BlockPick | undefined
+    ) => {
+      const count = choiceEvent(before, after, picked);
       if (!count || !key) return;
       try {
         window.electronAPI.recordConflictChoice?.({ id, path, key, count });

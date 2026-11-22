@@ -254,8 +254,10 @@ export function countPushed(session: ConflictSession): ConflictStatsEvent[] {
     if (!texts) continue;
     blocks.forEach((block, index) => {
       const proposal = file.proposals?.[index];
-      if (block && block.bucket !== 'decide' && proposal && texts[index] === proposal.text && !file.picks?.[index])
-        add(block.bucket);
+      // A Keep is yours, whatever its text; picking the proposal again (`'proposal'`) is not a Keep.
+      const pick = file.picks?.[index];
+      const keep = !!pick && pick !== 'proposal';
+      if (block && block.bucket !== 'decide' && proposal && texts[index] === proposal.text && !keep) add(block.bucket);
     });
   }
   if (!counted) return [];
@@ -267,14 +269,16 @@ export function countPushed(session: ConflictSession): ConflictStatsEvent[] {
 
 /**
  * What a choice in the workspace counts as. Undone: Undo removed Gnosis's untouched proposal. Re-chosen: a different
- * option than the one in place, a Keep or the proposal. Undoing your own Keep counts nothing.
+ * option than the one in place, a Keep or the proposal. Undoing your own choice counts nothing, also the proposal you
+ * picked again after another choice (`picked` is `'proposal'`).
  */
 export function choiceEvent(
   before: BlockPick | undefined,
-  after: BlockPick | undefined
+  after: BlockPick | undefined,
+  picked?: BlockPick
 ): ConflictChoice['count'] | undefined {
   if (before === undefined) return undefined;
-  if (after === undefined) return before === 'proposal' ? 'undone' : undefined;
+  if (after === undefined) return before === 'proposal' && picked !== 'proposal' ? 'undone' : undefined;
   return after === before ? undefined : 'rechosen';
 }
 /**

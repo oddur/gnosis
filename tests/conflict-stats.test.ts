@@ -249,6 +249,10 @@ void test('item 2: a push counts a proposal as accepted only when provably uncha
   assert.equal(countPushed(same).length, 2, 'The same text without a Keep is the proposal');
   same.files[0].picks = ['ours', 'theirs'];
   assert.deepEqual(countPushed(same), [{ kind: 'session', count: 'pushed' }]);
+  // The proposal picked again (#489) is not a Keep: it is still accepted as is.
+  const repicked = structuredClone(s);
+  repicked.files[0].picks = ['proposal', 'theirs'];
+  assert.equal(countPushed(repicked).length, 2);
   // A result edited around the conflicts cannot be split: nothing counts for it.
   const edited = structuredClone(s);
   edited.files[0].result = edited.files[0].result.replace('middle', 'edited by hand');
@@ -289,6 +293,10 @@ void test('item 8: undone means Undo removed the untouched proposal', () => {
   assert.equal(choiceEvent('proposal', 'theirs'), 'rechosen');
   assert.equal(choiceEvent('ours', 'proposal'), 'rechosen');
   assert.equal(choiceEvent('ours', 'ours'), undefined);
+  // The proposal picked again after another choice (#489) is yours: changing to it is re-chosen, undoing it is nothing.
+  assert.equal(choiceEvent('ours', 'proposal', 'ours'), 'rechosen');
+  assert.equal(choiceEvent('proposal', undefined, 'proposal'), undefined);
+  assert.equal(choiceEvent('proposal', 'theirs', 'proposal'), 'rechosen');
 });
 
 void test('item 1: undone and re-chosen count once per conflict, saved on the draft', () => {

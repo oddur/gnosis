@@ -1,0 +1,9 @@
+{
+  "description": "The PR moves orderTotal to the end of the file; main fixes a line inside it. The right result is the moved function with main’s fix. Gnosis proposes it in Check, never Merged. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "typescript",
+  "category": "structure/move-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "src/pricing.ts": "check"
+  }
+}

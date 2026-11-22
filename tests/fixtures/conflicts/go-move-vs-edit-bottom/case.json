@@ -1,0 +1,9 @@
+{
+  "description": "The PR moves ParsePairs to the end of the file; main changes a line inside it. The right result is the moved function with main’s change. Gnosis proposes it in Check, never Merged. Mergiraf fails on this case, so it tests the move rule alone (#445 item 17); with Mergiraf, its own whole-file proposal comes first.",
+  "language": "go",
+  "category": "structure/move-vs-edit",
+  "mergiraf": "fail",
+  "expected": {
+    "lab/pairs.go": "check"
+  }
+}

@@ -4281,6 +4281,24 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-disclosure { display:inline-flex;align-items:center;gap:6px;font-weight:600; }
 .conflict-disclosure > svg { transition:transform 150ms ease-out; }
 .conflict-disclosure[aria-expanded=true] > svg { transform:rotate(90deg); }
+/* The confirmation's groups (#445 item 12): You decided, Merged for you, Arriving from main. Each file is the
+   Conflicts view's diff, with a one-line note under each conflict. */
+.conflict-confirm-group + .conflict-confirm-group { padding-top:12px;border-top:1px solid var(--border); }
+.conflict-confirm-group > h3 { margin-bottom:0; }
+.conflict-confirm-group [data-confirm-count] { color:var(--muted-foreground);font-weight:500; }
+.conflict-confirm-group-body { display:flex;flex-direction:column;gap:12px;margin-top:10px; }
+.conflict-confirm-group-body > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
+.conflict-confirm-file { display:flex;flex-direction:column;gap:6px; }
+/* Arriving from main is virtualized in a scroller of its own, capped in height: hundreds of files open at once. */
+.conflict-confirm-arriving { overflow:auto;overscroll-behavior:contain;min-height:0; }
+.conflict-confirm-arriving .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
+.conflict-confirm-file > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
+.conflict-confirm-lead { color:var(--muted-foreground);font-size:var(--type-caption); }
+.conflict-confirm-note { display:flex;align-items:center;gap:6px;font-size:var(--type-caption);font-weight:600; }
+.conflict-confirm-note > svg { flex:none;color:var(--color-success); }
+/* Under a conflict's lines, the note is a card like the Conflicts view's, on the app surface, not the code's. */
+.conflict-diff-cards > .conflict-confirm-note { align-self:flex-start;padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);color:var(--foreground); }
+.conflict-confirm-file > .conflict-confirm-note { font-weight:500;color:var(--muted-foreground); }
 .conflict-whitespace summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 
 /* Outcome after the push. */

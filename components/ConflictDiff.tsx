@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
-import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
+import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffMetadata, type FileDiffOptions } from '@pierre/diffs';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { diffThemeName } from '../lib/diff-worker-pool';
 import { applyCodePalette } from '../lib/diff-code-palette';
@@ -24,7 +24,6 @@ import {
 import { blockVerdict, type Verdict } from '../lib/conflict-verify';
 import {
   shortBranch,
-  type BlockChoice,
   type BlockPick,
   type BlockPicks,
   type ConflictLabels,
@@ -51,12 +50,13 @@ const showsLine = (hunks: readonly GapHunk[], line: number) =>
 /**
  * One file of the Conflicts view as Changes shows a file (#445 item 8): DiffFileHeader over ChangesDiff, through
  * useDiffFileModel, so breadcrumbs, show scope and the code palette are the same. Quiet changes never apply.
- * `before` is the PR's version; `pins` keep lines in view that do not change, so a card can sit under them.
+ * `before` is the PR's version; `pins` keep lines in view that do not change, so a card can sit under them. With
+ * `patch` (a file of the push confirmation that Git merged on its own) the hunks come from the patch and cannot expand.
  */
 export function ConflictFileDiff<A>({
   name,
-  before,
-  after,
+  before: beforeText = '',
+  after: afterText = '',
   fileKey,
   pins = [],
   annotate,
@@ -65,10 +65,13 @@ export function ConflictFileDiff<A>({
   label,
   actions,
   bare = false,
+  patch,
+  previousPath,
+  note,
 }: {
   name: string;
-  before: string;
-  after: string;
+  before?: string;
+  after?: string;
   /** The session and file: reveals and shown scopes stay under it while the draft changes. */
   fileKey: string;
   pins?: readonly (readonly [number, number])[];
@@ -85,7 +88,17 @@ export function ConflictFileDiff<A>({
    * lines. Its numbers would count from the conflict, not the file.
    */
   bare?: boolean;
+  /** The file's change as a parsed patch, in place of `before` and `after`. */
+  patch?: FileDiffMetadata;
+  /** The file's path before a rename. */
+  previousPath?: string;
+  /** What changes besides lines, in the header: "Binary file changed", "Mode 100644 → 100755". */
+  note?: string;
 }) {
+  const before = patch ? '' : beforeText;
+  const after = patch ? '' : afterText;
+  const status = patch ? patchStatus(patch) : previousPath ? 'renamed' : 'modified';
+  const oldPath = patch?.prevName ?? previousPath;
   const sectionRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const appearance = useDiffAppearance(preferences?.diffAppearance);
@@ -96,7 +109,9 @@ export function ConflictFileDiff<A>({
   const { hunks, annotations, additions, deletions } = useMemo(() => {
     let base: GapHunk[] = [];
     try {
-      base = hunksFromDiff(parseDiffFromFile({ name, contents: before }, { name, contents: after }, { context }, true));
+      base = hunksFromDiff(
+        patch ?? parseDiffFromFile({ name, contents: before }, { name, contents: after }, { context }, true)
+      );
     } catch {
       /* Shown as the pinned lines alone. */
     }
@@ -115,10 +130,11 @@ export function ConflictFileDiff<A>({
       additions: rows.filter((row) => row.type === '+').length,
       deletions: rows.filter((row) => row.type === '-').length,
     };
-  }, [name, before, after, context, pins, annotate, bare]);
+  }, [name, before, after, context, pins, annotate, bare, patch]);
   const contents = useMemo(
-    (): PrFileContents => ({ before: { kind: 'text', content: before }, after: { kind: 'text', content: after } }),
-    [before, after]
+    (): PrFileContents | undefined =>
+      patch ? undefined : { before: { kind: 'text', content: before }, after: { kind: 'text', content: after } },
+    [before, after, patch]
   );
   // Parsed definitions are cached by revision: each draft this mount shows is one, numbered as it changes.
   const lineCount = useMemo(() => afterLines(after).length, [after]);
@@ -132,12 +148,12 @@ export function ConflictFileDiff<A>({
     path: name,
     hunks,
     contents,
-    expandable: !bare,
+    expandable: !bare && !patch,
     active: true,
     readStructure: false,
     codeSettings,
     sectionRef,
-    status: 'modified',
+    status,
     // Quiet changes never apply here: a whitespace or formatting difference between the sides is part of the decision.
     noiseFilter: NO_NOISE_FILTER,
   });
@@ -169,7 +185,10 @@ export function ConflictFileDiff<A>({
         <DiffFileHeader
           headerRef={headerRef}
           path={name}
-          status="modified"
+          previousPath={oldPath}
+          status={status}
+          stats={note && !hunks.length ? `${status} · ${note}` : undefined}
+          tags={note && hunks.length ? <span className="changes-file-noise">{note}</span> : undefined}
           additions={additions}
           deletions={deletions}
           countsLabel={label}
@@ -181,7 +200,7 @@ export function ConflictFileDiff<A>({
         {model.parts && model.parts.length > 0 && (
           <ChangesDiff
             parts={model.parts}
-            file={{ name, status: 'modified' }}
+            file={{ name, prevName: oldPath, status }}
             layout={layout}
             options={options}
             annotations={annotations}
@@ -207,6 +226,16 @@ export function ConflictFileDiff<A>({
     </section>
   );
 }
+
+/** A parsed patch's change type in Changes' words. */
+const patchStatus = (patch: FileDiffMetadata) =>
+  patch.type === 'new'
+    ? 'added'
+    : patch.type === 'deleted'
+      ? 'deleted'
+      : patch.type === 'change'
+        ? 'modified'
+        : 'renamed';
 
 const COMPARE_KEY = 'gnosis-conflict-compare';
 /** The last Compare with choice, in sessionStorage: every file and PR opens with it while the window stays open. */
@@ -459,14 +488,14 @@ export function ConflictDiff({
   handle?: Ref<ConflictViewHandle>;
   onAllResolved?: () => void;
   picks?: BlockPicks;
-  onPick?: (index: number, choice: BlockChoice | undefined) => void;
+  onPick?: (index: number, choice: BlockPick | undefined) => void;
   /** Each choice with the one it replaces and the conflict's fingerprint, for the local stats. Undefined is Undo. */
-  onChoice?: (key: string | undefined, before: BlockPick | undefined, after: BlockPick | undefined) => void;
+  onChoice?: (key: string | undefined, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
   const { root, model, total, choose } = useConflictChoices({
-    onChoice: onChoice && ((index, before, after) => onChoice(statsKeys?.[index], before, after)),
+    onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
     proposals,

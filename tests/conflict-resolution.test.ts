@@ -18,7 +18,8 @@ import { blockBuckets, CHECKS_VERSION, verifyProposals } from '../lib/conflict-v
 import { verdictKey } from '../lib/conflict-verdict-key';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { conflictChecker, createConflictCheckWorker } from '../src/conflict-checks';
+import { conflictChecker, createConflictCheckWorker, moveProposer } from '../src/conflict-checks';
+import { canRetryStructural } from '../lib/conflict-flow';
 const exec = promisify(execFile);
 async function fixture(
   t: TestContext,
@@ -128,7 +129,9 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   ).session;
   // Your Keep choices are saved with the draft (#445 item 8), so a Keep never reads as Merged after a reopen.
   assert.deepEqual(session.files[0].picks, ['ours']);
-  assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal'] }));
+  assert.throws(() => validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['mine'] }));
+  // Use the proposal after another choice is a pick too (#445 item 12): the confirmation lists it as yours.
+  validateConflictRequest({ kind: 'save', id: session.id, version: 1, path: 'a', contents: '', resolved: false, picks: ['proposal', null] });
   const preview = (await f.run({ kind: 'preview', id: session.id, version: session.version })).preview;
   assert.ok(preview);
   assert.match(preview.patch, /from-main.txt/);
@@ -1935,4 +1938,81 @@ void test('a file structural merge gave no result stays eligible, and the next r
   assert.equal(file.structuralNote, undefined);
   assert.equal(file.result, file.original);
   assert.ok(file.proposals?.[0]);
+});
+
+/** The lab's ts-move-vs-edit-bottom case: the PR moves orderTotal to the end of the file, and main edits it. */
+async function movedCase() {
+  const dir = path.resolve('tests/fixtures/conflicts/ts-move-vs-edit-bottom');
+  const [base, ours, theirs, resolved] = await Promise.all(
+    ['base', 'ours', 'theirs', 'resolved'].map((side) => fs.readFile(path.join(dir, side, 'src/pricing.ts'), 'utf8'))
+  );
+  return { sample: { name: 'pricing.ts', base, ours, theirs }, resolved };
+}
+const movedEngine = createSyntaxEngine(TreeSitter, {
+  runtime: async () => new Uint8Array(await fs.readFile(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))),
+  grammar: async (language) =>
+    new Uint8Array(await fs.readFile(path.resolve('src/assets/tree-sitter', `${language}.wasm`))),
+  tags: (name) => fs.readFile(path.resolve('src/assets/tree-sitter', `${name}-tags.scm`), 'utf8'),
+});
+
+void test('a move rule proposal is an extra whole-file option: Use applies its text with no structural merge, and the retry stays', async (t) => {
+  const { sample, resolved } = await movedCase();
+  const f = await fixture(t, false, sample);
+  let structural = 0;
+  Object.assign(f.deps, {
+    // This build has no Mergiraf: the move rule runs on Git's conflicts.
+    mergiraf: () => {
+      structural++;
+      return path.join(os.tmpdir(), 'no-such-mergiraf');
+    },
+    moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file),
+  });
+  let session = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  let file = session.files.find((x) => x.path === 'pricing.ts') as ConflictFile;
+  assert.equal(file.wholeFile?.source, 'moved');
+  assert.equal(file.wholeFile.text, resolved);
+  assert.equal(file.wholeFile.note, 'The PR moved orderTotal, and main edited it.');
+  assert.equal(file.result, file.original, 'The draft stays as Git wrote it');
+  assert.equal(file.proposals, undefined);
+  assert.equal(file.structuralNote, 'Structural merge isn’t available in this build.', 'The note stays');
+  structural = 0;
+  session = (
+    await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'whole-file', path: file.path })
+  ).session;
+  file = session.files.find((x) => x.path === 'pricing.ts') as ConflictFile;
+  assert.equal(structural, 0, 'Using the proposal runs no structural merge');
+  assert.equal(file.result, resolved);
+  assert.equal(file.resolved, false, 'Using it does not review it');
+  assert.equal(file.source, 'manual');
+  assert.equal(file.wholeFile?.text, resolved, 'Reset file can return to the proposal');
+  // A move rule's proposal doesn't stop "Try structural merge again"; structural merge's own does.
+  const timedOut = { ...file, result: file.original, structuralNote: 'Structural merge timed out.' };
+  assert.equal(canRetryStructural(timedOut, true), true);
+  assert.equal(canRetryStructural({ ...timedOut, wholeFile: { source: 'mergiraf', text: resolved } }, true), false);
+});
+
+void test('the move rule never replaces per-conflict proposals or the draft', async (t) => {
+  const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
+  if (!(await fs.stat(binary).catch(() => undefined))) {
+    t.skip('Run npm run prepare:mergiraf for the native integration check.');
+    return;
+  }
+  const fn = (name: string, body: string) => `export function ${name}(a: number, b: number) {\n  return ${body};\n}\n\n`;
+  const before = (added: string) => `${fn('add', 'a + b')}${added}${fn('subtract', 'a - b')}`;
+  const f = await fixture(t, false, {
+    name: 'math.ts',
+    base: before(''),
+    ours: before(fn('multiply', 'a * b')),
+    theirs: before(fn('divide', 'a / b')),
+  });
+  // A move rule that proposes everywhere: the file keeps its union and its draft.
+  Object.assign(f.deps, { moved: () => Promise.resolve({ source: 'moved', text: 'export const x = 1;\n' }) });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  const [file] = session.files;
+  assert.deepEqual(
+    file.proposals?.map((p) => p && p.source),
+    ['union']
+  );
+  assert.equal(file.wholeFile, undefined);
+  assert.equal(file.result, before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
 });

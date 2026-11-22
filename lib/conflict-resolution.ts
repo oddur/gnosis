@@ -18,9 +18,10 @@ export interface ConflictFile {
   proposals?: (ConflictProposal | null)[];
   /**
    * Your Keep choice per block of `original`, saved with the draft, so a Keep whose text equals the proposal still reads
-   * as yours, never as Merged, after the view closes or reopens (#445 item 8).
+   * as yours, never as Merged, after the view closes or reopens (#445 item 8). `proposal`: you chose Use the proposal
+   * after choosing something else, so the push confirmation lists it as yours (#445 item 12).
    */
-  picks?: ('ours' | 'theirs' | 'both' | null)[];
+  picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
   /**
    * Structural merge's result for the whole file, when it also changes lines outside Git's conflicts and so cannot be
    * split into per-block proposals. Always Check, never Merged. Accepting it makes it the draft, like a Suggest result.
@@ -45,10 +46,14 @@ export interface ConflictFile {
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
  * merge left it, as both sides' additions or as the PR's version of a change both sides made (lib/conflict-union.ts).
+ * A 'moved' proposal is only ever a whole-file proposal (`wholeFile`): one side moved or renamed a function and the
+ * other edited it, and the edit is applied at the new place (lib/conflict-moved.ts). It is never Merged.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved';
   text: string;
+  /** A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." */
+  note?: string;
 }
 export interface ConflictSession {
   id: string;
@@ -122,9 +127,17 @@ export type ConflictRequest =
       contents: string;
       resolved: boolean;
       /** Your Keep choices per block (`ConflictFile.picks`); absent leaves the saved ones. */
-      picks?: ('ours' | 'theirs' | 'both' | null)[];
+      picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
     }
-  | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path: string; instructions?: string }
+  | {
+      kind: 'resolve';
+      id: string;
+      version: number;
+      /** `whole-file`: the file's whole-file proposal (`wholeFile`) as it is, whoever made it. Nothing runs again. */
+      engine: 'mergiraf' | 'agent' | 'whole-file';
+      path: string;
+      instructions?: string;
+    }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -159,7 +172,10 @@ export function hasConflictMarkers(text: string) {
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
 /** Derive the stage from the displayed draft, including edits not saved yet. */
-export function conflictFileStage(file: ConflictFile, contents = file.result): ConflictFileStage {
+export function conflictFileStage(
+  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>,
+  contents = file.result
+): ConflictFileStage {
   if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
   return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
@@ -196,12 +212,12 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
       (r.kind === 'save' &&
         Array.isArray(r.picks) &&
         r.picks.length <= 10_000 &&
-        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both')))
+        (r.picks as unknown[]).every((pick) => pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal')))
   )
     return;
   if (
     r.kind === 'resolve' &&
-    ['agent', 'mergiraf'].includes(String(r.engine)) &&
+    ['agent', 'mergiraf', 'whole-file'].includes(String(r.engine)) &&
     text('path', 4096) &&
     (r.instructions === undefined || text('instructions', 10000))
   )
