@@ -262,6 +262,10 @@ void app.whenReady().then(async () => {
     await waitForWorkbenchQueue(contents);
     // The guide is open on first use; the gallery shows the workspace as people see it after that.
     await js("localStorage.setItem('gnosis-conflict-guide', 'dismissed')");
+    // Likewise the first-run panel and the Undo mention (components/ConflictOnboarding.tsx), for the lab account.
+    await js(
+      "localStorage.setItem('gnosis:conflict-tips:lab', JSON.stringify(['buckets','undo']))"
+    );
     await js(`(() => {
       window.conflictCalls = [];
       window.electronAPI.conflictResolution = async (request) => {
@@ -421,6 +425,13 @@ void app.whenReady().then(async () => {
             if (needs !== want.needs)
               result.problems.push(`Summary: "${s}", but ${want.needs} blocks are Check or Decide`);
           }
+          // "The checks proved every conflict" only when every block is Merged and nothing is still checking.
+          const allMerged = want.total > 0 && want.merged === want.total && !want.needs && !/Checking/.test(s);
+          const note = await js<boolean>("!!document.querySelector('[data-conflict-note=all-merged]')");
+          if (note !== allMerged)
+            result.problems.push(
+              note ? 'Says every conflict is proved, but not every block is Merged' : 'Every block is Merged, but no all-Merged note'
+            );
         } else result.notes.push(`No conflicted files: ${screen.state ?? screen.title ?? ''}`);
 
         if (INTERACT.includes(entry.id)) interactions.push(await interact(entry.id, all.length));

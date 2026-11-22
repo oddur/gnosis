@@ -1297,11 +1297,11 @@ void test('the summary says what is left: review, a local merge tool, or nothing
   const local = { buckets: ['decide' as const], verdict: undefined, reviewed: false, unsupported: true };
   assert.equal(
     summarySentence(bucketSummary([local, local, local])),
-    '3 files have conflicts. 3 files need a local merge tool. Gnosis can’t push this merge: merge the PR on your computer.'
+    '3 files have conflicts. 3 files need a local merge tool.'
   );
   assert.equal(
     summarySentence(bucketSummary([local, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
-    '2 files have conflicts. 2 need you: 1 to decide, 1 file needs a local merge tool. Gnosis can’t push this merge: merge the PR on your computer.'
+    '2 files have conflicts. 2 need you: 1 to decide, 1 file needs a local merge tool.'
   );
   // The file list and the file header show the same badge for a file Gnosis can't merge.
   const unsupported = fileStatus({ ...f, unsupported: 'rename' }, '', 'conflicted', ['decide']);

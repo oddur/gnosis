@@ -1530,9 +1530,6 @@ function needsYou(s: BucketSummary) {
     ...(s.markers ? [`${s.markers} ${s.markers === 1 ? 'file' : 'files'} with a conflict marker left`] : []),
     ...(s.local ? [`${s.local} ${s.local === 1 ? 'file needs' : 'files need'} a local merge tool`] : []),
   ];
-  // A file Gnosis can't write blocks the whole push: say so in the sentence, before any work starts.
-  const local = s.local ? ' Gnosis can’t push this merge: merge the PR on your computer.' : '';
-  return parts.length === 1
-    ? ` ${parts[0]}.${local}`
-    : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.${local}`;
+  // What a file Gnosis can't write means for the push is the guide's note (ConflictOnboarding), not repeated here.
+  return parts.length === 1 ? ` ${parts[0]}.` : ` ${s.needs} ${s.needs === 1 ? 'needs' : 'need'} you: ${parts.join(', ')}.`;
 }

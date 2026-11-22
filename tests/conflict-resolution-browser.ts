@@ -266,6 +266,62 @@ void app.whenReady().then(async () => {
     assert.ok(await js("!!document.querySelector('[data-conflict-keys][aria-label=\"Keyboard shortcuts\"]')"));
     assert.equal(await js("document.querySelector('.conflict-save-state').textContent"), 'Saved');
 
+    // First run (components/ConflictOnboarding.tsx): one compact panel under the summary explains Merged, Check and
+    // Decide, the main keys and the type check, once per account, and never takes focus from the first conflict.
+    const guide = "document.querySelector('[data-conflict-guide]')";
+    const note = (name: string) => `document.querySelector('[data-conflict-note="${name}"]')`;
+    const tipsSeen = async () =>
+      (JSON.parse((await js<string | null>("localStorage.getItem('gnosis:conflict-tips:oddur')")) ?? '[]') as string[]).sort();
+    assert.equal(await js(`${guide}.dataset.conflictGuide`), 'full');
+    assert.deepEqual(await js(`[...${guide}.querySelectorAll('dt')].map(e=>e.textContent)`), ['Merged', 'Check', 'Decide']);
+    assert.match(await js<string>(`${guide}.textContent`), /proposes only when you ask.*Nothing is pushed until you push\./);
+    assert.equal(await js(`!!${guide}.querySelector('.lucide-bot') && !document.querySelector('.conflict-workspace .lucide-sparkles')`), true);
+    assert.equal(
+      await js(`${guide}.querySelector('[data-conflict-guide-keys]').textContent`),
+      'JK move · A use the proposal · 123 keep · M mark reviewed · All keys'
+    );
+    // The type check is off and the PR is TypeScript: the panel's last line, with a link to the setting.
+    assert.match(await js<string>(`${guide}.querySelector('[data-conflict-guide-type-check]').textContent`), /type-check the merge.*It’s off\. Repository settings/);
+    assert.ok((await js<number>(`${guide}.getBoundingClientRect().height`)) <= 120, 'The panel stays compact');
+    assert.equal(await js("document.querySelectorAll('.conflict-notes > .conflict-note').length"), 0, 'No separate bands');
+    assert.equal(await activeBlock(), '0', 'The help never takes focus');
+    assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
+    await captureAll('first-run');
+    // Narrow, the panel is one line, so the first conflict stays in view; a click opens it.
+    await resize(760, 800);
+    await wait(`${guide}?.dataset.conflictGuide==='compact' && innerWidth===760`);
+    assert.ok(await js<boolean>(`${block(0)}.getBoundingClientRect().top < innerHeight - 120`), 'The first conflict stays above the fold');
+    await js(`${guide}.querySelector('.conflict-guide-expand').click()`);
+    await wait(`${guide}?.dataset.conflictGuide==='full'`);
+    await wait(`document.activeElement===${guide}`);
+    await capture('first-run-narrow-expanded');
+    await resize(1280, 900);
+    await wait('innerWidth===1280');
+    // All keys points at the full legend under the keyboard button.
+    await js(`[...${guide}.querySelectorAll('.conflict-guide-link')].find(b=>b.textContent==='All keys').click()`);
+    await wait("document.activeElement?.matches('[data-conflict-keys]') && !!document.querySelector('.conflict-keys')");
+    await js(`[...${guide}.querySelectorAll('.conflict-guide-link')].find(b=>b.textContent==='Repository settings').click()`);
+    await wait("[...document.querySelectorAll('[role=dialog] h2')].some(h=>h.textContent==='Repository settings')");
+    await key('Escape');
+    await wait("!document.querySelector('[role=dialog]') && !!document.querySelector('.conflict-workspace')");
+    // One Got it closes the whole panel for good; the summary's help button brings it back on demand.
+    await click('Got it');
+    await wait(`!${guide}`);
+    assert.equal(await js("document.activeElement?.classList.contains('conflict-workspace')"), true, 'Got it hands focus to the view');
+    assert.deepEqual(await tipsSeen(), ['buckets']);
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await open();
+    await wait("document.activeElement?.closest('.conflict-block')");
+    assert.equal(await js(`!!${guide}`), false, 'Dismissed help stays dismissed');
+    await js("document.querySelector('[data-conflict-guide-toggle]').click()");
+    await wait(`${guide}?.dataset.conflictGuide==='full'`);
+    assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
+    await capture('guide-reopened');
+    await js("document.querySelector('[data-conflict-guide-toggle]').click()");
+    await wait(`!${guide}`);
+    await js(`${block(0)}.focus()`);
+
     // A physical pointer click must dismiss the notification, not the conflict workspace.
     await js(
       `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Conflict notification regression',description:'A background result is ready.',timeout:0});})()`
@@ -551,6 +607,8 @@ void app.whenReady().then(async () => {
       "document.querySelector('[data-confirm-group=decided] .conflict-diff-file diffs-container')?.shadowRoot?.querySelector('[data-line]')"
     );
     assert.equal(await js("!!document.querySelector('[data-confirm-group=decided] [data-noise-stat]')"), false);
+    // Undo after push is off for this repository: the confirmation says so once, with the setting.
+    assert.match(await js<string>(`${note('undo')}.textContent`), /^Undo after push is off for this repository.*Repository settings$/);
     await captureAll('confirm-push');
     // The cascade preview: "Checking the stack…" while the dry run runs, then the sentence, which follows the result.
     await wait("document.querySelector('.conflict-confirm [data-cascade=checking]')?.textContent==='Checking the stack…'");
@@ -1021,7 +1079,7 @@ void app.whenReady().then(async () => {
     await js(
       "window.conflictFixture.files=[];window.conflictFixture.stale=false;window.conflictFixture.preparation='clean-merge';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
     );
-    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='Git merged everything cleanly'");
     await noResolveChrome();
     await captureAll('clean-merge');
     await click('Review and push…');
@@ -1060,6 +1118,7 @@ void app.whenReady().then(async () => {
     );
     await capture('preparing');
     await wait("document.querySelector('.conflict-state')?.textContent.includes('continues in Activity')");
+    await wait("/^\\d+ s so far$/.test(document.querySelector('[data-conflict-elapsed]')?.textContent ?? '')");
     await capture('preparing-slow');
     await wait("!document.querySelector('.conflict-state .loading-indicator')");
     await click('Close');
@@ -1074,6 +1133,7 @@ void app.whenReady().then(async () => {
       'Gnosis couldn’t prepare this merge.'
     );
     assert.ok(await exists('Try again'));
+    assert.ok(await exists('Open PR on GitHub'), 'A failed preparation also points to GitHub');
     await capture('failure');
     await captureAll('prepare-failed');
     await js('window.failOpen=undefined');
@@ -1445,6 +1505,12 @@ void app.whenReady().then(async () => {
       { state: 'skipped', reason: 'dependencies aren’t installed in your clone' },
       'Type check: skipped (dependencies aren’t installed in your clone)'
     );
+    // A check that couldn't run says what decided Merged instead.
+    assert.equal(
+      await js(`${note('type-check-unavailable')}?.textContent`),
+      'The type check didn’t run on this draft. Merged results passed the other checks.'
+    );
+    await captureAll('type-check-skipped');
     // New errors: the compiler checks the whole program, so every Merged conflict in the PR is Check, with the first
     // error as the note. A result for this draft only: every file's key is the one it checked.
     const typeNote = 'The type check found 2 new errors, the first in src/imports.ts:3 (TS2305).';
@@ -1672,6 +1738,33 @@ void app.whenReady().then(async () => {
     await click('Start from Git’s conflict');
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Close');
+
+    // "The checks proved every conflict" needs every check in: not while the type check runs, and not on a stale session.
+    const allMergedNote = "document.querySelector('[data-conflict-note=\"all-merged\"]')";
+    const setTypeCheck = (state: unknown) =>
+      js(`(()=>{window.typeCheckState=${JSON.stringify(state)};for(const cb of window.typeCheckListeners)cb(window.conflictFixture.id);})()`);
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify(counted.slice(1))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    await wait(`!!${allMergedNote}`);
+    assert.equal(await js(`${allMergedNote}.getAttribute('role')`), 'status');
+    await setTypeCheck({ state: 'running' });
+    await wait("document.querySelector('.conflict-type-check')?.firstChild?.textContent==='Type check: running…'");
+    assert.equal(await js(`!!${allMergedNote}`), false, 'Not proved while the type check runs');
+    await setTypeCheck(null);
+    await wait(`!!${allMergedNote}`);
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('window.conflictFixture.stale=true');
+    await open();
+    await wait(`(${visibleButton('Load latest changes')})`);
+    assert.equal(await js(`!!${allMergedNote}`), false, 'Not on a stale session');
+    await js('window.conflictFixture.stale=false');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
 
     // The conflict keyboard map (#445 item 13): A accepts, U undoes, V cycles Compare with, G shows the merged
     // conflicts and Cmd+Enter opens Review and push…, which never pushes. None of them acts while you type.
@@ -2369,7 +2462,12 @@ void app.whenReady().then(async () => {
     await wait('document.querySelector("[data-conflict-local]")');
     assert.equal(
       await js("document.querySelector('[data-conflict-summary]').textContent"),
-      '3 files have conflicts. 3 files need a local merge tool. Gnosis can’t push this merge: merge the PR on your computer.'
+      '3 files have conflicts. 3 files need a local merge tool.'
+    );
+    // The consequence leads: Gnosis can't push any of this merge.
+    assert.equal(
+      await js(`${note('local')}.textContent`),
+      'Gnosis pushes only a complete merge, and 3 files here can’t be merged as text. Merge this PR on your computer.'
     );
     assert.deepEqual(await badges('.conflict-file-title'), await listBadge(0), 'The header and the file list agree');
     assert.equal(await js("document.querySelector('.conflict-file-title [data-status]').textContent"), 'Needs a local merge tool');
@@ -2646,7 +2744,7 @@ void app.whenReady().then(async () => {
       window.conflictCalls=[];
     })()`);
     await open();
-    await wait("document.querySelector('.conflict-state h2')?.textContent==='No conflicts to resolve'");
+    await wait("document.querySelector('.conflict-state h2')?.textContent==='Git merged everything cleanly'");
     const started = Date.now();
     await click('Review and push…');
     await wait(
@@ -2867,7 +2965,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[data-conflict-model-notice]')");
     assert.equal(
       await js("document.querySelector('[data-conflict-model-notice]').textContent"),
-      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts.'
+      'Claude is paused until 14:00. Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them yourself.'
     );
     await wait(`!${block(0)}?.querySelector('.conflict-model-line') && !${block(1)}?.querySelector('.conflict-model-line')`);
     assert.equal(await calls('model'), 0);
