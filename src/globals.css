@@ -4138,6 +4138,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-heading { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 24px;padding:8px 16px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
 .conflict-heading-text { display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 22ch; }
 .conflict-heading h2 { font-size:var(--type-control);font-weight:600;line-height:1.4;text-wrap:balance; }
+.conflict-heading h2 .conflict-branch { font-family:var(--font-mono);font-size:.92em;font-weight:500;overflow-wrap:anywhere; }
 .conflict-heading-text [data-conflict-summary] { line-height:1.4; }
 .conflict-heading-description { color:var(--muted-foreground); }
 .conflict-heading-tools { display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 8px;margin-left:auto; }
@@ -4188,6 +4189,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-type-check-errors { display:flex;flex-direction:column;gap:6px;max-width:60ch; }
 .conflict-type-check-errors ul { display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none;font-family:var(--font-mono);font-size:11px;overflow-wrap:anywhere; }
 .conflict-save-state { color:var(--muted-foreground);font-size:var(--type-caption);font-variant-numeric:tabular-nums;min-width:7ch;text-align:right; }
+.conflict-keys { background:var(--popover);color:var(--popover-foreground);border:1px solid var(--border); }
+.conflict-keys .fill-foreground { background:var(--popover);fill:var(--popover); }
 .conflict-keys dl { display:grid;grid-template-columns:auto auto;gap:4px 12px;margin:0; }
 .conflict-keys dl > div { display:contents; }
 .conflict-keys dt { display:flex;gap:3px;justify-content:flex-end; }
@@ -4204,7 +4207,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-files .conflict-bucket { padding:1px 6px;border-radius:var(--radius-sm);background:var(--secondary); }
 .conflict-block[data-bucket=check] { border-color:color-mix(in srgb,var(--color-warning) 45%,var(--border)); }
 .conflict-block-header [data-slot=button] { margin-left:auto; }
-.conflict-whole-file > p { padding:8px 12px;max-width:80ch;font-size:var(--type-control); }
+.conflict-whole-file > p { padding:8px 12px;font-size:var(--type-control);text-wrap:pretty; }
 .conflict-proposal { padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:var(--type-control); }
 .conflict-proposal summary { cursor:pointer;color:var(--muted-foreground);font-size:var(--type-caption); }
 .conflict-proposal p { margin-top:6px;white-space:pre-wrap;max-width:80ch; }
@@ -4219,6 +4222,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-block:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
 .conflict-block-header { display:flex;align-items:baseline;gap:10px;padding:6px 12px;background:var(--secondary);font-size:var(--type-caption); }
 .conflict-block-header span { color:var(--muted-foreground); }
+/* "Conflict 1 of 1" and its bucket never wrap: the reason beside them does. */
+.conflict-block-header > strong,.conflict-block-header > .conflict-bucket { flex:none;white-space:nowrap; }
 .conflict-sides { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
 .conflict-side { min-width:0; }
 .conflict-side + .conflict-side { border-left:1px solid var(--border); }
@@ -4269,6 +4274,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Its background is WRITTEN_SWATCH (lib/diff-here.ts), set inline: the same colours as the marked rows. */
 .conflict-written-swatch { flex:none;width:14px;height:12px;border-radius:2px; }
 .conflict-result-diff > .conflict-diff-file,.conflict-diff-view > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
+/* Inside the result's frame the file ends at the frame: no gap strip under it, as between Changes' files. */
+.conflict-result-diff > .conflict-diff-file { border-bottom:0; }
 /* Compare with: PR · main · both (#445 item 9), in the file header: a pill switch like Markdown's Source · Preview. */
 .conflict-compare { display:inline-flex;align-items:center;gap:8px; }
 .conflict-compare-label { color:var(--file-muted);white-space:nowrap; }

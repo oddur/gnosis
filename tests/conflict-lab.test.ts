@@ -44,10 +44,25 @@ void test(
       decide: 1,
       decided: 0,
       clean: 0,
+      local: 0,
       none: 0,
     });
   }
 );
+
+void test('a file that needs a local merge tool scores as local, whatever its buckets', () => {
+  const rows = blocks([
+    {
+      name: 'rename',
+      meta: {},
+      steps: [{ step: 'pr', files: [{ path: 'a.ts', buckets: ['decide'], expected: ['local'], unsupported: 'rename' }] }],
+    },
+  ]) as { actual: string; wrong: string }[];
+  assert.deepEqual(
+    rows.map((r) => [r.actual, r.wrong]),
+    [['local', '']]
+  );
+});
 
 void test('a Merged block where Merged is unsafe counts as wrong', () => {
   const rows = blocks([

@@ -1394,8 +1394,12 @@ export function fileStatusParts(status: FileStatus): {
  * The footer's words for the open file, when it has something the counts don't say: a file Gnosis can't merge, or a
  * stray marker. What is left is counted once, in the summary and the file list (#445 distill), never here.
  */
-export function fileStatusLine(status: FileStatus): string | undefined {
-  if (status.kind === 'unsupported') return 'Gnosis can’t merge this file. Merge the PR on your computer';
+export function fileStatusLine(status: FileStatus, local = 1): string | undefined {
+  // `local`: the files Gnosis can't merge in the session (BucketSummary.local). With more than one, the line names them all.
+  if (status.kind === 'unsupported')
+    return local > 1
+      ? `Gnosis can’t merge these ${local} files. Merge the PR on your computer`
+      : 'Gnosis can’t merge this file. Merge the PR on your computer';
   if (status.kind === 'marker') return 'A conflict marker is left in the file. Check the result';
 }
 

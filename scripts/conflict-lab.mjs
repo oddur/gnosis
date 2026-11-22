@@ -119,8 +119,11 @@ function compare(result, accepted, mergedBlocks) {
   return 'differs';
 }
 
-/** `auto`: Merged, or merged by Git with no conflict; the generated matrix uses it. */
-const EXPECT = new Set(['merged', 'check', 'decide', 'any-but-merged', 'any', 'clean', 'auto']);
+/**
+ * `auto`: Merged, or merged by Git with no conflict; the generated matrix uses it. `local`: a file Gnosis can't merge
+ * as text (binary, rename, deletion), shown as the local-merge-tool screen with no blocks.
+ */
+const EXPECT = new Set(['merged', 'check', 'decide', 'any-but-merged', 'any', 'clean', 'auto', 'local']);
 function expectedFor(spec, count) {
   if (spec === undefined) return new Array(Math.max(count, 1)).fill('any');
   const list = Array.isArray(spec) ? spec : new Array(Math.max(count, 1)).fill(spec);
@@ -478,8 +481,12 @@ export function blocks(results) {
         const n = Math.max(f.expected.length, f.buckets.length, 1);
         for (let i = 0; i < n; i++) {
           const expected = f.expected[i] ?? f.expected.at(-1) ?? 'any';
-          const actual = f.clean ? 'clean' : (f.buckets[i] ?? 'none');
-          const withFixes = f.clean ? 'clean' : ((f.bucketsWithFixes ?? f.buckets)[i] ?? 'none');
+          const actual = f.clean ? 'clean' : f.unsupported ? 'local' : (f.buckets[i] ?? 'none');
+          const withFixes = f.clean
+            ? 'clean'
+            : f.unsupported
+              ? 'local'
+              : ((f.bucketsWithFixes ?? f.buckets)[i] ?? 'none');
           rows.push({
             case: r.name,
             step: s.step,
@@ -504,7 +511,7 @@ export function blocks(results) {
   return rows;
 }
 
-const ACTUAL = ['merged', 'check', 'decide', 'decided', 'clean', 'none'];
+const ACTUAL = ['merged', 'check', 'decide', 'decided', 'clean', 'local', 'none'];
 export function confusion(rows) {
   const matrix = {};
   for (const row of rows) {

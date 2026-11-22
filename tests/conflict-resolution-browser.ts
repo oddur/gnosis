@@ -1879,6 +1879,24 @@ void app.whenReady().then(async () => {
     );
     assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /Turn on Review Merged-only files myself/);
     assert.match(await js<string>("document.querySelector('.conflict-keys dl').textContent"), /right after A, that choice/);
+    // The legend is a popover in the theme's colours, never the inverted tooltip: light in light mode, dark in dark.
+    for (const dark of [false, true]) {
+      await js(`document.documentElement.classList.toggle('dark', ${dark})`);
+      assert.deepEqual(
+        await js(`(() => {
+          const legend = getComputedStyle(document.querySelector('.conflict-keys'));
+          const probe = document.createElement('div');
+          probe.style.cssText = 'background:var(--popover);color:var(--popover-foreground)';
+          document.body.append(probe);
+          const token = getComputedStyle(probe);
+          const out = [legend.backgroundColor === token.backgroundColor, legend.color === token.color];
+          probe.remove();
+          return out;
+        })()`),
+        [true, true],
+        `The keymap legend uses the popover tokens in ${dark ? 'dark' : 'light'} mode`
+      );
+    }
     // With GNOSIS_CONFLICT_SHOTS set, the legend in light and dark prints as `CONFLICTSHOT <name> <base64 PNG>`.
     if (process.env.GNOSIS_CONFLICT_SHOTS)
       for (const theme of ['light', 'dark']) {

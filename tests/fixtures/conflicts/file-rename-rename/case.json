@@ -3,8 +3,8 @@
   "language": "typescript",
   "category": "files/rename",
   "expected": {
-    "src/old.ts": "decide",
-    "src/left.ts": "decide",
-    "src/right.ts": "decide"
+    "src/old.ts": "local",
+    "src/left.ts": "local",
+    "src/right.ts": "local"
   }
 }
