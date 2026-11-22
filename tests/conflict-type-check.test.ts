@@ -13,7 +13,9 @@ import {
   NO_DEPENDENCIES,
   REFERENCES,
   TypeCheckSkipped,
+  typeCheckMerge,
   withoutRoots,
+  workspaceMissing,
   NOT_SUPPORTED,
   TIMED_OUT,
   checkedText,
@@ -98,7 +100,10 @@ async function fixture(
   await git('config', 'user.email', 'test@example.com');
   const write = async (version: 0 | 1 | 2) => {
     await fs.writeFile(path.join(remote, 'sample.ts'), [SAMPLE.base, SAMPLE.ours, SAMPLE.theirs][version]);
-    for (const [name, texts] of Object.entries(options.files ?? {})) await fs.writeFile(path.join(remote, name), texts[version]);
+    for (const [name, texts] of Object.entries(options.files ?? {})) {
+      await fs.mkdir(path.dirname(path.join(remote, name)), { recursive: true });
+      await fs.writeFile(path.join(remote, name), texts[version]);
+    }
   };
   if (options.tsconfig !== false)
     await fs.writeFile(path.join(remote, 'tsconfig.json'), typeof options.tsconfig === 'string' ? options.tsconfig : TSCONFIG);
@@ -892,5 +897,106 @@ void test('type check: a demotion that lands after Mark reviewed reopens the fil
   await assert.rejects(
     f.service.run({ kind: 'preview', id: saved.id, version: saved.version }, new AbortController().signal),
     /in Check first/
+  );
+});
+
+/** A clone whose node_modules links `@acme/util` to its own working copy of packages/util, as npm workspaces do. */
+async function workspaceClone(t: TestContext, util = 'export const value = 1;\n') {
+  const linked = await clone(t);
+  await fs.mkdir(path.join(linked, 'packages', 'util'), { recursive: true });
+  await fs.writeFile(path.join(linked, 'packages', 'util', 'package.json'), UTIL_PACKAGE);
+  await fs.writeFile(path.join(linked, 'packages', 'util', 'index.ts'), util);
+  await fs.mkdir(path.join(linked, 'node_modules', '@acme'));
+  await fs.symlink(
+    path.join('..', '..', 'packages', 'util'),
+    path.join(linked, 'node_modules', '@acme', 'util'),
+    'dir'
+  );
+  return linked;
+}
+const UTIL_PACKAGE = JSON.stringify({ name: '@acme/util', types: 'index.ts' });
+
+void test('type check: workspace packages resolve to the merge’s own copy, not your clone’s (#499)', async (t) => {
+  // Main makes the package's value a string, and the PR uses it as a number. Your clone's working copy still has the
+  // number, so a check that read it would pass.
+  const linked = await workspaceClone(t);
+  const util = 'export const value = 1;\n';
+  const f = await fixture(t, {
+    clone: linked,
+    files: {
+      'packages/util/package.json': [UTIL_PACKAGE, UTIL_PACKAGE, UTIL_PACKAGE],
+      'packages/util/index.ts': [util, util, "export const value = 'one';\n"],
+      'use.ts': [
+        'export {};\n',
+        "import { value } from '@acme/util';\nexport const n: number = value;\n",
+        'export {};\n',
+      ],
+    },
+  });
+  const status = await f.settled();
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.ok(
+    status.errors.some((e) => e.startsWith('use.ts:2 TS2322')),
+    JSON.stringify(status)
+  );
+  await cleanedUp(f.sessionDir);
+  // Your clone is as it was: its link still leads to its own copy.
+  assert.equal(
+    await fs.readlink(path.join(linked, 'node_modules', '@acme', 'util')),
+    path.join('..', '..', 'packages', 'util')
+  );
+  assert.equal(await fs.readFile(path.join(linked, 'packages', 'util', 'index.ts'), 'utf8'), util);
+});
+
+void test('type check: a workspace package the merge doesn’t have skips the check (#499)', async (t) => {
+  const f = await fixture(t, { clone: await workspaceClone(t) });
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: workspaceMissing('@acme/util') });
+  assert.equal(f.runs.length, 0);
+  await cleanedUp(f.sessionDir);
+  const saved = f.saved().files[0];
+  assert.ok(saved.verdict);
+  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict.verdict), ['merged']);
+});
+
+void test('type check: cleanup never removes a newer run’s worktree entry of the same name (#499)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-type-race-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  await fs.mkdir(repo);
+  const run = async (args: string[], cwd = repo) => ({
+    code: 0,
+    stdout: (await exec('git', args, { cwd })).stdout as unknown as Buffer,
+  });
+  await run(['init', '-q', '-b', 'main']);
+  await fs.writeFile(path.join(repo, 'tsconfig.json'), TSCONFIG);
+  await fs.writeFile(path.join(repo, 'a.ts'), 'export const a = 1;\n');
+  await run(['add', '.']);
+  await run(['-c', 'user.name=T', '-c', 'user.email=t@e', 'commit', '-qm', 'one']);
+  const head = (await exec('git', ['rev-parse', 'HEAD'], { cwd: repo })).stdout.trim();
+  const tree = (await exec('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo })).stdout.trim();
+  const newer = path.join(dir, 'newer', 'merge');
+  const status = await typeCheckMerge({
+    session: { tree, headSha: head, baseSha: head, files: [] },
+    clone: await clone(t),
+    directory: repo,
+    git: (args, _signal, cwd) => run(args, cwd),
+    // Start over while this run was stopping: its folder went and a new run's worktree took the entry `merge`. Git
+    // can't remove this run's worktree any more.
+    local: async (args) => {
+      if (args[0] !== 'worktree' || args[1] !== 'remove') return run(args);
+      await fs.rm(args[3], { recursive: true, force: true });
+      await run(['worktree', 'prune']);
+      await run(['worktree', 'add', '-q', '--detach', newer, head]);
+      throw new Error('not a working tree');
+    },
+    run: realRun,
+    signal: new AbortController().signal,
+  });
+  assert.equal(status.state, 'passed');
+  const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], { cwd: repo });
+  assert.ok(stdout.includes(`worktree ${await fs.realpath(newer)}`), stdout);
+  assert.ok(
+    (await fs.stat(path.join(repo, '.git', 'worktrees', 'merge', 'gitdir'))).isFile(),
+    'The newer run keeps its entry'
   );
 });

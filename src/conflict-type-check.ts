@@ -256,16 +256,107 @@ async function compile(
   return diagnostics;
 }
 
-/** A worktree's administrative folder in the session repository, from its `.git` file. */
+/**
+ * A worktree's administrative folder in the session repository, from its `.git` file, with what its `gitdir` file says:
+ * the entry belongs to this worktree only while that stays the same.
+ */
 async function adminFolder(worktree: string) {
   const match = /^gitdir:\s*(.+)$/m.exec(await fs.readFile(path.join(worktree, '.git'), 'utf8').catch(() => ''));
-  return match ? path.resolve(worktree, match[1].trim()) : undefined;
+  if (!match) return undefined;
+  const admin = path.resolve(worktree, match[1].trim());
+  const owner = await fs.readFile(path.join(admin, 'gitdir'), 'utf8').catch(() => undefined);
+  return owner === undefined ? undefined : { admin, owner };
 }
-/** Removes a worktree's link to your clone's node_modules: first, so nothing that removes the worktree reaches in. */
+/**
+ * Removes a worktree's entry in the session repository by hand, only while it is still this worktree's. Git names the
+ * entry after the folder (`worktrees/merge`), so after Start over a new run's worktree can have the same entry: its
+ * `gitdir` names another folder, and it stays.
+ */
+async function removeOwnAdmin({ admin, owner }: { admin: string; owner: string }) {
+  if (path.basename(path.dirname(admin)) !== 'worktrees') return;
+  if ((await fs.readFile(path.join(admin, 'gitdir'), 'utf8').catch(() => undefined)) !== owner) return;
+  await fs.rm(admin, { recursive: true, force: true }).catch(() => undefined);
+}
+/**
+ * Removes a worktree's links to your clone's node_modules: first, so nothing that removes the worktree reaches in. The
+ * link is either node_modules itself, or, with workspace packages, each entry of a node_modules folder (`linkModules`).
+ */
 async function unlinkModules(worktree: string) {
   const modules = path.join(worktree, 'node_modules');
-  if ((await fs.lstat(modules).catch(() => undefined))?.isSymbolicLink())
-    await fs.unlink(modules).catch(() => fs.rmdir(modules).catch(() => undefined));
+  const stat = await fs.lstat(modules).catch(() => undefined);
+  if (stat?.isSymbolicLink()) return fs.unlink(modules).catch(() => fs.rmdir(modules).catch(() => undefined));
+  if (!stat?.isDirectory()) return;
+  const unlink = (link: string) => fs.unlink(link).catch(() => fs.rmdir(link).catch(() => undefined));
+  for (const name of await fs.readdir(modules).catch(() => [] as string[])) {
+    const entry = path.join(modules, name);
+    const kind = await fs.lstat(entry).catch(() => undefined);
+    if (kind?.isSymbolicLink()) await unlink(entry);
+    else if (kind?.isDirectory() && name.startsWith('@'))
+      for (const scoped of await fs.readdir(entry).catch(() => [] as string[]))
+        if ((await fs.lstat(path.join(entry, scoped)).catch(() => undefined))?.isSymbolicLink())
+          await unlink(path.join(entry, scoped));
+  }
+}
+
+/** A workspace package your clone links in node_modules, and the merge doesn't have. */
+export const workspaceMissing = (name: string) => `the workspace package ${name} isn’t in this tree`;
+/**
+ * Your clone's node_modules entries that are links into the clone itself, outside node_modules: a monorepo's workspace
+ * packages (npm, Yarn and pnpm workspaces). By package name (`@scope/name`), with the folder relative to the clone.
+ */
+export async function workspacePackages(clone: string, modules: string) {
+  const root = await fs.realpath(clone);
+  const realModules = await fs.realpath(modules);
+  const inside = (target: string, folder: string) => target === folder || target.startsWith(folder + path.sep);
+  const packages = new Map<string, string>();
+  const visit = async (name: string) => {
+    const entry = path.join(modules, name);
+    const stat = await fs.lstat(entry).catch(() => undefined);
+    if (stat?.isDirectory() && name.startsWith('@') && !name.includes('/')) {
+      for (const scoped of await fs.readdir(entry).catch(() => [] as string[])) await visit(`${name}/${scoped}`);
+      return;
+    }
+    if (!stat?.isSymbolicLink()) return;
+    const target = await fs.realpath(entry).catch(() => undefined);
+    if (target && inside(target, root) && !inside(target, realModules)) packages.set(name, path.relative(root, target));
+  };
+  for (const name of await fs.readdir(modules)) await visit(name);
+  return packages;
+}
+/**
+ * Links your clone's node_modules into a worktree. Without workspace packages it is one link to the folder. With them,
+ * node_modules is a folder of links to each of the clone's entries, and each workspace package links to the worktree's
+ * own copy instead of your clone's working copy: the merge is checked against the merge's packages. A workspace package
+ * the worktree doesn't have, or that leads out of it, skips the check (fails closed).
+ */
+async function linkModules(worktree: string, modules: string, packages: ReadonlyMap<string, string>) {
+  const link = (target: string, at: string) =>
+    fs.symlink(target, at, process.platform === 'win32' ? 'junction' : 'dir');
+  const own = path.join(worktree, 'node_modules');
+  if (!packages.size) return link(modules, own);
+  const real = await fs.realpath(worktree);
+  const copies = new Map<string, string>();
+  for (const [name, folder] of packages) {
+    const copy = await fs.realpath(path.join(worktree, folder)).catch(() => undefined);
+    if (!copy || !copy.startsWith(real + path.sep) || !(await fs.stat(copy)).isDirectory())
+      throw new TypeCheckSkipped(workspaceMissing(name));
+    copies.set(name, copy);
+  }
+  await fs.mkdir(own);
+  // Only folders: a Windows junction can't link a file, and the compiler reads no file at the top of node_modules.
+  const entries = async (relative: string) => {
+    for (const name of await fs.readdir(path.join(modules, relative))) {
+      const entry = path.join(relative, name).replaceAll('\\', '/');
+      const copy = copies.get(entry);
+      if (copy) await link(copy, path.join(own, entry));
+      else if (!relative && name.startsWith('@') && [...copies.keys()].some((p) => p.startsWith(`${name}/`))) {
+        await fs.mkdir(path.join(own, name));
+        await entries(name);
+      } else if ((await fs.stat(path.join(modules, entry)).catch(() => undefined))?.isDirectory())
+        await link(path.join(modules, entry), path.join(own, entry));
+    }
+  };
+  await entries('');
 }
 
 /** Where every run keeps its own folder, in the session directory. Startup cleanup removes what a crash left. */
@@ -312,24 +403,25 @@ export async function typeCheckMerge(options: {
   const started = Date.now();
   const left = () => Math.max(1, timeout - (Date.now() - started));
   const folder = path.join(options.directory, TYPE_CHECK_FOLDER, crypto.randomBytes(8).toString('hex'));
-  const worktrees: { path: string; admin?: string }[] = [];
+  const worktrees: { path: string; admin?: { admin: string; owner: string } }[] = [];
   try {
     const listed = await git(['ls-tree', '--name-only', session.tree, '--', 'tsconfig.json'], signal);
     if (listed.stdout.toString().trim() !== 'tsconfig.json') return { state: 'skipped', reason: NOT_SUPPORTED };
     const compiler = await findCompiler(options.clone);
     if ('skipped' in compiler) return { state: 'skipped', reason: compiler.skipped };
+    // A monorepo's workspace packages resolve to each worktree's own copy, never to your clone's working copy.
+    const packages = await workspacePackages(options.clone, compiler.modules);
     await fs.mkdir(folder, { recursive: true, mode: 0o700 });
     const checkout = async (name: string, commit: string) => {
       const worktree = path.join(folder, name);
-      const entry: { path: string; admin?: string } = { path: worktree };
+      const entry: (typeof worktrees)[number] = { path: worktree };
       worktrees.push(entry);
       await git(['worktree', 'add', '--detach', worktree, commit], signal);
       // Its entry in the session repository, known while the folder is there: cleanup removes exactly this one.
       entry.admin = await adminFolder(worktree);
       // A linked node_modules, unless the tree has its own. A junction on Windows needs no privileges.
-      const modules = path.join(worktree, 'node_modules');
-      if (!(await fs.lstat(modules).catch(() => undefined)))
-        await fs.symlink(compiler.modules, modules, process.platform === 'win32' ? 'junction' : 'dir');
+      if (!(await fs.lstat(path.join(worktree, 'node_modules')).catch(() => undefined)))
+        await linkModules(worktree, compiler.modules, packages);
       return worktree;
     };
     const commit = (
@@ -422,8 +514,7 @@ export async function typeCheckMerge(options: {
         () => false
       );
       // Git couldn't remove it, such as when the folder is already gone: its own entry goes by hand, no other run's.
-      if (!removed && admin && path.basename(path.dirname(admin)) === 'worktrees')
-        await fs.rm(admin, { recursive: true, force: true }).catch(() => undefined);
+      if (!removed && admin) await removeOwnAdmin(admin);
     }
     await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined);
     await fs.rmdir(path.dirname(folder)).catch(() => undefined);
