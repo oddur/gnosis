@@ -6,6 +6,7 @@ import {
   CONFLICT_FILE_LIMIT,
   hasConflictMarkers,
   validateConflictRequest,
+  wholeFileFrom,
   type ConflictFile,
   type ConflictProposal,
   type ConflictSession,
@@ -1160,7 +1161,10 @@ export function createConflictResolutionService(deps: Deps) {
       const back = withoutUnconfirmed(file, verdict);
       if (back) {
         Object.assign(file, back);
-        verdict = verdict && file.proposals ? await deps.verify(file, disabled, signal) : undefined;
+        // Nothing proposed for the file any more: the move rule gets its turn, as after structural merge.
+        if (!file.proposals) await proposeMoves([file], signal);
+        verdict =
+          (verdict && file.proposals) || wholeFileFrom(file, 'moved') ? await deps.verify(file, disabled, signal) : undefined;
         signal.throwIfAborted();
       }
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
@@ -1241,12 +1245,27 @@ export function createConflictResolutionService(deps: Deps) {
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
     if (!queue.length) return files;
+    // The move rule runs after structural merge, on what it leaves. A move proposal the file already has is set aside
+    // meanwhile, and comes back when structural merge proposes nothing: the file's three versions are the same, so the
+    // rule would find the same move again. Kept also when the rule couldn't run this time (a timeout, a crash).
+    const moves = new Map<ConflictFile, ConflictProposal>();
+    for (const file of queue) {
+      const moved = wholeFileFrom(file, 'moved');
+      if (moved) moves.set(file, moved);
+      if (moved) delete file.wholeFile;
+    }
+    /** The move rule on one file structural merge is done with. */
+    const afterStructural = async (file: ConflictFile) => {
+      const kept = moves.get(file);
+      if (!kept) return proposeMoves([file], signal);
+      if (!file.wholeFile && !file.proposals && file.result === file.original) file.wholeFile = kept;
+    };
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
-    // The move rule runs again after structural merge, on what it leaves.
-    for (const file of queue) if (file.wholeFile?.source === 'moved') delete file.wholeFile;
     if (!(await exists(deps.mergiraf()))) {
-      for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
-      await proposeMoves(queue, signal);
+      for (const file of queue) {
+        file.structuralNote = 'Structural merge isn’t available in this build.';
+        await afterStructural(file);
+      }
       return files;
     }
     // A note from an earlier try (no binary, out of time) gives way to this one.
@@ -1285,11 +1304,12 @@ export function createConflictResolutionService(deps: Deps) {
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
-    /** Four files at a time. A file that runs out of time goes on `late`. */
+    /** Four files at a time. A file that runs out of time goes on `late`; the move rule runs on each other one. */
     const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
       const work = async () => {
         for (let file = files.shift(); file; file = files.shift())
           if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
+          else await afterStructural(file);
       };
       await Promise.all([work(), work(), work(), work()]);
     };
@@ -1303,8 +1323,8 @@ export function createConflictResolutionService(deps: Deps) {
     for (const file of failed) {
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
+      await afterStructural(file);
     }
-    await proposeMoves(queue, signal);
     return files;
   }
   /**
@@ -1431,6 +1451,14 @@ export function createConflictResolutionService(deps: Deps) {
         reopened.push(file.path);
         conflicts += file.unsupported ? 1 : Math.max(result.reused ? result.open : conflictCount(next.original), 1);
       }
+    }
+    // The move rule ran on the fresh merge, before your draft came back: a draft you changed gets no move proposal it
+    // didn't have (proposeMoves), the same rule as at preparation.
+    for (const file of carried) {
+      const moved = wholeFileFrom(file, 'moved');
+      const had = byPath.get(file.path);
+      if (moved && file.result !== file.original && (!had || wholeFileFrom(had, 'moved')?.text !== moved.text))
+        delete file.wholeFile;
     }
     return { files: carried, reopened, conflicts };
   }
@@ -1632,7 +1660,7 @@ export function createConflictResolutionService(deps: Deps) {
           f.result === f.original &&
           !f.proposals &&
           // A move rule's proposal is not structural merge's: structural merge still gets its pass.
-          f.wholeFile?.source !== 'mergiraf'
+          !wholeFileFrom(f, 'mergiraf')
       );
       if (untried.length)
         await mergeStructurally(
@@ -2775,7 +2803,7 @@ export function createConflictResolutionService(deps: Deps) {
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's. A move rule's proposal is not
               // Mergiraf's result: "Try structural merge again" runs Mergiraf.
-              let output = file.wholeFile?.source === 'mergiraf' ? file.wholeFile.text : undefined;
+              let output = wholeFileFrom(file, 'mergiraf')?.text;
               if (output === undefined) {
                 const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));
                 const started = Date.now();

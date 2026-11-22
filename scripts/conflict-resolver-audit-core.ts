@@ -159,7 +159,7 @@ function merges(c: LabCase): Merge[] {
   const list: Merge[] = [{ name: c.name, base, ours, theirs, resolved, canned, disabled, standIn }];
   const theirs2 = c.trees.theirs2;
   if (theirs2)
-    list.push({ name: `${c.name} (after-move)`, base, ours, theirs: theirs2, resolved: c.trees.resolved2, disabled });
+    list.push({ name: `${c.name} (after-move)`, base, ours, theirs: theirs2, resolved: c.trees.resolved2, disabled, standIn });
   return list;
 }
 
