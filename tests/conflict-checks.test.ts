@@ -105,4 +105,11 @@ void test('a cancelled check stops in the worker, so the next one does not wait 
   assertPerf('conflict check: next answer after cancelling a 16,000-line check', waited, perfBudget(250));
   // A signal that is already aborted never starts a job.
   assert.equal(await checks.check(conflictFile('late', 1), [], AbortSignal.abort()), undefined);
+  // After dispose, every kind of job answers at once and none hangs.
+  checks.dispose();
+  assert.equal(await checks.definitions('late.ts', 'export const x = 1;\n'), undefined);
+  assert.deepEqual(
+    await checks.noise([{ language: 'typescript', after: 'export const x = 1;\n', hunks: [], imports: false }]),
+    [null]
+  );
 });

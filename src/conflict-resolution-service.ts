@@ -62,6 +62,7 @@ import {
 } from './conflict-type-check';
 import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
+import { hasUnion } from '../lib/conflict-flow';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
@@ -2622,7 +2623,7 @@ export function createConflictResolutionService(deps: Deps) {
             } else {
               // Structural merge already ran and left these conflicts open: a retry would throw the unions away, and
               // the dialog never offers one (canRetryStructural). Refused here too (#462).
-              if (file.proposals?.some((p) => p?.source === 'union'))
+              if (hasUnion(file))
                 throw new Error('Structural merge already ran on this file. Resolve its conflicts here.');
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's. A move rule's proposal is not

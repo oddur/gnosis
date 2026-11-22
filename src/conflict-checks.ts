@@ -249,13 +249,17 @@ export function createConflictCheckWorker(
     previous?.removeAllListeners();
     void previous?.terminate();
   };
+  /** Answers a job: its timer and its signal listener go. */
+  const settle = (job: Job, response: CheckResponse | undefined) => {
+    clearTimeout(job.timer);
+    job.release?.();
+    job.resolve(response);
+  };
   /** Answers the running job, then starts the next. `restart`: the worker is stuck or gone, so a new one takes over. */
   const finish = (job: Job, response: CheckResponse | undefined, restart = false) => {
     if (current !== job) return;
-    clearTimeout(job.timer);
-    job.release?.();
     current = undefined;
-    job.resolve(response);
+    settle(job, response);
     if (restart) terminate();
     pump();
   };
@@ -304,20 +308,22 @@ export function createConflictCheckWorker(
   }
   const run = (request: CheckRequest, signal?: AbortSignal) =>
     new Promise<CheckResponse | undefined>((resolve) => {
-      if (signal?.aborted) {
+      // After dispose, or for a request already cancelled, no job starts.
+      if (disposed || signal?.aborted) {
         resolve(undefined);
         return;
       }
       const job: Job = { request, resolve };
       if (signal) {
         const cancel = () => {
-          const at = queue.indexOf(job);
-          if (current === job) finish(job, undefined, true);
-          else if (at >= 0) {
-            queue.splice(at, 1);
-            job.release?.();
-            resolve(undefined);
+          if (current === job) {
+            finish(job, undefined, true);
+            return;
           }
+          const at = queue.indexOf(job);
+          if (at < 0) return;
+          queue.splice(at, 1);
+          settle(job, undefined);
         };
         signal.addEventListener('abort', cancel, { once: true });
         job.release = () => signal.removeEventListener('abort', cancel);
@@ -327,7 +333,6 @@ export function createConflictCheckWorker(
     });
   /** A conflict file's job: its check, or the move rule's proposal. */
   const ask = (file: CheckedFile, disabled: SyntaxLanguage[], kind: 'check' | 'moved', signal?: AbortSignal) => {
-    if (disposed) return Promise.resolve(undefined);
     const { path, base, ours, theirs, original, proposals, wholeFile, result } = file;
     return run(
       {
@@ -349,9 +354,8 @@ export function createConflictCheckWorker(
       return response && 'verdict' in response ? response.verdict : undefined;
     },
     /** A text's definitions (definitionsOf), in the same worker, one job at a time with the checks. */
-    async definitions(path: string, text: string, disabled: SyntaxLanguage[] = [], signal?: AbortSignal) {
-      if (disposed) return undefined;
-      const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled }, signal);
+    async definitions(path: string, text: string, disabled: SyntaxLanguage[] = []) {
+      const response = await run({ id: ++serial, kind: 'definitions', path, text, disabled });
       return response && 'definitions' in response ? response.definitions : undefined;
     },
     /** The move rule's proposal for a file (moveProposer), in the same worker, one job at a time with the checks. */
@@ -385,11 +389,7 @@ export function createConflictCheckWorker(
       disposed = true;
       clearTimeout(idle);
       terminate();
-      for (const job of [...(current ? [current] : []), ...queue.splice(0)]) {
-        clearTimeout(job.timer);
-        job.release?.();
-        job.resolve(undefined);
-      }
+      for (const job of [...(current ? [current] : []), ...queue.splice(0)]) settle(job, undefined);
       current = undefined;
     },
   };
