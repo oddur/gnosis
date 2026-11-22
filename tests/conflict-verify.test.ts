@@ -245,20 +245,20 @@ void test('the summary counts conflicts, not files, and a reviewed file’s Chec
   // Whole-file proposals are named as proposals to check.
   const passed = { merged: false, passed: true, note: '' };
   const whole = { buckets: ['check'] as const, verdict: passed, reviewed: false, whole: true };
-  assert.equal(summarySentence(bucketSummary([whole])), '1 file has conflicts. 1 proposal to check.');
+  assert.equal(summarySentence(bucketSummary([whole])), '1 file has conflicts. 1 whole-file proposal to check.');
   assert.equal(
     summarySentence(bucketSummary([whole, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
-    '2 files have conflicts. 2 need you: 1 proposal to check, 1 to decide.'
+    '2 files have conflicts. 2 need you: 1 whole-file proposal to check, 1 to decide.'
   );
   // One proposal that covers two conflicts says so, and the totals stay per conflict.
   const covering = { ...whole, buckets: ['check', 'check'] as const };
   assert.equal(
     summarySentence(bucketSummary([covering])),
-    '1 file has conflicts. 1 proposal to check for 2 conflicts.'
+    '1 file has conflicts. 1 whole-file proposal to check for 2 conflicts.'
   );
   assert.equal(
     summarySentence(bucketSummary([covering, { buckets: ['decide'], verdict: undefined, reviewed: false }])),
-    '2 files have conflicts. 3 need you: 1 proposal to check for 2 conflicts, 1 to decide.'
+    '2 files have conflicts. 3 need you: 1 whole-file proposal to check for 2 conflicts, 1 to decide.'
   );
 });
 
@@ -910,11 +910,11 @@ void test('a whole-file proposal is checked as a whole, accepts a move, and is n
   assert.deepEqual(right, {
     merged: false,
     passed: true,
-    note: 'Mergiraf moved lines outside the conflict. The proposal parses and keeps every change from both sides. Read it, then use it.',
+    note: 'Structural merge moved lines outside the conflict. The proposal parses and keeps every change from both sides. Read it, then use it.',
   });
   // The note names what wrote the whole-file proposal, never Mergiraf for another source.
   const other = await verifyWholeFile(sides, { source: 'rerere', text: [fn('beta'), fn('alpha', 'value + 10')].join('\n') }, analyse);
-  assert.match(other.note, /^Gnosis moved lines outside the conflict\./);
+  assert.match(other.note, /^Gnosis’s rule moved lines outside the conflict\./);
   // The move without main's edit drops the line main added.
   assert.equal(
     accountWholeFile(sides, sides.ours, false),
@@ -1021,10 +1021,10 @@ void test('one file status for the file list, the header, the footer and the sum
   const whole = file([], { proposals: undefined, wholeFile: merged(ours), result: original });
   assert.deepEqual(status(whole, original, passed), {
     value: { kind: 'proposal' },
-    parts: ['proposal:Proposal ready'],
+    parts: ['proposal:Whole file to check'],
     line: undefined,
   });
-  assert.deepEqual(status(whole, ours, passed).value, { kind: 'resolved' }, 'After Use this result');
+  assert.deepEqual(status(whole, ours, passed).value, { kind: 'resolved' }, 'After Use the proposal for this file');
   // One that failed its checks: its conflicts are to decide.
   assert.deepEqual(status(whole, original, check).parts, ['decide:2 to decide']);
   assert.deepEqual(fileStatus({ ...whole, unsupported: 'Binary file' }, original, 'conflicted', ['decide']), {
@@ -1285,7 +1285,7 @@ void test('the summary says what is left: review, a local merge tool, or nothing
   assert.ok(allMerged(buckets));
   assert.ok(waitsForReview(status, buckets, true));
   assert.equal(waitsForReview(status, buckets, false), false, 'Reviewed for you with the setting off');
-  // "Show me every merged conflict" on: the Merged file waits for Mark reviewed, and the summary says so.
+  // "Review Merged-only files myself" on: the Merged file waits for Mark reviewed, and the summary says so.
   assert.equal(
     summarySentence(bucketSummary([{ buckets, verdict: ok, reviewed: false, review: true }])),
     '1 file has conflicts. 2 of 2 conflicts are merged and checked. 1 file is ready for review.'

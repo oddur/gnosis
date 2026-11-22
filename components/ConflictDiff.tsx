@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { parseDiffFromFile, type DiffLineAnnotation, type FileDiffMetadata, type FileDiffOptions } from '@pierre/diffs';
 import { CircleHelp } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
@@ -23,6 +23,8 @@ import {
   isCompareWith,
   resolverBaseline,
   shownWritten,
+  fileWriter,
+  proposalWriter,
   writtenFileLines,
   type CompareWith,
   type ConflictCompareRows,
@@ -38,6 +40,7 @@ import {
 } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { nextCompare } from '../lib/conflict-shortcuts';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
 import { ChangesDiff } from './ChangesDiff';
@@ -284,7 +287,10 @@ function CompareSwitch({
   baseLabel,
   bothDisabled = false,
   kind = 'merge',
+  shortcut = false,
 }: {
+  /** V cycles the modes (lib/conflict-shortcuts.ts). */
+  shortcut?: boolean;
   value: CompareWith;
   onChange: (value: CompareWith) => void;
   baseName: string;
@@ -324,6 +330,7 @@ function CompareSwitch({
             title={mode === 'both' && bothDisabled ? 'No conflicts left to compare' : titles[mode]}
             // aria-disabled, not disabled: a disabled button takes no pointer events, so its tooltip could not show.
             aria-disabled={(mode === 'both' && bothDisabled) || undefined}
+            aria-keyshortcuts={shortcut ? 'V' : undefined}
             onClick={() => {
               if (!(mode === 'both' && bothDisabled)) onChange(mode);
             }}
@@ -418,7 +425,7 @@ function ConflictCompareBoth({
       <DiffFileHeader
         path={name}
         status="modified"
-        stats={`${total} ${total === 1 ? 'conflict' : 'conflicts'} · each side against ${labels.base.toLowerCase()}`}
+        stats={`${total} ${total === 1 ? 'conflict' : 'conflicts'} · both sides and the result, each against the version ${labels.base.toLowerCase()}`}
         actions={actions}
       />
       {rows.map((row) => (
@@ -513,12 +520,16 @@ export function ConflictDiff({
   picks,
   onPick,
   resolverText,
+  writer,
   onChoice,
   models,
   edits,
   onEdits,
   kind = 'merge',
+  onEditorDirty,
 }: {
+  /** The in-place editor is open with text you haven't saved (true), or not any more (false). */
+  onEditorDirty?: (dirty: boolean) => void;
   /** A paused restack's file (components/RestackReview.tsx): its versions are the updated parent and the PR's commit. */
   kind?: 'merge' | 'restack';
   /** Each open conflict's model request, by index (#445 item 7). */
@@ -535,6 +546,8 @@ export function ConflictDiff({
    * lines that neither side had are marked when they are this text's, never when you typed them (#445 item 10).
    */
   resolverText?: string;
+  /** Who wrote `resolverText` (writerOf), for its legend: "2 lines written by structural merge". */
+  writer?: string;
   /** The PR's version of the file: the diff's old side in Compare with: PR. */
   ours: string;
   /** The base branch's version of the file: the diff's old side in Compare with: main. */
@@ -551,7 +564,7 @@ export function ConflictDiff({
     ours: string;
     theirs: string;
     onUse: () => void;
-    /** Use this result on the card too: off while the footer's primary is the same action. */
+    /** Use the proposal for this file on the card too: off while the footer's primary is the same action. */
     inlineUse?: boolean;
     shown: boolean;
     onShow: () => void;
@@ -569,7 +582,9 @@ export function ConflictDiff({
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
+  const cycleCompare = useRef<() => boolean>(undefined);
   const { root, model, total, choose, undo, editStart, saveEdit } = useConflictChoices({
+    cycleCompare,
     onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
     original,
     contents,
@@ -587,8 +602,19 @@ export function ConflictDiff({
   // The conflict open in the in-place editor, and what you typed in it: kept here, not in the draft, until you save.
   const [editing, setEditing] = useState<number>();
   const typed = useRef(new Map<number, string>());
+  // Told only when it changes, never per keystroke.
+  const dirtyShown = useRef(false);
+  const reportDirty = (dirty: boolean) => {
+    if (dirtyShown.current === dirty) return;
+    dirtyShown.current = dirty;
+    onEditorDirty?.(dirty);
+  };
+  const dirtyReport = useRef(reportDirty);
+  dirtyReport.current = reportDirty;
+  useEffect(() => () => dirtyReport.current(false), []);
   const closeEditor = (index: number) => {
     typed.current.delete(index);
+    reportDirty(false);
     setEditing(undefined);
     // Focus returns to the conflict's card once it is back.
     requestAnimationFrame(() =>
@@ -637,7 +663,10 @@ export function ConflictDiff({
                   : undefined
               }
               disabled={disabled}
-              onType={(text) => typed.current.set(index, text)}
+              onType={(text) => {
+                typed.current.set(index, text);
+                reportDirty(text !== start);
+              }}
               onSave={(text) => {
                 const saved = saveEdit(index, text);
                 if (saved) closeEditor(index);
@@ -682,6 +711,13 @@ export function ConflictDiff({
     focusSwitch.current = false;
     root.current?.querySelector<HTMLElement>(`.conflict-compare [data-compare=${mode}]`)?.focus();
   }, [mode, root]);
+  // V steps through the modes, as a click on the switch would (lib/conflict-shortcuts.ts).
+  cycleCompare.current = hideBlocks
+    ? undefined
+    : () => {
+        switchTo(nextCompare(mode, !hasConflicts));
+        return true;
+      };
   const switcher = (
     <CompareSwitch
       value={mode}
@@ -690,11 +726,12 @@ export function ConflictDiff({
       baseLabel={labels.theirs}
       bothDisabled={!hasConflicts}
       kind={kind}
+      shortcut={shortcuts}
     />
   );
   const sides = useMemo(
-    () => (wholeWritten ? { ours, theirs, resolver: resolverText } : undefined),
-    [wholeWritten, ours, theirs, resolverText]
+    () => (wholeWritten ? { ours, theirs, resolver: resolverText, by: writer } : undefined),
+    [wholeWritten, ours, theirs, resolverText, writer]
   );
   const diff = { name, model, proposals, fileKey, preferences, labels, card, written, sides };
   return (
@@ -789,7 +826,7 @@ function CompareDiff({
   /** Each conflict's lines neither side had (conflictWritten). */
   written: ReadonlyMap<number, readonly number[]>;
   /** Both whole versions, when the draft is a resolver's whole file: its lines neither had are marked instead. */
-  sides?: { ours: string; theirs: string; resolver?: string };
+  sides?: { ours: string; theirs: string; resolver?: string; by?: string };
 }) {
   const last = useRef({ model, proposals, written, sides });
   if (live) last.current = { model, proposals, written, sides };
@@ -840,7 +877,7 @@ function CompareDiff({
       {/* A file with no lines left has nowhere to put a card: its cards come first. */}
       {live && shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
       {/* A resolver's whole file has no card per conflict: the count of its marked lines heads the diff. */}
-      {live && draft.sides && marks.size > 0 && <WrittenLegend count={marks.size} />}
+      {live && draft.sides && marks.size > 0 && <WrittenLegend count={marks.size} by={draft.sides.by} />}
       <ConflictCards.Provider value={live ? card : NO_CARDS}>
         <ConflictFileDiff
           name={name}
@@ -874,6 +911,7 @@ export function ConflictResult({
   file,
   picks,
   written: marked,
+  by,
   landmark,
 }: {
   name: string;
@@ -888,6 +926,8 @@ export function ConflictResult({
   picks?: BlockPicks;
   /** The marked lines, when the caller knows them (a whole-file proposal), in place of the file's. */
   written?: ReadonlySet<number>;
+  /** Who wrote the marked lines (writerOf), when the caller knows: else the file's writer. */
+  by?: string;
   landmark?: boolean;
 }) {
   const layout = useDiffLayout(preferences?.diffLayout);
@@ -903,7 +943,7 @@ export function ConflictResult({
         <p className="conflict-side-empty">The result is the same as {beforeLabel}.</p>
       ) : (
         <>
-          {written && written.size > 0 && <WrittenLegend count={written.size} />}
+          {written && written.size > 0 && <WrittenLegend count={written.size} by={by ?? (file && fileWriter(file))} />}
           <ConflictFileDiff
             name={name}
             before={before}
@@ -963,7 +1003,7 @@ function WholeFile({
       data-bucket="check"
       data-conflict-index={-1}
       tabIndex={0}
-      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : 'structural merge combined both sides'}. ${note}`}
+      aria-label={`Whole file. Check: ${proposal.source === 'moved' ? 'one side moved this code and the other edited it' : `${proposalWriter(proposal)} combined both sides`}. ${note}`}
     >
       <header className="conflict-block-header">
         <strong>Whole file</strong>
@@ -984,12 +1024,13 @@ function WholeFile({
         fileKey={`${fileKey}:whole-file`}
         preferences={preferences}
         written={written}
+        by={proposalWriter(proposal)}
         landmark={false}
       />
       {inlineUse && (
         <div className="conflict-block-actions">
           <Button size="sm" disabled={disabled} data-choice="whole-file" onClick={onUse}>
-            Use this result
+            Use the proposal for this file
           </Button>
         </div>
       )}

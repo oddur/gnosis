@@ -6,7 +6,7 @@ import { ArrowRight, CheckCheck, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
 import { ConflictDiff } from './ConflictDiff';
 import { conflictLabels, type BlockEdits, type BlockPick } from '../lib/conflict-blocks';
-import { resolverBaseline } from '../lib/conflict-diff';
+import { fileWriter, resolverBaseline } from '../lib/conflict-diff';
 import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
@@ -229,8 +229,8 @@ export function RestackReview({
         <p>All prepared branches were pushed together. GitHub will run checks for their new commits.</p>
       ) : step.id === 'rebase' ? (
         <p>
-          Rebase {count} dependent {count === 1 ? 'PR' : 'PRs'} in order onto the resolved branch. Matching saved
-          resolutions are reused. Preparation does not push anything.
+          Restack {count} dependent {count === 1 ? 'PR' : 'PRs'} in order onto the resolved branch. Resolutions you
+          saved for the same conflicts are reused. Preparing pushes nothing.
         </p>
       ) : step.id === 'resolve' && plan?.blocked ? (
         <div className="restack-blocked">
@@ -284,7 +284,7 @@ export function RestackReview({
                       : file.resolved && !dirty
                         ? 'Reviewed'
                         : markers
-                          ? 'Conflicted'
+                          ? 'Conflicts left'
                           : 'Resolved · needs review'}
                   </span>
                 </h4>
@@ -321,6 +321,7 @@ export function RestackReview({
                         setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: next } }))
                       }
                       resolverText={resolverBaseline(file, value)}
+                      writer={fileWriter(file)}
                       wholeFile={
                         whole && value === file.original
                           ? {
@@ -373,8 +374,8 @@ export function RestackReview({
         <>
           <div className="restack-instructions">
             <p>
-              Review each branch update below. Rebasing changes commit IDs and can dismiss GitHub approvals. Tests have
-              not been run locally.
+              Review each branch update below. Restacking changes commit IDs and can dismiss GitHub approvals. Gnosis
+              didn’t run your tests.
             </p>
             <Button size="sm" variant="ghost" disabled={busy} onClick={onPrepare}>
               Prepare again

@@ -1,5 +1,5 @@
 import { LoadingIndicator } from './LoadingState';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { DropdownMenu, Popover } from 'radix-ui';
 import type { DiffLineAnnotation } from '@pierre/diffs';
 import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
@@ -22,14 +22,16 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
+import { ConflictGuideButton, ConflictNotes, ConflictUndoTip, PreparingElapsed, useConflictTips } from './ConflictOnboarding';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
+import { conflictShortcuts, hasGlyph, isReviewAndPushKey, mac, spokenKey } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
+import { CopyCommands } from './CopyCommands';
 import { ConflictUndo } from './ConflictUndo';
-import { undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
+import { undoAllowed, undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import { WrittenLegend, proposalWhat } from './ConflictCard';
 import { useCodeOptions } from '../lib/use-code-options';
@@ -42,7 +44,7 @@ import {
   type BlockPicks,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
-import { cardAnchors, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
+import { cardAnchors, fileWriter, proposalWriter, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
   WRITTEN_BUDGET_MS,
   confirmCount,
@@ -284,7 +286,7 @@ function FilePicker({
 }
 
 /** The workspace's shortcuts, on hover or focus: the same list as the keyboard shortcut overlay. */
-function KeyboardHelp() {
+function KeyboardHelp({ base }: { base?: string }) {
   return (
     <TooltipProvider delayDuration={350}>
       <Tooltip>
@@ -295,12 +297,21 @@ function KeyboardHelp() {
         </TooltipTrigger>
         <TooltipContent side="bottom" align="end" className="conflict-keys">
           <dl>
-            {CONFLICT_SHORTCUTS.map(({ keys, label }) => (
+            {conflictShortcuts(base).map(({ keys, label }) => (
               <div key={keys}>
                 <dt>
                   {keys.split(/\s+/).map((k) => (
                     <kbd key={k} className="kbd">
-                      {k.toUpperCase()}
+                      {hasGlyph(k) ? (
+                        <>
+                          <span aria-hidden="true">{k}</span>
+                          <span className="sr-only">{spokenKey(k)}</span>
+                        </>
+                      ) : k.length === 1 ? (
+                        k.toUpperCase()
+                      ) : (
+                        k
+                      )}
                     </kbd>
                   ))}
                 </dt>
@@ -445,11 +456,14 @@ function LocalMerge({ session, reason }: { session: ConflictSession; reason: str
   );
 }
 
-/** The PR author, from the queue the app already holds. Unknown authors get neutral copy. */
-function findAuthor(url: string) {
+/**
+ * The PR as the queue holds it: its author (unknown authors get neutral copy), and its branches, which name a local
+ * merge before any session exists.
+ */
+function findMember(url: string) {
   const queue = workbenchStore.getQueue();
   for (const subject of [...queue.items.map((item) => item.subject), ...(queue.stacks ?? [])])
-    for (const member of subject.members) if (member.url === url && member.author) return member.author;
+    for (const member of subject.members) if (member.url === url) return member;
   return undefined;
 }
 
@@ -517,6 +531,7 @@ function ErrorPanel({
       <div>
         <p className="conflict-error-title">{copy.title}</p>
         {copy.body && <p>{copy.body}</p>}
+        {copy.commands && <CopyCommands commands={copy.commands} />}
         {actions && <div className="conflict-error-actions">{actions}</div>}
         {copy.details && (
           <details className="conflict-error-details">
@@ -660,8 +675,13 @@ export function ConflictWorkspace({
   const primary = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLElement>(null);
   const done = useRef<HTMLButtonElement>(null);
+  const mergedToggle = useRef<HTMLInputElement>(null);
+  // The in-place editor is open with text you haven't saved: the confirmation waits for it (confirm).
+  const editorDirty = useRef(false);
+  // G in the confirmation: each press opens Merged for you and focuses it.
+  const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
-  const author = useMemo(() => (session ? findAuthor(session.url) : undefined), [session?.url]);
+  const author = useMemo(() => (session ? findMember(session.url)?.author : undefined), [session?.url]);
   // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
   // proposals never counts: the file's proposals are Check until their own checks finish.
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
@@ -726,6 +746,17 @@ export function ConflictWorkspace({
   const repo = session ? repositoryKey(session.baseRepo) : '';
   // Unset means on: Merged conflicts still wait for your review.
   const showMerged = (repositories[repo] as RepositorySettings | undefined)?.showMergedConflicts !== false;
+  // First-run help, per account (components/ConflictOnboarding.tsx). The bucket key reopens from the summary row.
+  const tips = useConflictTips(session?.account);
+  const [guideAsked, setGuideAsked] = useState(false);
+  const guideId = useId();
+  const guideOpen = guideAsked || !tips.seen('buckets');
+  const closeGuide = () => {
+    tips.dismiss('buckets');
+    setGuideAsked(false);
+  };
+  const { configure } = useRepositorySettings();
+  const openRepoSettings = configure && session ? () => configure(session.baseRepo) : undefined;
 
   const file = session?.files.find((f) => f.path === selected);
   // Saved drafts' buckets change only with the session or a check result; the open draft's follow each keystroke.
@@ -1004,11 +1035,28 @@ export function ConflictWorkspace({
     setConfirming(false);
     setBaseNote('');
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
+    // The footer shows a hint before the outcome: clear it, so the undo's outcome is what it says.
+    setHint('');
     setOutcome(`${next.headBranch} is back at ${next.headSha.slice(0, 7)}. Your resolutions are saved.`);
   }
+  /** An in-place edit with unsaved text holds every step that would leave or review the draft: says so, and true. */
+  function editHeld() {
+    if (editorDirty.current) setHint('Save or cancel your edit first.');
+    return editorDirty.current;
+  }
+  /**
+   * Review and push… and Cmd+Enter (#445 item 13). The confirmation opens only when nothing needs you: no unsaved edit
+   * in place, no conflict left unchosen, and every file reviewed in its draft on screen, with no marker or local merge.
+   */
   function confirm() {
-    // The confirmation opens only when nothing needs you: every file reviewed, none with a marker left or a local merge.
-    const waiting = sessionRef.current?.files.find((f) => needsYou(f));
+    if (editHeld()) return;
+    if (file && unchosen.length) {
+      setHint(waitingHint(file, contents, unchosen.length));
+      return;
+    }
+    const waiting = sessionRef.current?.files.find((f) =>
+      needsYou(f, f.path === selectedRef.current ? contentsRef.current : f.result)
+    );
     if (waiting) {
       setHint(`${waiting.path} still needs you. Review every file before you push.`);
       return;
@@ -1032,6 +1080,7 @@ export function ConflictWorkspace({
     );
   }
   function markReviewed() {
+    if (editHeld()) return;
     if (!file || markersRemain || file.unsupported) return;
     if (unchosen.length) {
       setHint(waitingHint(file, contents, unchosen.length));
@@ -1058,7 +1107,7 @@ export function ConflictWorkspace({
       if (ok && finished) confirm();
     });
   }
-  // With "Show me every merged conflict" off, a file whose every conflict is Merged needs no review from you.
+  // With "Review Merged-only files myself" off, a file whose every conflict is Merged needs no review from you.
   useEffect(() => {
     if (showMerged || busy || error || confirming || !session || session.stale || session.status !== 'editing') return;
     const ready = fileStates.find((s) => !s.file.resolved && s.contents === s.file.result && allMerged(s.buckets));
@@ -1102,6 +1151,7 @@ export function ConflictWorkspace({
     focusIntent.current = true;
   }
   function chooseFile(path: string) {
+    if (path !== selected && editHeld()) return;
     if (!sessionRef.current || pending.current || path === selected) return;
     void persist()
       .then((saved) => select(path, saved))
@@ -1225,8 +1275,8 @@ export function ConflictWorkspace({
         void persist().catch((e: unknown) =>
           toast.add({
             type: 'error',
-            title: `Could not save your conflict draft for ${committed.current.session?.title ?? url}`,
-            description: `${e instanceof Error ? e.message : String(e)} Open Resolve conflicts again before you push.`,
+            title: `Gnosis couldn’t save your conflict draft for ${committed.current.session?.title ?? url}`,
+            description: `${e instanceof Error ? e.message : String(e)} Your last changes may be lost. Open the Conflicts tab again and check the draft before you push.`,
             timeout: 0,
           })
         );
@@ -1248,6 +1298,14 @@ export function ConflictWorkspace({
     []
   );
 
+  /** G: the merged conflicts. Review Merged-only files myself turns on, never off, and takes focus. */
+  function showMergedConflicts() {
+    const toggle = mergedToggle.current;
+    if (!toggle) return false;
+    if (!showMerged) void setShowMergedConflicts?.(repo, true);
+    toggle.focus();
+    return true;
+  }
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     // Escape leaves the view, as it closed the dialog. Drafts save first; nothing is pushed.
     if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -1257,16 +1315,36 @@ export function ConflictWorkspace({
       void close();
       return;
     }
-    if (!shortcutsActive || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    // U right after A undoes that A; any other key ends that (Shift and the other modifiers alone don't).
+    if (event.key !== 'a' && event.key !== 'u' && !['Shift', 'Meta', 'Control', 'Alt'].includes(event.key))
+      view.current?.forgetAccept();
+    if (event.defaultPrevented || event.altKey) return;
     const origin = (event.nativeEvent.composedPath()[0] ?? event.target) as HTMLElement;
-    // The in-place editor's card is yours while it is open: no key chooses, moves or marks from there (#445 item 11).
+    // No key acts while you type: in a field, a menu, the in-place editor's card (#445 item 11) or any editable text.
+    // A checkbox is not typing.
     if (
       origin.isContentEditable ||
       origin.closest(
-        'input,textarea,select,[contenteditable=true],[role=menu],[role=dialog],.conflict-suggest-menu,.conflict-block[data-state=editing]'
+        'input:not([type=checkbox]),textarea,select,[contenteditable=true],[role=menu],[role=dialog],.conflict-suggest-menu,.conflict-block[data-state=editing]'
       )
     )
       return;
+    // In the confirmation, G opens Merged for you. Cmd+Enter there is the Push button's own key, never this view's.
+    if (confirming) {
+      if (event.key === 'g' && !event.metaKey && !event.ctrlKey && groups && !groups.pending.length) {
+        event.preventDefault();
+        setOpenMerged((n) => n + 1);
+      }
+      return;
+    }
+    if (!shortcutsActive) return;
+    // Cmd+Enter opens the confirmation, as Review and push… does. It never pushes: Push takes its own click or key.
+    if (isReviewAndPushKey(event, mac)) {
+      event.preventDefault();
+      if (!event.repeat) confirm();
+      return;
+    }
+    if (event.metaKey || event.ctrlKey) return;
     const key = event.key;
     const handled = (() => {
       if (key === 'j' || key === 'k') {
@@ -1278,7 +1356,8 @@ export function ConflictWorkspace({
         return !!view.current?.choose(key === '1' ? 'ours' : key === '2' ? 'theirs' : 'both');
       }
       if (key === 'm') {
-        if (markersRemain) setHint('Resolve the remaining conflicts first.');
+        if (editHeld()) return true;
+        if (markersRemain) setHint('Choose for every conflict in this file before you mark it reviewed.');
         else markReviewed();
         return true;
       }
@@ -1286,6 +1365,22 @@ export function ConflictWorkspace({
         stepFile(key === 'n' ? 1 : -1);
         return true;
       }
+      if (key === 'a') {
+        if (!canEdit) return false;
+        // A whole-file proposal is never accepted by a key: Use this result takes it.
+        if (proposalOnly) setHint('A uses one conflict’s proposal. For this file, select Use the proposal for this file.');
+        else if (!view.current) return false;
+        else if (view.current.accept()) setHint('');
+        else setHint('Nothing to accept here: this conflict has no proposal that needs you.');
+        return true;
+      }
+      if (key === 'u') {
+        if (!canEdit) return false;
+        if (view.current?.undo()) setHint('');
+        return true;
+      }
+      if (key === 'v') return !!view.current?.cycleCompare();
+      if (key === 'g') return showMergedConflicts();
       return false;
     })();
     if (handled) event.preventDefault();
@@ -1296,11 +1391,15 @@ export function ConflictWorkspace({
   const title = session
     ? `Bring ${session.baseBranch} into ${ownBranch ? `your ${session.headBranch}` : headLabel}`
     : 'Resolve conflicts';
+  // Before a session exists, the queue's copy of the PR names the branches for a local merge.
+  const member = error && !session ? findMember(url) : undefined;
   const describedError = error
     ? describeConflictError(error, {
         stage: failedKind === 'publish' ? 'push' : failedKind === 'open' ? 'prepare' : 'other',
-        headBranch: session?.headBranch,
-        baseBranch: session?.baseBranch,
+        headBranch: session?.headBranch ?? member?.headBranch,
+        baseBranch: session?.baseBranch ?? member?.baseBranch,
+        headRepo: session?.headRepo ?? member?.headRepo,
+        baseRepo: session?.baseRepo ?? member?.baseRepo,
       })
     : undefined;
   // A personal access token can't sign in again for the workflow permission: its instructions follow the copy.
@@ -1361,7 +1460,7 @@ export function ConflictWorkspace({
           disabled={!canEdit}
           onClick={() => suggest('whole-file')}
         >
-          Use this result
+          Use the proposal for this file
         </Button>
       );
     switch (action) {
@@ -1416,7 +1515,7 @@ export function ConflictWorkspace({
     }
   })();
   const summaryShown = editing && summary.conflicts > 0;
-  const mergedToggle = !!session?.files.some((f) => f.proposals);
+  const mergedSetting = !!session?.files.some((f) => f.proposals);
   const fileButtons = fileStates.map(({ file: f, stage, status }) => (
     <button
       key={f.path}
@@ -1526,29 +1625,35 @@ export function ConflictWorkspace({
                     : 'Saved'}
               </span>
             )}
-            {summaryShown && <KeyboardHelp />}
+            {summaryShown && (
+              <ConflictGuideButton id={guideId} open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
+            )}
+            {summaryShown && <KeyboardHelp base={session.baseBranch} />}
             <Button variant="outline" size="sm" onClick={() => void close()}>
               {busy && !session ? 'Close · keeps preparing' : busy ? 'Continue in background' : 'Close'}
             </Button>
           </div>
-          {summaryShown && (models.notice || session.lastPush || typeCheck || mergedToggle) && (
+          {summaryShown && (models.notice || session.lastPush || typeCheck || mergedSetting) && (
             <div className="conflict-summary-notes">
               {models.notice && (
                 <p className="conflict-model-notice" role="status" data-conflict-model-notice="">
                   <Bot size={13} aria-hidden="true" />
-                  {models.notice} Gnosis didn’t ask it about these conflicts.
+                  {models.notice} Gnosis didn’t ask it about these conflicts. Ask again after that, or decide them
+                  yourself.
                 </p>
               )}
               {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
-              {mergedToggle && (
-                <label>
+              {mergedSetting && (
+                <label title="On: you mark every file reviewed. Off: a file whose conflicts are all Merged is marked reviewed for you. Saved for this repository.">
                   <input
+                    ref={mergedToggle}
                     type="checkbox"
+                    aria-keyshortcuts="G"
                     checked={showMerged}
                     disabled={!setShowMergedConflicts}
                     onChange={(e) => void setShowMergedConflicts?.(repo, e.target.checked)}
                   />
-                  Show me every merged conflict
+                  Review Merged-only files myself
                 </label>
               )}
               {typeCheck && (
@@ -1560,14 +1665,33 @@ export function ConflictWorkspace({
             </div>
           )}
         </div>
+        {/* First-run key and notes (#510) sit under the band, over the code. */}
+        {summaryShown && (
+          <ConflictNotes
+            guideId={guideId}
+            guideOpen={guideOpen}
+            guideAsked={guideAsked}
+            onCloseGuide={closeGuide}
+            model={model}
+            summary={summary}
+            stale={!!session.stale}
+            typed={session.files.some((f) => /\.(?:[cm]?ts|tsx)$/.test(f.path))}
+            typeCheck={typeCheck}
+            localPath={file?.unsupported ? undefined : session.files.find((f) => f.unsupported)?.path}
+            onShowLocal={chooseFile}
+            onSettings={openRepoSettings}
+            onAllKeys={() => root.current?.querySelector<HTMLElement>('[data-conflict-keys]')?.focus()}
+          />
+        )}
         {!session ? (
           busy ? (
             <div className="conflict-state" role="status">
               <LoadingIndicator announce={false}>Preparing the merge…</LoadingIndicator>
               <p>{activity?.detail || 'Reading the PR and its base branch.'}</p>
+              <PreparingElapsed since={activity?.startedAt} />
               {slow && (
                 <p className="conflict-state-muted">
-                  Large repositories can take a minute. You can close this window; preparation continues in Activity.
+                  Large repositories can take a minute. You can close this tab; preparation continues in Activity.
                 </p>
               )}
               {slow && activity?.canCancel && (
@@ -1585,8 +1709,21 @@ export function ConflictWorkspace({
               {errorCopy ? (
                 <ErrorPanel copy={errorCopy} actions={recover(errorCopy)} focus />
               ) : (
-                <p>The merge could not be prepared.</p>
+                <p>Gnosis couldn’t prepare this merge. Nothing was changed. Try again.</p>
               )}
+              <div className="conflict-state-actions">
+                {!errorCopy && (
+                  <Button size="sm" onClick={() => void load()}>
+                    Try again
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" asChild>
+                  <a href={url} target="_blank" rel="noreferrer">
+                    Open PR on GitHub
+                    <ExternalLink aria-hidden="true" />
+                  </a>
+                </Button>
+              </div>
             </div>
           )
         ) : session.reopened ? (
@@ -1679,7 +1816,7 @@ export function ConflictWorkspace({
                     {pushed && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <ConflictUndo update={pushed} onUndone={undone} />
+                        <ConflictUndo update={pushed} onUndone={undone} announce={false} />
                       </>
                     )}
                   </p>
@@ -1846,6 +1983,7 @@ export function ConflictWorkspace({
                 </li>
                 <li>Approvals may be dismissed if the repository requires it.</li>
                 <ConflictCascadeLine cascade={cascade} />
+                {!undoAllowed(repositories[repo]) && <ConflictUndoTip tips={tips} onSettings={openRepoSettings} />}
                 <li>
                   Pushes only if the branch is still at <code>{session.headSha.slice(0, 7)}</code>. The PR stays open;
                   checks run again.
@@ -1863,6 +2001,7 @@ export function ConflictWorkspace({
                   labels={labels}
                   verdictOf={verdictOf}
                   preferences={preferences}
+                  openMerged={openMerged}
                 />
               )}
             </StepCard>
@@ -1897,9 +2036,9 @@ export function ConflictWorkspace({
             ) : (
               <>
                 <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
-                <h2>No conflicts to resolve</h2>
+                <h2>Git merged everything cleanly</h2>
                 <p>
-                  Git can bring {session.baseBranch} into {session.headBranch} cleanly. Review the changes, then push.
+                  No conflicts. Review what arrives from {session.baseBranch}, then push.
                 </p>
                 {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
                 <Button ref={primary} size="sm" disabled={busy} onClick={confirm}>
@@ -1931,7 +2070,7 @@ export function ConflictWorkspace({
                                   : file.source === 'mergiraf'
                                     ? 'Suggested by structural merge'
                                     : `Suggested by ${model}`}{' '}
-                                · Not tested
+                                · Gnosis didn’t run your tests
                               </summary>
                               {file.explanation && <p>{file.explanation}</p>}
                             </details>
@@ -1952,6 +2091,7 @@ export function ConflictWorkspace({
                                 disabled={!canEdit}
                                 onChange={setContents}
                                 onAllResolved={() => primary.current?.focus()}
+                                onEditorDirty={(dirty) => (editorDirty.current = dirty)}
                                 proposals={file.proposals}
                                 verdict={verdictOf(file)}
                                 note={file.structuralNote}
@@ -1961,6 +2101,7 @@ export function ConflictWorkspace({
                                 edits={editsOf(file)}
                                 onEdits={(next) => editsFor(file, next)}
                                 resolverText={resolverBaseline(file, contents)}
+                                writer={fileWriter(file)}
                                 onChoice={(key, before, after, picked) => choiceStats(session.id, file.path, key, before, after, picked)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
@@ -2106,7 +2247,7 @@ function ConfirmFileDiff({
         <Icon size={13} aria-hidden="true" />
         <span>
           Conflict {index + 1} of {total} · {text}
-          {wrote > 0 && ` · ${writtenLabel(wrote)}`}
+          {wrote > 0 && ` · ${writtenLabel(wrote, proposal ? proposalWriter(proposal) : saved && fileWriter(saved))}`}
         </span>
       </p>
     );
@@ -2126,7 +2267,7 @@ function ConfirmFileDiff({
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
         </p>
       )}
-      {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} />}
+      {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} by={saved && fileWriter(saved)} />}
       <ConflictFileDiff
         name={part.path}
         previousPath={part.previousPath}
@@ -2268,6 +2409,7 @@ function ConfirmDiff({
   labels,
   verdictOf,
   preferences,
+  openMerged = 0,
 }: {
   session: ConflictSession;
   preview: NonNullable<ConflictReply['preview']>;
@@ -2275,10 +2417,20 @@ function ConfirmDiff({
   labels: ConflictLabels;
   verdictOf: (f: ConflictFile) => Verdict | undefined;
   preferences?: Preferences | null;
+  /** Counts G presses: each opens Merged for you and focuses its heading. */
+  openMerged?: number;
 }) {
   const clean = !session.files.length;
   // A clean merge has only main's changes: that group opens.
   const [open, setOpen] = useState({ decided: true, merged: false, main: clean });
+  const root = useRef<HTMLDivElement>(null);
+  const pressed = useRef(openMerged);
+  useEffect(() => {
+    if (openMerged === pressed.current) return;
+    pressed.current = openMerged;
+    setOpen((previous) => ({ ...previous, merged: true }));
+    root.current?.querySelector<HTMLElement>('[data-confirm-group=merged] .conflict-disclosure')?.focus();
+  }, [openMerged]);
   const toggle = (id: keyof typeof open) => setOpen((previous) => ({ ...previous, [id]: !previous[id] }));
   const verdict = (path: string) => {
     const f = session.files.find((file) => file.path === path);
@@ -2311,7 +2463,7 @@ function ConfirmDiff({
     />
   );
   return (
-    <div className="conflict-confirm-diff">
+    <div ref={root} className="conflict-confirm-diff">
       {!clean && (
         <ConfirmSection
           id="decided"
@@ -2399,7 +2551,7 @@ function LastPush({
           {update && (
             <>
               {' · '}
-              <ConflictUndo update={update} onUndone={onUndone} />
+              <ConflictUndo update={update} onUndone={onUndone} announce={false} />
             </>
           )}
         </p>

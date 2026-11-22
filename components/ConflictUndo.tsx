@@ -17,9 +17,15 @@ import { toast } from './ui/toast';
 export function ConflictUndo({
   update,
   onUndone,
+  announce = true,
 }: {
   update: PushedUpdate;
   onUndone?: (session: ConflictSession) => void;
+  /**
+   * A toast for the outcome. The Conflicts view says it on screen instead: a toast there would outlive the state it
+   * reports and contradict the screen.
+   */
+  announce?: boolean;
 }) {
   const { settings } = useRepositorySettings();
   const [open, setOpen] = useState(false);
@@ -47,14 +53,15 @@ export function ConflictUndo({
         version: update.version,
       });
       setOpen(false);
-      toast.add({
-        type: 'success',
-        title: `${branch} is back at ${update.headSha.slice(0, 7)}`,
-        description: 'The merge commit is off the branch. Your resolutions are saved: fix them and push again.',
-      });
+      if (announce)
+        toast.add({
+          type: 'success',
+          title: `${branch} is back at ${update.headSha.slice(0, 7)}`,
+          description: 'The merge commit is off the branch. Your resolutions are saved: fix them and push again.',
+        });
       onUndone?.(reply.session);
     } catch (e) {
-      setError(describeUndoError(e instanceof Error ? e.message : String(e), branch));
+      setError(describeUndoError(e instanceof Error ? e.message : String(e), update));
     } finally {
       pending.current = false;
       setBusy(false);
@@ -112,6 +119,13 @@ export function ConflictUndo({
               <div>
                 <p className="conflict-error-title">{error.title}</p>
                 {error.body && <p>{error.body}</p>}
+                {error.docs && (
+                  <p>
+                    <a href={UNDO_DOCS_URL} target="_blank" rel="noreferrer">
+                      How to undo this update
+                    </a>
+                  </p>
+                )}
                 {error.details && (
                   <details className="conflict-error-details">
                     <summary>Details</summary>

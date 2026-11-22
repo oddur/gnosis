@@ -6,6 +6,8 @@ import {
   editConflict,
   pickText,
   type BlockChoice,
+  type BlockEdit,
+  type ConflictModel,
   type BlockEdits,
   type BlockPick,
   type BlockPicks,
@@ -13,6 +15,7 @@ import {
 import { keptMarks, writtenLines } from '../lib/conflict-diff';
 import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { Verdict } from '../lib/conflict-verify';
+import { nextNeedingYou } from '../lib/conflict-shortcuts';
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 /**
@@ -84,6 +87,17 @@ export interface ConflictViewHandle {
   /** Apply a choice to the focused open conflict, or to the first open one. */
   choose: (choice: BlockChoice) => boolean;
   focusFirst: () => boolean;
+  /**
+   * A (#445 item 13): use the focused conflict's proposal, then focus the next conflict that needs you, else the next
+   * action. False, and nothing changes, when the conflict needs you but has no proposal of its own.
+   */
+  accept: () => boolean;
+  /** U: right after A, undoes that accept; otherwise the focused conflict's Undo. False when there is nothing to undo. */
+  undo: () => boolean;
+  /** Any other key, a click or a focus move of yours: U no longer undoes the last accept. */
+  forgetAccept: () => void;
+  /** V: the next Compare with mode. False while no switch shows. */
+  cycleCompare: () => boolean;
 }
 
 /**
@@ -104,7 +118,10 @@ export function useConflictChoices({
   onChoice,
   edits,
   onEdits,
+  cycleCompare,
 }: {
+  /** The diff's Compare with step, for V; it reads the mode on screen when called. */
+  cycleCompare?: { current: (() => boolean) | undefined };
   original: string;
   contents: string;
   proposals?: readonly (ConflictProposal | null)[];
@@ -135,7 +152,21 @@ export function useConflictChoices({
     [original, contents, proposals, picks, edits]
   );
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
-  const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
+  const pendingFocus = useRef<{ after?: number; at?: number; accepted?: boolean }>(undefined);
+  // Conflicts whose proposal you accepted with A while it stays in Check: Accept's focus passes over them.
+  const accepted = useRef(new Set<number>());
+  // The conflict card that last had focus: A and U act on it while focus is on the view's own controls (V's switch,
+  // G's checkbox, the next action).
+  const lastCard = useRef<number>(undefined);
+  // The last A, with what it replaced, until another key, a click or a focus move: U then undoes it.
+  const lastAccept = useRef<{
+    index: number;
+    choice: ConflictModel['choices'][number];
+    pick: BlockPick | undefined;
+    edit: BlockEdit | null | undefined;
+    /** The conflict A sent focus to: focus arriving anywhere else in the view is a move of yours. */
+    target?: number;
+  }>(undefined);
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
   const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
@@ -173,6 +204,11 @@ export function useConflictChoices({
       const card = (event.target as Element).closest('.conflict-block');
       const index = card?.getAttribute('data-conflict-index');
       focused = card && index ? { index, card } : undefined;
+      if (index && Number(index) >= 0) lastCard.current = Number(index);
+      // The accepted card taking focus back as it mounts again isn't a move of yours; keys and clicks end it already.
+      const at = index ? Number(index) : undefined;
+      if (lastAccept.current && at !== lastAccept.current.target && at !== lastAccept.current.index)
+        lastAccept.current = undefined;
     };
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget) focused = undefined;
@@ -188,12 +224,16 @@ export function useConflictChoices({
         .querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)
         ?.focus({ preventScroll: true });
     });
+    // A click anywhere is yours: U no longer undoes the last accept.
+    const onPointerDown = () => (lastAccept.current = undefined);
     element.addEventListener('focusin', onFocusIn);
     element.addEventListener('focusout', onFocusOut);
+    document.addEventListener('pointerdown', onPointerDown, true);
     observer.observe(element, { childList: true, subtree: true });
     return () => {
       element.removeEventListener('focusin', onFocusIn);
       element.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       observer.disconnect();
     };
   }, []);
@@ -223,6 +263,7 @@ export function useConflictChoices({
     const next = [...model.choices];
     const before = next[index];
     next[index] = choice;
+    accepted.current.delete(index);
     pendingFocus.current = choice ? { after: index } : { at: index };
     // Replacing your edit is not a choice between Gnosis's options: the stats count none.
     if (before !== 'edit') onChoice?.(index, before, choice, picks?.[index]);
@@ -233,6 +274,7 @@ export function useConflictChoices({
   }
   /** Undo: a Keep or a proposal opens the conflict again; your edit returns to the choice it replaced (#445 item 11). */
   function undo(index: number) {
+    accepted.current.delete(index);
     const edit = model.choices[index] === 'edit' ? model.edits?.[index] : undefined;
     if (!edit) {
       choose(index, undefined);
@@ -289,12 +331,31 @@ export function useConflictChoices({
         reveal(root.current?.querySelector<HTMLElement>(`[data-conflict-index="${pending.at}"]`));
         return;
       }
+      if (pending.accepted) {
+        focusAfterAccept(pending.after ?? -1);
+        return;
+      }
       const blocks = openBlocks();
       const target = blocks.find((block) => indexOf(block) > (pending.after ?? -1)) ?? blocks.at(0);
       if (target) reveal(target);
       else onAllResolved?.();
     });
   }, [model]);
+  function focusAfterAccept(from: number) {
+    const next = nextNeedingYou(openBlocks().map(indexOf).filter((index) => index >= 0), from, accepted.current);
+    if (lastAccept.current) lastAccept.current.target = next;
+    if (next === undefined) onAllResolved?.();
+    else reveal(root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${next}"]`));
+  }
+  /** The conflict card with focus, in this file. */
+  const focusedCard = () => {
+    const card = document.activeElement?.closest<HTMLElement>('.conflict-block');
+    if (card && root.current?.contains(card) && indexOf(card) >= 0) return card;
+    // Focus is on the view's own controls: the card you were on.
+    return lastCard.current === undefined
+      ? undefined
+      : (root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${lastCard.current}"]`) ?? undefined);
+  };
   // A proposal is Check while its checks run. If it had focus and turns Merged, focus moves on to the next conflict that
   // needs you. With none, it stays put: never onto a button that commits a review while you may be pressing keys. J
   // then goes to the next action.
@@ -330,6 +391,64 @@ export function useConflictChoices({
         choose(indexOf(target), choice);
         return true;
       },
+      accept() {
+        if (disabled) return false;
+        // The focused conflict, or the first that needs you; never the whole-file proposal, which Use this result takes.
+        const card = focusedCard() ?? openBlocks().find((block) => indexOf(block) >= 0);
+        const index = indexOf(card ?? null);
+        if (!card || index < 0 || !card.matches(pendingSelector) || !proposals?.[index]) return false;
+        const before = {
+          index,
+          choice: model.choices[index],
+          pick: picks?.[index],
+          edit: model.edits?.[index],
+        };
+        if (model.choices[index] === 'proposal' && picks?.[index] === 'proposal') {
+          // You chose this proposal already: only focus moves on, and U brings it back.
+          lastAccept.current = before;
+          accepted.current.add(index);
+          whenCards(() => focusAfterAccept(index));
+          return true;
+        }
+        // The same handler as the card's Use the proposal: one way to apply a proposal, as your explicit choice.
+        choose(index, 'proposal');
+        lastAccept.current = before;
+        accepted.current.add(index);
+        pendingFocus.current = { after: index, accepted: true };
+        return true;
+      },
+      undo() {
+        if (disabled) return false;
+        const last = lastAccept.current;
+        lastAccept.current = undefined;
+        if (last) {
+          // Back to what A replaced: its choice, your pick and your edit, with focus on that conflict again.
+          accepted.current.delete(last.index);
+          const next = [...model.choices];
+          next[last.index] = last.choice;
+          const edits = [...(model.edits ?? [])];
+          edits[last.index] = last.edit;
+          pendingFocus.current = { at: last.index };
+          if (next[last.index] === model.choices[last.index] && last.pick === picks?.[last.index]) {
+            reveal(root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${last.index}"]`));
+            return true;
+          }
+          if (last.edit !== model.edits?.[last.index]) onEdits?.(edits);
+          onPick?.(last.index, last.pick);
+          onChange(applyChoices(model.segments, next, proposals, edits));
+          return true;
+        }
+        const card = focusedCard();
+        if (!card || !model.undoable) return false;
+        const index = indexOf(card);
+        if (model.choices[index] === undefined) return false;
+        undo(index);
+        return true;
+      },
+      forgetAccept() {
+        lastAccept.current = undefined;
+      },
+      cycleCompare: () => cycleCompare?.current?.() ?? false,
       focusFirst() {
         if (!cardsIn()) {
           // Cards still mounting: focus the first that needs you once they are in, else the next action.
