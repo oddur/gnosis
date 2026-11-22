@@ -3,6 +3,7 @@
     "target": "es2022",
     "strict": true,
     "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "sourceMap": true,
     "outDir": "dist"
   },

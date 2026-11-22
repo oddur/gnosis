@@ -268,12 +268,14 @@ The resolver audit checks the checks. Each resolver and rule runs over the lab's
 | `broken-parse` | A line that does not parse is inserted. |
 | `drop-pr-line`, `drop-main-line` | One line from the PR or from main is removed, a line that side added first. |
 | `swap-order` | Two lines of one function body, both from one side, change places. |
+| `duplicate-unit` | A one-line unit that one side added, such as an enum variant, a field, an import or a key, is repeated after itself. |
+| `swap-units` | Two lines that one side added together change places. The two sides' additions may change places; one side's own may not. |
 | `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
 | `cross-anchor` | A line one side changed moves past lines the other side inserted next to it, before or after it in the ancestor. |
 | `change-number`, `change-string` | A number or a string in the result changes. |
 | `touch-outside` | A number or a name that is not a keyword changes on a line next to the conflict, outside it, in the resolver's whole output. The output is then mapped onto Git's conflicts again. |
 
-No mutation may end Merged, and a whole-file proposal may not pass its checks. A union is never Merged; the audit still counts a mutation the checks would not catch (`held`). An earlier resolution is your own resolution of the same conflict, so it may drop a side, reorder or edit lines on purpose (`own`). It is held only to parsing, no duplicated definition and no text outside the conflict.
+No mutation may end Merged, and a whole-file proposal may not pass its checks. A union is never Merged; the audit still counts a mutation the checks would not catch (`held`). An earlier resolution is your own resolution of the same conflict, so it may drop a side, reorder, repeat or edit lines on purpose (`own`). It is held only to parsing, no duplicated definition and no text outside the conflict.
 
 ```
 npm run conflict-resolver-audit                 # the fixtures and one matrix case per pattern and language

@@ -2,7 +2,7 @@
  * The resolver audit (#445 item 19). Runs each resolver and rule over the conflict lab's cases (tests/fixtures/conflicts
  * and a sample of the generated matrix), as the conflict service does, then mutates every result the checks pass:
  * a dropped or duplicated definition, a broken parse, a line dropped from either side, two lines swapped inside a
- * function, a changed string or number, and text outside the conflict touched. Every mutation must fail the checks:
+ * function, a one-line unit repeated or two of one side's swapped (#481), a changed string or number, and text outside the conflict touched. Every mutation must fail the checks:
  * it must never end Merged (lib/conflict-verify.ts). Pure library code; scripts/conflict-resolver-audit.ts prints it,
  * and tests/conflict-resolver-audit.test.ts runs it with `npm test`.
  */
@@ -36,6 +36,8 @@ export type MutationKind =
   | 'interleave-sides'
   | 'cross-anchor'
   | 'definition-into-definition'
+  | 'duplicate-unit'
+  | 'swap-units'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -49,13 +51,15 @@ export const MUTATIONS: MutationKind[] = [
   'interleave-sides',
   'cross-anchor',
   'definition-into-definition',
+  'duplicate-unit',
+  'swap-units',
   'change-number',
   'change-string',
   'touch-outside',
 ];
 /**
  * Mutations a remembered resolution may make on purpose: it is your own earlier resolution of the same conflict (Git's
- * rerere matches the conflict's exact text), and you may have dropped a side, reordered or edited it. The checks hold it
+ * rerere matches the conflict's exact text), and you may have dropped a side, reordered, repeated or edited it. The checks hold it
  * only to parsing, no duplicated definition and no text outside the conflict.
  */
 export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
@@ -63,6 +67,8 @@ export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
   'drop-pr-line',
   'drop-main-line',
   'swap-order',
+  'swap-units',
+  'duplicate-unit',
   'interleave-sides',
   'cross-anchor',
   'change-number',
@@ -479,6 +485,31 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
         }
       }
       return { skip: 'the result has no lines only one side added beside the other side’s' };
+    }
+    case 'duplicate-unit':
+    case 'swap-units': {
+      // The order-free kinds (#481) are one line each: an enum variant, a field, an import, a JSON key. One such line a
+      // side added, repeated after itself; or two lines one side added, in the other order. Either is a merge neither
+      // side wrote, however free the order between the two sides is.
+      const [base, ours, theirs] = [target.sides.base, target.sides.ours, target.sides.theirs].map(sideLines);
+      /** The side that alone added this line. */
+      const own = (line: string) => {
+        const key = norm(line);
+        if (!hasWord(line) || base.has(key) || ours.has(key) === theirs.has(key)) return undefined;
+        return ours.has(key) ? 'ours' : 'theirs';
+      };
+      if (kind === 'duplicate-unit') {
+        const i = lines.findIndex((line) => own(line) && /[,;]\s*$/.test(line));
+        return i < 0 ? { skip: 'no one-line unit a side added' } : { text: replaceLines(lines, i + 1, 0, [lines[i]]) };
+      }
+      for (let i = 0; i + 1 < lines.length; i++) {
+        const side = own(lines[i]);
+        if (!side || own(lines[i + 1]) !== side || norm(lines[i]) === norm(lines[i + 1])) continue;
+        return {
+          text: replaceLines(lines, i, 2, [withEnding(lines[i + 1], lines[i]), withEnding(lines[i], lines[i + 1])]),
+        };
+      }
+      return { skip: 'no two lines one side added together' };
     }
     case 'change-number':
     case 'change-string': {

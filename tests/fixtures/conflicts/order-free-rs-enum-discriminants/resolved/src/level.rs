@@ -3,6 +3,7 @@ pub enum Level {
     Low = 1,
     High = 9,
     Medium = 5,
+    Severe = 7,
     Critical = 12,
 }
 

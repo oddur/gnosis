@@ -3,6 +3,7 @@ pub struct Limits {
     pub width: u32,
     pub height: u32,
     pub depth: u32,
+    pub margin: u16,
     pub ratio: f64,
 }
 
