@@ -73,13 +73,7 @@ export function conflictHeader(
     const merged = allMerged(buckets);
     // The dialog's own next step for the file. Only a reviewed file, or an all-Merged one that "Show me every merged
     // conflict" off reviews for you, leaves nothing to review.
-    const action = conflictFileAction({
-      stage,
-      resultShown: false,
-      otherFilesPending: false,
-      unsupported: !!f.unsupported,
-      merged,
-    });
+    const action = conflictFileAction({ stage, otherFilesPending: false, unsupported: !!f.unsupported });
     if (action !== 'confirm' && !(action === 'mark-reviewed' && merged && !showMerged)) review = true;
     return summaryEntry(f, fileStatus(f, f.result, stage, buckets), buckets, verdict, showMerged);
   });

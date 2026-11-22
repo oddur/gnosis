@@ -8,9 +8,9 @@ The heading names the task, such as "Bring main into @ana's feature/retry". Belo
 
 Each conflict shows two labelled versions side by side: **This PR · branch** and the base branch. The common ancestor is under a collapsed **Before both changes**. Git's markers and commit IDs are never shown as labels.
 
-1. Choose **Keep PR change**, **Keep main's change** or **Keep both** for each conflict. The block then shows a short note, such as "Kept PR change · Undo", even when the proposal had the same text: a choice you make is yours. Undo works per block and survives switching files. Use **Edit result** to write your own result.
-2. When no conflict is left, the file is **Resolved · needs review**. Select **Review result** to compare the result with the PR version. The columns are labelled.
-3. **Mark reviewed** is available only after the current result has been shown. A file whose every conflict is Merged shows its results already, so its next step is **Mark reviewed**. It saves the file as **Reviewed** and opens the next file that needs work.
+1. Choose **Keep PR change**, **Keep main's change** or **Keep both** for each conflict. The block then shows a short note, such as "Kept PR change · Undo", even when the proposal had the same text: a choice you make is yours. Undo works per block and survives switching files.
+2. To write a conflict's result yourself, select **Edit** on its card. The conflict's lines open in an editor under them, in the diff: an open conflict starts with both sides, PR first. **Save edit** (Cmd+Enter, Ctrl+Enter on Windows and Linux) puts your text into that conflict's lines and nowhere else; **Cancel** (Escape) changes nothing. The card then says "Edited by you · Undo", and Undo returns the conflict to what it was before your first edit, such as the proposal or a Keep. An edit is yours: it clears your Keep for the conflict, and the file is saved as your edit. If Gnosis can't keep an edit to the conflict's lines, for example because the draft was changed around the conflicts, it says so and changes nothing. A conflict marker left in your edit keeps the conflict in **Decide** and the file conflicted.
+3. When no conflict is left, the file is **Resolved · needs review**. Its result is in the diff: **Compare with: PR** shows what changes on the PR's branch. **Mark reviewed** saves the file as **Reviewed** and opens the next file that needs work. The confirmation shows the whole update again before anything is pushed.
 4. When every file is reviewed, the confirmation opens directly.
 
 ### Compare with
@@ -40,15 +40,15 @@ When one side moved or renamed a function and the other side edited it, and stru
 
 A conflict Gnosis can't write as text, such as a rename on both sides, a deletion or a binary file, shows **Needs a local merge tool** in the file list and the file header. Gnosis pushes only a merge it can resolve completely, so the file says to merge the PR on your computer and gives the commands to start (**Copy commands**).
 
-Each file has one main action in the footer: **Next conflict**, **Review result**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
+Each file has one main action in the footer: **Next conflict**, **Mark reviewed**, **Next file** or **Review and push…**. Drafts save automatically; the summary row shows "Saving…" or "Saved". **Start over with latest code…** asks before it replaces the draft with a fresh merge.
 
 ### Lines Gnosis wrote
 
-A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them, such as "1 line written by Gnosis (neither side had it)". A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), in Review result, in a whole-file proposal before you use it, and in the confirmation's diffs. A screen reader reads "Written by Gnosis. Neither side had this line." for each marked line, and the line number shows the same tooltip.
+A line that neither side had gets a steady mark: a soft blue band under its text and a thin rail at its left edge. Structural merge, the rules that keep both sides or the same change, the move rule, a remembered resolution and a model suggestion can all write such lines. Read the marked lines most carefully. The conflict's card counts them, such as "1 line written by Gnosis (neither side had it)". A file that a resolver wrote whole, where Gnosis can't separate its conflicts, shows the count above its diff. The mark shows in PR, main and both (on the result row), in a whole-file proposal before you use it, and in the confirmation's diffs. A screen reader reads "Written by Gnosis. Neither side had this line." for each marked line, and the line number shows the same tooltip.
 
 When in doubt, Gnosis marks the line. It compares each conflict's result with both sides' lines exactly, line endings included, so a re-indented line or a line changed from CRLF to LF is a new line. A result that has a line more often than both sides together marks every copy of that line. In a file written whole, a line is a side's only where a line diff against that side keeps it. When there is no time for that diff, for example in a confirmation of many large files, Gnosis marks every copy of a line the result has more often than the side with the most copies.
 
-Gnosis keeps the text the resolver wrote. When you then keep a conflict or edit the draft, the resolver's lines that neither side had stay marked. A line you type, saved or not, is never marked, and neither is a Keep or an open conflict. The mark never hides a line or its change colour.
+Gnosis keeps the text the resolver wrote. When you then keep a conflict or edit the draft, the resolver's lines that neither side had stay marked. A line you type, saved or not, is never marked, and neither is a Keep or an open conflict. In a conflict you edit, only the resolver's lines you leave as they were keep their mark; a line you change or add is yours. The mark never hides a line or its change colour.
 
 ### Keyboard
 
@@ -56,10 +56,10 @@ Gnosis keeps the text the resolver wrote. When you then keep a conflict or edit 
 | --- | --- |
 | J / K | Next / previous conflict |
 | 1 / 2 / 3 | Keep PR change / base change / both, for the focused conflict |
-| M | Mark the file reviewed and open the next file. A file with a choice or an edit of yours shows its result first |
+| M | Mark the file reviewed and open the next file |
 | N / P | Next / previous file |
 
-Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, the result editor and the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
+Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, in a conflict's editor and in the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
 
 ## Confirm and push
 

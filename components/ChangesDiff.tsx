@@ -1123,12 +1123,22 @@ export interface DiffNavigator {
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
 /**
+ * The diffs under `scope`, without a diff or an editor inside one's annotations, such as a conflict's in-place editor
+ * (#445 item 11): marks and line lookups are for the diff's own rows, never for code in a card under them.
+ */
+function diffHosts(scope: ParentNode): HTMLElement[] {
+  return [...scope.querySelectorAll<HTMLElement>('diffs-container')].filter(
+    (host) => !host.parentElement?.closest('diffs-container')
+  );
+}
+
+/**
  * The row of a line on one side, in the diffs under `scope`: deleted rows and the old column's rows carry old
  * numbers in `data-line`, the rest new ones, with the other side's number in `data-alt-line`.
  */
 function lineElement(scope: ParentNode, side: LinePoint['side'], line: number): HTMLElement | undefined {
   const selector = `[data-line="${line}"], [data-alt-line="${line}"]`;
-  for (const host of scope.querySelectorAll('diffs-container'))
+  for (const host of diffHosts(scope))
     for (const row of host.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []) {
       const type = row.dataset.lineType;
       if (type === (side === 'before' ? 'change-addition' : 'change-deletion')) continue;
@@ -1767,7 +1777,7 @@ export function ChangesDiff<A>({
           });
           // As many rows as fill the view twice: the rest of a long section is out of view while the mark lasts.
           const rows = Math.ceil((2 * scroller.clientHeight) / CODE_LINE_HEIGHT);
-          markSection(element.querySelectorAll('diffs-container'), { side, start: first, end: last, signatureEnd: here[1] }, bars, rows);
+          markSection(diffHosts(element), { side, start: first, end: last, signatureEnd: here[1] }, bars, rows);
         } else if (landed?.isConnected) {
           // A line is marked with the rest of `here` on its side, such as a definition's whole signature; a bar alone.
           const rows: HTMLElement[] = [landed];
@@ -1868,16 +1878,16 @@ export function ChangesDiff<A>({
   }, [stickyUnder]);
   // New rails mark the diffs already rendered.
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markRails(host, rails);
+    if (root.current) for (const host of diffHosts(root.current)) markRails(host, rails);
   }, [rails]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-noise-line', noiseLines]]);
+    if (root.current) for (const host of diffHosts(root.current)) markLines(host, [['data-noise-line', noiseLines]]);
   }, [noiseLines]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markLines(host, [['data-moved-line', movedLines]]);
+    if (root.current) for (const host of diffHosts(root.current)) markLines(host, [['data-moved-line', movedLines]]);
   }, [movedLines]);
   useEffect(() => {
-    if (root.current) for (const host of root.current.querySelectorAll('diffs-container')) markWritten(host, written);
+    if (root.current) for (const host of diffHosts(root.current)) markWritten(host, written);
   }, [written]);
   // New definitions name the reader's place anew.
   useEffect(() => follow.current?.(), [scopeAt]);

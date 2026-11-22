@@ -4146,10 +4146,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* In the file header the path keeps one line: the folders give way first. */
 .conflict-file-title .conflict-path { flex-wrap:nowrap; }
 .conflict-file-title .conflict-path-dir { flex:0 1000 auto;min-width:1.5em; }
-.conflict-modes { display:flex;gap:2px;padding:2px;border-radius:calc(var(--radius-sm) + 2px);background:color-mix(in srgb,var(--secondary) 60%,transparent); }
-.conflict-modes [data-slot=button] { height:28px; }
-.conflict-modes [aria-pressed=true] { background:var(--background);box-shadow:0 1px 2px color-mix(in srgb,var(--foreground) 12%,transparent); }
-.dark .conflict-modes [aria-pressed=true] { background:var(--secondary); }
 .conflict-scroll { flex:1 1 auto;min-height:0;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;overscroll-behavior:contain; }
 .conflict-scroll > * { flex-shrink:0; }
 .conflict-footer { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 16px;border-top:1px solid var(--border);background:var(--background); }
@@ -4220,6 +4216,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-kept { display:flex;align-items:center;gap:6px;padding:4px 8px 4px 12px;background:var(--secondary);font-size:var(--type-caption);font-weight:600; }
 .conflict-kept > svg { color:var(--color-success); }
 .conflict-kept > span[aria-hidden] { color:var(--muted-foreground);font-weight:400; }
+/* Edit (#445 item 11) sits at the end of a decided card's line, away from Undo. */
+.conflict-kept > [data-conflict-edit] { margin-left:auto; }
+/* The in-place editor: the conflict's lines, under them in the diff, until you save or cancel. */
+/* Its scroll margin clears the pinned file and hunk headers above it. */
+.conflict-block[data-state=editing] { border-color:color-mix(in srgb,var(--ring) 60%,var(--border));scroll-margin-top:calc(var(--diff-file-header-height,48px) + 56px); }
+.conflict-inline-editor { max-height:min(60vh,480px);overflow:auto;border-top:1px solid var(--border);font-size:var(--type-code,13px); }
+.conflict-inline-editor:focus-within { outline:2px solid var(--ring);outline-offset:-2px; }
 
 .conflict-result-diff,.conflict-preview-diff { border:1px solid var(--border);border-radius:var(--radius-md);overflow:clip; }
 /* The Conflicts view's diff (#445 item 8) is Changes' file: each conflict's card sits under its lines. */

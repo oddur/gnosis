@@ -134,6 +134,30 @@ void app.whenReady().then(async () => {
   const block = (index: number) => `document.querySelector('.conflict-block[data-conflict-index="${index}"]')`;
   const activeBlock = () =>
     js<string | null>("document.activeElement?.closest('.conflict-block')?.dataset.conflictIndex ?? null");
+  /** Conflict `index`'s in-place editor (#445 item 11): the editable surface inside its card. */
+  const inlineEditor = (index: number, scope = 'document') =>
+    `${scope}.querySelector('[data-conflict-inline-edit="${index}"] diffs-container')?.shadowRoot?.querySelector('[contenteditable=true]')`;
+  /** Opens conflict `index`'s editor from its card, types `text` where the caret starts, and saves. */
+  const editInline = async (index: number, text: string, scope = 'document') => {
+    const card = `${scope}.querySelector('.conflict-block[data-conflict-index="${index}"]')`;
+    await js(`${card}.querySelector('[data-conflict-edit]').click()`);
+    const editor = inlineEditor(index, scope);
+    // The editor takes focus once it has rendered.
+    await wait(`!!${editor} && ${editor}.getRootNode().activeElement===${editor}`);
+    const save = `${scope}.querySelector('[data-conflict-inline-edit="${index}"] [data-conflict-edit-save]')`;
+    await js(`window.__inlineEditor=${editor}`);
+    await win.webContents.debugger.sendCommand('Input.insertText', { text });
+    try {
+      await wait(`!!${save} && !${save}.disabled`);
+    } catch (error) {
+      const state = await js<string>(
+        `JSON.stringify({text:${editor}?.textContent,same:window.__inlineEditor===${editor},connected:window.__inlineEditor?.isConnected,active:${editor}?.getRootNode().activeElement===${editor},sel:String(${editor}?.getRootNode().getSelection?.()?.anchorNode?.textContent),inert:!!document.querySelector('[data-conflict-inline-edit]')?.closest('[inert]'),editable:${editor}?.isContentEditable,busy:document.querySelector('.conflict-footer-status')?.textContent,hasFocus:document.hasFocus()})`
+      );
+      throw new Error(`The editor: ${state}`, { cause: error });
+    }
+    await js(`${save}.click()`);
+    await wait(`!${scope}.querySelector('[data-conflict-inline-edit]')`);
+  };
   const open = () =>
     js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
   try {
@@ -223,8 +247,9 @@ void app.whenReady().then(async () => {
       /<{7}|>{7}|={7}|\|{7}|Current Change|Incoming Change/
     );
     assert.deepEqual(
-      await js(`[...${block(0)}.querySelectorAll('.conflict-block-actions button')].map(b=>b.firstChild.textContent)`),
-      ['Keep PR change', 'Keep main’s change', 'Keep both']
+      await js(`[...${block(0)}.querySelectorAll('.conflict-block-actions button')].map(b=>b.textContent.replace(/\\d$/,'').trim())`),
+      ['Keep PR change', 'Keep main’s change', 'Keep both', 'Edit'],
+      'Each card has one Edit action (#445 item 11)'
     );
     assert.equal(await exists('Save draft'), false, 'Drafts save automatically');
     // No step rail, no guide and no engine menu: the summary and the footer say where you are, and the keys are one
@@ -336,7 +361,8 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.conflict-file-title [data-stage]').textContent"),
       'Resolved · needs review'
     );
-    await wait("document.activeElement?.dataset.conflictPrimary==='review-result'");
+    // The result is in the diff already: the next step is Mark reviewed, with no Review result mode in between.
+    await wait("document.activeElement?.dataset.conflictPrimary==='mark-reviewed'");
     // Undo one block; the other keeps its choice.
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
@@ -346,6 +372,67 @@ void app.whenReady().then(async () => {
     await key('3');
     await wait(`${block(0)}?.dataset.state==='kept'`);
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Kept both changes/);
+
+    // Edit in place (#445 item 11): a Decide conflict's Edit opens its lines in an editor under them, in the diff.
+    // Save changes that conflict's span only; the edit is yours; Undo restores the choice it replaced.
+    const prefix = 'export function retryDelay(attempt: number) {\n';
+    const suffix = '}\nexport const retries = 3;\n';
+    assert.equal(await exists('Edit result'), false, 'No whole-file editor mode');
+    assert.equal(await exists('Review result'), false, 'No Review result mode');
+    assert.equal(await js("!!document.querySelector('.conflict-modes')"), false);
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await wait("window.conflictFixture.files[0].result.includes('<<<<<<<')");
+    await editInline(0, '// merged by hand\n');
+    await wait(`${block(0)}?.dataset.state==='edited'`);
+    assert.match(await js<string>(`${block(0)}.querySelector('.conflict-kept').textContent`), /Edited by you·Undo/);
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await wait("window.conflictFixture.files[0].result.includes('// merged by hand')");
+    const edited = await js<{ result: string; picks: unknown; source: string }>(
+      '(({result,picks,source})=>({result,picks,source}))(window.conflictFixture.files[0])'
+    );
+    assert.ok(edited.result.startsWith(prefix) && edited.result.endsWith(suffix), `Nothing outside the conflict changed: ${edited.result}`);
+    assert.equal(
+      edited.result.slice(prefix.length, edited.result.length - suffix.length),
+      '// merged by hand\n  return Math.min(attempt * 200, 5000);\n  return Math.max(100, attempt * 200);\n',
+      'The editor started from both sides, PR first, and your line went into the conflict'
+    );
+    assert.deepEqual(edited.picks, [null, 'theirs'], 'The edit clears your pick for that conflict only');
+    assert.equal(edited.source, 'manual', 'The service saves the file as your edit');
+    assert.equal(await stage(), 'resolved');
+    assert.equal(await primary(), 'mark-reviewed');
+    // The line you typed is never marked as Gnosis's.
+    assert.equal(
+      await js("[...document.querySelectorAll('.conflict-compare-diff:not([hidden]) diffs-container')].some(h=>h.shadowRoot?.querySelector('[data-written-line]'))"),
+      false
+    );
+    await captureAll('inline-edited');
+    // Undo returns the conflict to Decide, as it was before the edit.
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open'`);
+    await wait("window.conflictFixture.files[0].result.includes('<<<<<<<') && !window.conflictFixture.files[0].result.includes('// merged by hand')");
+    assert.equal(await stage(), 'conflicted');
+    // Conflict markers typed in an edit keep the conflict in Decide, and Mark reviewed stays away.
+    await editInline(0, '<<<<<<< mine\n');
+    await wait(`${block(0)}?.dataset.state==='open' && ${block(0)}?.hasAttribute('data-edited')`);
+    assert.equal(await js(`${block(0)}.querySelector('.conflict-bucket').dataset.bucket`), 'decide');
+    assert.equal(await stage(), 'conflicted');
+    assert.equal(await primary(), 'next-conflict');
+    await key('m');
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
+    await captureAll('inline-edit-markers');
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='open' && !${block(0)}?.hasAttribute('data-edited')`);
+    // Cancel (Escape) leaves the draft as it was, and the workspace stays open.
+    await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
+    await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
+    await captureAll('inline-edit-open');
+    await key('Escape');
+    await wait(`!document.querySelector('[data-conflict-inline-edit]') && ${block(0)}?.dataset.state==='open'`);
+    assert.ok(await js("!!document.querySelector('.conflict-workspace')"), 'Escape in the editor closes only the editor');
+    await js(`${block(0)}.focus()`);
+    await key('3');
+    await wait(`${block(0)}?.dataset.state==='kept'`);
     // Autosave stores the draft without marking the file reviewed.
     await wait(
       "window.conflictFixture.files[0].result.includes('Math.max') && window.conflictFixture.files[0].result.includes('retries = 3')"
@@ -358,20 +445,12 @@ void app.whenReady().then(async () => {
     );
     await captureAll('file-resolved');
 
-    // Review before mark: Mark reviewed appears only after the result is shown next to the PR.
-    assert.equal(await primary(), 'review-result');
-    assert.equal(await exists('Mark reviewed'), false);
-    await key('m');
-    await wait("document.querySelector('.conflict-result-diff')");
-    assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'M first shows the result');
-    assert.deepEqual(
-      await js(
-        "[...document.querySelectorAll('.conflict-result-diff .conflict-diff-columns > span')].map(s=>s.lastChild.textContent)"
-      ),
-      ['This PR · feature/retry', 'Result after the merge']
+    // The result is on screen in Compare with: PR, so Mark reviewed is the next step.
+    assert.equal(await primary(), 'mark-reviewed');
+    assert.equal(
+      await js("document.querySelector('.conflict-compare [data-compare=pr]')?.getAttribute('aria-pressed')"),
+      'true'
     );
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
-    await captureAll('review-result');
 
     // Structural merge already ran on every file: what is left is asking the model about this file, with the Bot icon.
     const ask = "document.querySelector('.conflict-suggest-trigger')";
@@ -398,50 +477,11 @@ void app.whenReady().then(async () => {
       await js<string>("document.querySelector('.conflict-footer-status').textContent"),
       /suggested a result/
     );
-    assert.equal(
-      await js(
-        "[...document.querySelectorAll('.conflict-modes button')].find(b=>b.textContent==='Review result').getAttribute('aria-pressed')"
-      ),
-      'true'
-    );
-    await capture('proposal');
-
-    // Manual edits save automatically and need a new review.
-    await click('Edit result');
-    await wait(
-      "document.querySelector('.conflict-scroll diffs-container')?.shadowRoot?.querySelector('[contenteditable=true]')"
-    );
-    await js(
-      "document.querySelector('.conflict-scroll diffs-container').shadowRoot.querySelector('[contenteditable=true]').focus()"
-    );
-    const point = await js<{ x: number; y: number }>(
-      `(()=>{const r=document.querySelector('.conflict-scroll diffs-container').shadowRoot.querySelector('[contenteditable=true]').getBoundingClientRect();return {x:r.x+50,y:r.y+10}})()`
-    );
-    for (const type of ['mousePressed', 'mouseReleased'])
-      await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
-        type,
-        ...point,
-        button: 'left',
-        clickCount: 1,
-      });
-    await js('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))');
-    for (const type of ['keyDown', 'keyUp'])
-      await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
-        type,
-        key: 'Home',
-        code: 'Home',
-        windowsVirtualKeyCode: 36,
-      });
-    // Let the native caret change reach Pierre's selection listener before typing.
-    await js('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))');
-    await win.webContents.debugger.sendCommand('Input.insertText', { text: '// Manual review note\n' });
-    await wait('/Manual review note/.test(window.conflictFixture.files[0].result)');
-    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    // The suggestion is the draft, in the diff against the PR; the file waits only for Mark reviewed.
+    await wait("!!document.querySelector('.conflict-compare-diff[data-compare=pr]:not([hidden]) diffs-container')");
     assert.equal(await stage(), 'resolved');
-    assert.equal(await primary(), 'review-result', 'A changed result needs to be shown again');
-    await captureAll('editor');
-    await click('Review result');
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
+    assert.equal(await primary(), 'mark-reviewed');
+    await capture('proposal');
 
     // Three PRs stack on this one: the cascade preview (#445 item 22) runs once every file is reviewed.
     await js(`(()=>{
@@ -463,8 +503,8 @@ void app.whenReady().then(async () => {
     const confirmText = await js<string>("document.querySelector('.conflict-confirm').innerText");
     assert.match(confirmText, /Pushes to (@\S+’s|your|the author’s) branch/);
     assert.match(confirmText, /Approvals may be dismissed if the repository requires it\./);
-    // Three groups (#445 item 12): you edited the file, so both its conflicts are yours; main brings src/clock.ts.
-    // You decided is open, the other two are collapsed.
+    // Three groups (#445 item 12): the suggestion you asked for wrote the file, so both its conflicts are yours; main
+    // brings src/clock.ts. You decided is open, the other two are collapsed.
     assert.deepEqual(await confirmGroupsShown(), {
       decided: { count: '2 conflicts in 1 file', open: 'true' },
       merged: { count: 'none', open: 'false' },
@@ -473,7 +513,7 @@ void app.whenReady().then(async () => {
     assert.match(confirmText, /You decided ·\s+2 conflicts in 1 file/);
     assert.equal(
       await js("document.querySelector('[data-confirm-group=decided] [data-confirm-file]')?.dataset.confirmWhole"),
-      'manual'
+      'agent'
     );
     assert.doesNotMatch(confirmText, /Your resolutions|Changes coming from/);
     assert.equal((confirmText.match(/Nothing is pushed/g) ?? []).length, 1, 'Say “nothing pushed” once');
@@ -912,8 +952,6 @@ void app.whenReady().then(async () => {
     // Reviewing one file advances without publishing; each file keeps its own saved content.
     await wait("document.activeElement?.closest('.conflict-block')");
     await key('1');
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='review-result'");
-    await key('m');
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     assert.match(
       await js<string>("document.querySelector('[data-conflict-primary]').textContent"),
@@ -925,9 +963,9 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
     await wait("document.activeElement?.closest('.conflict-block')");
     await key('2');
-    await key('m');
     await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     await captureAll('files-reviewed');
+    // M marks the file reviewed at once: its result is in the diff, with no separate step to show it.
     await key('m');
     await wait("document.querySelector('.conflict-confirm .step-card')");
     assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true);
@@ -1001,8 +1039,7 @@ void app.whenReady().then(async () => {
     assert.doesNotMatch(await js<string>("document.querySelector('.conflict-view').innerText"), /<{7}|>{7}/);
     await captureAll('base-moved-new-conflict');
     await js("document.querySelector('.conflict-block[data-state=open] [data-choice=theirs]').click()");
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='review-result'");
-    await click('Review result');
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");
     assert.match(await js<string>('window.conflictFixture.files[0].result'), /"version": "2.0.0"/);
@@ -1552,18 +1589,15 @@ void app.whenReady().then(async () => {
       ['Resolved · needs review', 'Resolved · needs review']
     );
     // Used, the same lines stay marked in the draft's diff, each one in view: a marked line is pinned, never in a gap.
-    await wait("!!document.querySelector('.conflict-result-diff diffs-container, .conflict-compare-diff:not([hidden]) diffs-container')");
-    // Using it shows the result (Review result), or the Conflicts view's diff: either marks the same lines.
-    const prScope = (await js<boolean>("!!document.querySelector('.conflict-result-diff')"))
-      ? '.conflict-result-diff'
-      : '.conflict-compare-diff[data-compare=pr]';
+    await wait("!!document.querySelector('.conflict-compare-diff:not([hidden]) diffs-container')");
+    const prScope = '.conflict-compare-diff[data-compare=pr]';
     try {
       await wait(`${legendIn(prScope)}>0 && ${markedIn(prScope)}===${legendIn(prScope)}`);
     } catch (error) {
       const rows = await js(
         `[...document.querySelectorAll('${prScope} diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).map(r=>(r.closest('[data-deletions]')?'old ':'new ')+r.dataset.line+' '+r.dataset.lineType+(r.hasAttribute('data-written-line')?' W':''))`
       );
-      throw new Error(`legend ${await js(legendIn(prScope))}, marked ${await js(markedIn(prScope))}, rows ${JSON.stringify(rows)}`, { cause: error });
+      throw new Error(`legend ${await js<number>(legendIn(prScope))}, marked ${await js<number>(markedIn(prScope))}, rows ${JSON.stringify(rows)}`, { cause: error });
     }
     await captureAll('whole-file-used');
     // Reset file brings the whole-file proposal back, and the footer drops the suggestion's note.
@@ -1783,7 +1817,7 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(".conflict-workspace").style.width="900px"');
     const header = () =>
       js<number[]>(
-        "(()=>{const h=document.querySelector('.conflict-file-header').getBoundingClientRect();const t=document.querySelector('.conflict-file-title').getBoundingClientRect();const m=document.querySelector('.conflict-modes').getBoundingClientRect();return [t.top-h.top,t.height,m.top-h.top]})()"
+        "(()=>{const h=document.querySelector('.conflict-file-header').getBoundingClientRect();const t=document.querySelector('.conflict-file-title').getBoundingClientRect();const m=document.querySelector('.conflict-file-tools').getBoundingClientRect();return [t.top-h.top,t.height,m.top-h.top]})()"
       );
     const withProposals = await header();
     await shot('p1-header-proposals-900');
@@ -1813,8 +1847,8 @@ void app.whenReady().then(async () => {
     await wait("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)");
     await wait("document.querySelector('.conflict-confirm .step-card')");
     await click('Close');
-    // A choice of yours beside a Merged conflict: never all-Merged. The result is shown before Mark reviewed, and the
-    // summary says the file waits for review with the setting on or off.
+    // A choice of yours beside a Merged conflict: never all-Merged. The summary says the file waits for review with the
+    // setting on or off.
     // Each side inserts at its own place in both conflicts (before and after a line both kept), so both are Merged.
     const twoMerged = {
       path: 'src/two.ts',
@@ -1835,16 +1869,13 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='open'`);
     await pick(1, 'ours');
     await wait(`${block(1)}?.dataset.state==='kept'`);
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='review-result'");
+    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
     await wait("window.conflictCalls.some(r=>r.kind==='save'&&!r.resolved)");
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     const reviewSentence = '1 file has conflicts. 1 of 2 conflicts are merged and checked. 1 file is ready for review.';
     // The save re-runs the checks (the draft is in the check key), so the summary reads "Checking…" until they finish.
     await checksDone();
     assert.equal(await js("document.querySelector('[data-conflict-summary]').textContent"), reviewSentence);
-    await key('m');
-    await wait("document.querySelector('[data-conflict-primary]')?.dataset.conflictPrimary==='mark-reviewed'");
-    assert.equal(await js("window.conflictCalls.some(r=>r.kind==='save'&&r.resolved)"), false, 'M shows the result first');
     // Setting off: the file is not reviewed for you, and the summary still says it waits for your review.
     const showMergedBox = "[...document.querySelectorAll('.conflict-summary label')].find(l=>l.textContent.includes('Show me every merged conflict'))?.querySelector('input')";
     await js(`${showMergedBox}.click()`);
@@ -1909,8 +1940,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open' && ${block(1)}?.dataset.bucket==='check'`);
     await pick(0, 'theirs');
     await wait(`${block(0)}?.dataset.state==='kept'`);
-    // Review the result, then Mark reviewed: that reviews the Check proposal too. The Merged file needs only the mark.
-    await click('Review result');
+    // Mark reviewed reviews the Check proposal too. The Merged file needs only the mark.
     await click('Mark reviewed & next file');
     await wait("document.querySelector('.conflict-file-title strong')?.textContent==='src/imports.ts'");
     await checksDone();
@@ -2081,15 +2111,29 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='proposal'`);
     await marksAre(prDiff, [combined]);
     assert.ok(await js(`!!${block(0)}.querySelector('.conflict-written-legend')`));
-    // Review result marks the same line, with its count.
     await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
     await checksDone();
-    await click('Review result');
-    await marksAre('.conflict-result-diff', [combined]);
+    // An edit in place (#445 item 11) keeps the mark of the resolver's line you left as it was; the line you typed is
+    // yours and never marked. Undo brings the proposal back, with its mark and its count.
+    await editInline(0, '// checked by hand\n');
+    await wait(`${block(0)}?.dataset.state==='edited'`);
+    await marksAre(prDiff, [combined]);
     assert.equal(
-      await js("document.querySelector('.conflict-result-diff .conflict-written-legend')?.textContent"),
+      await js(`${block(0)}.querySelector('.conflict-written-legend')?.textContent`),
       '1 line written by Gnosis (neither side had it)'
     );
+    assert.ok(
+      await js<boolean>(
+        `[...document.querySelectorAll('${prDiff} diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).some(r=>r.textContent.includes('// checked by hand')&&!r.hasAttribute('data-written-line'))`
+      ),
+      'The typed line shows, unmarked'
+    );
+    await captureAll('written-lines-inline-edit');
+    await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
+    await wait(`${block(0)}?.dataset.state==='proposal'`);
+    await marksAre(prDiff, [combined]);
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved'");
+    await checksDone();
     // The push confirmation marks the same line in the group that holds it.
     await click('Mark reviewed');
     await wait("document.querySelector('.conflict-confirm .step-card')");
@@ -2393,7 +2437,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[data-testid=conflict-merged-undo-rate]')?.textContent==='No Merged conflicts yet.'");
     assert.equal(await mergedUndone(), 0);
     console.log(
-      'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
+      'Conflict workspace passed: labelled versions, per-block undo, shortcuts, inline edit, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );
     app.exit(0);
   } catch (error) {

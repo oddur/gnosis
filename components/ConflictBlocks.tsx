@@ -1,30 +1,38 @@
 import {
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
   type RefObject,
 } from 'react';
-import { File, MultiFileDiff } from '@pierre/diffs/react';
+import { EditProvider, File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Bot, Check, CheckCheck, ChevronsUpDown, CircleAlert, CircleHelp, Undo2 } from 'lucide-react';
+import { Bot, Check, CheckCheck, ChevronsUpDown, CircleAlert, CircleHelp, Pencil, Undo2 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   applyChoices,
   chosenText,
   conflictModel,
+  editConflict,
+  editOpen,
+  pickText,
   type BlockChoice,
+  type BlockEdit,
+  type BlockEdits,
   type BlockPick,
   type BlockPicks,
   type ConflictBlock,
   type ConflictLabels,
+  type ModelChoice,
 } from '../lib/conflict-blocks';
 import type { ConflictProposal } from '../lib/conflict-resolution';
 import type { ModelCard } from '../lib/conflict-model';
-import { writtenFileLines, writtenLabel, type CompareWith } from '../lib/conflict-diff';
+import { keptMarks, writtenFileLines, writtenLabel, writtenLines, type CompareWith } from '../lib/conflict-diff';
 import { WRITTEN_CSS, WRITTEN_SWATCH, markWritten } from '../lib/diff-here';
 import { blockVerdict, SAME_CHANGE, type BlockVerdict, type Verdict } from '../lib/conflict-verify';
 
@@ -185,7 +193,16 @@ export function Block({
   compare = 'pr',
   model,
   written = 0,
+  edit,
+  onEdit,
+  editor,
 }: {
+  /** Your in-place edit of this conflict, when `choice` is `edit` (#445 item 11). */
+  edit?: BlockEdit;
+  /** Opens the in-place editor on this conflict's lines; undefined where the draft can't be edited conflict by conflict. */
+  onEdit?: () => void;
+  /** The in-place editor, while it is open: it takes the card's place. */
+  editor?: ReactNode;
   /** This conflict's model request while it has no proposal. */
   model?: ModelCard;
   /** In the Conflicts view's diff (components/ConflictDiff.tsx): the diff shows the code, the card the decision. */
@@ -196,7 +213,7 @@ export function Block({
   block: ConflictBlock;
   index: number;
   total: number;
-  choice: BlockPick | undefined;
+  choice: ModelChoice | undefined;
   labels: ConflictLabels;
   shortcuts: boolean;
   disabled: boolean;
@@ -211,9 +228,37 @@ export function Block({
   written?: number;
 }) {
   const title = `Conflict ${index + 1} of ${total}`;
-  const wrote = written > 0 && choice === 'proposal' && !!proposal;
+  if (editor)
+    return (
+      <section
+        className="conflict-block"
+        data-state="editing"
+        data-conflict-index={index}
+        tabIndex={-1}
+        aria-label={`${title}. Editing its lines.`}
+      >
+        {editor}
+      </section>
+    );
+  const wrote = written > 0 && (choice === 'proposal' ? !!proposal : choice === 'edit');
   const writtenNote = wrote && <WrittenLegend count={written} />;
   const writtenText = wrote ? ` ${writtenLabel(written)}.` : '';
+  // Edit sits with the Keep actions on an open card, and on the line of a decided one.
+  const editAction = (size: 'xs' | 'sm') =>
+    onEdit && (
+      <Button
+        size={size}
+        variant="ghost"
+        disabled={disabled}
+        data-conflict-edit=""
+        onClick={onEdit}
+        aria-label={`Edit conflict ${index + 1}`}
+      >
+        <Pencil aria-hidden="true" />
+        Edit
+      </Button>
+    );
+  const editButton = editAction('xs');
   const actions = (
     <div className="conflict-block-actions" role="group" aria-label={`Choose for conflict ${index + 1}`}>
       {(['ours', 'theirs', 'both'] as const).map((value) => (
@@ -246,6 +291,7 @@ export function Block({
           Use the proposal
         </Button>
       )}
+      {editAction('sm')}
     </div>
   );
   const undo = onUndo && (
@@ -280,6 +326,7 @@ export function Block({
           <span>Merged · {what}</span>
           {undo && <span aria-hidden="true">·</span>}
           {undo}
+          {editButton}
         </div>
         {inDiff ? (
           <>
@@ -329,6 +376,72 @@ export function Block({
       </section>
     );
   }
+  // Your edit, with a conflict marker left in it: the conflict is still open, in Decide (#445 item 11).
+  if (choice === 'edit' && editOpen(edit))
+    return (
+      <section
+        className="conflict-block"
+        data-state="open"
+        data-edited=""
+        data-conflict-index={index}
+        tabIndex={0}
+        aria-label={`${title}, line ${block.line}. Your edit still has a conflict marker.`}
+      >
+        <header className="conflict-block-header">
+          <strong>{title}</strong>
+          <span className="conflict-bucket" data-bucket="decide">
+            <CircleAlert size={13} aria-hidden="true" />
+            Decide
+          </span>
+          <span>Your edit still has a conflict marker. Remove it, or choose a side.</span>
+          {onUndo && (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={disabled}
+              onClick={onUndo}
+              aria-label={`Undo your edit of conflict ${index + 1}`}
+            >
+              <Undo2 aria-hidden="true" />
+              Undo
+            </Button>
+          )}
+        </header>
+        {actions}
+      </section>
+    );
+  if (choice === 'edit')
+    return (
+      <section
+        className="conflict-block"
+        data-state="edited"
+        data-conflict-index={index}
+        tabIndex={-1}
+        aria-label={`${title}. Edited by you.${writtenText}`}
+      >
+        <div className="conflict-kept">
+          <Pencil size={14} aria-hidden="true" />
+          <span>Edited by you</span>
+          {onUndo && (
+            <>
+              <span aria-hidden="true">·</span>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={disabled}
+                onClick={onUndo}
+                aria-label={`Undo your edit of conflict ${index + 1}`}
+              >
+                <Undo2 aria-hidden="true" />
+                Undo
+              </Button>
+            </>
+          )}
+          {editButton}
+        </div>
+        {writtenNote}
+      </section>
+    );
   if (choice && choice !== 'proposal')
     return (
       <section
@@ -356,6 +469,7 @@ export function Block({
               </Button>
             </>
           )}
+          {editButton}
         </div>
         {inDiff ? null : chosenText(block, choice) ? (
           <CodeSnippet name={name} text={chosenText(block, choice)} />
@@ -464,11 +578,16 @@ export function useConflictChoices({
   onAllResolved,
   verdict,
   onChoice,
+  edits,
+  onEdits,
 }: {
   original: string;
   contents: string;
   proposals?: readonly (ConflictProposal | null)[];
   picks?: BlockPicks;
+  /** Your in-place edits (#445 item 11), and where a change to them goes. Without `onEdits` nothing is edited in place. */
+  edits?: BlockEdits;
+  onEdits?: (edits: BlockEdits) => void;
   onPick?: (index: number, choice: BlockPick | undefined) => void;
   onChange: (contents: string) => void;
   disabled: boolean;
@@ -479,12 +598,17 @@ export function useConflictChoices({
    * Each choice with the one it replaces and your saved pick for it, for the local stats (lib/conflict-stats.ts).
    * Undefined is Undo.
    */
-  onChoice?: (index: number, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
+  onChoice?: (
+    index: number,
+    before: BlockPick | undefined,
+    after: BlockPick | undefined,
+    picked: BlockPick | undefined
+  ) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const model = useMemo(
-    () => conflictModel(original, contents, proposals, picks),
-    [original, contents, proposals, picks]
+    () => conflictModel(original, contents, proposals, picks, edits),
+    [original, contents, proposals, picks, edits]
   );
   const total = model.segments.filter((s) => s.kind === 'conflict').length;
   const pendingFocus = useRef<{ after?: number; at?: number }>(undefined);
@@ -536,7 +660,9 @@ export function useConflictChoices({
       const index = focused.index;
       focused = undefined;
       if (active && active !== document.body && !active.contains(element)) return;
-      element.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)?.focus({ preventScroll: true });
+      element
+        .querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)
+        ?.focus({ preventScroll: true });
     });
     element.addEventListener('focusin', onFocusIn);
     element.addEventListener('focusout', onFocusOut);
@@ -553,21 +679,82 @@ export function useConflictChoices({
     let frames = 0;
     const attempt = () => {
       if (!target?.isConnected) return;
-      if (target.checkVisibility()) { revealElement(target); return; }
+      if (target.checkVisibility()) {
+        revealElement(target);
+        return;
+      }
       const active = document.activeElement;
       if (++frames < 300 && (!active || active === document.body || (!!root.current && active.contains(root.current))))
         requestAnimationFrame(attempt);
     };
     attempt();
   }
+  /** The edits the draft reads after conflict `index` gets another choice: its own edit goes. */
+  const editsWithout = (index: number) => {
+    const next = [...(model.edits ?? [])];
+    next[index] = undefined;
+    return next;
+  };
   function choose(index: number, choice: BlockPick | undefined) {
     const next = [...model.choices];
+    const before = next[index];
     next[index] = choice;
     pendingFocus.current = choice ? { after: index } : { at: index };
-    onChoice?.(index, model.choices[index], choice, picks?.[index]);
+    // Replacing your edit is not a choice between Gnosis's options: the stats count none.
+    if (before !== 'edit') onChoice?.(index, before, choice, picks?.[index]);
+    else onEdits?.(editsWithout(index));
     // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick.
     onPick?.(index, choice);
-    onChange(applyChoices(model.segments, next, proposals));
+    onChange(applyChoices(model.segments, next, proposals, model.edits));
+  }
+  /** Undo: a Keep or a proposal opens the conflict again; your edit returns to the choice it replaced (#445 item 11). */
+  function undo(index: number) {
+    const edit = model.choices[index] === 'edit' ? model.edits?.[index] : undefined;
+    if (!edit) {
+      choose(index, undefined);
+      return;
+    }
+    const next = [...model.choices];
+    next[index] = edit.before;
+    pendingFocus.current = { at: index };
+    onEdits?.(editsWithout(index));
+    onPick?.(index, edit.pick);
+    onChange(applyChoices(model.segments, next, proposals, model.edits));
+  }
+  /** The text the in-place editor starts from: the conflict's lines, or both sides while it is open. */
+  function editStart(index: number) {
+    const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
+    if (segment?.kind !== 'conflict') return '';
+    const choice = model.choices[index];
+    return choice ? pickText(segment, choice, proposals, model.edits) : chosenText(segment.block, 'both');
+  }
+  /**
+   * Your text for conflict `index`, into that conflict's span only (editConflict). False, and nothing changes, when the
+   * edit can't be kept to the conflict. The resolver's lines you left as they were keep their mark; lines you typed
+   * never get one.
+   */
+  function saveEdit(index: number, typed: string) {
+    if (disabled || !onEdits) return false;
+    const result = editConflict(model, contents, index, typed, proposals, picks);
+    const segment = model.segments.find((s) => s.kind === 'conflict' && s.index === index);
+    if (!result || segment?.kind !== 'conflict') return false;
+    const choice = model.choices[index];
+    const from = choice ? pickText(segment, choice, proposals, model.edits) : '';
+    const proposal = proposals?.[index];
+    const marked =
+      choice === 'proposal' && proposal
+        ? writtenLines(proposal.text, segment.block.ours, segment.block.theirs)
+        : choice === 'edit'
+          ? (model.edits?.[index]?.written ?? [])
+          : [];
+    const written = keptMarks(from, marked, result.edit.text);
+    if (written.length) result.edits[index] = { ...result.edit, written };
+    pendingFocus.current = { at: index };
+    onEdits(result.edits);
+    // An edit is yours: your pick for the conflict is cleared, and the service saves the file as your edit.
+    onPick?.(index, undefined);
+    onChange(result.contents);
+    return true;
   }
   useEffect(() => {
     const pending = pendingFocus.current;
@@ -637,7 +824,146 @@ export function useConflictChoices({
     }),
     [model, disabled]
   );
-  return { root, model, total, choose };
+  return { root, model, total, choose, undo, editStart, saveEdit };
+}
+
+/**
+ * The in-place editor for one conflict (#445 item 11): the conflict's lines only, in the editor Edit result used. Save
+ * puts your text into that conflict's span and nowhere else; Cancel, or Escape, leaves the draft as it was. Cmd+Enter
+ * (Ctrl+Enter) saves.
+ */
+export function InlineEdit({
+  name,
+  index,
+  initial,
+  start,
+  hint,
+  theme,
+  disabled,
+  onType,
+  onSave,
+  onCancel,
+}: {
+  name: string;
+  index: number;
+  /** The text to show: what you typed so far, or `start`. */
+  initial: string;
+  /** The text the editor started from: Save stays off until you change it. */
+  start: string;
+  hint?: string;
+  /** The diff's code theme (diffThemeName). */
+  theme: string;
+  disabled: boolean;
+  onType: (text: string) => void;
+  /** False when the edit can't be kept to the conflict: the editor stays open and says so. */
+  onSave: (text: string) => boolean;
+  onCancel: () => void;
+}) {
+  const [file] = useState(() => ({ name, contents: initial }));
+  const [text, setText] = useState(initial);
+  const [refused, setRefused] = useState(false);
+  const host = useRef<HTMLDivElement>(null);
+  // This editor's instance, so focus can put the caret at the start of the conflict's first line.
+  const editor = useRef<Pick<Editor, 'focus'>>(undefined);
+  const factory = useCallback<EditorFactory<undefined, undefined>>((type, opts, key) => {
+    const instance = new Editor(type, opts, key);
+    editor.current = instance;
+    return instance;
+  }, []);
+  // The diff's own code theme, as the rows above it: the editor is part of the code tier, whatever the app's theme.
+  const editorOptions = useMemo(
+    () => ({
+      theme,
+      themeType: 'dark' as const,
+      overflow: 'wrap' as const,
+      disableFileHeader: true,
+      disableLineNumbers: true,
+      unsafeCSS: SNIPPET_CSS,
+    }),
+    [theme]
+  );
+  // Focus goes into the editor, at the start of its first line, once it has rendered; unless you moved it meanwhile.
+  useEffect(() => {
+    let frame = 0;
+    let tries = 0;
+    // Focus where Edit was chosen from counts as unmoved: the editor is what you asked for.
+    const opened = document.activeElement;
+    const attempt = () => {
+      const target = host.current
+        ?.querySelector('diffs-container')
+        ?.shadowRoot?.querySelector<HTMLElement>('[contenteditable=true]');
+      const active = document.activeElement;
+      const free =
+        !active ||
+        active === opened ||
+        active === document.body ||
+        !!host.current?.closest('.conflict-block')?.contains(active);
+      if (target && free) {
+        // The editor places a caret only on lines it has rendered, so the editor comes into view first.
+        if (tries === 0) host.current?.closest('.conflict-block')?.scrollIntoView({ block: 'nearest' });
+        editor.current?.focus({ lineNumber: 1, character: 0, preventScroll: true });
+        if ((target.getRootNode() as ShadowRoot).activeElement === target) return;
+      }
+      if (++tries < 300) frame = requestAnimationFrame(attempt);
+    };
+    frame = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const save = () => {
+    if (disabled || text === start) return;
+    const ok = onSave(text);
+    setRefused(!ok);
+  };
+  return (
+    <div
+      className="conflict-inline-edit"
+      data-conflict-inline-edit={index}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onCancel();
+        } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          save();
+        }
+      }}
+    >
+      <header className="conflict-block-header">
+        <strong>Conflict {index + 1} · Edit</strong>
+        <span>Only this conflict’s lines change.{hint ? ` ${hint}` : ''}</span>
+      </header>
+      <div ref={host} className="conflict-inline-editor">
+        <EditProvider createEditor={factory}>
+          <File
+            file={file}
+            edit
+            options={editorOptions}
+            onEditChange={(event) => {
+              setText(event.file.contents);
+              setRefused(false);
+              onType(event.file.contents);
+            }}
+          />
+        </EditProvider>
+      </div>
+      {refused && (
+        <p className="conflict-block-note-line" role="alert" data-conflict-edit-refused="">
+          Gnosis couldn’t keep this edit to this conflict’s lines, so nothing changed. Edit only the conflict’s own
+          lines.
+        </p>
+      )}
+      <div className="conflict-block-actions">
+        <Button size="sm" disabled={disabled || text === start} data-conflict-edit-save="" onClick={save}>
+          Save edit
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export function ConflictView({
@@ -666,7 +992,14 @@ export function ConflictView({
   note?: string;
   /** Structural merge's whole-file result, shown first as one thing to check. */
   /** `shown`: you asked to see the conflicts too. */
-  wholeFile?: { proposal: ConflictProposal; ours: string; theirs: string; onUse: () => void; shown: boolean; onShow: () => void };
+  wholeFile?: {
+    proposal: ConflictProposal;
+    ours: string;
+    theirs: string;
+    onUse: () => void;
+    shown: boolean;
+    onShow: () => void;
+  };
   labels: ConflictLabels;
   onChange: (contents: string) => void;
   disabled?: boolean;
