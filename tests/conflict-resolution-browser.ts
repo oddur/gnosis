@@ -1,5 +1,7 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import { perfBudget, withinPerf } from './perf-budget';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
+import { blockFingerprints } from '../lib/conflict-stats';
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -1108,8 +1110,19 @@ void app.whenReady().then(async () => {
       resolved: false,
       result: ((index) => f.original.replace(/<<<<<<<[\s\S]*?>>>>>>> main\n/g, (raw) => f.proposals[index++]?.text ?? raw))(0),
     });
+    // Each conflict's bucket as the main process saves it when it counts them as shown (lib/conflict-stats.ts).
+    const counted = (
+      [
+        [retry, ['decide', 'check']],
+        [imports, ['merged']],
+        [notes, ['merged']],
+      ] as const
+    ).map(([f, buckets]) => ({
+      ...withResult(f),
+      statsBlocks: blockFingerprints(f.original).map((key, i) => ({ key, bucket: buckets[i] })),
+    }));
     await js(`(()=>{
-      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify([retry, imports, notes].map(withResult))}});
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify(counted)}});
       window.conflictCalls=[];
     })()`);
     await open();
@@ -1293,9 +1306,12 @@ void app.whenReady().then(async () => {
     await wait(
       "window.electronAPI.loadPreferences().then(p=>!p.repositorySettings?.['klang/engine'] || !('showMergedConflicts' in p.repositorySettings['klang/engine']))"
     );
-    // Undo moves a Merged conflict to Decide with both sides.
+    // Undo moves a Merged conflict to Decide with both sides. It counts as a Merged undo, for Settings (#445 item 2).
+    const mergedUndone = () => js<number>('window.fixtureConflictStats.buckets.merged.undone');
+    const undoneBefore = await mergedUndone();
     await js(`[...${block(0)}.querySelectorAll('button')].find(b=>b.textContent.trim()==='Undo').click()`);
     await wait(`${block(0)}?.dataset.state==='open'`);
+    await wait(`window.fixtureConflictStats.buckets.merged.undone===${undoneBefore + 1}`);
     await wait(
       "document.querySelector('[data-conflict-summary]')?.textContent==='3 files have conflicts. 1 of 4 conflicts are merged and checked. 3 need you: 1 to check, 2 to decide.'"
     );
@@ -1306,6 +1322,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Reset file');
     await wait(`${block(0)}?.dataset.bucket==='merged'`);
+    assert.equal(await mergedUndone(), undoneBefore + 1, 'A conflict counts as undone once per session');
     assert.equal(await exists('Reset file'), false, 'The proposals are the reset point');
     assert.ok(await exists('Start from Git’s conflict'));
     await click('Start from Git’s conflict');
@@ -1966,6 +1983,45 @@ void app.whenReady().then(async () => {
     assert.ok(await inView(), 'And in a narrow window');
     await resize(1280, 900);
     await click('Close');
+
+    // Settings › Diagnostics › Conflict resolution stats shows the Merged undo count and rate, read-only, with Reset.
+    const undone = await mergedUndone();
+    assert.ok(undone >= 1);
+    await js(`window.fixtureConflictStats.buckets.merged.shown=${undone * 4}`);
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
+    await wait("!!document.querySelector('[role=dialog] [role=tab]:not(.workspace-tab-select)')");
+    // A tab switches on mousedown.
+    await js(
+      "[...document.querySelectorAll('[role=dialog] [role=tab]')].find(b=>b.textContent.trim()==='Diagnostics').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))"
+    );
+    await wait("!!document.querySelector('[data-testid=conflict-stats] tr[data-bucket=merged]')");
+    assert.deepEqual(
+      await js<string[]>(
+        "[...document.querySelectorAll('[data-testid=conflict-stats] tr[data-bucket=merged] > *')].map(c=>c.textContent)"
+      ),
+      ['Merged', String(undone * 4), '0', String(undone), '0']
+    );
+    assert.equal(
+      await js<string>("document.querySelector('[data-testid=conflict-merged-undo-rate]').textContent"),
+      `Merged undo rate: 25% (${undone} of ${undone * 4} Merged conflicts undone).`
+    );
+    assert.equal(
+      await js("document.querySelector('[data-testid=conflict-stats] tr[data-bucket=decide] td:nth-of-type(2)').textContent"),
+      '—',
+      'Decide has no proposal to accept'
+    );
+    assert.equal(
+      await js("document.querySelectorAll('[data-testid=conflict-stats] input, [data-testid=conflict-stats] [role=switch]').length"),
+      0,
+      'Read-only'
+    );
+    await js("document.querySelector('#conflict-stats-title').scrollIntoView({block:'center'})");
+    await capture('settings-conflict-stats');
+    await js(
+      "[...document.querySelectorAll('[data-testid=conflict-stats] button')].find(b=>b.textContent.trim()==='Reset').click()"
+    );
+    await wait("document.querySelector('[data-testid=conflict-merged-undo-rate]')?.textContent==='No Merged conflicts yet.'");
+    assert.equal(await mergedUndone(), 0);
     console.log(
       'Conflict workspace passed: labelled versions, per-block undo, shortcuts, review before mark, one confirmation, outcome and failure copy, edge screens, stale guard, themes and narrow layout.'
     );

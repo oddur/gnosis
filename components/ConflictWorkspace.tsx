@@ -86,6 +86,7 @@ import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { withProposals } from '../lib/conflict-carry';
+import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, type RepositorySettings } from '../lib/repository-settings';
@@ -446,6 +447,8 @@ export function ConflictWorkspace({
     }
   }, [session?.files]);
   const { settings: repositories, setShowMergedConflicts } = useRepositorySettings();
+  // Undo and re-choice counts for Settings › Diagnostics (lib/conflict-stats.ts).
+  const choiceStats = useConflictChoiceStats();
   const repo = session ? repositoryKey(session.baseRepo) : '';
   // Unset means on: Merged conflicts still wait for your review.
   const showMerged = (repositories[repo] as RepositorySettings | undefined)?.showMergedConflicts !== false;
@@ -1617,6 +1620,7 @@ export function ConflictWorkspace({
                                 note={file.structuralNote}
                                 picks={picksOf(file)}
                                 onPick={(index, choice) => pickFor(file, index, choice)}
+                                onChoice={(key, before, after, picked) => choiceStats(session.id, file.path, key, before, after, picked)}
                                 wholeFile={
                                   file.wholeFile && contents === file.original
                                     ? {

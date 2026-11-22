@@ -102,6 +102,18 @@ If GitHub does not return a merge base, or a shallow fetch or merge fails, prepa
 
 On startup, Gnosis removes cache directories that no saved session needs: discarded sessions, published sessions without a paused or prepared restack, and full-history caches from earlier versions. A draft whose cache was removed rebuilds its merge from the shared store when it is previewed or published, and checks that the result is the same tree. A store is removed when no session borrows from it. The resolution memory (`conflict-objects/resolution-memory`) is not changed.
 
+### Conflict resolution stats
+
+**Settings → Diagnostics → Conflict resolution stats** counts how the buckets fare, so a later version can decide whether verified Merged conflicts may skip review by default. Nothing changes a default yet. For Merged, Check and Decide it counts the conflicts shown, accepted as is, undone, and changed to another option. It also counts the sessions started, started over and pushed, and shows the Merged undo rate. **Reset** sets every count to zero. While saved data is still loading, Reset is refused.
+
+- **Shown:** each conflict of a fresh preparation that you open. Its bucket is saved with the draft, per conflict, so a reopen does not count it again. Load latest changes counts only the conflicts that changed, and it never counts as a new session.
+- **Accepted as is:** a conflict pushed with its proposal unchanged: its text is the proposal's and you did not choose a Keep for it. A result edited around the conflicts counts nothing. A whole-file proposal pushed as proposed counts its conflicts in Check.
+- **Undone:** Undo that removes Gnosis's proposal. Undoing your own Keep is not counted. Decide has no proposal, so its accepted and undone columns show "—".
+- **Changed to another option:** a Keep over the proposal, another Keep, or the proposal again after a Keep.
+- Undone and changed count at most once per conflict. The main process saves that on the draft, so another window or a restart does not count a conflict twice.
+
+The stats are counts only, one record for the app in the local app-data store. There are no file contents, paths, file names, PR names or accounts, and nothing is sent anywhere. A count is written in the background and never delays Undo, Start over or Push. Restacks are not counted.
+
 ### Preparation in the background
 
 When GitHub reports conflicts on a PR you wrote or starred, or on a PR whose page you open, Gnosis prepares it in the background, one PR at a time: the same fetch, merge, earlier resolutions, structural merge and checks as **Resolve conflicts**. Nothing is pushed. The PR's readiness line then says what is waiting, such as "3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you.", or "Checking 3 files…" while it runs. When every conflict is merged and checked, the action reads **Review and push…**. If you can't push to the branch, the line says so and nothing is prepared. Opening the conflicts reuses the background draft while the PR head is the same, and the draft becomes yours. A new head or a clean merge removes it. Gnosis keeps the 8 newest background drafts, for at most a week, and removes the rest with their caches. Nothing starts on battery power, and a running preparation stops until the computer is on power again. Metered networks are not detected.

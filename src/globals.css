@@ -2155,9 +2155,9 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .sync-health-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .sync-health-heading { margin-top:10px; font-size:var(--type-control); font-weight:600; }
 .sync-health-scroll { overflow-x:auto; }
-.sync-health-table { width:100%; border-collapse:collapse; font-size:var(--type-caption); }
-.sync-health-table th { padding:4px 12px 4px 0; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-weight:500; text-align:left; white-space:nowrap; }
-.sync-health-table td { padding:6px 12px 6px 0; border-bottom:1px solid var(--border); vertical-align:top; overflow-wrap:anywhere; }
+.sync-health-table, .conflict-stats-table { width:100%; border-collapse:collapse; font-size:var(--type-caption); }
+.sync-health-table th, .conflict-stats-table th { padding:4px 12px 4px 0; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-weight:500; text-align:left; white-space:nowrap; }
+.sync-health-table td, .conflict-stats-table td { padding:6px 12px 6px 0; border-bottom:1px solid var(--border); vertical-align:top; overflow-wrap:anywhere; }
 .sync-health .numeric { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .sync-health a { color:var(--foreground); text-decoration:underline; text-underline-offset:2px; }
 .sync-health-stale { display:flex; flex-direction:column; gap:4px; color:var(--muted-foreground); font-size:var(--type-caption); }

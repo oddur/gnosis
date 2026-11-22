@@ -8,6 +8,8 @@ import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
+import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
+import { blockFingerprints } from '../lib/conflict-stats';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, validateConflictRequest, type ConflictFile } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
@@ -150,6 +152,57 @@ void test('real Git conflicts: draft, proposal, preview and guarded publication 
   assert.equal(await f.git('show', 'feature:from-main.txt'), 'Retain this clean base change.');
   assert.equal(await f.git('rev-parse', 'feature^1'), f.state.headSha);
   assert.equal(await f.git('rev-parse', 'feature^2'), f.state.baseSha);
+});
+void test('conflict stats: an open counts its conflicts once, Start over counts, and a push counts (#445 item 2)', async (t) => {
+  const f = await fixture(t);
+  const store = createConflictStatsStore(f.deps.storage);
+  const service = createConflictResolutionService({ ...f.deps, stats: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  // The fixture's first open had no stats: this open counts the one Decide conflict, and the session.
+  let session = (await run({ kind: 'open', url: f.state.url })).session;
+  assert.deepEqual(session.files[0].statsBlocks?.map((block) => block?.bucket), ['decide']);
+  assert.equal(store.get().buckets.decide.shown, 1);
+  assert.deepEqual(store.get().sessions, { started: 1, startedOver: 0, pushed: 0 });
+  // A reopen counts nothing again; the buckets are saved with the draft.
+  session = (await run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(store.get().buckets.decide.shown, 1);
+  // Load latest changes keeps them; Start over is a fresh merge.
+  session = (await run({ kind: 'open', url: f.state.url, restart: true, keep: true })).session;
+  assert.deepEqual(store.get().sessions, { started: 1, startedOver: 0, pushed: 0 });
+  session = (await run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(store.get().buckets.decide.shown, 2);
+  assert.deepEqual(store.get().sessions, { started: 2, startedOver: 1, pushed: 0 });
+  // Keep ours, then theirs: re-chosen once, saved on the draft, so a restarted service does not count it again.
+  const choice = { id: session.id, path: 'sample.ts', key: blockFingerprints(session.files[0].original)[0], count: 'rechosen' as const };
+  service.countChoice(choice);
+  service.countChoice(choice);
+  createConflictResolutionService({ ...f.deps, stats: store }).countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+  session = (
+    await run({ kind: 'save', id: session.id, version: session.version, path: 'sample.ts', contents: 'export const answer = 3;\n', resolved: true })
+  ).session;
+  const preview = (await run({ kind: 'preview', id: session.id, version: session.version })).preview;
+  assert.ok(preview);
+  await run({ kind: 'publish', id: session.id, version: session.version, previewToken: preview.token, message: 'Resolve' });
+  const stats = store.get();
+  assert.deepEqual(stats.sessions, { started: 2, startedOver: 1, pushed: 1 });
+  assert.equal(stats.buckets.decide.accepted, 0, 'Decide has no proposal to accept');
+  // Counts only: nothing of the PR, the account or the file.
+  const draft = f.deps.storage.read(`conflict-draft:tester:${session.id}`) as { files: { statsBlocks: { rechosen?: true }[] }[] };
+  assert.equal(draft.files[0].statsBlocks[0].rechosen, true, 'The flag stayed through the save and the push');
+  const saved = JSON.stringify(f.deps.storage.read(CONFLICT_STATS_NAME));
+  for (const secret of ['sample', 'answer', 'tester', 'github.com', 'feature']) assert.equal(saved.includes(secret), false);
+});
+void test('conflict stats: a plain open reads the draft no more often than without stats (item 7)', async (t) => {
+  const f = await fixture(t);
+  const reads = async (stats: boolean) => {
+    let n = 0;
+    const storage = { ...f.deps.storage, read: (key: string) => (n++, f.deps.storage.read(key)) };
+    const service = createConflictResolutionService({ ...f.deps, storage, ...(stats ? { stats: createConflictStatsStore(f.deps.storage) } : {}) });
+    await service.run({ kind: 'open', url: f.state.url }, new AbortController().signal);
+    return n;
+  };
+  assert.equal(await reads(true), await reads(false));
 });
 void test('drafts survive service restart; stale revisions and accounts cannot publish or overwrite them', async (t) => {
   const f = await fixture(t);

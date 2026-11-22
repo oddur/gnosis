@@ -36,6 +36,12 @@ export interface ConflictFile {
    * fingerprint (`proposalKey`). It counts only while that fingerprint matches.
    */
   verdict?: { key: string; verdict: import('./conflict-verify').Verdict };
+  /**
+   * Each conflict block's bucket when you first opened it, for the local stats in Settings › Diagnostics
+   * (lib/conflict-stats.ts), with the block's fingerprint and whether it was counted as undone or re-chosen. A block
+   * that is present was counted as shown; null is one not counted yet.
+   */
+  statsBlocks?: (import('./conflict-stats').StatsBlock | null)[];
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
