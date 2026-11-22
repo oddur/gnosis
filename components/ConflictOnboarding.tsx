@@ -16,11 +16,11 @@ import type { BucketSummary } from '../lib/conflict-verify';
 import type { ConflictTypeCheck } from '../lib/conflict-resolution';
 
 /**
- * The Conflicts view's first-run help (#445 onboarding): the bucket key, the keys hint and the opt-in mentions. Each
- * is shown until you dismiss it, once per GitHub account on this computer.
+ * The Conflicts view's first-run help (#445 onboarding): one key panel (buckets, keys, the type check) and the push
+ * confirmation's Undo mention. Each shows until you dismiss it, once per GitHub account on this computer.
  */
-export type ConflictTip = 'buckets' | 'keys' | 'type-check' | 'undo';
-const TIPS: readonly ConflictTip[] = ['buckets', 'keys', 'type-check', 'undo'];
+export type ConflictTip = 'buckets' | 'undo';
+const TIPS: readonly ConflictTip[] = ['buckets', 'undo'];
 export const conflictTipsKey = (account: string) => `gnosis:conflict-tips:${account}`;
 /** Dismissals when storage is unavailable: they last until the window reloads. */
 const sessionTips = new Map<string, Set<ConflictTip>>();
@@ -107,15 +107,33 @@ function Note({
 }
 
 const TYPED = /\.(?:[cm]?ts|tsx)$/;
-const SHORTCUT_KEYS = new Set(['j', 'k', '1', '2', '3', 'm', 'n', 'p']);
+/** The view's own narrow layout (760px is a shipping size): the key starts as one line there. */
+const NARROW = '(max-width: 899px)';
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
+  useEffect(() => {
+    const query = window.matchMedia(NARROW);
+    const change = () => setNarrow(query.matches);
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
+  return narrow;
+}
+const Keys = ({ keys }: { keys: string[] }) =>
+  keys.map((k) => (
+    <kbd key={k} className="kbd">
+      {k}
+    </kbd>
+  ));
 
 /**
- * Everything the Conflicts view explains under its summary sentence: the bucket key, the keys hint, the state of the
- * whole merge (all Merged, or a file Gnosis can't write) and the type check's mention. Nothing here changes a result.
+ * Everything the Conflicts view explains under its summary sentence: the first-run key (buckets, keys and the type
+ * check's mention, in one panel), the state of the whole merge (all Merged, or a file Gnosis can't write) and a type
+ * check that couldn't run. Nothing here changes a result.
  */
 export function ConflictNotes({
-  tips,
   guideOpen,
+  guideAsked,
   onCloseGuide,
   model,
   summary,
@@ -125,8 +143,9 @@ export function ConflictNotes({
   onShowLocal,
   onSettings,
 }: {
-  tips: ReturnType<typeof useConflictTips>;
   guideOpen: boolean;
+  /** Opened from the summary row's help button: shown in full at any width. */
+  guideAsked: boolean;
   onCloseGuide: () => void;
   model: string;
   summary: BucketSummary;
@@ -136,30 +155,18 @@ export function ConflictNotes({
   /** The first file Gnosis can't write, unless it is open already. */
   localPath?: string;
   onShowLocal: (path: string) => void;
-  /** Opens this repository's settings, where both opt-ins live. */
+  /** Opens this repository's settings, where the type check is turned on. */
   onSettings?: () => void;
 }) {
-  const keysHint = !tips.seen('keys');
-  const { dismiss } = tips;
-  // The hint goes with the first key you press: you have found them.
-  useEffect(() => {
-    if (!keysHint) return;
-    const used = (e: globalThis.KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (e.metaKey || e.ctrlKey || e.altKey || target?.closest('input, textarea, [contenteditable=true]')) return;
-      if (SHORTCUT_KEYS.has(e.key.toLowerCase())) dismiss('keys');
-    };
-    document.addEventListener('keydown', used, true);
-    return () => document.removeEventListener('keydown', used, true);
-  }, [keysHint, dismiss]);
-
+  const narrow = useNarrow();
+  const [expanded, setExpanded] = useState(false);
+  const compact = narrow && !guideAsked && !expanded;
   const allMerged =
     summary.conflicts > 0 && summary.merged === summary.conflicts && !summary.needs && !summary.checking;
   const typed = paths.some((path) => TYPED.test(path));
-  const settingsLink = onSettings && (
-    <Button size="xs" variant="link" className="conflict-note-link" onClick={onSettings}>
-      <Settings aria-hidden="true" />
-      Repository settings
+  const gotIt = (
+    <Button size="xs" variant="outline" onClick={onCloseGuide} data-conflict-guide-close="">
+      Got it
     </Button>
   );
   return (
@@ -169,48 +176,91 @@ export function ConflictNotes({
           id="conflict-guide"
           className="conflict-guide"
           aria-label="How Gnosis sorts conflicts"
-          data-conflict-guide=""
+          data-conflict-guide={compact ? 'compact' : 'full'}
         >
-          <dl>
-            <div>
-              <dt className="conflict-bucket" data-bucket="merged">
-                <CheckCheck size={13} aria-hidden="true" />
-                Merged
-              </dt>
-              <dd>Gnosis resolved it and every check passed. Nothing to do, but you can still change it.</dd>
-            </div>
-            <div>
-              <dt className="conflict-bucket" data-bucket="check">
-                <CircleHelp size={13} aria-hidden="true" />
-                Check
-              </dt>
-              <dd>Gnosis has a proposal it couldn’t prove. Nothing is chosen until you use it or pick a side.</dd>
-            </div>
-            <div>
-              <dt className="conflict-bucket" data-bucket="decide">
-                <CircleAlert size={13} aria-hidden="true" />
-                Decide
-              </dt>
-              <dd>No proposal. Keep one side, keep both, or edit.</dd>
-            </div>
-          </dl>
-          <p className="conflict-guide-foot">
-            <Bot size={13} aria-hidden="true" />
-            <span>
-              {model} proposes only when you ask, and its proposals stay in Check. Nothing is pushed until you push.
-            </span>
-            <Button size="xs" variant="outline" onClick={onCloseGuide} data-conflict-guide-close="">
-              Got it
-            </Button>
-          </p>
+          {compact ? (
+            <p className="conflict-guide-line">
+              <button
+                type="button"
+                className="conflict-guide-expand"
+                aria-expanded="false"
+                onClick={() => setExpanded(true)}
+              >
+                <span className="conflict-bucket" data-bucket="merged">
+                  Merged
+                </span>
+                {' · '}
+                <span className="conflict-bucket" data-bucket="check">
+                  Check
+                </span>
+                {' · '}
+                <span className="conflict-bucket" data-bucket="decide">
+                  Decide
+                </span>
+                : what these mean
+              </button>
+              {gotIt}
+            </p>
+          ) : (
+            <>
+              <dl>
+                <div>
+                  <dt className="conflict-bucket" data-bucket="merged">
+                    <CheckCheck size={13} aria-hidden="true" />
+                    Merged
+                  </dt>
+                  <dd>Gnosis resolved it and every check passed. Nothing to do, but you can still change it.</dd>
+                </div>
+                <div>
+                  <dt className="conflict-bucket" data-bucket="check">
+                    <CircleHelp size={13} aria-hidden="true" />
+                    Check
+                  </dt>
+                  <dd>Gnosis has a proposal it couldn’t prove. Nothing is chosen until you use it or pick a side.</dd>
+                </div>
+                <div>
+                  <dt className="conflict-bucket" data-bucket="decide">
+                    <CircleAlert size={13} aria-hidden="true" />
+                    Decide
+                  </dt>
+                  <dd>No proposal. Keep one side, keep both, or edit.</dd>
+                </div>
+              </dl>
+              <p className="conflict-guide-more">
+                <Bot size={13} aria-hidden="true" />
+                <span>
+                  {model} proposes only when you ask, and its proposals stay in Check. Nothing is pushed until you push.
+                </span>
+              </p>
+              <p className="conflict-guide-more conflict-guide-last">
+                <span data-conflict-guide-keys="">
+                  <Keyboard size={13} aria-hidden="true" />
+                  <Keys keys={['J', 'K']} /> move · <Keys keys={['A']} /> accept · <Keys keys={['1', '2', '3']} /> keep
+                  · <Keys keys={['M']} /> mark reviewed ·{' '}
+                  <button
+                    type="button"
+                    className="conflict-guide-link"
+                    onClick={() => document.querySelector<HTMLElement>('[data-conflict-keys]')?.focus()}
+                  >
+                    All keys
+                  </button>
+                </span>
+                {typed && typeCheck === null && (
+                  <span data-conflict-guide-type-check="">
+                    <Info size={13} aria-hidden="true" />
+                    Gnosis can also type-check the merge in your linked clone. It’s off.{' '}
+                    {onSettings && (
+                      <button type="button" className="conflict-guide-link" onClick={onSettings}>
+                        Repository settings
+                      </button>
+                    )}
+                  </span>
+                )}
+              </p>
+              <div className="conflict-guide-close">{gotIt}</div>
+            </>
+          )}
         </section>
-      )}
-      {keysHint && (
-        <Note name="keys" icon={<Keyboard size={13} aria-hidden="true" />} onDismiss={() => dismiss('keys')}>
-          Keys: <kbd className="kbd">J</kbd> <kbd className="kbd">K</kbd> next and previous conflict ·{' '}
-          <kbd className="kbd">1</kbd> <kbd className="kbd">2</kbd> <kbd className="kbd">3</kbd> keep a side or both ·{' '}
-          <kbd className="kbd">M</kbd> mark reviewed
-        </Note>
       )}
       {allMerged && (
         <Note name="all-merged" icon={<CircleCheck size={13} aria-hidden="true" className="conflict-state-ok" />}>
@@ -231,16 +281,6 @@ export function ConflictNotes({
         >
           Gnosis pushes only a complete merge, and {summary.local === 1 ? '1 file' : `${summary.local} files`} here
           can’t be merged as text. Merge this PR on your computer.
-        </Note>
-      )}
-      {typed && typeCheck === null && !tips.seen('type-check') && (
-        <Note
-          name="type-check"
-          icon={<Info size={13} aria-hidden="true" />}
-          action={settingsLink}
-          onDismiss={() => dismiss('type-check')}
-        >
-          Gnosis can also type-check the merge in your linked clone of this repository. It’s off.
         </Note>
       )}
       {(typeCheck?.state === 'unchecked' || typeCheck?.state === 'skipped') && (

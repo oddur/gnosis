@@ -266,48 +266,59 @@ void app.whenReady().then(async () => {
     assert.ok(await js("!!document.querySelector('[data-conflict-keys][aria-label=\"Keyboard shortcuts\"]')"));
     assert.equal(await js("document.querySelector('.conflict-save-state').textContent"), 'Saved');
 
-    // First run (components/ConflictOnboarding.tsx): the key to Merged, Check and Decide and a keys hint show under the
-    // summary, once per account, and never take focus from the first conflict.
+    // First run (components/ConflictOnboarding.tsx): one compact panel under the summary explains Merged, Check and
+    // Decide, the main keys and the type check, once per account, and never takes focus from the first conflict.
     const guide = "document.querySelector('[data-conflict-guide]')";
     const note = (name: string) => `document.querySelector('[data-conflict-note="${name}"]')`;
     const tipsSeen = async () =>
       (JSON.parse((await js<string | null>("localStorage.getItem('gnosis:conflict-tips:oddur')")) ?? '[]') as string[]).sort();
+    assert.equal(await js(`${guide}.dataset.conflictGuide`), 'full');
     assert.deepEqual(await js(`[...${guide}.querySelectorAll('dt')].map(e=>e.textContent)`), ['Merged', 'Check', 'Decide']);
     assert.match(await js<string>(`${guide}.textContent`), /proposes only when you ask.*Nothing is pushed until you push\./);
     assert.equal(await js(`!!${guide}.querySelector('.lucide-bot') && !document.querySelector('.conflict-workspace .lucide-sparkles')`), true);
-    assert.match(await js<string>(`${note('keys')}.textContent`), /^Keys: J K next and previous conflict/);
+    assert.equal(
+      await js(`${guide}.querySelector('[data-conflict-guide-keys]').textContent`),
+      'JK move · A accept · 123 keep · M mark reviewed · All keys'
+    );
+    // The type check is off and the PR is TypeScript: the panel's last line, with a link to the setting.
+    assert.match(await js<string>(`${guide}.querySelector('[data-conflict-guide-type-check]').textContent`), /type-check the merge.*It’s off\. Repository settings/);
+    assert.ok((await js<number>(`${guide}.getBoundingClientRect().height`)) <= 120, 'The panel stays compact');
+    assert.equal(await js("document.querySelectorAll('.conflict-notes > .conflict-note').length"), 0, 'No separate bands');
     assert.equal(await activeBlock(), '0', 'The help never takes focus');
     assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
-    // The type check is off and the PR is TypeScript: one quiet mention, with a link to the setting.
-    assert.match(await js<string>(`${note('type-check')}.textContent`), /type-check the merge.*It’s off\.Repository settings$/);
     await captureAll('first-run');
-    await js(`${note('type-check')}.querySelector('.conflict-note-link').click()`);
+    // Narrow, the panel is one line, so the first conflict stays in view; a click opens it.
+    await resize(760, 800);
+    await wait(`${guide}?.dataset.conflictGuide==='compact' && innerWidth===760`);
+    assert.ok(await js<boolean>(`${block(0)}.getBoundingClientRect().top < innerHeight - 120`), 'The first conflict stays above the fold');
+    await js(`${guide}.querySelector('.conflict-guide-expand').click()`);
+    await wait(`${guide}?.dataset.conflictGuide==='full'`);
+    await capture('first-run-narrow-expanded');
+    await resize(1280, 900);
+    await wait('innerWidth===1280');
+    // All keys points at the full legend under the keyboard button.
+    await js(`[...${guide}.querySelectorAll('.conflict-guide-link')].find(b=>b.textContent==='All keys').click()`);
+    await wait("document.activeElement?.matches('[data-conflict-keys]') && !!document.querySelector('.conflict-keys')");
+    await js(`[...${guide}.querySelectorAll('.conflict-guide-link')].find(b=>b.textContent==='Repository settings').click()`);
     await wait("[...document.querySelectorAll('[role=dialog] h2')].some(h=>h.textContent==='Repository settings')");
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]') && !!document.querySelector('.conflict-workspace')");
-    await js(`${note('type-check')}.querySelector('[aria-label=Dismiss]').click()`);
-    await wait(`!${note('type-check')}`);
-    // Got it closes the key for good; the summary's help button brings it back on demand.
+    // One Got it closes the whole panel for good; the summary's help button brings it back on demand.
     await click('Got it');
     await wait(`!${guide}`);
-    assert.deepEqual(await tipsSeen(), ['buckets', 'type-check']);
+    assert.deepEqual(await tipsSeen(), ['buckets']);
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
     await open();
     await wait("document.activeElement?.closest('.conflict-block')");
-    assert.equal(await js(`!!${guide} || !!${note('type-check')}`), false, 'Dismissed help stays dismissed');
-    assert.equal(await js(`!!${note('keys')}`), true, 'The keys hint waits for a key');
+    assert.equal(await js(`!!${guide}`), false, 'Dismissed help stays dismissed');
     await js("document.querySelector('[data-conflict-guide-toggle]').click()");
-    await wait(`!!${guide}`);
+    await wait(`${guide}?.dataset.conflictGuide==='full'`);
     assert.equal(await js("document.querySelector('[data-conflict-guide-toggle]').getAttribute('aria-expanded')"), 'true');
     await capture('guide-reopened');
     await js("document.querySelector('[data-conflict-guide-toggle]').click()");
     await wait(`!${guide}`);
-    // The first shortcut ends the keys hint: you have found them.
     await js(`${block(0)}.focus()`);
-    await key('j');
-    await wait(`!${note('keys')}`);
-    assert.deepEqual(await tipsSeen(), ['buckets', 'keys', 'type-check']);
 
     // A physical pointer click must dismiss the notification, not the conflict workspace.
     await js(

@@ -1479,8 +1479,8 @@ export function ConflictWorkspace({
         )}
         {editing && summary.conflicts > 0 && (
           <ConflictNotes
-            tips={tips}
             guideOpen={guideOpen}
+            guideAsked={guideAsked}
             onCloseGuide={closeGuide}
             model={model}
             summary={summary}
