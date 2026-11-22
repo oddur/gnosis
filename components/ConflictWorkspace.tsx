@@ -1,5 +1,5 @@
 import { LoadingIndicator } from './LoadingState';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { DiffLineAnnotation } from '@pierre/diffs';
 import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
@@ -628,6 +628,7 @@ export function ConflictWorkspace({
   // First-run help, per account (components/ConflictOnboarding.tsx). The bucket key reopens from the summary row.
   const tips = useConflictTips(session?.account);
   const [guideAsked, setGuideAsked] = useState(false);
+  const guideId = useId();
   const guideOpen = guideAsked || !tips.seen('buckets');
   const closeGuide = () => {
     tips.dismiss('buckets');
@@ -1472,23 +1473,26 @@ export function ConflictWorkspace({
                     ? 'Saving…'
                     : 'Saved'}
               </span>
-              <ConflictGuideButton open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
+              <ConflictGuideButton id={guideId} open={guideOpen} onToggle={() => (guideOpen ? closeGuide() : setGuideAsked(true))} />
               <KeyboardHelp />
             </div>
           </div>
         )}
         {editing && summary.conflicts > 0 && (
           <ConflictNotes
+            guideId={guideId}
             guideOpen={guideOpen}
             guideAsked={guideAsked}
             onCloseGuide={closeGuide}
             model={model}
             summary={summary}
-            paths={session.files.map((f) => f.path)}
+            stale={!!session.stale}
+            typed={session.files.some((f) => /\.(?:[cm]?ts|tsx)$/.test(f.path))}
             typeCheck={typeCheck}
             localPath={file?.unsupported ? undefined : session.files.find((f) => f.unsupported)?.path}
             onShowLocal={chooseFile}
             onSettings={openRepoSettings}
+            onAllKeys={() => root.current?.querySelector<HTMLElement>('[data-conflict-keys]')?.focus()}
           />
         )}
         {!session ? (
@@ -1846,8 +1850,7 @@ export function ConflictWorkspace({
                 <CircleCheck size={24} aria-hidden="true" className="conflict-state-ok" />
                 <h2>Git merged everything cleanly</h2>
                 <p>
-                  Nothing needs you. Review what arrives from {session.baseBranch}, then push. Nothing is pushed until
-                  you push.
+                  No conflicts. Review what arrives from {session.baseBranch}, then push.
                 </p>
                 {session.lastPush && <LastPush session={session} push={session.lastPush} onUndone={undone} />}
                 <Button ref={primary} size="sm" disabled={busy} onClick={confirm}>

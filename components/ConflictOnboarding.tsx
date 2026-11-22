@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import {
   Bot,
   CheckCheck,
@@ -22,46 +22,48 @@ import type { ConflictTypeCheck } from '../lib/conflict-resolution';
 export type ConflictTip = 'buckets' | 'undo';
 const TIPS: readonly ConflictTip[] = ['buckets', 'undo'];
 export const conflictTipsKey = (account: string) => `gnosis:conflict-tips:${account}`;
-/** Dismissals when storage is unavailable: they last until the window reloads. */
-const sessionTips = new Map<string, Set<ConflictTip>>();
 
 function readTips(key: string): Set<ConflictTip> {
   // No account yet (the session is still loading): nothing shows, so nothing flashes.
   if (!key) return new Set(TIPS);
-  const held = sessionTips.get(key);
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
-    const seen = new Set(Array.isArray(stored) ? TIPS.filter((tip) => stored.includes(tip)) : []);
-    for (const tip of held ?? []) seen.add(tip);
-    return seen;
+    return new Set(Array.isArray(stored) ? TIPS.filter((tip) => stored.includes(tip)) : []);
   } catch {
-    return new Set(held);
+    return new Set();
   }
 }
 
 export function useConflictTips(account: string | undefined) {
   const key = account ? conflictTipsKey(account) : '';
-  const [version, setVersion] = useState(0);
-  // `version` re-reads storage after a dismissal.
-  const seen = useMemo(() => readTips(key), [key, version]);
+  const [stored, setStored] = useState(() => ({ key, seen: readTips(key) }));
+  const seen = stored.key === key ? stored.seen : readTips(key);
   const dismiss = useCallback(
     (tip: ConflictTip) => {
       if (!key) return;
-      const next = [...new Set([...readTips(key), tip])];
+      const next = new Set([...readTips(key), tip]);
       try {
-        localStorage.setItem(key, JSON.stringify(next));
+        localStorage.setItem(key, JSON.stringify([...next]));
       } catch {
-        sessionTips.set(key, new Set(next));
+        /* Storage unavailable: dismissed until the view closes. */
       }
-      setVersion((v) => v + 1);
+      setStored({ key, seen: next });
     },
     [key]
   );
   return { seen: (tip: ConflictTip) => seen.has(tip), dismiss };
 }
 
+/**
+ * A control that is about to unmount hands focus back to the view, so its keys keep working: to `target`, else the
+ * Conflicts view itself.
+ */
+function keepFocus(event: MouseEvent<HTMLElement>, target?: HTMLElement | null) {
+  (target ?? event.currentTarget.closest<HTMLElement>('.conflict-workspace'))?.focus({ preventScroll: true });
+}
+
 /** Opens and closes the bucket key: the summary row's way back to it after the first run. */
-export function ConflictGuideButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+export function ConflictGuideButton({ id, open, onToggle }: { id: string; open: boolean; onToggle: () => void }) {
   return (
     <Button
       size="icon-sm"
@@ -69,7 +71,7 @@ export function ConflictGuideButton({ open, onToggle }: { open: boolean; onToggl
       aria-label="What Merged, Check and Decide mean"
       title="What Merged, Check and Decide mean"
       aria-expanded={open}
-      aria-controls="conflict-guide"
+      aria-controls={id}
       data-conflict-guide-toggle=""
       onClick={onToggle}
     >
@@ -78,35 +80,27 @@ export function ConflictGuideButton({ open, onToggle }: { open: boolean; onToggl
   );
 }
 
-/** One quiet line with an optional link and a dismiss button. */
+/** One quiet status line with an optional action. */
 function Note({
   icon,
   name,
   children,
   action,
-  onDismiss,
 }: {
   icon: React.ReactNode;
   name: string;
   children: React.ReactNode;
   action?: React.ReactNode;
-  onDismiss?: () => void;
 }) {
   return (
-    <p className="conflict-note" data-conflict-note={name}>
+    <p className="conflict-note" role="status" data-conflict-note={name}>
       {icon}
       <span>{children}</span>
       {action}
-      {onDismiss && (
-        <button type="button" className="conflict-note-dismiss" aria-label="Dismiss" onClick={onDismiss}>
-          <X size={13} aria-hidden="true" />
-        </button>
-      )}
     </p>
   );
 }
 
-const TYPED = /\.(?:[cm]?ts|tsx)$/;
 /** The view's own narrow layout (760px is a shipping size): the key starts as one line there. */
 const NARROW = '(max-width: 899px)';
 function useNarrow() {
@@ -132,40 +126,68 @@ const Keys = ({ keys }: { keys: string[] }) =>
  * check that couldn't run. Nothing here changes a result.
  */
 export function ConflictNotes({
+  guideId,
   guideOpen,
   guideAsked,
   onCloseGuide,
   model,
   summary,
-  paths,
+  stale,
+  typed,
   typeCheck,
   localPath,
   onShowLocal,
   onSettings,
+  onAllKeys,
 }: {
+  guideId: string;
   guideOpen: boolean;
   /** Opened from the summary row's help button: shown in full at any width. */
   guideAsked: boolean;
   onCloseGuide: () => void;
   model: string;
   summary: BucketSummary;
-  /** Every conflicted file's path: the type check is mentioned only for TypeScript. */
-  paths: readonly string[];
+  /** The PR changed since the merge was prepared: what it says about the merge no longer holds. */
+  stale: boolean;
+  /** The PR has TypeScript conflicts: only then is the type check mentioned. */
+  typed: boolean;
   typeCheck: ConflictTypeCheck | null | undefined;
   /** The first file Gnosis can't write, unless it is open already. */
   localPath?: string;
   onShowLocal: (path: string) => void;
   /** Opens this repository's settings, where the type check is turned on. */
   onSettings?: () => void;
+  /** Opens the full legend under this view's keyboard button. */
+  onAllKeys: () => void;
 }) {
   const narrow = useNarrow();
   const [expanded, setExpanded] = useState(false);
   const compact = narrow && !guideAsked && !expanded;
+  const panel = useRef<HTMLElement>(null);
+  // Expanding replaces the button that had focus: the panel takes it.
+  useEffect(() => {
+    if (expanded) panel.current?.focus({ preventScroll: true });
+  }, [expanded]);
+  // Merged is proved only with every check in: the type check is off, or passed for this draft.
+  const typeCheckSettled = typeCheck === null || typeCheck?.state === 'passed';
   const allMerged =
-    summary.conflicts > 0 && summary.merged === summary.conflicts && !summary.needs && !summary.checking;
-  const typed = paths.some((path) => TYPED.test(path));
+    !stale &&
+    typeCheckSettled &&
+    summary.conflicts > 0 &&
+    summary.merged === summary.conflicts &&
+    !summary.needs &&
+    !summary.checking;
+  const sentence = model.charAt(0).toUpperCase() + model.slice(1);
   const gotIt = (
-    <Button size="xs" variant="outline" onClick={onCloseGuide} data-conflict-guide-close="">
+    <Button
+      size="xs"
+      variant="outline"
+      onClick={(e) => {
+        keepFocus(e);
+        onCloseGuide();
+      }}
+      data-conflict-guide-close=""
+    >
       Got it
     </Button>
   );
@@ -173,7 +195,9 @@ export function ConflictNotes({
     <div className="conflict-notes">
       {guideOpen && (
         <section
-          id="conflict-guide"
+          ref={panel}
+          id={guideId}
+          tabIndex={-1}
           className="conflict-guide"
           aria-label="How Gnosis sorts conflicts"
           data-conflict-guide={compact ? 'compact' : 'full'}
@@ -209,7 +233,7 @@ export function ConflictNotes({
                     <CheckCheck size={13} aria-hidden="true" />
                     Merged
                   </dt>
-                  <dd>Gnosis resolved it and every check passed. Nothing to do, but you can still change it.</dd>
+                  <dd>Gnosis resolved it and its checks passed. Nothing to do, but you can still change it.</dd>
                 </div>
                 <div>
                   <dt className="conflict-bucket" data-bucket="check">
@@ -229,7 +253,8 @@ export function ConflictNotes({
               <p className="conflict-guide-more">
                 <Bot size={13} aria-hidden="true" />
                 <span>
-                  {model} proposes only when you ask, and its proposals stay in Check. Nothing is pushed until you push.
+                  {sentence} proposes only when you ask, and its proposals stay in Check. Nothing is pushed until you
+                  push.
                 </span>
               </p>
               <p className="conflict-guide-more conflict-guide-last">
@@ -237,11 +262,7 @@ export function ConflictNotes({
                   <Keyboard size={13} aria-hidden="true" />
                   <Keys keys={['J', 'K']} /> move · <Keys keys={['A']} /> accept · <Keys keys={['1', '2', '3']} /> keep
                   · <Keys keys={['M']} /> mark reviewed ·{' '}
-                  <button
-                    type="button"
-                    className="conflict-guide-link"
-                    onClick={() => document.querySelector<HTMLElement>('[data-conflict-keys]')?.focus()}
-                  >
+                  <button type="button" className="conflict-guide-link" onClick={onAllKeys}>
                     All keys
                   </button>
                 </span>
@@ -267,7 +288,7 @@ export function ConflictNotes({
           Gnosis proved every conflict. Review and push, or look through them first.
         </Note>
       )}
-      {summary.local > 0 && (
+      {!stale && summary.local > 0 && (
         <Note
           name="local"
           icon={<TriangleAlert size={13} aria-hidden="true" />}
@@ -283,7 +304,7 @@ export function ConflictNotes({
           can’t be merged as text. Merge this PR on your computer.
         </Note>
       )}
-      {(typeCheck?.state === 'unchecked' || typeCheck?.state === 'skipped') && (
+      {!stale && (typeCheck?.state === 'unchecked' || typeCheck?.state === 'skipped') && (
         <Note name="type-check-unavailable" icon={<Info size={13} aria-hidden="true" />}>
           The type check didn’t run on this draft. Merged results passed Gnosis’s other checks.
         </Note>
@@ -310,7 +331,15 @@ export function ConflictUndoTip({
           Repository settings
         </Button>
       )}
-      <button type="button" className="conflict-note-dismiss" aria-label="Dismiss" onClick={() => tips.dismiss('undo')}>
+      <button
+        type="button"
+        className="conflict-note-dismiss"
+        aria-label="Dismiss: Undo after push mention"
+        onClick={(e) => {
+          keepFocus(e, e.currentTarget.closest<HTMLElement>('[tabindex]'));
+          tips.dismiss('undo');
+        }}
+      >
         <X size={13} aria-hidden="true" />
       </button>
     </li>

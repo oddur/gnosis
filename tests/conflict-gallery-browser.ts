@@ -262,9 +262,9 @@ void app.whenReady().then(async () => {
     await waitForWorkbenchQueue(contents);
     // The guide is open on first use; the gallery shows the workspace as people see it after that.
     await js("localStorage.setItem('gnosis-conflict-guide', 'dismissed')");
-    // Likewise the first-run key, keys hint and opt-in mentions (components/ConflictOnboarding.tsx), for the lab account.
+    // Likewise the first-run panel and the Undo mention (components/ConflictOnboarding.tsx), for the lab account.
     await js(
-      "localStorage.setItem('gnosis:conflict-tips:lab', JSON.stringify(['buckets','keys','type-check','undo']))"
+      "localStorage.setItem('gnosis:conflict-tips:lab', JSON.stringify(['buckets','undo']))"
     );
     await js(`(() => {
       window.conflictCalls = [];

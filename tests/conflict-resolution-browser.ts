@@ -293,6 +293,7 @@ void app.whenReady().then(async () => {
     assert.ok(await js<boolean>(`${block(0)}.getBoundingClientRect().top < innerHeight - 120`), 'The first conflict stays above the fold');
     await js(`${guide}.querySelector('.conflict-guide-expand').click()`);
     await wait(`${guide}?.dataset.conflictGuide==='full'`);
+    await wait(`document.activeElement===${guide}`);
     await capture('first-run-narrow-expanded');
     await resize(1280, 900);
     await wait('innerWidth===1280');
@@ -306,6 +307,7 @@ void app.whenReady().then(async () => {
     // One Got it closes the whole panel for good; the summary's help button brings it back on demand.
     await click('Got it');
     await wait(`!${guide}`);
+    assert.equal(await js("document.activeElement?.classList.contains('conflict-workspace')"), true, 'Got it hands focus to the view');
     assert.deepEqual(await tipsSeen(), ['buckets']);
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
@@ -1726,6 +1728,33 @@ void app.whenReady().then(async () => {
     await click('Start from Git’s conflict');
     await wait(`${block(0)}?.dataset.state==='open'`);
     await click('Close');
+
+    // "Gnosis proved every conflict" needs every check in: not while the type check runs, and not on a stale session.
+    const allMergedNote = "document.querySelector('[data-conflict-note=\"all-merged\"]')";
+    const setTypeCheck = (state: unknown) =>
+      js(`(()=>{window.typeCheckState=${JSON.stringify(state)};for(const cb of window.typeCheckListeners)cb(window.conflictFixture.id);})()`);
+    await js(`(()=>{
+      Object.assign(window.conflictFixture,{status:'editing',commitSha:undefined,stale:false,version:1,restack:undefined,dependents:[],files:${JSON.stringify(counted.slice(1))}});
+      window.conflictCalls=[];
+    })()`);
+    await open();
+    await checksDone();
+    await wait(`!!${allMergedNote}`);
+    assert.equal(await js(`${allMergedNote}.getAttribute('role')`), 'status');
+    await setTypeCheck({ state: 'running' });
+    await wait("document.querySelector('.conflict-type-check')?.firstChild?.textContent==='Type check: running…'");
+    assert.equal(await js(`!!${allMergedNote}`), false, 'Not proved while the type check runs');
+    await setTypeCheck(null);
+    await wait(`!!${allMergedNote}`);
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    await js('window.conflictFixture.stale=true');
+    await open();
+    await wait(`(${visibleButton('Load latest changes')})`);
+    assert.equal(await js(`!!${allMergedNote}`), false, 'Not on a stale session');
+    await js('window.conflictFixture.stale=false');
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
 
     // The conflict keyboard map (#445 item 13): A accepts, U undoes, V cycles Compare with, G shows the merged
     // conflicts and Cmd+Enter opens Review and push…, which never pushes. None of them acts while you type.
