@@ -62,7 +62,7 @@ Each heading counts what it holds, such as "You decided · 2 conflicts in 1 file
 
 Enter a commit message and select **Push merge commit**, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus. Enter alone never pushes, and Enter or Space on the button does nothing. The title and **Push merge commit** stay in view; only the diff between them scrolls.
 
-After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit. **Done** closes the workspace.
+After the push, the outcome names the updated branch, the merge commit, the files you resolved, and that checks restart. It also says how to undo: reset the branch to its previous commit, or use **Undo this update** (see [Undo an update](#undo-an-update)). **Done** closes the workspace.
 
 If someone pushed to the branch after you started, the push is rejected and nothing is pushed. **Load latest changes** prepares the merge again on the new head. Conflicts whose text did not change keep your resolutions, and you review each file again. Other Git errors show plain copy, with the raw output under **Details**. A failed push is never resent; **Check again** only reads the branch.
 
@@ -76,6 +76,34 @@ On a busy base branch, new commits land while you resolve. That alone does not b
 - **New conflicts:** nothing is pushed. The workspace returns to the files, opens the first file with a new conflict, and says how many conflicts are new. Only those conflicts are open; files without new conflicts stay **Reviewed**.
 
 If the base branch keeps moving, Gnosis tries three times and then asks you to try again. The push lease still checks the exact PR head, so a commit someone pushed to the PR in the meantime is never overwritten.
+
+### Undo an update
+
+While your merge commit is still the head of the PR branch, the PR header says "Merged main into this PR". The undo shows there, in the workspace's outcome, and in the workspace when you open it again and the PR merges cleanly. It is offered only while Gnosis still has the draft you pushed: after a fresh preparation, for example when main brought new conflicts, there are no choices to return to.
+
+**Undo this update** is off for every repository. To turn it on, open the repository's settings and select **Allow undoing a conflict update with a force push**. Some teams forbid force pushes on shared branches; leave it off for those repositories. When it is off, Gnosis shows **How to undo this update**, which opens this section, and refuses the undo in the main process too.
+
+When it is on, **Undo this update** opens a confirmation. The confirmation names the branch and says that the undo rewrites the branch's history. Cancel has focus. Enter alone never pushes, and Enter or Space on the push button does nothing. Select the button, or press Cmd+Enter (Ctrl+Enter on Windows and Linux) while it has focus.
+
+Gnosis then reads the PR from GitHub and the branch from the remote, and pushes the previous head back with `git push --force-with-lease=<branch>:<merge commit> <previous head>:<branch>`. It uses the same sign-in and push path as the update. The undo is refused, and nothing changes, when:
+
+- someone pushed to the branch after the merge commit, or CI added a commit. The lease refuses this too, if the commit arrives during the undo.
+- the PR is merged or closed.
+- dependent PRs were restacked onto the merge commit. Undo for a restack is not supported.
+- GitHub refuses the force push, for example on a protected branch. Gnosis shows GitHub's message.
+
+After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again: Gnosis reads the branch and finishes the undo if it reached GitHub.
+
+To undo by hand, without a force push, revert the merge commit on the PR branch. This keeps the history:
+
+```
+git fetch origin <branch>
+git switch <branch>
+git revert -m 1 <merge commit>
+git push origin <branch>
+```
+
+After a revert, merging the base branch again does not bring back the changes the reverted merge brought in. Revert the revert first when you merge again. If your team allows force pushes, you can reset the branch instead: `git push --force-with-lease=<branch>:<merge commit> origin <previous head>:<branch>`. The outcome shows both commits.
 
 ## Other states
 

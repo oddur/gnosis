@@ -210,7 +210,7 @@ export function StepCard({
   function onContinueKey(event: KeyboardEvent<HTMLButtonElement>) {
     // No implicit click from Enter or Space, and the card's Enter never sees the key either.
     pushButtonKey(event, mac, () => {
-      if (canContinue) onContinue?.();
+      if (canContinue) onContinue();
     });
   }
   return (

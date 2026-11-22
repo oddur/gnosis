@@ -3,7 +3,7 @@ import type { PushedUpdate } from './conflict-undo';
 
 /**
  * Your conflict update while its merge commit is this PR head (#445 item 25), for the header's "Merged main into this
- * PR · Undo this update". Read again when main says the PR's conflict state changed.
+ * PR · Undo this update". Read again when the head changes: a push or an undo moves it.
  */
 export function useConflictPushed(url: string, headSha: string, enabled: boolean): PushedUpdate | undefined {
   const [pushed, setPushed] = useState<{ key: string; value: PushedUpdate | undefined }>();
@@ -11,21 +11,15 @@ export function useConflictPushed(url: string, headSha: string, enabled: boolean
   useEffect(() => {
     if (!enabled || !url.startsWith('https://github.com/') || !/^[a-f0-9]{40,64}$/.test(headSha)) return;
     let live = true;
-    const read = () =>
-      (window.electronAPI.conflictPushed?.(url, headSha) ?? Promise.resolve(null)).then(
-        (value) => {
-          if (live) setPushed({ key, value: value ?? undefined });
-        },
-        // An older main process, or a test without the handler: no line.
-        () => {}
-      );
-    void read();
-    const off = window.electronAPI.onConflictHeaderChanged((changed) => {
-      if (changed === url) void read();
-    });
+    // An older main process, or a test without the handler: no line.
+    void Promise.resolve(window.electronAPI.conflictPushed?.(url, headSha)).then(
+      (value) => {
+        if (live) setPushed({ key, value: value ?? undefined });
+      },
+      () => {}
+    );
     return () => {
       live = false;
-      off();
     };
   }, [key, enabled]);
   return enabled && pushed?.key === key ? pushed.value : undefined;

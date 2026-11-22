@@ -46,7 +46,7 @@ const strip = (text: string) => text.replace(/^Error invoking remote method '[^'
 export function remoteMessage(raw: string) {
   return raw
     .split(/\r?\n/)
-    .map((line) => /^remote:\s*(?:error:\s*)?(.*)$/i.exec(line.trim())?.[1]?.trim() ?? '')
+    .map((line) => /(?:^|\s)remote:\s*(?:error:\s*)?(.*)$/i.exec(line.trim())?.[1]?.trim() ?? '')
     .filter((line) => line && !/^-+$/.test(line))
     .join(' ');
 }

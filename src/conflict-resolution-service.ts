@@ -1438,6 +1438,10 @@ export function createConflictResolutionService(deps: Deps) {
     if (!(await exists(path.join(dir, 'HEAD')))) {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
       await git(ctx, session.id, ['init', '--bare', '.'], signal);
+      // As restoreHistory sets it up: a promisor remote, so trees arrive without their blobs.
+      await git(ctx, session.id, ['config', 'remote.pr.url', remote(session.headRepo)], signal);
+      await git(ctx, session.id, ['config', 'remote.pr.promisor', 'true'], signal);
+      await git(ctx, session.id, ['config', 'remote.pr.partialclonefilter', 'blob:none'], signal);
     }
     const present = async (sha: string) =>
       (await git(ctx, session.id, ['cat-file', '-e', `${sha}^{commit}`], signal, undefined, [0, 1, 128], { lazyFetch: false }))
@@ -1446,7 +1450,7 @@ export function createConflictResolutionService(deps: Deps) {
       await git(
         ctx,
         session.id,
-        ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', '--depth=2', remote(session.headRepo), commitSha],
+        ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', '--depth=2', 'pr', commitSha],
         signal
       );
     // GitHub's PR read can lag a push: the remote's own ref is the live head.
@@ -1458,30 +1462,35 @@ export function createConflictResolutionService(deps: Deps) {
       .split(/\s/)[0];
     if (live !== commitSha) throw new Error(UNDO_MOVED);
     assertAccount(ctx);
-    // Saved before the network write, so a reopen can finish an undo whose reply was lost.
+    // Saved before the network write, so a reopen can finish an undo whose reply was lost. The version stays: a
+    // refused undo leaves the draft as the renderer has it.
     session.undoing = true;
-    session.version++;
     await persist(session);
     report(`Moving ${session.headBranch} back to its previous commit.`);
-    try {
-      await git(
-        ctx,
-        session.id,
-        [
-          'push',
-          '--porcelain',
-          `--force-with-lease=refs/heads/${session.headBranch}:${commitSha}`,
-          remote(session.headRepo),
-          `${headSha}:refs/heads/${session.headBranch}`,
-        ],
-        signal
-      );
-    } catch (error) {
-      // Refused: nothing changed, and the update stays. A lost reply is settled by the next open.
+    // Git exits 1 when the remote refused the ref: nothing changed. Any other failure (the connection, a timeout)
+    // throws with `undoing` saved, and the next open reads the branch to settle it.
+    const push = await git(
+      ctx,
+      session.id,
+      [
+        'push',
+        '--porcelain',
+        `--force-with-lease=refs/heads/${session.headBranch}:${commitSha}`,
+        remote(session.headRepo),
+        `${headSha}:refs/heads/${session.headBranch}`,
+      ],
+      signal,
+      undefined,
+      [0, 1]
+    );
+    if (push.code !== 0) {
       delete session.undoing;
-      session.version++;
       await persist(session);
-      throw error;
+      // The lease's refusal is in the porcelain status, not in Git's error output.
+      if (/\[rejected\] \(stale info\)|\(fetch first\)/.test(push.stdout.toString('utf8'))) throw new Error(UNDO_MOVED);
+      let output = push.stderr.replace(/AUTHORIZATION:[^\r\n]*/gi, '[redacted]');
+      if (ctx.token) output = output.replaceAll(ctx.token, '[redacted]');
+      throw new Error(`Git could not complete this operation. ${output.slice(0, 1500)}`);
     }
     await undone(ctx, session);
   }
