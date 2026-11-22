@@ -27,7 +27,7 @@ import { CONFLICT_SHORTCUTS } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
 import { ConflictUndo } from './ConflictUndo';
-import type { PushedUpdate } from '../lib/conflict-undo';
+import { undoTarget, UNDO_UNSETTLED } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import {
   ResultEditor,
@@ -878,7 +878,7 @@ export function ConflictWorkspace({
     });
   }, [session, selected, epoch, confirming, mode]);
   const upToDate = session?.status === 'editing' && !session.files.length && session.preparation === 'up-to-date';
-  const pushed = session ? pushedUpdate(session) : undefined;
+  const pushed = session ? undoTarget(session) : undefined;
   const reopened = !!session?.reopened;
   useEffect(() => {
     if ((session?.status === 'published' && !session.dependents?.length) || upToDate || reopened)
@@ -1285,6 +1285,11 @@ export function ConflictWorkspace({
                     </li>
                     <li>Checks restarting on GitHub</li>
                   </ul>
+                  {session.undoing && (
+                    <p role="status" data-conflict-undo-unsettled="">
+                      {UNDO_UNSETTLED}
+                    </p>
+                  )}
                   <p className="conflict-outcome-undo">
                     To undo, reset {session.headBranch} to <CommitBadge sha={session.headSha} repo={session.headRepo} />
                     {pushed && (
@@ -2104,7 +2109,7 @@ function LastPush({
   onUndone: (session: ConflictSession) => void;
 }) {
   // Only the saved push itself can be undone: a fresh preparation since has no choices to return to.
-  const update = session.commitSha === push.commitSha ? pushedUpdate(session) : undefined;
+  const update = session.commitSha === push.commitSha ? undoTarget(session) : undefined;
   return (
     <div className="conflict-state-muted" data-conflict-last-push="">
       <p>
@@ -2132,11 +2137,4 @@ function LastPush({
       )}
     </div>
   );
-}
-
-/** A published draft whose push Undo this update can move back (#445 item 25). A restacked push has none. */
-function pushedUpdate(session: ConflictSession): PushedUpdate | undefined {
-  if (session.status !== 'published' || !session.commitSha || session.restack?.status === 'published') return undefined;
-  const { id, version, url, headRepo, baseRepo, headBranch, baseBranch, headSha, commitSha } = session;
-  return { id, version, url, headRepo, baseRepo, headBranch, baseBranch, headSha, commitSha };
 }

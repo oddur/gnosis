@@ -34,7 +34,7 @@ import type { Verdict } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
-import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE } from '../lib/conflict-undo';
+import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
 import type { SyntaxLanguage } from '../lib/syntax-scope';
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
@@ -220,9 +220,16 @@ export function createConflictResolutionService(deps: Deps) {
     pendingChoices.delete(key);
     return session;
   }
+  /** `pushed` per draft and head: a draft can be megabytes, so it is read once per change (#445 item 25). */
+  const pushedCache = new Map<string, { headSha: string; value: PushedUpdate | undefined }>();
+  /** Every draft write goes through here, so `pushed` never answers from an older draft. */
+  function write(key: string, value: unknown) {
+    pushedCache.delete(key);
+    deps.storage.write(key, value);
+  }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    deps.storage.write(key, withChoices(key, session));
+    write(key, withChoices(key, session));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -1116,13 +1123,13 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
-    // An undo whose reply or status write was lost: the PR head says whether it landed (#445 item 25).
-    if (saved?.status === 'published' && saved.undoing && !background) {
-      if (state.headSha === saved.headSha && state.headBranch === saved.headBranch && state.headRepo === saved.headRepo)
-        await undone(ctx, saved);
-      else delete saved.undoing;
-      saved.version++;
-      await persist(saved);
+    // A pending undo (#445 item 25) is settled only when you open the PR, from the remote. Background work never
+    // replaces or settles it.
+    if (saved?.status === 'published' && saved.undoing) {
+      if (background) return saved;
+      // Landed: the remote is at the previous head even while GitHub's read still shows the merge commit.
+      if (await settleUndo(ctx, saved, signal)) return { ...saved, stale: false };
+      if (saved.undoing) return saved;
     }
     // A background draft counts only for the revisions it was prepared on. Your own draft, or a push still to restack,
     // is never replaced in the background.
@@ -1340,14 +1347,11 @@ export function createConflictResolutionService(deps: Deps) {
    * Restack walks history. A shallow or removed cache fetches it first, as the full path always did. `tip` is the
    * commit whose history is fetched: the pushed merge commit, or, for a dry run before the push, the PR head.
    */
-  async function restoreHistory(
-    ctx: Context,
-    session: ConflictSession,
-    signal: AbortSignal,
-    report: (text: string) => void,
-    tip = session.commitSha
-  ) {
-    if (!tip || !oid(tip)) return;
+  /**
+   * The PR's private cache, set up again after startup cleanup removed it: a bare repository with the PR and base
+   * repositories as promisor remotes, so trees arrive without their blobs.
+   */
+  async function ensureCache(ctx: Context, session: ConflictSession, signal: AbortSignal) {
     const dir = await directory(ctx.account, session.id);
     if (!(await exists(path.join(dir, 'HEAD')))) {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
@@ -1361,6 +1365,48 @@ export function createConflictResolutionService(deps: Deps) {
         await git(ctx, session.id, ['config', `remote.${name}.partialclonefilter`, 'blob:none'], signal);
       }
     }
+    return dir;
+  }
+  /** The PR branch's commit on the remote now: GitHub's PR read can lag a push. */
+  async function liveHead(ctx: Context, session: ConflictSession, signal: AbortSignal) {
+    await ensureCache(ctx, session, signal);
+    return (
+      await git(ctx, session.id, ['ls-remote', remote(session.headRepo), `refs/heads/${session.headBranch}`], signal)
+    ).stdout
+      .toString()
+      .trim()
+      .split(/\s/)[0];
+  }
+  /**
+   * An undo whose reply or status write was lost (#445 item 25), settled from the remote, never from GitHub's lagging
+   * PR read: at the previous head it landed, at the merge commit it never did. Anywhere else, or if the remote can't be
+   * read, the draft stays as it is with `undoing` set, and the workspace says so. True when the undo landed.
+   */
+  async function settleUndo(ctx: Context, session: ConflictSession, signal: AbortSignal) {
+    let live: string | undefined;
+    try {
+      live = await liveHead(ctx, session, signal);
+    } catch (error) {
+      if (signal.aborted || accountChanged(error)) throw error;
+      console.warn('[conflicts] Could not read the branch to settle an undo.', error);
+      return false;
+    }
+    if (live === session.headSha) await undone(ctx, session);
+    else if (live === session.commitSha) delete session.undoing;
+    else return false;
+    session.version++;
+    await persist(session);
+    return session.status === 'editing';
+  }
+  async function restoreHistory(
+    ctx: Context,
+    session: ConflictSession,
+    signal: AbortSignal,
+    report: (text: string) => void,
+    tip = session.commitSha
+  ) {
+    if (!tip || !oid(tip)) return;
+    const dir = await ensureCache(ctx, session, signal);
     const shallow = await exists(path.join(dir, 'shallow'));
     const present =
       (
@@ -1420,29 +1466,13 @@ export function createConflictResolutionService(deps: Deps) {
   ) {
     const { commitSha, headSha } = session;
     if (session.status !== 'published' || !commitSha || !oid(commitSha) || !oid(headSha)) throw new Error(UNDO_UNAVAILABLE);
-    // Dependent PRs now sit on the merge commit: moving it back would leave them on a commit the PR no longer has.
-    if (session.restack?.status === 'published') throw new Error(UNDO_RESTACKED);
+    // A restack plan of any state builds on the merge commit: moving it back would strand the dependent PRs.
+    if (session.restack) throw new Error(UNDO_RESTACKED);
     if (deps.allowUndo?.(session.baseRepo) !== true) throw new Error(UNDO_OFF);
     report('Checking that the merge commit is still the PR head.');
-    const state = await deps.read(session.url);
-    signal.throwIfAborted();
-    assertAccount(ctx);
-    if (state.state !== 'OPEN') throw new Error(UNDO_CLOSED);
-    if (state.account !== ctx.account || state.archived || !state.canUpdateBranch)
-      throw new Error('You cannot update this PR branch with the connected account. Nothing was changed.');
-    if (state.headRepo !== session.headRepo || state.headBranch !== session.headBranch || state.headSha !== commitSha)
-      throw new Error(UNDO_MOVED);
     // The pushed commits must be here, so the push sends nothing: the remote already has the previous head. Startup
     // cleanup may have removed this PR's cache since the push.
-    const dir = await directory(ctx.account, session.id);
-    if (!(await exists(path.join(dir, 'HEAD')))) {
-      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-      await git(ctx, session.id, ['init', '--bare', '.'], signal);
-      // As restoreHistory sets it up: a promisor remote, so trees arrive without their blobs.
-      await git(ctx, session.id, ['config', 'remote.pr.url', remote(session.headRepo)], signal);
-      await git(ctx, session.id, ['config', 'remote.pr.promisor', 'true'], signal);
-      await git(ctx, session.id, ['config', 'remote.pr.partialclonefilter', 'blob:none'], signal);
-    }
+    await ensureCache(ctx, session, signal);
     const present = async (sha: string) =>
       (await git(ctx, session.id, ['cat-file', '-e', `${sha}^{commit}`], signal, undefined, [0, 1, 128], { lazyFetch: false }))
         .code === 0;
@@ -1453,14 +1483,21 @@ export function createConflictResolutionService(deps: Deps) {
         ['fetch', '--no-tags', '--no-write-fetch-head', '--filter=blob:none', '--depth=2', 'pr', commitSha],
         signal
       );
-    // GitHub's PR read can lag a push: the remote's own ref is the live head.
-    const live = (
-      await git(ctx, session.id, ['ls-remote', remote(session.headRepo), `refs/heads/${session.headBranch}`], signal)
-    ).stdout
-      .toString()
-      .trim()
-      .split(/\s/)[0];
+    const live = await liveHead(ctx, session, signal);
+    // A retry after a lost reply: the earlier undo landed. Finish it rather than call it someone else's push.
+    if (session.undoing && live === headSha) {
+      await undone(ctx, session);
+      return;
+    }
     if (live !== commitSha) throw new Error(UNDO_MOVED);
+    const state = await deps.read(session.url);
+    signal.throwIfAborted();
+    assertAccount(ctx);
+    if (state.state !== 'OPEN') throw new Error(UNDO_CLOSED);
+    if (state.account !== ctx.account || state.archived || !state.canUpdateBranch)
+      throw new Error('You cannot update this PR branch with the connected account. Nothing was changed.');
+    if (state.headRepo !== session.headRepo || state.headBranch !== session.headBranch || state.headSha !== commitSha)
+      throw new Error(UNDO_MOVED);
     assertAccount(ctx);
     // Saved before the network write, so a reopen can finish an undo whose reply was lost. The version stays: a
     // refused undo leaves the draft as the renderer has it.
@@ -1617,7 +1654,7 @@ export function createConflictResolutionService(deps: Deps) {
     if (removedAny) await runGit(dir, ['worktree', 'prune'], signal, { allowed: [0, 128] }).catch(() => {});
   }
   async function drop(account: string, id: string) {
-    deps.storage.write(storageKey(account, id), null);
+    write(storageKey(account, id), null);
     writeCarry(account, id, []);
     await deps.storage.flush();
     const dir = await directory(account, id);
@@ -1636,7 +1673,7 @@ export function createConflictResolutionService(deps: Deps) {
     if (!deps.storage.names) return { removed };
     // Their caches go below, with every other directory no saved session needs.
     const stale = staleBackground(deps.backgroundDrafts ?? BACKGROUND_DRAFTS);
-    for (const { name } of stale) deps.storage.write(name, null);
+    for (const { name } of stale) write(name, null);
     let dropped = 0;
     // Carried restack choices outlive nothing: only a pushed resolution whose restack is still to push keeps them.
     for (const name of deps.storage.names()) {
@@ -1644,7 +1681,7 @@ export function createConflictResolutionService(deps: Deps) {
       if (!match || busy.has(storageKey(match[1], match[2]))) continue;
       const saved = deps.storage.read(storageKey(match[1], match[2])) as ConflictSession | null | undefined;
       if (saved?.status !== 'published' || saved.restack?.status === 'published') {
-        deps.storage.write(name, null);
+        write(name, null);
         dropped++;
       }
     }
@@ -1742,7 +1779,7 @@ export function createConflictResolutionService(deps: Deps) {
       const key = storageKey(ctx.account, hash(url));
       // Your draft, or a push still to restack: nothing to do, before any work. open() keeps the full rule.
       const saved = deps.storage.read(key) as ConflictSession | undefined;
-      if (saved && !saved.background && (saved.status === 'editing' || saved.restack)) return saved;
+      if (saved && !saved.background && (saved.status === 'editing' || saved.restack || saved.undoing)) return saved;
       if (busy.has(key)) return undefined;
       return asBackground(key, signal, async (yielding) => {
         await maintenance;
@@ -1811,11 +1848,19 @@ export function createConflictResolutionService(deps: Deps) {
     pushed(url: string, headSha: string) {
       const ctx = deps.context();
       if (!ctx.account) return undefined;
-      const saved = deps.storage.read(storageKey(ctx.account, hash(url))) as ConflictSession | undefined;
-      if (!saved || saved.status !== 'published' || saved.commitSha !== headSha || saved.undoing) return undefined;
-      if (saved.restack?.status === 'published') return undefined;
-      const { id, version, url: pr, headRepo, baseRepo, headBranch, baseBranch, commitSha } = saved;
-      return { id, version, url: pr, headRepo, baseRepo, headBranch, baseBranch, headSha: saved.headSha, commitSha };
+      const key = storageKey(ctx.account, hash(url));
+      const known = pushedCache.get(key);
+      if (known?.headSha === headSha) return known.value;
+      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      const value = saved && saved.commitSha === headSha ? undoTarget(saved) : undefined;
+      pushedCache.delete(key);
+      pushedCache.set(key, { headSha, value });
+      // Bounded like the header lines: the oldest PRs go first.
+      for (const old of pushedCache.keys()) {
+        if (pushedCache.size <= 200) break;
+        pushedCache.delete(old);
+      }
+      return value;
     },
     /** Removes a background draft (the PR moved or merges cleanly now). Your own draft is never removed. */
     async forgetBackground(url: string) {
@@ -1844,7 +1889,7 @@ export function createConflictResolutionService(deps: Deps) {
         if (busy.has(key)) pendingChoices.set(key, [...pending, choice]);
         else {
           pendingChoices.delete(key);
-          deps.storage.write(key, saved);
+          write(key, saved);
         }
       });
     },
@@ -1893,7 +1938,7 @@ export function createConflictResolutionService(deps: Deps) {
             await persist(stored);
           } else if (stored && counted?.changed) {
             // Saved with the next write; the open never waits for it.
-            deps.storage.write(key, withChoices(key, stored));
+            write(key, withChoices(key, stored));
           }
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);

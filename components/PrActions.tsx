@@ -176,7 +176,7 @@ export function PrActions({
   const rebaseBlocked = updateBlocked ?? (state ? workflowReason(state, 'update-rebase') : undefined);
   const active = state?.state === 'OPEN' && !state.archived;
   // "Merged main into this PR · Undo this update", while your pushed merge commit is the head (#445 item 25).
-  const pushedUpdate = useConflictPushed(member.url, state?.headSha ?? member.headSha, active && !stackMembers && !trigger);
+  const [pushedUpdate, rereadPushed] = useConflictPushed(member.url, state?.headSha ?? member.headSha, active && !stackMembers && !trigger);
   const kind = dialog?.kind;
   const members = plan ? (kind === 'merge' ? plan.members : [plan.target]) : [];
   const heading =
@@ -534,6 +534,8 @@ export function PrActions({
               <ConflictUndo
                 update={pushedUpdate}
                 onUndone={() => {
+                  // The head moves back only once GitHub's read catches up: read the saved draft again now.
+                  rereadPushed();
                   void refresh();
                   onChanged?.();
                 }}

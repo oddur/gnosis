@@ -14,6 +14,9 @@ export const UNDO_RESTACKED =
   'Dependent PRs were restacked onto this merge commit, so Gnosis can’t undo it. Nothing was changed.';
 export const UNDO_CLOSED = 'This PR is merged or closed, so Gnosis can’t undo the update. Nothing was changed.';
 export const UNDO_MOVED = 'New commits are on the PR branch after the merge commit.';
+/** An interrupted undo whose branch is at neither commit: Gnosis keeps the draft as it was and asks you to look. */
+export const UNDO_UNSETTLED =
+  'Gnosis couldn’t tell whether the last undo reached GitHub: the branch is at neither the merge commit nor the commit before it. Your draft is kept. Check the branch on GitHub.';
 
 /** A pushed update while its merge commit is the PR head (the service's `pushed`): what Undo this update needs. */
 export interface PushedUpdate {
@@ -27,6 +30,30 @@ export interface PushedUpdate {
   /** The PR head before the update: the commit Undo pushes back. */
   headSha: string;
   commitSha: string;
+}
+
+/**
+ * The one rule for whether a draft's push can be undone, in the PR header (the service's `pushed`), the workspace and
+ * the service: a published draft with its merge commit, no undo in flight, and no restack plan of any state, since a
+ * prepared or published restack builds on the merge commit.
+ */
+export function undoTarget(session: {
+  id: string;
+  version: number;
+  url: string;
+  status: string;
+  headRepo: string;
+  baseRepo: string;
+  headBranch: string;
+  baseBranch: string;
+  headSha: string;
+  commitSha?: string;
+  undoing?: boolean;
+  restack?: unknown;
+}): PushedUpdate | undefined {
+  if (session.status !== 'published' || !session.commitSha || session.undoing || session.restack) return undefined;
+  const { id, version, url, headRepo, baseRepo, headBranch, baseBranch, headSha, commitSha } = session;
+  return { id, version, url, headRepo, baseRepo, headBranch, baseBranch, headSha, commitSha };
 }
 
 /** Whether a repository allows Undo this update. Unset is off: the setting fails closed. */
@@ -55,7 +82,7 @@ export function remoteMessage(raw: string) {
 export function describeUndoError(error: string, branch: string): UndoErrorCopy {
   const raw = strip(error);
   const git = /^Git could not complete this operation\./.test(raw);
-  if (raw.startsWith(UNDO_MOVED) || /\(stale info\)|\bstale info\b|\(fetch first\)/i.test(raw))
+  if (raw.startsWith(UNDO_MOVED) || /\bstale info\b|\(fetch first\)/i.test(raw))
     return {
       title: `${branch} has new commits after the merge commit.`,
       body: 'Someone pushed, or a check added a commit, after your update. Nothing was changed. To undo it now, revert the merge commit instead.',

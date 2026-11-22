@@ -89,10 +89,10 @@ Gnosis then reads the PR from GitHub and the branch from the remote, and pushes 
 
 - someone pushed to the branch after the merge commit, or CI added a commit. The lease refuses this too, if the commit arrives during the undo.
 - the PR is merged or closed.
-- dependent PRs were restacked onto the merge commit. Undo for a restack is not supported.
+- a restack of the dependent PRs is prepared, paused or pushed: it builds on the merge commit. Undo for a restack is not supported.
 - GitHub refuses the force push, for example on a protected branch. Gnosis shows GitHub's message.
 
-After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again: Gnosis reads the branch and finishes the undo if it reached GitHub.
+After the undo, the draft returns to editing with your choices and edits. Fix what you need, then select **Review and push…** again. A failed undo is never resent. If the connection was lost, open the PR again, or select **Undo this update** again: Gnosis reads the branch on the remote, not GitHub's PR, which can lag. At the previous commit, the undo landed and Gnosis finishes it. At the merge commit, it never did. Anywhere else, the workspace says so and keeps your draft as it is. Background preparation never replaces a draft while an undo is unsettled.
 
 To undo by hand, without a force push, revert the merge commit on the PR branch. This keeps the history:
 
