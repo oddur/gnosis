@@ -1762,6 +1762,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.conflict-confirm')"), false);
     assert.match(await footerSays(), /still needs you/);
     // Keys are ignored in the in-place editor: they type there, and Escape leaves it with nothing changed.
+    await wait("document.querySelector('.conflict-save-state')?.textContent==='Saved' && !window.conflictFixture.files[0].result.includes('<<<<<<<')");
     const before = await draft();
     await js(`${block(0)}.querySelector('[data-conflict-edit]').click()`);
     await wait(`!!${inlineEditor(0)} && ${inlineEditor(0)}.getRootNode().activeElement===${inlineEditor(0)}`);
