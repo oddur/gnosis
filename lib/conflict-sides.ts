@@ -3,8 +3,8 @@
  * version, so an open conflict's lines arrive as a deletion (the compared version's side) and an addition (the other
  * side). Neither is being deleted or added: nothing is chosen yet. So each side wears its own neutral tint instead of the
  * review diff's red and green, the same for the PR's side in every mode and in a restack, and the first line of each
- * side names it ("PR", "main"). Only these rows change: Changes, Explanation and every chosen conflict keep the
- * review diff's colours.
+ * side names it ("PR", "main") in its line number's place. Only these rows change: Changes, Explanation and every
+ * chosen conflict keep the review diff's colours.
  *
  * The rows live in Pierre's shadow roots: the CSS goes in through the diff's `unsafeCSS`, and ConflictFileDiff marks the
  * rows after each render (`markSides`), as ChangesDiff marks written lines (lib/diff-here.ts).
@@ -77,10 +77,11 @@ export const SIDES_CSS = `
   --diffs-bg-deletion-emphasis: rgb(from var(--conflict-side) r g b / 24%); --diffs-bg-addition-emphasis: rgb(from var(--conflict-side) r g b / 24%);
 }
 [data-line][data-conflict-side]::before { content: '' !important; }
-[data-line][data-conflict-label] { position: relative; }
-[data-line][data-conflict-label]::after {
-  content: attr(data-conflict-label); position: absolute; top: 0; right: 8px; z-index: 1; padding: 0 6px; border-radius: 3px;
-  background: var(--conflict-side); color: var(--diffs-bg, #0d1117); font: 600 11px/1.6 var(--font-sans, system-ui); pointer-events: none;
+/* The name takes the first row's line number: the gutter stays in view however far the code scrolls sideways. */
+[data-column-number][data-conflict-label] { color: transparent; }
+[data-column-number][data-conflict-label]::after {
+  content: attr(data-conflict-label); position: absolute; top: 0; right: 4px; z-index: 1; padding: 0 4px; border-radius: 3px;
+  background: var(--conflict-side); color: var(--diffs-bg, #0d1117); font: 600 10px/1.6 var(--font-sans, system-ui); pointer-events: none;
 }`;
 
 /**
@@ -107,9 +108,11 @@ export function markSides(host: Element, rows: SideRows | undefined, labels: Rec
     // A run continues in the same column, row after row.
     const continues =
       !!previous && previous.column === column && previous.tone === tone && previous.row.nextElementSibling === row;
+    const gutter = gutterOf(row);
     set(row, 'data-conflict-side', tone);
-    set(gutterOf(row), 'data-conflict-side', tone);
+    set(gutter, 'data-conflict-side', tone);
     set(row, 'data-conflict-label', tone && !continues ? labels[tone] : undefined);
+    set(gutter, 'data-conflict-label', tone && !continues ? labels[tone] : undefined);
     previous = { column, tone, row };
   }
 }
