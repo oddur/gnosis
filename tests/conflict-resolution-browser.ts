@@ -577,7 +577,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.conflictResolution=async req=>{
         const s=window.conflictFixture;
         if(req.kind==='restack-prepare'){
-          window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[{url:s.dependents[0],headSha:'a'.repeat(40),baseSha:'b'.repeat(40),headBranch:'feature/retry-121',baseBranch:'feature/retry'}],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
+          window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[{url:s.dependents[0],headSha:'a'.repeat(40),baseSha:'b'.repeat(40),headBranch:'feature/retry-121',baseBranch:'feature/retry'}],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,merged:i?0:2,yours:i?1:0,review:!!i,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
         }
         if(req.kind==='restack-save'){window.conflictCalls.push(req);const f=s.restack.blocked.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;s.version++;return {session:structuredClone(s)};}
         if(req.kind==='restack-continue'){window.conflictCalls.push(req);s.restack.status='prepared';s.restack.blocked=undefined;s.version++;return {session:structuredClone(s)};}
@@ -596,11 +596,26 @@ void app.whenReady().then(async () => {
     assert.ok(await exists('Skip'), 'Restacking is optional before it starts');
     await captureAll('restack-plan');
     await click('Prepare restack · 2 PRs');
-    await wait("document.querySelectorAll('.restack-reviewed input').length===2");
+    await wait("document.querySelectorAll('.restack-branch').length===2");
+    // #445 item 21: #121's replay had only conflicts the checks merged, so it passes straight through. #122 has one you
+    // resolved, so it stops for its Reviewed tick.
     assert.equal(
       await js("document.querySelectorAll('.restack-branch-header .restack-reviewed input').length"),
-      2,
-      'Each update’s review control sits at its header'
+      1,
+      'Only the update with a decision of yours has a review control, at its header'
+    );
+    assert.deepEqual(
+      await js(
+        "[...document.querySelectorAll('.restack-branch')].map(b=>[b.getAttribute('aria-label'),b.querySelector('.restack-merged')?.textContent??b.querySelector('.restack-reviewed')?.textContent])"
+      ),
+      [
+        ['PR #121 update', 'Merged and checked · No review needed'],
+        ['PR #122 update', 'Reviewed'],
+      ]
+    );
+    assert.match(
+      await js<string>("document.querySelector('.restack-branch p')?.textContent ?? ''"),
+      /2 conflicts merged and checked/
     );
     assert.equal(await js("document.querySelector('.restack-review [aria-current=step]').dataset.step"), 'review');
     assert.equal(await exists('Skip'), false);
@@ -611,7 +626,7 @@ void app.whenReady().then(async () => {
     );
     assert.match(
       await js<string>("document.querySelector('.restack-review .step-card-status').textContent"),
-      /Mark each update reviewed to continue/
+      /0 of 1 PR update reviewed · Mark each update reviewed to continue/
     );
     await captureAll('restack-review');
     await js("document.querySelectorAll('.restack-reviewed input').forEach(input=>input.click())");
@@ -625,14 +640,16 @@ void app.whenReady().then(async () => {
     await click('Push 2 PR updates');
     await wait("document.querySelector('.restack-review h2').textContent==='Dependent PRs updated'");
     assert.deepEqual(await js("window.conflictCalls.find(r=>r.kind==='restack-publish').reviewed"), [
-      'https://github.com/klang/engine/pull/121',
       'https://github.com/klang/engine/pull/122',
     ]);
     await captureAll('restack-published');
     await click('Close');
     // A paused restack uses the same conflict view as the main resolution.
     await js(`(()=>{
-      const s=window.conflictFixture;s.restack.status='blocked';s.restack.blocked={url:s.dependents[0],title:'Apply bounded retry delays',reason:'The restack is paused on a new conflict. Choose what to keep in each file, mark it reviewed, then continue. No dependent branches have been pushed.',paths:['src/retry.ts'],reused:0,files:[{...s.files[0],result:s.files[0].original,resolved:false}]};
+      const s=window.conflictFixture;s.restack.status='blocked';
+      // The pipeline merged the second conflict and checked it; the first needs you.
+      const o=s.files[0].original,cut=o.lastIndexOf('<<<<<<<'),merged='export const retries = 4;\\n';
+      s.restack.blocked={url:s.dependents[0],title:'Apply bounded retry delays',reason:'The restack is paused on a new conflict. Choose what to keep in each file, mark it reviewed, then continue. No dependent branches have been pushed.',paths:['src/retry.ts'],reused:0,merged:0,yours:0,files:[{...s.files[0],result:o.slice(0,cut)+merged,resolved:false,source:'mergiraf',proposals:[null,{source:'mergiraf',text:merged}],verdict:{key:'',verdict:{merged:true,note:'Structural merge combined both sides, and the result parses.'}}}]};
       window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:s.url}));
     })()`);
     await wait("document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
@@ -648,13 +665,20 @@ void app.whenReady().then(async () => {
       await js<string>("document.querySelector('.restack-review .step-card-status').textContent"),
       /Mark each file reviewed/
     );
+    assert.equal(
+      await js("document.querySelectorAll('.restack-conflict-file .conflict-block[data-state=open]').length"),
+      1,
+      'Only the conflict the pipeline left needs you'
+    );
+    assert.equal(
+      await js("document.querySelectorAll('.restack-conflict-file .conflict-block[data-bucket=merged]').length"),
+      1,
+      'The merged conflict shows as Merged, in the same view as the main resolution'
+    );
     await captureAll('restack-paused');
-    for (let n = 0; n < 2; n++) {
-      await js(
-        "document.querySelector('.restack-conflict-file .conflict-block[data-state=open] [data-choice=theirs]').click()"
-      );
-      await new Promise((r) => setTimeout(r, 150));
-    }
+    await js(
+      "document.querySelector('.restack-conflict-file .conflict-block[data-state=open] [data-choice=theirs]').click()"
+    );
     await wait("!document.querySelector('.restack-conflict-file .conflict-block[data-state=open]')");
     // Closing must save an unreviewed paused draft; it must not lose it or publish.
     await click('Close');
