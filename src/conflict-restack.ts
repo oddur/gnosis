@@ -12,6 +12,7 @@ import type { PrActionState } from '../lib/pr-actions';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import { blockResolutions, carryFile, carrySource, type CarriedFile, type CarrySource } from '../lib/conflict-carry';
 import { blockBuckets } from '../lib/conflict-verify';
+import type { CascadePr } from '../lib/conflict-cascade';
 
 type Git = (
   args: string[],
@@ -46,6 +47,11 @@ interface Deps {
    * carrying your choices to the same conflicts; a continued pause adds its files to it in place.
    */
   carry?: ConflictFile[];
+  /**
+   * A dry run onto this merge commit, made locally and not pushed (#445 item 22): the resolved PR is still at its
+   * original head. The replay stops at the first pause, keeps no worktree, and updates no ref.
+   */
+  dryRun?: string;
 }
 /** How a replayed conflict was resolved: by the checks (`merged`), by you (`yours`: carried), or still open. */
 export type ReplayBucket = 'merged' | 'yours' | 'check' | 'decide';
@@ -166,13 +172,16 @@ export async function prepareRestack(
   deps: Deps,
   resume = false
 ): Promise<RestackPlan> {
-  if (!session.commitSha || !urls.length) throw new Error('No dependent PRs were found. Refresh the stack first.');
+  const rootSha = deps.dryRun ?? session.commitSha;
+  if (!rootSha || !urls.length) throw new Error('No dependent PRs were found. Refresh the stack first.');
+  if (deps.dryRun && resume) throw new Error('A dry run cannot continue a paused restack.');
   if (urls.length > 30 || new Set(urls).size !== urls.length || urls.includes(session.url))
     throw new Error('Choose a single linear stack with at most 30 dependent PRs.');
   const [rootRead, ...reads] = await readSettled(deps, [session.url, ...urls]);
   const root = settled(rootRead);
   writable(root, session);
-  if (root.headSha !== session.commitSha || root.headBranch !== session.headBranch)
+  // A dry run comes before the push: the PR is still at the head the merge commit was made on.
+  if (root.headSha !== (deps.dryRun ? session.headSha : session.commitSha) || root.headBranch !== session.headBranch)
     throw new Error('The resolved PR changed. Reopen its conflict workspace before restacking.');
   const states: WritableState[] = [];
   let parent = root;
@@ -207,7 +216,7 @@ export async function prepareRestack(
   const plan: RestackPlan = previous ?? {
     token: crypto.randomBytes(32).toString('hex'),
     status: 'prepared',
-    rootSha: root.headSha,
+    rootSha,
     expected,
     branches: [],
   };
@@ -253,7 +262,8 @@ export async function prepareRestack(
     let merged = 0;
     let yours = 0;
     const work = files.filter((file) => !file.unsupported);
-    if (!deps.propose || !work.length) return { left: files, merged, yours };
+    if (!deps.propose || !work.length)
+      return { left: files, merged, yours, open: files.reduce((count, file) => count + replayBuckets(file).length, 0) };
     // Your earlier choices first: structural merge runs only where a conflict is still open.
     const sources = [
       ...[...carry].reverse(),
@@ -313,7 +323,13 @@ export async function prepareRestack(
     if (done.size) await forgetRerere(done);
     const byPath = new Map(work.map((file) => [file.path, file]));
     const left = files.filter((file) => !done.has(file.path)).map((file) => byPath.get(file.path) ?? file);
-    return { left, merged, yours };
+    // The new conflicts this pause asks you about: Check or Decide, never the Merged or carried ones beside them.
+    const open = left.reduce(
+      (count, file) =>
+        count + replayBuckets(file, carriedBlocks.get(file)).filter((b) => b === 'check' || b === 'decide').length,
+      0
+    );
+    return { left, merged, yours, open };
   }
   /**
    * Git rerere records a staged result when the commit is made, and would offer it later as a resolution you reviewed.
@@ -367,14 +383,14 @@ export async function prepareRestack(
   }
   try {
     deps.report('Preparing a private worktree for the dependent PRs. Git may fetch file contents.');
-    if (!resume) await deps.git(['worktree', 'add', '--detach', worktree, root.headSha]);
+    if (!resume) await deps.git(['worktree', 'add', '--detach', worktree, rootSha]);
     // A paused worktree that is gone, such as after a stale pause was refused, cannot take the pause's files.
     const realWorktree = await fs.realpath(worktree).catch((error: unknown) => {
       if (resume) throw new Error(REPLAY_MOVED);
       throw error;
     });
     let oldParent = plan.branches.at(-1)?.oldSha ?? session.headSha;
-    let newParent = plan.branches.at(-1)?.newSha ?? root.headSha;
+    let newParent = plan.branches.at(-1)?.newSha ?? rootSha;
     for (const state of states.slice(plan.branches.length)) {
       deps.signal.throwIfAborted();
       deps.report(`Rebasing ${state.headBranch} onto its updated parent. Nothing has been pushed.`);
@@ -552,30 +568,37 @@ export async function prepareRestack(
             reused,
             merged,
             yours,
+            open: settled.open,
             commit: identity.commit,
             head: identity.head,
           };
-          keepWorktree = true;
+          // A dry run only reports the pause: its worktree goes, with the preimages it recorded.
+          keepWorktree = !deps.dryRun;
           return plan;
         }
         result = await git(['-c', 'core.editor=true', 'rebase', '--continue'], undefined, [0, 1]);
       }
       if (result.code) throw new Error('The restack exceeded its replay limit. No branches were pushed.');
       const newSha = await text(git, ['rev-parse', 'HEAD']);
-      const patch = (await git(['diff', '--no-ext-diff', '--no-textconv', state.headSha, newSha])).stdout.toString(
-        'utf8'
-      );
-      if (
-        Buffer.byteLength(patch) + plan.branches.reduce((bytes, branch) => bytes + Buffer.byteLength(branch.patch), 0) >
-        8 * 1024 * 1024
-      )
-        throw new Error(
-          'The restack preview exceeds 8 MB. Review and restack this large change with a local Git tool.'
-        );
-      const { parsePatchFiles } = await import('@pierre/diffs');
-      const files = parsePatchFiles(patch).flatMap((value) => value.files);
+      // A dry run reports outcomes, not the updates: no patch, no size check, and no ref keeps its commits.
+      let patch = '';
+      let files: RestackPlan['branches'][number]['files'] = [];
+      if (!deps.dryRun) {
+        patch = (await git(['diff', '--no-ext-diff', '--no-textconv', state.headSha, newSha])).stdout.toString('utf8');
+        if (
+          Buffer.byteLength(patch) +
+            plan.branches.reduce((bytes, branch) => bytes + Buffer.byteLength(branch.patch), 0) >
+          8 * 1024 * 1024
+        )
+          throw new Error(
+            'The restack preview exceeds 8 MB. Review and restack this large change with a local Git tool.'
+          );
+        const { parsePatchFiles } = await import('@pierre/diffs');
+        files = parsePatchFiles(patch).flatMap((value) => value.files);
+      }
       // Keep prepared objects reachable after closing the private worktree.
-      await deps.git(['update-ref', `refs/gnosis/restack/${plan.token}/${plan.branches.length}`, newSha]);
+      if (!deps.dryRun)
+        await deps.git(['update-ref', `refs/gnosis/restack/${plan.token}/${plan.branches.length}`, newSha]);
       plan.branches.push({
         url: state.url,
         title: state.title,
@@ -648,4 +671,29 @@ export async function publishRestack(session: ConflictSession, token: string, de
     ...plan.branches.map((branch) => `${branch.newSha}:refs/heads/${branch.branch}`),
   ]);
   plan.status = 'published';
+}
+
+/**
+ * What a dry run's plan says about each dependent PR (#445 item 22), in stack order: each replayed PR by the restack's
+ * own rule, the PR it stopped on with its new conflicts, and the PRs above that one as not replayed yet.
+ */
+export function cascadeOutcomes(plan: RestackPlan, urls: string[]): CascadePr[] {
+  return urls.map((url): CascadePr => {
+    const branch = plan.branches.find((value) => value.url === url);
+    if (branch) {
+      const merges = branch.merges ?? 0;
+      const outcome = branch.reused || branch.yours ? 'carried' : branch.merged ? 'merged' : 'clean';
+      return { url, title: branch.title, outcome, merges, review: branch.review !== false };
+    }
+    if (plan.blocked?.url === url)
+      return {
+        url,
+        title: plan.blocked.title,
+        outcome: 'conflicts',
+        conflicts: Math.max(1, plan.blocked.open ?? plan.blocked.files.length),
+        merges: 0,
+        review: true,
+      };
+    return { url, title: '', outcome: 'waiting', merges: 0, review: true };
+  });
 }
