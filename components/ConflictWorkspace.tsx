@@ -93,7 +93,7 @@ import {
   summarySentence,
   unchosenConflicts,
   preparedDraft,
-  chooseFirst,
+  waitingHint,
   type FileStatus,
   verifyProposals,
   verifyWholeFile,
@@ -918,7 +918,7 @@ export function ConflictWorkspace({
   function markReviewed() {
     if (!file || markersRemain || file.unsupported) return;
     if (unchosen.length) {
-      setHint(chooseFirst(unchosen.length));
+      setHint(waitingHint(file, contents, unchosen.length));
       view.current?.move(1);
       return;
     }

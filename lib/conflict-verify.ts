@@ -1213,11 +1213,15 @@ export function blockBuckets(
   if (!choices) {
     const texts = blockResolutions(segments, contents);
     if (!texts) {
-      // Edited by hand outside its conflicts: the draft is your own text, never an untouched proposal. Its conflicts are
-      // Decided (edited by you), never Merged and never waiting for a choice; only those still open in it need you, and
-      // their markers say so.
+      // The draft can't be split into its conflicts (edited around them, or past the splitter's limits). Fail closed:
+      // a proposal that needs a choice may still be in it untouched, so it is Check and waits for you (Reset file is
+      // the way back). Others: Decide while the draft still shows a conflict, else Decided.
       let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
-      return blocks.map(() => (open-- > 0 ? 'decide' : 'decided'));
+      return blocks.map((s) => {
+        const proposal = file.proposals?.[s.index];
+        if (proposal && !needsNoChoice(proposal, verdict, s.index)) return 'check';
+        return open-- > 0 ? 'decide' : 'decided';
+      });
     }
     // Text typed inside a conflict, the rest as it was: each conflict by its own text. A proposal still in place
     // unchanged is Merged only as the checks say, else Check; text of yours is Decided.
@@ -1271,6 +1275,11 @@ export function unchosenConflicts(
 /** "Choose for the conflict in Check first: …", the one wording for every place that waits for a choice. */
 export const chooseFirst = (count: number) =>
   `Choose for ${count === 1 ? 'the conflict' : `the ${count} conflicts`} in Check first: use the proposal, keep a side, or edit.`;
+/** Why a draft that can't be split into its conflicts waits: only Reset file gives the choices back. */
+export const UNSPLIT_HINT = 'Gnosis can’t tell your edits apart from the proposals here. Reset the file to choose again.';
+/** The wording for conflicts that wait for a choice in `contents`: chooseFirst, or UNSPLIT_HINT for a draft that can't be split. */
+export const waitingHint = (file: Pick<ConflictFile, 'original'>, contents: string, count: number) =>
+  blockResolutions(parseConflicts(file.original), contents) ? chooseFirst(count) : UNSPLIT_HINT;
 
 /**
  * The draft as preparation leaves it, and the target of Reset file: the original conflict with only the proposals that

@@ -52,10 +52,10 @@ import {
 import { withUnions } from '../lib/conflict-union';
 import { mayHaveMove } from '../lib/conflict-moved';
 import {
-  chooseFirst,
   typeCheckKey,
   typeErrorOf,
   unchosenConflicts,
+  waitingHint,
   withTypeError,
   withoutUnchosen,
   type Verdict,
@@ -363,15 +363,21 @@ export function createConflictResolutionService(deps: Deps) {
    * A file marked reviewed has an explicit choice for every conflict in Check (fail closed): none is accepted by default.
    * The saved verdict counts only when it was made for this draft (its key); else nothing counts as Merged.
    */
-  const assertChosen = (
+  const unchosenOf = (
     file: ConflictFile,
     request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
   ) => {
     const key = verdictKey({ ...file, result: request.contents }, deps.disabledLanguages?.() ?? []);
     // The type check's demotion saved on the file counts too: a Merged proposal it demoted waits for a choice.
     const verdict = withTypeError(file.verdict?.key === key ? file.verdict.verdict : undefined, typeErrorOf(file, undefined));
-    const waiting = unchosenConflicts(file, request.contents, verdict, request.picks ?? file.picks, request.edits ?? file.edits);
-    if (waiting.length) throw new Error(chooseFirst(waiting.length));
+    return unchosenConflicts(file, request.contents, verdict, request.picks ?? file.picks, request.edits ?? file.edits);
+  };
+  const assertChosen = (
+    file: ConflictFile,
+    request: { contents: string; picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] }
+  ) => {
+    const waiting = unchosenOf(file, request);
+    if (waiting.length) throw new Error(waitingHint(file, request.contents, waiting.length));
   };
   /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
@@ -420,6 +426,8 @@ export function createConflictResolutionService(deps: Deps) {
       const mark: TypeErrorMark | undefined = typed && { key: typed.key, note: typed.note };
       if (mark && JSON.stringify(file.typeError) !== JSON.stringify(mark)) {
         file.typeError = mark;
+        // A demotion that lands after Mark reviewed reopens the file: its demoted conflicts wait for a choice again.
+        if (file.resolved && unchosenOf(file, { contents: file.result }).length) file.resolved = false;
         changed = true;
       } else if (!typed && file.typeError) {
         delete file.typeError;
@@ -1951,6 +1959,8 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('The PR already contains the base branch. No update is needed.');
     if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
+    // The same guard as Mark reviewed, at the last moment: a conflict in Check without a choice is never pushed.
+    for (const file of session.files) assertChosen(file, { contents: file.result });
   }
   async function resultTree(
     ctx: Context,

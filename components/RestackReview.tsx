@@ -16,7 +16,9 @@ import {
   type ConflictSession,
   type SavedBlockEdit,
 } from '../lib/conflict-resolution';
-import { chooseFirst, preparedDraft, unchosenConflicts } from '../lib/conflict-verify';
+import { preparedDraft, unchosenConflicts, waitingHint } from '../lib/conflict-verify';
+import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
@@ -253,7 +255,12 @@ export function RestackReview({
             // Only the proposals nobody has to choose (the checks' Merged ones) are in place; the rest wait on their cards.
             const resetTarget = preparedDraft(file, file.verdict?.verdict);
             // Mark reviewed waits for a choice on every conflict in Check, as in the main workspace (fail closed).
-            const unchosen = unchosenConflicts(file, value, file.verdict?.verdict, filePicks, fileEdits);
+            // Only a verdict made for this draft counts, as in the service's guard; a stale one Merges nothing.
+            const current =
+              file.verdict?.key === verdictKey({ ...file, result: value }, disabledLanguages(currentCodeIntelligence()))
+                ? file.verdict.verdict
+                : undefined;
+            const unchosen = unchosenConflicts(file, value, current, filePicks, fileEdits);
             const reset = () => {
               setPicks((previous) => ({ ...previous, [file.path]: [] }));
               setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: [] } }));
@@ -341,7 +348,7 @@ export function RestackReview({
                       </Button>
                       {unchosen.length > 0 && (
                         <span className="restack-conflict-hint" role="status" data-restack-unchosen="">
-                          {chooseFirst(unchosen.length)}
+                          {waitingHint(file, value, unchosen.length)}
                         </span>
                       )}
                       {value !== resetTarget && (

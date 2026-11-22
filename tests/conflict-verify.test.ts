@@ -12,6 +12,9 @@ import {
   accountWholeFile,
   blockBuckets,
   unchosenConflicts,
+  UNSPLIT_HINT,
+  waitingHint,
+  withoutUnchosen,
   bucketSummary,
   fileStatus,
   fileStatusLine,
@@ -181,9 +184,11 @@ void test('buckets follow the draft: proposal, undone, kept by you, edited by ha
   assert.deepEqual(blockBuckets(f, original, ok), ['check', 'decide'], 'Undo restores both sides');
   const keptPr = f.result.replace(/<<<<<<< feature\nexport function three[\s\S]*?>>>>>>> main\n/, three);
   assert.deepEqual(blockBuckets(f, keptPr, ok), ['merged', 'decided']);
-  // A draft edited outside its conflicts is your own text: Decided, never Merged, never waiting for a choice.
+  // A draft edited outside its conflicts can't be split into them. Fail closed: a proposal that needs a choice may still
+  // be in it untouched, so it waits (Reset file is the way back); one the checks Merged doesn't.
   assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, ok), ['decided', 'decided']);
-  assert.deepEqual(unchosenConflicts(f, `// edited\n${keptPr}`, undefined), []);
+  assert.deepEqual(blockBuckets(f, `// edited\n${keptPr}`, undefined), ['check', 'decided']);
+  assert.deepEqual(unchosenConflicts(f, `// edited\n${keptPr}`, undefined), [0]);
   assert.deepEqual(blockBuckets({ ...f, unsupported: 'binary' }, '', ok), ['decide']);
 });
 
@@ -1327,4 +1332,22 @@ void test('a choice or an edit beside a Merged conflict is never all-Merged: it 
   assert.ok(allMerged(picked));
   assert.equal(allMerged(blockBuckets(f, f.result, ok, ['both'])), false);
   assert.equal(allMerged([]), false);
+});
+
+void test('a draft past the splitter’s limits keeps an untouched proposal in Check, waiting for you (#507 round 2)', () => {
+  // Two conflicts separated by one blank line, with a 100-line tail: the splitter gives up (SPLIT_ENDS), so the draft
+  // can't be told apart into its conflicts.
+  const tail = '\n'.repeat(100);
+  const conflictText = '<<<<<<< pr\na\n=======\nb\n>>>>>>> main\n\n<<<<<<< pr\nc\n=======\nd\n>>>>>>> main\n' + tail;
+  const proposals = [null, { source: 'union' as const, text: 'c\nd\n' }];
+  // You typed text in the first conflict; the second still holds its untouched, unchecked proposal.
+  const draft = 'typed\n\nc\nd\n' + tail;
+  const f = { original: conflictText, proposals, unsupported: undefined, wholeFile: undefined };
+  assert.equal(blockResolutions(parseConflicts(conflictText), draft), undefined, 'The splitter gave up');
+  assert.deepEqual(blockBuckets(f, draft, undefined), ['decided', 'check']);
+  assert.deepEqual(unchosenConflicts(f, draft, undefined), [1], 'It blocks Mark reviewed and the reviewed save');
+  assert.equal(withoutUnchosen({ ...f, result: draft }, undefined), undefined, 'Nothing can be stripped safely');
+  assert.equal(waitingHint(f, draft, 1), UNSPLIT_HINT, 'The way back is Reset file');
+  // A Merged one (or your own remembered resolution) needs no choice even here.
+  assert.deepEqual(unchosenConflicts(f, draft, { merged: true, note: '', blocks: [undefined, { merged: true, note: '' }] }), []);
 });
