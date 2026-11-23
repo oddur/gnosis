@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { createAppDataStore } from '../src/app-data-store';
+import { Worker } from 'node:worker_threads';
+import { createAppDataStore, SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
 import { httpDocuments } from '../src/command-search-service';
 import { maintainDatabase } from '../src/sqlite-maintain';
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-state-'));
@@ -385,11 +386,124 @@ void test('close reports a failed final save and still stops the worker', async 
     db.close();
     store.write('workbench:alice', queue()); // fails on every flush
     await assert.rejects(store.close(), /simulated disk failure/);
-    // The worker is gone, so the database is released (Windows refuses to delete an open file).
-    await store.close();
+    // The worker is gone, so the database is released (Windows refuses to delete an open file). Closing again still
+    // reports the unsaved work, so a second quit asks again instead of quitting quietly.
+    await assert.rejects(store.close(), { message: SAVED_WORK_UNAVAILABLE });
     store = createAppDataStore();
     await store.open(dir);
   } finally {
+    await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('after a close that could not save, a flush says the work is unsaved, and reopen saves the queue', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const error = console.error;
+  console.error = () => {};
+  try {
+    await store.open(dir);
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    store.write('workbench:alice', queue());
+    // Quit: the final save fails, and you keep Gnosis open.
+    await assert.rejects(store.close(), /simulated disk failure/);
+    db.exec('DROP TRIGGER fail_write');
+    db.close();
+    // Before the fix this rejected with "Storage is not ready". It still rejects: the queued save is not on disk, and
+    // a caller must never read it as saved.
+    await assert.rejects(store.flush(), { message: SAVED_WORK_UNAVAILABLE });
+    // Writes and row changes while it is closed are queued, not lost: the close didn't save, so the app runs on.
+    store.write('workbench:bob', queue('bob'));
+    store.patch(mutedName, { put: { one: { at: 1 } } });
+    await assert.rejects(store.flush(), { message: SAVED_WORK_UNAVAILABLE }, 'Never reads as saved');
+    assert.equal(store.lostWrites(), 0);
+    await assert.rejects(store.search({ account: 'alice', query: 'x' } as never), { message: SAVED_WORK_UNAVAILABLE });
+    // Keep open (src/main.ts `saveBeforeQuit`) opens saved data again, and the queue goes to disk.
+    await store.reopen();
+    await store.flush();
+    store.write('workbench:carol', queue('carol'));
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.equal((store.read('workbench:alice') as { account: string }).account, 'alice', 'The failed final save landed');
+    assert.equal((store.read('workbench:bob') as { account: string }).account, 'bob', 'The write while closed landed');
+    assert.deepEqual(store.take(mutedName), { entries: { one: { at: 1 } } }, 'The row change while closed landed');
+    assert.equal((store.read('workbench:carol') as { account: string }).account, 'carol', 'Saving works again');
+  } finally {
+    console.error = error;
+    await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+// A hang fails the test (`timeout`) instead of stalling the suite.
+void test('a write while a failed close is shutting the worker down never hangs, and lands after reopen', { timeout: 30_000 }, async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const error = console.error;
+  console.error = () => {};
+  // Runs right after the store sends `close` to the worker.
+  const post = Worker.prototype.postMessage;
+  Worker.prototype.postMessage = function (this: Worker, message: unknown, ...rest: unknown[]) {
+    post.call(this, message, ...(rest as []));
+    if ((message as { method?: string } | null)?.method === 'close')
+      queueMicrotask(() => {
+        store.write('workbench:bob', queue('bob'));
+        void store.saveReviewState({ key: 'late', value: { top: 1, left: 0 } }).catch(() => {});
+      });
+  };
+  const bounded = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 5_000).unref()),
+    ]);
+  try {
+    await store.open(dir);
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    store.write('workbench:alice', queue());
+    await assert.rejects(bounded(store.close()), /simulated disk failure/);
+    Worker.prototype.postMessage = post;
+    db.exec('DROP TRIGGER fail_write');
+    db.close();
+    // Keep open: the write that came during the close request was queued, never sent to the stopping worker.
+    await bounded(store.reopen());
+    await bounded(store.flush());
+    await bounded(store.close());
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.equal((store.read('workbench:alice') as { account: string }).account, 'alice');
+    assert.equal((store.read('workbench:bob') as { account: string }).account, 'bob', 'The write during the close request landed');
+    assert.equal(store.lostWrites(), 0);
+  } finally {
+    Worker.prototype.postMessage = post;
+    console.error = error;
+    await bounded(store.close()).catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('a reopen that fails leaves every later request saying to restart', async () => {
+  const dir = fixture();
+  const store = createAppDataStore();
+  const error = console.error;
+  console.error = () => {};
+  try {
+    await store.open(dir);
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    db.close();
+    store.write('workbench:alice', queue());
+    await assert.rejects(store.close(), /simulated disk failure/);
+    // The directory is gone, so saved data can't open again.
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.writeFileSync(dir, 'not a directory');
+    await assert.rejects(store.reopen(), { message: SAVED_WORK_NO_DISK });
+    await assert.rejects(store.flush(), { message: SAVED_WORK_NO_DISK });
+    await assert.rejects(store.search({ account: 'alice', query: 'x' } as never), { message: SAVED_WORK_NO_DISK });
+    // The next quit is not silent: it reports the unsaved work, so "Some changes could not be saved" shows again.
+    await assert.rejects(store.close(), { message: SAVED_WORK_NO_DISK });
+  } finally {
+    console.error = error;
     await store.close().catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
   }

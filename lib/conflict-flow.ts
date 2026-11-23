@@ -1,5 +1,7 @@
 import {
   SAVE_REFUSALS,
+  SAVED_WORK_NO_DISK,
+  SAVED_WORK_UNAVAILABLE,
   STALE_DRAFT,
   UNREADABLE_DRAFT,
   type BaseMove,
@@ -149,6 +151,19 @@ export function describeConflictError(
       title: 'This draft changed in another view.',
       body: 'Nothing was pushed or overwritten. Load the saved draft, then go on from it.',
       recovery: 'reload',
+    };
+  // Saved data is closed after a quit that couldn't save. Keep open opens it again, so Try again can work.
+  if (raw.startsWith(SAVED_WORK_UNAVAILABLE))
+    return {
+      title: 'Saved work isn’t available.',
+      body: 'Your last change wasn’t saved. Nothing was pushed. Try again, or restart Gnosis.',
+      recovery: 'retry',
+    };
+  // Saved data couldn't open again: only a restart, with space on the disk, brings it back.
+  if (raw.startsWith(SAVED_WORK_NO_DISK))
+    return {
+      title: 'Saved work isn’t available.',
+      body: 'Your last change wasn’t saved. Nothing was pushed. Free some disk space, then restart Gnosis.',
     };
   // A draft the service can't use (`draftProblem`): Start over prepares the merge again.
   if (raw.startsWith(UNREADABLE_DRAFT))
