@@ -775,6 +775,18 @@ void app.whenReady().then(async () => {
       const line=window.deepAll('[data-line]',section).find(e=>e.getBoundingClientRect().width>0);
       return {crumb:section.querySelector('[data-hunk-header] .diff-gap-symbol').getBoundingClientRect().left,code:line.getBoundingClientRect().left+parseFloat(getComputedStyle(line).paddingLeft)}})()`);
     assert.ok(Math.abs(columns.crumb - columns.code) <= 1, `The breadcrumb lines up with the code: ${JSON.stringify(columns)}`);
+    // Its air slides under the file header before the bar pins: 4 px into it, the bar is still in the flow, so it is
+    // not marked pinned and its controls still take a click.
+    await js(`(()=>{const s=window.stream();const second=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1];
+      const file=window.stickyRow('src/sticky.ts').querySelector('.changes-file-header').getBoundingClientRect();
+      s.scrollTop+=second.getBoundingClientRect().top-file.bottom+4})()`);
+    await settle();
+    {
+      const state = await js<{ stuck: boolean; hit: boolean; events: string }>(`(()=>{const h=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1].querySelector(':scope > [data-hunk-header]');
+        const b=h.querySelector(':is(.diff-gap-gutter,.diff-gap-act,.diff-gap-controls) > button');if(!b)throw Error('No control on the bar');const r=b.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {stuck:h.hasAttribute('data-stuck'),hit:!!hit&&b.contains(hit),events:getComputedStyle(b).pointerEvents}})()`);
+      assert.ok(!state.stuck && state.hit && state.events !== 'none', `A bar whose air is under the file header is not pinned yet: ${JSON.stringify(state)}`);
+    }
     // Hand-off: the second header pushes the first one away as it arrives, and is never under it.
     // The second hunk's bar, under its air, starts 12 px below the file header.
     await js(`(()=>{const s=window.stream();const second=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1];

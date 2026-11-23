@@ -2037,7 +2037,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 /* A line of metadata under the file header, shorter than a hunk header and in muted ink, so it reads as part of the
    file's heading rather than as another bar. The symbols stay at full strength: they are what it offers. */
 .diff-outline-bar { display:flex; align-items:center; gap:0 16px; min-width:0; height:calc(var(--leading-code) * 1.4); padding:0 12px 0 6px; }
-.diff-outline-toggle { display:inline-flex; flex:none; align-items:center; gap:6px; min-height:24px; padding:0 8px 0 4px; border-radius:4px; color:var(--outline-muted); font:inherit; white-space:nowrap; }
+.diff-outline-toggle { display:inline-flex; flex:none; align-items:center; gap:6px; min-height:22px; padding:0 8px 0 4px; border-radius:4px; color:var(--outline-muted); font:inherit; white-space:nowrap; }
 .diff-outline-toggle:hover { color:var(--outline-fg); background:var(--outline-hover); }
 .diff-outline-chevron { flex:none; color:var(--outline-muted); transition:rotate 180ms cubic-bezier(0.16, 1, 0.3, 1); }
 .diff-outline[data-expanded] .diff-outline-chevron { rotate:90deg; }
@@ -2060,7 +2060,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-outline-more:hover { color:var(--outline-fg); }
 .diff-outline-more::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }
 .diff-outline-end { display:flex; flex:none; align-items:center; gap:10px; margin-left:auto; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.diff-outline-mark { min-height:24px; padding:0 8px; border:1px solid var(--outline-line); border-radius:4px; color:var(--outline-fg); font:inherit; }
+.diff-outline-mark { min-height:22px; padding:0 8px; border:1px solid var(--outline-line); border-radius:4px; color:var(--outline-fg); font:inherit; }
 .diff-outline-mark:hover { background:var(--outline-hover); }
 .diff-outline :is(button, input):focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; }
 .diff-outline-list { display:flex; flex-direction:column; margin:0; padding:0 12px 6px 6px; list-style:none; }
@@ -3312,7 +3312,11 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* Files are the stream's strongest break: each file is one framed unit, and the canvas between files is wider than
    anything inside a file, where parts meet at a hairline. The stream's rows carry the space, so a file shown on its own
    (Conflicts, Feedback) keeps only its frame. */
-.commit-stream-file { min-width:0;border:1px solid var(--border);border-radius:6px;overflow:clip;background:var(--background); }
+.commit-stream-file { min-width:0;border:1px solid var(--border);border-radius:6px;overflow:clip;overflow-clip-margin:8px;background:var(--background); }
+/* The clip margin lets a pinned hunk bar's folded crumbs open past a short file's end, so the frame's corners are
+   drawn by the parts that meet them: the file header on top, the trailing bar below. */
+.commit-stream-file > .changes-file-header { border-radius:5px 5px 0 0; }
+.commit-stream-file .diff-gap[data-trailing]:last-child { border-radius:0 0 5px 5px; }
 .commit-stream-row { padding:0 var(--diff-stream-inset) var(--diff-file-gap); }
 .commit-stream-row[data-index="0"] { padding-top:var(--diff-stream-inset); }
 .commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2; }
