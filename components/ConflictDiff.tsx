@@ -47,6 +47,7 @@ import { ChangesDiff, diffHosts } from './ChangesDiff';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
+import { textHash } from '../lib/text-hash';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
@@ -169,13 +170,21 @@ export function ConflictFileDiff<A>({
   );
   // Parsed definitions are cached by revision: each draft this mount shows is one, numbered as it changes.
   const lineCount = useMemo(() => afterLines(after).length, [after]);
+  const textKey = useMemo(
+    () =>
+      patch
+        ? `${patch.prevObjectId ?? ''}..${patch.newObjectId ?? ''}:${patch.hunks.length}`
+        : `${lineCount}:${textHash(before)}:${textHash(after)}`,
+    [patch, before, after, lineCount]
+  );
   const [mount] = useState(() => ++mounts);
   const [revision, setRevision] = useState({ before, after, n: 0 });
   if (revision.before !== before || revision.after !== after) setRevision({ before, after, n: revision.n + 1 });
   const model = useDiffFileModel({
     fileKey: `${fileKey}:${mount}.${revision.n}`,
-    // Revealed lines and pins are line numbers: a choice that changes the draft's length drops them, never misplaces them.
-    revealKey: `${fileKey}:${lineCount}`,
+    // Revealed lines and pins are line numbers of this exact text: other text (a choice, a new preparation, Start over,
+    // a base move) starts without them and plans its own scopes, never reusing another draft's (#486).
+    revealKey: `${fileKey}:${textKey}`,
     path: name,
     hunks,
     contents,

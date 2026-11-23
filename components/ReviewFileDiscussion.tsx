@@ -246,6 +246,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, fileHunks,
         <ReviewDiff
           {...diff}
           source={diffSource}
+          keyScope={review?.prUrl}
           active={enabled}
           sourceLocation={sourceLocation}
           onSourceLocationShown={() => setSourceLocation(undefined)}
