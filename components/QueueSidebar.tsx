@@ -303,7 +303,8 @@ export function QueueSidebar({
                       {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">
+                  {/* Below the title bar row, clear of the macOS window buttons at its start. */}
+                  <TooltipContent side="bottom" sideOffset={10} collisionPadding={8}>
                     {collapsed ? 'Expand sidebar' : 'Collapse sidebar'} <kbd>{shortcut}</kbd>
                   </TooltipContent>
                 </Tooltip>

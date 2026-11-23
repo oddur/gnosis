@@ -88,7 +88,8 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
     await wait("!document.querySelector('.github-author-tooltip')");
     await js('document.activeElement.blur()');
-    await js("document.querySelector('.queue-meta .github-author').focus()");
+    // Tooltips open for keyboard focus, not for focus the app moves.
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.queue-meta .github-author').focus()");
     await wait('window.profileCalls === 3');
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
@@ -100,7 +101,7 @@ void app.whenReady().then(async () => {
       false,
       'Escape dismisses a pending tooltip'
     );
-    await js("document.activeElement.blur();document.querySelector('.queue-meta .github-author').focus()");
+    await js("document.activeElement.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.queue-meta .github-author').focus()");
     await wait('window.profileCalls === 4');
     await js('window.resolveProfile()');
     await wait("!!document.querySelector('.github-author-tooltip')");
@@ -128,7 +129,9 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 250));
     win.focus();
     win.webContents.focus();
-    await js("document.querySelectorAll('.queue-meta .github-author')[1].focus({preventScroll:true})");
+    // A window without focus drops the keyboard state that lets focus open a tooltip.
+    await wait('document.hasFocus()');
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelectorAll('.queue-meta .github-author')[1].focus({preventScroll:true})");
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Profile details unavailable')");
     await capture('zoom');
     assert.ok(

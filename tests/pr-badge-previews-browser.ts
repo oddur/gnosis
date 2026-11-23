@@ -58,7 +58,8 @@ void app.whenReady().then(async () => {
       `document.activeElement.blur();document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center',behavior:'instant'})`
     );
     await new Promise((r) => setTimeout(r, 150));
-    await js(`document.querySelector(${JSON.stringify(selector)}).focus()`);
+    // Previews open for keyboard focus, not for focus the app moves.
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector(${JSON.stringify(selector)}).focus()`);
     await wait(`!!${content}`);
   };
   const close = async () => {
@@ -90,7 +91,7 @@ void app.whenReady().then(async () => {
     await close();
     // A delayed local cache read must not show a small loading tooltip and resize it.
     await js(
-      "window.electronAPI.getPrBadgePreview=url=>new Promise(resolve=>{window.releasePreview=async()=>resolve(await window.basePreview(url))});document.querySelector('.queue-meta .entity-badge-pr').focus();void 0"
+      "window.electronAPI.getPrBadgePreview=url=>new Promise(resolve=>{window.releasePreview=async()=>resolve(await window.basePreview(url))});window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.queue-meta .entity-badge-pr').focus();void 0"
     );
     await wait("typeof window.releasePreview==='function'");
     assert.equal(await js(`!!${content}`), false);
