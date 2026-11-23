@@ -1,9 +1,9 @@
 {
-  "description": "Review probe (#454): the PR only changes the spacing inside a call, on the same one line; main changes an argument. The resolver returns main's line, with the same line count as the PR's: a line count can't tell. It must not be Merged.",
+  "description": "Review probe (#454): the PR only changes the spacing inside a call, on the same one line; main changes an argument. The resolver returns main's line, with the same line count as the PR's: a line count can't tell. It must not be Merged. Since the layout rule (lib/conflict-union.ts layoutMerge), the conflict gets the rule's proposal instead: main's edit in the PR's layout, which the checks Merge. The canned line itself is still never Merged (tests/conflict-verify.test.ts).",
   "language": "typescript",
   "category": "review-probe",
   "mergiraf": "canned",
   "expected": {
-    "src/greet.ts": "any-but-merged"
+    "src/greet.ts": "merged"
   }
 }

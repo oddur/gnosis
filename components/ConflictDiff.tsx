@@ -21,6 +21,7 @@ import {
   conflictWritten,
   draftWritten,
   isCompareWith,
+  lineRuns,
   resolverBaseline,
   shownWritten,
   fileWriter,
@@ -52,8 +53,22 @@ import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
 import { SIDES_CSS, conflictSideRows, markSides, prSideOf, type SideRange, type SideTone } from '../lib/conflict-sides';
 
-/** Conflict diffs mounted so far: each mount numbers its drafts on its own. */
-let mounts = 0;
+/** Each diff key's latest text and its number: a mount with the same text reuses it, other text takes a new one. */
+const revisions = new Map<string, { before: string; after: string; patch?: FileDiffMetadata; n: number }>();
+let revisionCount = 0;
+const KEPT_REVISIONS = 200;
+function revisionOf(key: string, before: string, after: string, patch: FileDiffMetadata | undefined) {
+  const known = revisions.get(key);
+  if (known && known.before === before && known.after === after && known.patch === patch) return known.n;
+  const n = ++revisionCount;
+  revisions.delete(key);
+  revisions.set(key, { before, after, patch, n });
+  for (const old of revisions.keys()) {
+    if (revisions.size <= KEPT_REVISIONS) break;
+    revisions.delete(old);
+  }
+  return n;
+}
 /** Whether a hunk shows a new line. */
 const showsLine = (hunks: readonly GapHunk[], line: number) =>
   hunks.some(
@@ -167,13 +182,12 @@ export function ConflictFileDiff<A>({
       patch ? undefined : { before: { kind: 'text', content: before }, after: { kind: 'text', content: after } },
     [before, after, patch]
   );
-  // Parsed definitions are cached by revision: each draft this mount shows is one, numbered as it changes.
+  // Parsed definitions are cached by revision: the same text under the same key keeps its number, so a diff that mounts
+  // again, as a virtualized list scrolls it back into view, keeps its parse (#491).
   const lineCount = useMemo(() => afterLines(after).length, [after]);
-  const [mount] = useState(() => ++mounts);
-  const [revision, setRevision] = useState({ before, after, n: 0 });
-  if (revision.before !== before || revision.after !== after) setRevision({ before, after, n: revision.n + 1 });
+  const revision = useMemo(() => revisionOf(fileKey, before, after, patch), [fileKey, before, after, patch]);
   const model = useDiffFileModel({
-    fileKey: `${fileKey}:${mount}.${revision.n}`,
+    fileKey: `${fileKey}:${revision}`,
     // Revealed lines and pins are line numbers: a choice that changes the draft's length drops them, never misplaces them.
     revealKey: `${fileKey}:${lineCount}`,
     path: name,
@@ -335,7 +349,7 @@ function CompareSwitch({
           both: 'Each conflict’s two sides, with the result under them',
         };
   return (
-    <div className="conflict-compare" role="group" aria-label="Compare result with">
+    <div className="conflict-compare" role="group" aria-label="Compare result with" data-conflict-control="">
       <span className="conflict-compare-label" aria-hidden="true">
         Compare with
       </span>
@@ -808,16 +822,6 @@ export function ConflictDiff({
 }
 
 const NO_CARDS = () => null;
-/** Line numbers as runs of consecutive lines, for pins: a marked line is never hidden in a gap. */
-export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number])[] {
-  const runs: [number, number][] = [];
-  for (const line of [...lines].sort((a, b) => a - b)) {
-    const last = runs.at(-1);
-    if (last && line === last[1] + 1) last[1] = line;
-    else runs.push([line, line]);
-  }
-  return runs;
-}
 /**
  * One mode's diff of the draft (#445 items 8 and 9), with each conflict's card under its lines: against the PR's version
  * (`against` 'ours') or main's ('theirs'). A diff that isn't `live` is hidden and keeps the draft it last showed: it

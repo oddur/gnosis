@@ -13,7 +13,7 @@ import {
   type ConflictModel,
   type ConflictSegment,
 } from './conflict-blocks';
-import type { ConflictFile, ConflictProposal } from './conflict-resolution';
+import { writtenInEdit, type ConflictFile, type ConflictProposal } from './conflict-resolution';
 import type { GapHunk } from './diff-gaps';
 
 /** A text's lines; a final line feed ends the last line rather than starting another. */
@@ -309,8 +309,7 @@ export function conflictWritten(model: ConflictModel, proposals?: BlockProposals
     // Your edit keeps only the marks of the resolver's lines you left as they were (keptMarks); a typed line has none.
     const edit = model.choices[segment.index] === 'edit' ? model.edits?.[segment.index] : undefined;
     // Only indexes inside the edit's own lines: one past it would mark a line after the conflict (#509).
-    const editLines = edit?.written?.length ? textLines(edit.text).length : 0;
-    const kept = edit?.written?.filter((i) => i < editLines) ?? [];
+    const kept = edit ? writtenInEdit(edit.text, edit.written) : [];
     if (kept.length) written.set(segment.index, kept);
     if (model.choices[segment.index] !== 'proposal') continue;
     const text = proposals?.[segment.index]?.text;
@@ -433,6 +432,7 @@ export function writerOf(source: string | undefined, by?: string) {
       return 'you in an earlier merge';
     case 'union':
     case 'same':
+    case 'layout':
     case 'moved':
       return 'Gnosis’s rule';
     default:
@@ -447,3 +447,14 @@ export const fileWriter = (file: Pick<ConflictFile, 'wholeFile' | 'source'>) =>
 /** "3 lines written by structural merge (neither side had them)". */
 export const writtenLabel = (count: number, by = 'a resolver') =>
   `${count} ${count === 1 ? 'line' : 'lines'} written by ${by} (neither side had ${count === 1 ? 'it' : 'them'})`;
+
+/** Line numbers as runs of consecutive lines, for pins: a marked line is never hidden in a gap. */
+export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number])[] {
+  const runs: [number, number][] = [];
+  for (const line of [...lines].sort((a, b) => a - b)) {
+    const last = runs.at(-1);
+    if (last && line === last[1] + 1) last[1] = line;
+    else runs.push([line, line]);
+  }
+  return runs;
+}

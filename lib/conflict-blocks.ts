@@ -1,4 +1,4 @@
-import { hasConflictMarkers, type SavedBlockEdit } from './conflict-resolution';
+import { hasConflictMarkers, writtenInEdit, type SavedBlockEdit } from './conflict-resolution';
 
 /**
  * Conflict blocks in Gnosis's own words. Git writes `<<<<<<<`, `|||||||`, `=======` and `>>>>>>>`
@@ -50,8 +50,7 @@ export type BlockEdits = readonly (BlockEdit | null | undefined)[];
 export function savedBlockEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
   return Array.from(edits ?? [], (edit) => {
     if (!edit) return null;
-    const lines = textLines(edit.text).length;
-    const written = edit.written?.filter((i) => i < lines) ?? [];
+    const written = writtenInEdit(edit.text, edit.written);
     return {
       text: edit.text,
       before: edit.before ?? null,

@@ -15,6 +15,7 @@ export function FileEditor({
   theme,
   disabled,
   onHeld,
+  onType,
   onSave,
   onCancel,
 }: {
@@ -26,6 +27,8 @@ export function FileEditor({
   disabled: boolean;
   /** Open (true) or closed (false): while it is open, every step that would leave or review the draft waits. */
   onHeld: (held: boolean) => void;
+  /** Your text as you type it. */
+  onType: (text: string) => void;
   onSave: (text: string) => void;
   onCancel: () => void;
 }) {
@@ -97,7 +100,10 @@ export function FileEditor({
       </header>
       <div ref={host} className="conflict-file-editor">
         <EditProvider createEditor={factory}>
-          <File file={file} edit options={options} onEditChange={(event) => setText(event.file.contents)} />
+          <File file={file} edit options={options} onEditChange={(event) => {
+              setText(event.file.contents);
+              onType(event.file.contents);
+            }} />
         </EditProvider>
       </div>
       <div className="conflict-block-actions">

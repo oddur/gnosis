@@ -1,9 +1,9 @@
 {
-  "description": "Review probe (#454): the PR only changes a string's quotes, main changes an argument on the same line. The resolver returns main's line word for word, so the PR's reformat is lost. The result is main's program, but not in the PR's formatting: it must not be Merged.",
+  "description": "Review probe (#454): the PR only changes a string's quotes, main changes an argument on the same line. The resolver returns main's line word for word, so the PR's reformat is lost. The result is main's program, but not in the PR's formatting: it must not be Merged. Since the layout rule (lib/conflict-union.ts layoutMerge), the conflict gets the rule's proposal instead: main's edit in the PR's layout, which the checks Merge. The canned line itself is still never Merged (tests/conflict-verify.test.ts).",
   "language": "typescript",
   "category": "review-probe",
   "mergiraf": "canned",
   "expected": {
-    "src/greet.ts": "any-but-merged"
+    "src/greet.ts": "merged"
   }
 }

@@ -10,7 +10,15 @@ import {
   patchNote,
   wholeNote,
 } from '../lib/conflict-confirm';
-import { blockBuckets, fileStatus, unchosenConflicts, wholeEdited, type Verdict } from '../lib/conflict-verify';
+import {
+  blockBuckets,
+  fileStatus,
+  unchosenConflicts,
+  waitingHint,
+  wholeEdited,
+  withTypeError,
+  type Verdict,
+} from '../lib/conflict-verify';
 import type { BlockPicks } from '../lib/conflict-blocks';
 import { conflictFileStage, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 
@@ -129,6 +137,15 @@ void test('a whole-file proposal you used is yours as one file, with every confl
   assert.deepEqual(groups.main, [], 'main’s lines are inside the proposal: never counted twice');
   // Its one line neither side had is marked.
   assert.deepEqual(confirmWritten(groups.decided[0]), [5]);
+  // The moved-code rule's whole file (#483) says so, not structural merge (#491).
+  const moved = file(whole, undefined, { wholeFile: { source: 'moved', text: whole }, source: 'manual' });
+  const byMove = confirmGroups([entry(moved, { merged: false, passed: true, note: '' })], []).decided[0];
+  assert.equal(byMove.whole, 'whole-moved');
+  assert.equal(
+    wholeNote(byMove.whole!, 2, 'main'),
+    'You used the proposal for this file, where one side moved code and the other edited it. It covers 2 conflicts and main’s other lines in it.'
+  );
+  assert.doesNotMatch(wholeNote(byMove.whole!, 2, 'main'), /structural merge/);
 });
 
 void test('a file edited by hand is yours, Merged proposals included, and its note says what produced it', () => {
@@ -188,7 +205,8 @@ void test('files Git merged on its own arrive from main; main’s rename of a co
   const groups = confirmGroups([entry(f, undefined, ['theirs', 'theirs'])], preview);
   assert.deepEqual(groups.incoming, [{ name: 'src/clock.ts' }]);
   assert.equal(groups.counts.mainFiles, 2, 'main’s lines in src/a.ts, and src/clock.ts');
-  // main renamed the conflicted file: every part's header shows the rename, and Arriving from main counts it.
+  // main renamed the conflicted file: Arriving from main's header shows the rename and counts it. The parts after it
+  // are at the new path already, so they show no rename of their own (#491).
   const renamed = file('a = 11\nb = 2\nx = 0\nc = 31\n', undefined, {
     path: 'src/b.ts',
     original: original.replace('x = 5', 'x = 0'),
@@ -198,7 +216,7 @@ void test('files Git merged on its own arrive from main; main’s rename of a co
   assert.equal(r.main.length, 1, 'the rename alone, with no lines from main');
   assert.equal(r.main[0].previousPath, 'src/a.ts');
   assert.equal(r.main[0].before, r.main[0].after);
-  assert.equal(r.decided[0].previousPath, 'src/a.ts');
+  assert.equal(r.decided[0].previousPath, undefined);
   assert.equal(r.counts.mainFiles, 1);
   // A clean merge: only main's files.
   const clean = confirmGroups([], [{ name: 'src/clock.ts' }, { name: 'src/retry.ts' }]);
@@ -237,6 +255,26 @@ void test('binary and mode-only files say what changed instead of an empty diff'
       .map((f) => patchNote(f)),
     ['Binary file changed', 'Mode 100644 → 100755', undefined]
   );
+  // An empty file has an index line and no hunks too: its blob is Git's empty one, so it is empty, not binary (#491).
+  const empty = [
+    'diff --git a/src/empty.ts b/src/empty.ts',
+    'new file mode 100644',
+    'index 0000000..e69de29',
+    'diff --git a/src/gone.ts b/src/gone.ts',
+    'deleted file mode 100644',
+    'index e69de29..0000000',
+    'diff --git a/logo.bin b/logo.bin',
+    'new file mode 100644',
+    'index 0000000..3b18e51',
+    'Binary files /dev/null and b/logo.bin differ',
+    '',
+  ].join('\n');
+  assert.deepEqual(
+    parsePatchFiles(empty)
+      .flatMap((p) => p.files)
+      .map((f) => patchNote(f)),
+    ['Empty file added', 'Empty file deleted', 'Binary file added']
+  );
 });
 
 void test('anything that still needs you is pending, and no group counts it', () => {
@@ -273,7 +311,8 @@ void test('Edit whole file: the whole file is yours, its Merged proposal too, an
   });
   assert.equal(wholeEdited(edited, draft), true);
   assert.deepEqual(blockBuckets(edited, draft, merged), ['decided', 'decided'], 'Every conflict is yours');
-  assert.deepEqual(unchosenConflicts(edited, draft, check), [], 'Nothing waits for a choice');
+  assert.deepEqual(unchosenConflicts(edited, draft, merged), [], 'Nothing waits for a choice');
+  assert.deepEqual(unchosenConflicts(edited, draft, check), [1], 'An unproven proposal left as it was still waits');
   const groups = confirmGroups([entry(edited, merged)], []);
   assert.deepEqual(groups.counts, { decided: 2, merged: 0, mainFiles: 1 });
   assert.deepEqual(groups.merged, [], 'Nothing in a file you edited is Merged for you');
@@ -315,4 +354,24 @@ void test('Edit whole file: a draft that splits into its conflicts again is told
   assert.deepEqual(confirmGroups([entry(marked, merged)], []).pending, [{ path: 'src/a.ts', conflicts: 2 }]);
   // Without the service's mark, the same draft is only a draft edited around its conflicts: the unproven proposal waits.
   assert.deepEqual(blockBuckets(file(draft, proposal), draft, check), ['decided', 'check']);
+});
+
+void test('Edit whole file: a proposal the edit left as it was stays in Check; only what you changed is yours (#503)', () => {
+  // The type check demoted the Merged proposal; you add only the import it asked for.
+  const before = 'a = 11\nb = 2\nx = 5\nc = 3031\n';
+  const demoted = withTypeError(merged, { note: 'The type check found a new error in src/a.ts:1 (TS2304).' });
+  const draft = 'a = 11\nb = 2\nimport { x } from "./x";\nx = 5\nc = 3031\n';
+  const wholeEdit = { result: before, resolved: false, source: 'manual' as const, picks: ['theirs' as const, null] };
+  const edited = file(draft, proposal, { wholeEdit, resolved: false });
+  assert.deepEqual(blockBuckets(edited, draft, demoted), ['decided', 'check'], 'Your Keep is yours; the proposal is not');
+  assert.deepEqual(unchosenConflicts(edited, draft, demoted), [1], 'Mark reviewed waits');
+  assert.match(waitingHint(edited, draft, 1), /Your edit left the proposal for a conflict in Check as it was/);
+  // Without the demotion the proposal is Merged, and the whole file is yours.
+  assert.deepEqual(blockBuckets(edited, draft, merged), ['decided', 'decided']);
+  // A proposal you used before the edit is yours already.
+  const used = file(draft, proposal, { wholeEdit: { ...wholeEdit, picks: ['theirs', 'proposal'] } });
+  assert.deepEqual(blockBuckets(used, draft, demoted), ['decided', 'decided']);
+  // Lines of the conflict you changed are yours.
+  const changed = draft.replace('c = 3031', 'c = 30 + 31');
+  assert.deepEqual(blockBuckets(file(changed, proposal, { wholeEdit }), changed, demoted), ['decided', 'decided']);
 });

@@ -34,6 +34,11 @@ export interface ConflictFile {
    */
   wholeFile?: ConflictProposal;
   /**
+   * The service's name for this file's saved draft (src/conflict-resolution-service.ts `fileRevision`): its conflicts,
+   * then its draft, proposals, choices and edits. A save sends it back as `base`.
+   */
+  revision?: string;
+  /**
    * The whole draft a resolver last wrote for this file (#445 item 10): a remembered resolution, structural merge's
    * result, a whole-file proposal you used, or a suggestion. It stays when you then keep or edit parts of the draft, so
    * the lines the resolver wrote that neither side had stay marked, and lines you typed never are.
@@ -81,6 +86,32 @@ export interface WholeFileEdit {
   resolverText?: string;
   picks?: ConflictFile['picks'];
   edits?: ConflictFile['edits'];
+  /** The file changed again after the first whole-file edit: Undo discards that too, so the view asks first. */
+  later?: boolean;
+}
+/** The file as it is now, for Undo of a whole-file edit (ConflictFile.wholeEdit). */
+export function wholeEditSnapshot(file: ConflictFile): WholeFileEdit {
+  return {
+    result: file.result,
+    resolved: file.resolved,
+    source: file.source,
+    ...(file.explanation !== undefined ? { explanation: file.explanation } : {}),
+    ...(file.resolverText !== undefined ? { resolverText: file.resolverText } : {}),
+    ...(file.picks ? { picks: file.picks } : {}),
+    ...(file.edits ? { edits: file.edits } : {}),
+  };
+}
+/** Undo of a whole-file edit: puts `before` back into `file`, and ends the edit. */
+export function restoreWholeEdit(file: ConflictFile, before: WholeFileEdit) {
+  delete file.wholeEdit;
+  file.result = before.result;
+  file.resolved = before.resolved && !hasConflictMarkers(before.result);
+  file.source = before.source;
+  file.explanation = before.explanation;
+  file.resolverText = before.resolverText;
+  file.picks = before.picks;
+  file.edits = before.edits;
+  for (const key of ['explanation', 'resolverText', 'picks', 'edits'] as const) if (file[key] === undefined) delete file[key];
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -91,7 +122,7 @@ export interface WholeFileEdit {
  * never Merged either.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved' | 'model';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'layout' | 'moved' | 'model';
   text: string;
   /**
    * A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." A 'model'
@@ -100,6 +131,11 @@ export interface ConflictProposal {
   note?: string;
   /** A 'model' proposal (lib/conflict-model.ts): the provider that wrote it, such as "Claude". */
   by?: string;
+  /**
+   * A 'layout' proposal that took the place of structural merge's (lib/conflict-union.ts withUnions): that proposal's
+   * text, offered again when the checks don't Merge this one (src/conflict-checks.ts withoutUnconfirmed).
+   */
+  instead?: string;
   /** A 'model' proposal: what the model says each side meant. The model's words, never checked. */
   intents?: { pr: string; main: string };
 }
@@ -218,6 +254,11 @@ export type ConflictRequest =
       picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
       /** Your in-place edits per block (`ConflictFile.edits`); absent leaves the saved ones. */
       edits?: (SavedBlockEdit | null)[];
+      /**
+       * The file's `revision` your edit started from. A draft that another writer moved on since `version` still takes
+       * the save while this file is the same; when the file changed too, the save is refused (`SAVE_REFUSALS`).
+       */
+      base?: string;
     }
   | {
       kind: 'resolve';
@@ -237,9 +278,9 @@ export type ConflictRequest =
    * Edit whole file (#503): `contents` becomes the draft and the whole file your decision, every conflict in it too. The
    * service keeps the file as it was before your first whole-file edit, for `undo-edit-file`.
    */
-  | { kind: 'edit-file'; id: string; version: number; path: string; contents: string }
+  | { kind: 'edit-file'; id: string; version: number; path: string; contents: string; base?: string }
   /** Undo of Edit whole file: the file as it was before your first whole-file edit, your Keeps and edits included. */
-  | { kind: 'undo-edit-file'; id: string; version: number; path: string }
+  | { kind: 'undo-edit-file'; id: string; version: number; path: string; base?: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -313,6 +354,35 @@ export interface SavedBlockEdit {
   written?: number[];
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A request made from an earlier version of the draft, refused. */
+export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
+/**
+ * Why the service refused a save made from an earlier version of the draft (`refusedSave`). The renderer matches the
+ * message to say what happened and offer what can still be done.
+ */
+export const SAVE_REFUSALS = {
+  /** Another view saved this file: the same conflicts, another draft. Keep my edit may replace it. */
+  changed: 'This file’s saved draft changed in another view while you edited it, so your edit wasn’t saved.',
+  /** The file's conflicts are new (Start over, new base commits): the edit no longer fits them. */
+  conflicts: 'This file’s conflicts changed in another view while you edited it, so your edit wasn’t saved.',
+  /** The file is no longer in the merge. */
+  left: 'This file is no longer in the merge, so your edit wasn’t saved.',
+  /** Another view pushed the resolution. */
+  pushed: 'This PR’s resolution was pushed from another view.',
+} as const;
+export type SaveRefusal = keyof typeof SAVE_REFUSALS;
+/** The refusal an error carries, or undefined. */
+export function refusedSave(error: unknown): SaveRefusal | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  return (Object.keys(SAVE_REFUSALS) as SaveRefusal[]).find((reason) => message.includes(SAVE_REFUSALS[reason]));
+}
+/** The part of a file's `revision` that names its conflicts (Git's conflict text and the path). */
+export const revisionConflicts = (revision: string | undefined) => revision?.split('.')[0];
+/** The paths whose saved file is another one in `after` than in `before`, by `revision`; `except` left out. */
+export function changedFiles(before: ConflictSession, after: ConflictSession, except?: string) {
+  const known = new Map(before.files.map((f) => [f.path, f.revision]));
+  return after.files.filter((f) => f.path !== except && known.get(f.path) !== f.revision).map((f) => f.path);
+}
 /** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
 const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
 const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
@@ -331,6 +401,14 @@ export function conflictFileStage(
   return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
 
+/**
+ * The marked lines of an in-place edit that are its own (#509): whole indexes into the edit's lines. One past them
+ * would mark a line after the conflict.
+ */
+export function writtenInEdit(text: string, written: readonly unknown[] | undefined): number[] {
+  const lines = text.split(/(?<=\n)/).filter(Boolean).length;
+  return (written ?? []).filter((line): line is number => Number.isSafeInteger(line) && Number(line) >= 0 && Number(line) < lines);
+}
 const isPick = (pick: unknown) =>
   pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
 /** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */
@@ -351,11 +429,7 @@ function validEdits(value: unknown): boolean {
       (e.written === undefined ||
         (Array.isArray(e.written) &&
           e.written.length <= 100_000 &&
-          // Each index is one of the edit's own lines (#509): past them it would mark a line after the conflict.
-          ((lines) =>
-            (e.written as unknown[]).every((line) => Number.isSafeInteger(line) && Number(line) >= 0 && Number(line) < lines))(
-            e.text.split(/(?<=\n)/).filter(Boolean).length
-          )))
+          writtenInEdit(e.text, e.written as unknown[]).length === e.written.length))
     );
   });
 }
@@ -389,11 +463,14 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     typeof r.resolved === 'boolean' &&
     (r.picks === undefined ||
       (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
-    (r.edits === undefined || validEdits(r.edits))
+    (r.edits === undefined || validEdits(r.edits)) &&
+    (r.base === undefined || (r.kind === 'save' && text('base', 64)))
   )
     return;
-  if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT)) return;
-  if (r.kind === 'undo-edit-file' && text('path', 4096)) return;
+  // Edit whole file (#503) names the file's revision its editor started from (`base`), as a save does.
+  const based = r.base === undefined || text('base', 64);
+  if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT) && based) return;
+  if (r.kind === 'undo-edit-file' && text('path', 4096) && based) return;
   if (
     r.kind === 'resolve' &&
     ['agent', 'mergiraf', 'whole-file'].includes(String(r.engine)) &&

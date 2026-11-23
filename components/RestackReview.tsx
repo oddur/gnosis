@@ -22,7 +22,6 @@ import { currentCodeIntelligence } from '../lib/use-syntax-contents';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
-const savedEdits = savedBlockEdits;
 /** A paused draft and your in-place edits made with it (#509). */
 interface DraftEdits {
   text: string;
@@ -362,7 +361,7 @@ export function RestackReview({
                         size="sm"
                         variant="outline"
                         disabled={busy || markers || unchosen.length > 0 || (file.resolved && !dirty)}
-                        onClick={() => onSave(file.path, value, true, savedPicks, savedEdits(fileEdits))}
+                        onClick={() => onSave(file.path, value, true, savedPicks, savedBlockEdits(fileEdits))}
                       >
                         Mark reviewed
                       </Button>

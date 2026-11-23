@@ -4,8 +4,13 @@ import { settleInOrder } from '../lib/bounded';
 import fs from 'node:fs/promises';
 import {
   CONFLICT_FILE_LIMIT,
+  SAVE_REFUSALS,
+  STALE_DRAFT,
+  revisionConflicts,
   hasConflictMarkers,
+  restoreWholeEdit,
   validateConflictRequest,
+  wholeEditSnapshot,
   type ConflictFile,
   type ConflictProposal,
   type ConflictSession,
@@ -98,12 +103,32 @@ import {
   type SharedLayout,
 } from './conflict-object-store';
 
+/** A save waits this long for another request on the PR to finish. */
+const SAVE_WAIT = 30_000;
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 /** Requests that change a file's draft: its checks and the type check run again (#445 item 24, #503). */
 const changesDraft = (
   request: ConflictRequest
 ): request is Extract<ConflictRequest, { kind: 'resolve' | 'save' | 'model' | 'edit-file' | 'undo-edit-file' }> =>
   ['resolve', 'save', 'model', 'edit-file', 'undo-edit-file'].includes(request.kind);
+/**
+ * A file's saved draft, named (`ConflictFile.revision`): its conflicts, then its draft, review flag, proposals, choices
+ * and edits, and the state before a whole-file edit (#503).
+ * Exact, so a save from another view's draft of the file is never taken for this one.
+ */
+const fileRevision = (f: ConflictFile) =>
+  `${hash(`${f.path}\0${f.original}`).slice(0, 16)}.${hash(
+    JSON.stringify([
+      f.path,
+      f.original,
+      f.result,
+      f.resolved,
+      f.proposals ?? null,
+      f.picks ?? null,
+      f.edits ?? null,
+      f.wholeEdit ?? null,
+    ])
+  ).slice(0, 32)}`;
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
 /** Why background work stopped: a request of yours came for the same PR. */
@@ -198,6 +223,8 @@ interface Deps {
   typeCheckTimeout?: number;
   /** Milliseconds after the last change to a draft before it is type checked again. Tests change it. */
   typeCheckDelay?: number;
+  /** Milliseconds a save waits for another request on the PR before it fails as busy (SAVE_WAIT). Tests change it. */
+  saveWait?: number;
   /** A PR's type check status changed (`typeCheck`). */
   typeCheckChanged?: (id: string) => void;
 }
@@ -451,7 +478,8 @@ export function createConflictResolutionService(deps: Deps) {
     pendingTypeErrors.delete(key);
     const saved = deps.storage.read(key) as ConflictSession | undefined;
     if (saved && (!match || match(saved)) && applyTypeErrors(saved, result)) {
-      write(key, saved);
+      // A demotion can reopen a reviewed file: its revision moves, so a save from before it is refused.
+      write(key, stamped(saved));
       void deps.storage.flush();
     }
   }
@@ -612,9 +640,34 @@ export function createConflictResolutionService(deps: Deps) {
       else finish({ state: 'skipped', reason: `couldn’t run: ${message.slice(0, 200)}` });
     });
   }
+  /**
+   * Why a save can't go on from the draft as it is now; undefined when it can. Another writer (an open in another view,
+   * its checks, a save of another file) may have moved the draft on since the save's version: the save goes on while
+   * the file it edits is the one it started from (`base`), and is refused when that file changed. Nothing is
+   * overwritten.
+   */
+  function saveRefusal(
+    request: Extract<ConflictRequest, { kind: 'save' | 'edit-file' | 'undo-edit-file' }>,
+    session: ConflictSession
+  ) {
+    if (session.status === 'published') return SAVE_REFUSALS.pushed;
+    if (request.version > session.version) return STALE_DRAFT;
+    const file = session.files.find((f) => f.path === request.path);
+    if (!file) return SAVE_REFUSALS.left;
+    const revision = fileRevision(file);
+    if (revision === request.base) return undefined;
+    return revisionConflicts(revision) === revisionConflicts(request.base)
+      ? SAVE_REFUSALS.changed
+      : SAVE_REFUSALS.conflicts;
+  }
+  /** Names each file's saved draft (`fileRevision`) before a write that may change one. */
+  function stamped(session: ConflictSession) {
+    for (const f of session.files) f.revision = fileRevision(f);
+    return session;
+  }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    write(key, withChoices(key, session));
+    write(key, stamped(withChoices(key, session)));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -2244,7 +2297,7 @@ export function createConflictResolutionService(deps: Deps) {
         await maintenance;
         const session = sessionFor(ctx, id);
         if (session.version !== version)
-          throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+          throw new Error(STALE_DRAFT);
         if (session.status !== 'editing') throw new Error('This resolution has already been published.');
         const urls = deps.dependents?.(session.url) ?? [];
         if (!urls.length) return { version, url: session.url, prs: [] };
@@ -2268,6 +2321,16 @@ export function createConflictResolutionService(deps: Deps) {
       });
     },
     /** The saved draft's version, while it is being edited: the cascade preview restarts only current drafts. */
+    /**
+     * The saved draft as it is now, while it is being edited, with each file's revision: the view reads it when the type
+     * check changed a file without a request of yours (#517). No network, nothing written.
+     */
+    savedDraft(id: string): ConflictSession | undefined {
+      const ctx = deps.context();
+      if (!ctx.account || !/^[a-f0-9]{64}$/.test(id)) return undefined;
+      const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+      return saved?.status === 'editing' && saved.account === ctx.account ? stamped(structuredClone(saved)) : undefined;
+    },
     draftVersion(id: string) {
       const ctx = deps.context();
       if (!ctx.account) return undefined;
@@ -2518,9 +2581,19 @@ export function createConflictResolutionService(deps: Deps) {
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
       // Background work on this PR stops for you; only another request of yours makes this one wait.
-      // A background run that took the lock while this waited gives way too.
-      do await yieldToYou(key);
-      while (backgroundWork.has(key));
+      // A background run that took the lock while this waited gives way too. A save waits for the request before it
+      // (an open from another view of the PR, say) and then goes on from the draft that request left.
+      for (;;) {
+        do await yieldToYou(key);
+        while (backgroundWork.has(key));
+        if (!busy.has(key) || request.kind !== 'save') break;
+        // Bounded: a save behind a long request fails as busy, and the view's autosave tries again later.
+        const waited = AbortSignal.any([signal, AbortSignal.timeout(deps.saveWait ?? SAVE_WAIT)]);
+        await freed(key, waited).catch((error: unknown) => {
+          if (signal.aborted) throw error;
+        });
+        if (waited.aborted && !signal.aborted) break;
+      }
       if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
       busy.add(key);
       try {
@@ -2542,7 +2615,7 @@ export function createConflictResolutionService(deps: Deps) {
             await persist(stored);
           } else if (stored && counted?.changed) {
             // Saved with the next write; the open never waits for it.
-            write(key, withChoices(key, stored));
+            write(key, stamped(withChoices(key, stored)));
           }
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);
@@ -2552,8 +2625,15 @@ export function createConflictResolutionService(deps: Deps) {
           return { session };
         }
         const session = sessionFor(ctx, id);
-        if (request.version !== session.version)
-          throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+        // A save that names its file's revision is checked against the file; any other request against the version.
+        const refused =
+          (request.kind === 'save' || request.kind === 'edit-file' || request.kind === 'undo-edit-file') &&
+          request.base !== undefined
+            ? saveRefusal(request, session)
+            : request.version !== session.version
+              ? STALE_DRAFT
+              : undefined;
+        if (refused) throw new Error(refused);
         if (
           request.kind === 'restack-prepare' ||
           request.kind === 'restack-publish' ||
@@ -2666,7 +2746,9 @@ export function createConflictResolutionService(deps: Deps) {
           return { session };
         }
         if (session.status !== 'editing')
-          throw new Error('This resolution has already been published. Refresh the PR.');
+          throw new Error(
+            request.kind === 'save' ? SAVE_REFUSALS.pushed : 'This resolution has already been published. Refresh the PR.'
+          );
         let baseMoved: BaseMove | undefined;
         if (request.kind === 'discard') {
           await stopTypeCheck(key, id);
@@ -2687,6 +2769,7 @@ export function createConflictResolutionService(deps: Deps) {
           // Your whole-file edit (#503) lasts while the draft can't be split into its conflicts. Reset file and Start
           // from Git's conflict return to one that can: the conflicts are told apart again, before any check of them.
           if (file.wholeEdit && !wholeEdited(file, request.contents)) delete file.wholeEdit;
+          else if (file.wholeEdit && request.contents !== file.result) file.wholeEdit.later = true;
           if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {
             file.source = 'manual';
@@ -2708,34 +2791,23 @@ export function createConflictResolutionService(deps: Deps) {
         } else if (request.kind === 'edit-file' || request.kind === 'undo-edit-file') {
           const file = session.files.find((f) => f.path === request.path);
           if (!file || file.unsupported) throw new Error('This file cannot be edited in the conflict editor.');
-          if (request.kind === 'undo-edit-file') {
+          // An edit back to the file as it was before your first whole-file edit is its Undo: no decision of yours.
+          const undo = request.kind === 'undo-edit-file' || request.contents === file.wholeEdit?.result;
+          if (undo) {
             // Undo of Edit whole file: the file as it was before your first whole-file edit, Keeps and edits included.
-            const before = file.wholeEdit;
-            if (!before) throw new Error('This file has no whole-file edit to undo.');
-            delete file.wholeEdit;
-            file.result = before.result;
-            file.resolved = before.resolved && !hasConflictMarkers(before.result);
-            file.source = before.source;
-            file.explanation = before.explanation;
-            file.picks = before.picks;
-            file.edits = before.edits;
-            if (before.resolverText === undefined) delete file.resolverText;
-            else file.resolverText = before.resolverText;
+            if (!file.wholeEdit) throw new Error('This file has no whole-file edit to undo.');
+            restoreWholeEdit(file, file.wholeEdit);
+            // Reviewed only while nothing in the restored draft waits for a choice, as Mark reviewed requires.
+            if (file.resolved && unchosenOf(file, { contents: file.result }).length) file.resolved = false;
           } else {
-            if (typeof request.contents !== 'string' || Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT)
+            if (Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT)
               throw new Error('This file is too large for the conflict editor.');
             // Fail closed: an edit that changes nothing is no decision of yours.
             if (request.contents === file.result) throw new Error('Nothing in the file changed, so nothing was saved.');
-            // The state before your first whole-file edit, from this draft, never from the renderer.
-            file.wholeEdit ??= {
-              result: file.result,
-              resolved: file.resolved,
-              source: file.source,
-              ...(file.explanation !== undefined ? { explanation: file.explanation } : {}),
-              ...(file.resolverText !== undefined ? { resolverText: file.resolverText } : {}),
-              ...(file.picks ? { picks: file.picks } : {}),
-              ...(file.edits ? { edits: file.edits } : {}),
-            };
+            // The state before your first whole-file edit, from this draft, never from the renderer. A later edit says
+            // so, and Undo asks before it discards it.
+            if (file.wholeEdit) file.wholeEdit.later = true;
+            else file.wholeEdit = wholeEditSnapshot(file);
             // A line you type is never marked as the resolver's; the resolver's lines you left keep their mark.
             if (
               file.resolverText !== undefined &&
