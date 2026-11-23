@@ -71,7 +71,6 @@ import {
   SAVE_REFUSALS,
   STALE_DRAFT,
   refusedSave,
-  type SaveRefusal,
   hasConflictMarkers,
   conflictFileStage,
   type ConflictFile,
@@ -82,7 +81,7 @@ import {
   type SavedBlockEdit,
   type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
-import { adopt, editsJson, loadedOf, picksJson, reconcile, type LoadedFile } from '../lib/conflict-loaded';
+import { adopt, editsJson, heldReason, loadedOf, picksJson, reconcile, type HeldReason, type LoadedFile } from '../lib/conflict-loaded';
 import {
   conflictPushNeedsWorkflow,
   githubWriteError,
@@ -532,7 +531,7 @@ interface HeldEdit {
   revision?: string;
   picks?: BlockPicks;
   edits?: BlockEdits;
-  reason: SaveRefusal;
+  reason: HeldReason;
   at: number;
 }
 const heldEdits = new Map<string, HeldEdit>();
@@ -550,6 +549,8 @@ function pruneHeld(account: string, now = Date.now()) {
 function heldSentence(edit: HeldEdit) {
   const name = edit.path.split('/').pop() ?? edit.path;
   switch (edit.reason) {
+    case 'checked':
+      return 'The type check moved this file’s conflicts to Check. Your edit is kept; choose again.';
     case 'changed':
       return `Your edit to ${name} isn’t saved: another view saved a different version of this file meanwhile. Keep my edit replaces that version with yours; Use the saved draft drops your edit.`;
     case 'conflicts':
@@ -638,12 +639,13 @@ export function ConflictWorkspace({
   const sessionRef = useRef<ConflictSession>(undefined);
   // What the view's text and own choices for each file came from (lib/conflict-loaded.ts): saves send it as `base`.
   const loaded = useRef(new Map<string, LoadedFile>());
-  const reconcileRef = useRef<(value: ConflictSession) => void>(undefined);
+  const reconcileRef = useRef<(value: ConflictSession, before?: ConflictSession) => void>(undefined);
   /** A newer saved draft: files another writer changed are read afresh, or held when you changed them too. */
   const setSession = (value: ConflictSession) => {
+    const before = sessionRef.current;
     sessionRef.current = value;
     setSessionState(value);
-    reconcileRef.current?.(value);
+    reconcileRef.current?.(value, before);
   };
   const [selected, setSelectedState] = useState('');
   const selectedRef = useRef('');
@@ -754,7 +756,7 @@ export function ConflictWorkspace({
    * Keeps your edit of a file another view changed, with your choices for it, and pauses its saves until you choose.
    * `was`: what your edit came from.
    */
-  const hold = ({ session, path, was, text, reason }: { session: ConflictSession; path: string; was: LoadedFile; text: string; reason: SaveRefusal }) => {
+  const hold = ({ session, path, was, text, reason }: { session: ConflictSession; path: string; was: LoadedFile; text: string; reason: HeldReason }) => {
     const ownPicks = picksState.current[path];
     const ownEdits = editsState.current[path];
     const edit: HeldEdit = {
@@ -788,7 +790,7 @@ export function ConflictWorkspace({
       (ownEdits?.original === was.original && editsJson(ownEdits.edits) !== was.edits)
     );
   };
-  reconcileRef.current = (value: ConflictSession) => {
+  reconcileRef.current = (value: ConflictSession, before?: ConflictSession) => {
     const { reload, hold: changed } = reconcile(loaded.current, value, changedHere, heldRef.current?.path);
     forgetOwn(reload);
     const shown = reload.includes(selectedRef.current) && value.files.find((f) => f.path === selectedRef.current);
@@ -797,6 +799,8 @@ export function ConflictWorkspace({
       hold({
         session: value,
         ...changed,
+        // The same version as before: no other view saved it, the type check did.
+        reason: before ? heldReason(changed.reason, before.version, value.version) : changed.reason,
         text: changed.path === selectedRef.current ? contentsRef.current : changed.was.result,
       });
   };
@@ -853,8 +857,23 @@ export function ConflictWorkspace({
         (status) => active && setTypeCheck({ id: sessionId, status }),
         () => {}
       );
+    // The type check may have demoted a file in the saved draft (#517): read it, so a file you didn't change reloads
+    // and one you did is held. Only the same version: any other writer's change comes with your next request.
+    const reread = () =>
+      void window.electronAPI.conflictDraft?.(sessionId).then(
+        (saved) => {
+          const now = sessionRef.current;
+          if (active && saved && now?.id === saved.id && now.version === saved.version && !pending.current)
+            setSession(saved);
+        },
+        () => {}
+      );
     refresh();
-    const off = window.electronAPI.onConflictTypeCheckChanged((id) => id === sessionId && refresh());
+    const off = window.electronAPI.onConflictTypeCheckChanged((id) => {
+      if (id !== sessionId) return;
+      refresh();
+      reread();
+    });
     return () => {
       active = false;
       off();
@@ -1040,8 +1059,13 @@ export function ConflictWorkspace({
             )
           ).session;
         } catch (e) {
-          const reason = refusedSave(e);
-          if (reason) hold({ session: value, path, was: loaded.current.get(path) ?? loadedOf(current), text, reason });
+          const refused = refusedSave(e);
+          if (refused) {
+            // Refused with no new version saved since: the type check moved the file, no other view.
+            const saved = refused === 'changed' ? await window.electronAPI.conflictDraft?.(value.id).catch(() => null) : null;
+            const reason = saved ? heldReason(refused, value.version, saved.version) : refused;
+            hold({ session: value, path, was: loaded.current.get(path) ?? loadedOf(current), text, reason });
+          }
           throw e;
         }
         // Your save of this file is the saved file now; any other file the reply changed is read afresh or held.
@@ -1180,7 +1204,7 @@ export function ConflictWorkspace({
       // Your refused edit: the one you chose to keep, or one refused before this view opened.
       const waiting = mine ?? heldEdits.get(key);
       const file = waiting && reply.session.files.find((f) => f.path === waiting.path);
-      const reason: SaveRefusal | undefined =
+      const reason: HeldReason | undefined =
         !waiting || reply.session.status !== 'editing' || (file?.result === waiting.text && !mine)
           ? undefined
           : !file
@@ -1199,7 +1223,7 @@ export function ConflictWorkspace({
       if (still && file) loaded.current.set(file.path, { ...loadedOf(file), revision: still.revision });
       setHeld(still);
       apply(reply, file ? file.path : selectedRef.current);
-      if (file && (mine ? !still : still?.reason === 'changed')) {
+      if (file && (mine ? !still : still?.reason === 'changed' || still?.reason === 'checked')) {
         // Your text on screen; with Keep my edit, your own choices for it too, never older ones.
         setContents(waiting.text);
         if (mine) {
@@ -1422,7 +1446,7 @@ export function ConflictWorkspace({
       ? { ...edit, text: contentsRef.current, picks: picksRef.current(shown), edits: editsRef.current(shown) }
       : edit;
     heldEdits.delete(edit.key);
-    void load(keep && edit.reason === 'changed' ? { mine } : {});
+    void load(keep && (edit.reason === 'changed' || edit.reason === 'checked') ? { mine } : {});
   }
   async function close() {
     // Long operations continue in Activity; their inputs were saved before starting.
@@ -2422,13 +2446,13 @@ export function ConflictWorkspace({
                   </span>
                   <Button
                     size="sm"
-                    variant={held.reason === 'changed' ? 'outline' : 'default'}
+                    variant={held.reason === 'changed' || held.reason === 'checked' ? 'outline' : 'default'}
                     disabled={busy}
                     onClick={() => settleHeld(false)}
                   >
                     {held.reason === 'pushed' ? 'Load the saved draft' : 'Use the saved draft'}
                   </Button>
-                  {held.reason === 'changed' && (
+                  {(held.reason === 'changed' || held.reason === 'checked') && (
                     <Button size="sm" disabled={busy} onClick={() => settleHeld(true)}>
                       Keep my edit
                     </Button>

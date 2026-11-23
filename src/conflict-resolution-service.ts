@@ -2301,6 +2301,16 @@ export function createConflictResolutionService(deps: Deps) {
       });
     },
     /** The saved draft's version, while it is being edited: the cascade preview restarts only current drafts. */
+    /**
+     * The saved draft as it is now, while it is being edited, with each file's revision: the view reads it when the type
+     * check changed a file without a request of yours (#517). No network, nothing written.
+     */
+    savedDraft(id: string): ConflictSession | undefined {
+      const ctx = deps.context();
+      if (!ctx.account || !/^[a-f0-9]{64}$/.test(id)) return undefined;
+      const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+      return saved?.status === 'editing' && saved.account === ctx.account ? stamped(structuredClone(saved)) : undefined;
+    },
     draftVersion(id: string) {
       const ctx = deps.context();
       if (!ctx.account) return undefined;

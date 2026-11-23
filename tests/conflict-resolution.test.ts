@@ -21,7 +21,7 @@ import {
   type ConflictSession,
 } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
-import { adopt, loadedOf, reconcile, type LoadedFile } from '../lib/conflict-loaded';
+import { adopt, heldReason, loadedOf, reconcile, type LoadedFile } from '../lib/conflict-loaded';
 import { withProposals } from '../lib/conflict-carry';
 import type { PrActionState } from '../lib/pr-actions';
 import { blockBuckets, CHECKS_VERSION, unchosenConflicts, verifyProposals } from '../lib/conflict-verify';
@@ -475,6 +475,35 @@ void test('the view’s rule: the selected file another view changed is held whe
   const reread = reconcile(fresh.loaded, reply, () => false);
   assert.ok(reread.reload.includes('sample.ts'));
   assert.equal(fresh.loaded.get('sample.ts')?.revision, f.fileOf(reply, 'sample.ts').revision);
+});
+void test('the view’s rule: a type check write the view reads again reloads an untouched file, and holds an edited one as checked', async (t) => {
+  const f = await twoFiles(t);
+  const reviewed = (await f.run(f.saveFrom(f.session, 'sample.ts', 'export const answer = 1;\n', { picks: ['ours'], resolved: true }))).session;
+  assert.equal(f.fileOf(reviewed, 'sample.ts').resolved, true);
+  const a = view(reviewed);
+  // The type check's demotion reopens the file in the saved draft, with no new version.
+  const demoted = structuredClone(f.deps.storage.read(f.key)) as ConflictSession;
+  f.fileOf(demoted, 'sample.ts').resolved = false;
+  f.deps.storage.write(f.key, demoted);
+  // On the type check's event the view reads the saved draft: same version, a new revision for sample.ts.
+  const read = f.service.savedDraft(reviewed.id);
+  assert.ok(read);
+  assert.equal(read.version, reviewed.version);
+  assert.notEqual(f.fileOf(read, 'sample.ts').revision, f.fileOf(reviewed, 'sample.ts').revision);
+  // Nothing of yours on it: it reloads.
+  const untouched = view(reviewed);
+  assert.deepEqual(reconcile(untouched.loaded, read, () => false).reload, ['sample.ts']);
+  // Your edit on it: held, and said to be the type check's, not another view's.
+  const { hold } = reconcile(a.loaded, read, (path) => path === 'sample.ts');
+  assert.equal(hold?.path, 'sample.ts');
+  assert.equal(heldReason(hold.reason, reviewed.version, read.version), 'checked');
+  assert.equal(heldReason('changed', reviewed.version, reviewed.version + 1), 'changed');
+  // Your stale save never flips the review flag back.
+  await assert.rejects(
+    f.run(a.save(reviewed, 'sample.ts', 'export const answer = 1;\n', { resolved: true })),
+    (e: Error) => e.message === SAVE_REFUSALS.changed
+  );
+  assert.equal(f.fileOf(f.deps.storage.read(f.key) as ConflictSession, 'sample.ts').resolved, false);
 });
 void test('the view’s rule: read afresh to retry, the selected file drops your older choices for it', async (t) => {
   const f = await twoFiles(t);

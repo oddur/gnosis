@@ -452,6 +452,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   conflictTypeCheck: (id: string): Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null | undefined> =>
     ipcRenderer.invoke('conflict-type-check', id),
   cancelConflictTypeCheck: (id: string): Promise<void> => ipcRenderer.invoke('conflict-type-check-cancel', id),
+  conflictDraft: (id: string): Promise<import('../lib/conflict-resolution').ConflictSession | null> =>
+    ipcRenderer.invoke('conflict-draft', id),
   onConflictTypeCheckChanged: (callback: (id: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id);
     ipcRenderer.on('conflict-type-check-changed', handler);

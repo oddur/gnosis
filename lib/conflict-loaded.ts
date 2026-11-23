@@ -1,6 +1,15 @@
 import type { ConflictFile, ConflictSession, SaveRefusal, SavedBlockEdit } from './conflict-resolution';
 
 /**
+ * Why the view holds your edit: the service's refusal, or `checked`: the file's saved state moved with no new version,
+ * so no other view saved it. The type check's demotion is the one write that does that.
+ */
+export type HeldReason = SaveRefusal | 'checked';
+/** `changed` from a draft whose version is the one the view knows is the type check's own write. */
+export const heldReason = (reason: SaveRefusal, knownVersion: number, savedVersion: number): HeldReason =>
+  reason === 'changed' && savedVersion === knownVersion ? 'checked' : reason;
+
+/**
  * What the Conflicts view's text and own choices for a file came from (#517): the file's saved revision, and its
  * conflict, draft, choices and edits then. Every save sends that revision as `base`, never a newer one, so a view whose
  * file another view changed is always refused, whichever path saves it. Only Keep my edit moves it on with your text.
