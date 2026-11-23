@@ -159,8 +159,8 @@ function writable(state: PrActionState, session: ConflictSession): asserts state
 
 /**
  * Removes a restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the resolution
- * memory keeps no preimage of a pause nobody resolved. `git` runs in the session repository. Never throws: whatever
- * Git can't remove, startup cleanup removes later.
+ * memory keeps no preimage of a pause nobody resolved. `git` runs in the session repository. Never throws: a removal
+ * that fails is logged, and startup cleanup removes what is left.
  */
 export async function removeRestackWorktree(git: Git, worktree: string, signal: AbortSignal) {
   for (const args of [
@@ -168,7 +168,13 @@ export async function removeRestackWorktree(git: Git, worktree: string, signal: 
     ['rebase', '--abort'],
   ])
     await git(['-C', worktree, ...args], undefined, [0, 1, 128], signal).catch(() => {});
-  await git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], signal).catch(() => {});
+  try {
+    const { code, stderr } = await git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], signal);
+    // 128 is Git's own refusal, such as for a folder that is not a worktree (any more): logged too.
+    if (code) console.warn('[conflicts] Could not remove a restack worktree.', stderr.trim());
+  } catch (error) {
+    console.warn('[conflicts] Could not remove a restack worktree.', error);
+  }
 }
 
 /** Keep Git's worktree metadata path below its Windows limit; resume older drafts in place. */

@@ -2069,15 +2069,11 @@ export function createConflictResolutionService(deps: Deps) {
     drafts.sort((a, b) => b.at - a.at);
     return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
   }
-  /** Removes a draft and its cache, as Discard does. */
   /** Removes a paused restack's private worktree (`removeRestackWorktree`). */
   async function abandonWorktree(ctx: Context, id: string, token: string) {
     const worktree = await restackWorktreePath(await directory(ctx.account, id), token);
-    await removeRestackWorktree(
-      (args, input, allowed, signal) => git(ctx, id, args, signal ?? AbortSignal.timeout(30_000), input, allowed),
-      worktree,
-      AbortSignal.timeout(30_000)
-    );
+    const signal = AbortSignal.timeout(30_000);
+    await removeRestackWorktree((args, input, allowed) => git(ctx, id, args, signal, input, allowed), worktree, signal);
   }
   /** Every `restack-*` worktree but the paused restack's own: its rerere state is cleared, then it is removed. */
   async function removeLeftoverWorktrees(dir: string, saved: ConflictSession) {
@@ -2095,6 +2091,7 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (removedAny) await runGit(dir, ['worktree', 'prune'], signal, { allowed: [0, 128] }).catch(() => {});
   }
+  /** Removes a draft and its cache, as Discard does. */
   async function drop(account: string, id: string) {
     write(storageKey(account, id), null);
     writeCarry(account, id, []);
