@@ -39,8 +39,10 @@ export type CheckedFile = Pick<
 type Engine = Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'equivalent'>;
 
 /**
- * Takes back each 'same' proposal (#445 item 15) that its own check didn't Merge: it failed, or there is no verdict (an
- * error, a timeout, a language that is off, a file over the limits). Fail closed: such a conflict is yours to decide.
+ * Takes back each 'same' proposal (#445 item 15) and each 'layout' proposal (lib/conflict-union.ts layoutMerge) that its
+ * own check didn't Merge: it failed, or there is no verdict (an error, a timeout, a language that is off, a file over the
+ * limits). Fail closed: such a conflict is yours to decide, or structural merge's proposal the layout one replaced is
+ * offered again, in Check.
  * Where the draft still holds the proposal's text for it, Git's markers come back, and the file is no longer resolved;
  * a conflict you changed keeps your text. The fields to change on the file; undefined when there is nothing to take back.
  */
@@ -50,10 +52,14 @@ export function withoutUnconfirmed(
 ): Pick<ConflictFile, 'proposals' | 'result' | 'source' | 'structuralNote' | 'resolved'> | undefined {
   const proposals = file.proposals;
   const drop = (proposals ?? []).flatMap((p, index) =>
-    p?.source === 'same' && blockVerdict(verdict, index)?.merged !== true ? [index] : []
+    (p?.source === 'same' || p?.source === 'layout') && blockVerdict(verdict, index)?.merged !== true ? [index] : []
   );
   if (!proposals || !drop.length) return undefined;
-  const kept = proposals.map((p, index) => (drop.includes(index) ? null : p));
+  // A layout proposal that took structural merge's place gives it back (`instead`): that one is in Check again.
+  const kept = proposals.map((p, index): ConflictProposal | null => {
+    if (!drop.includes(index)) return p;
+    return p?.source === 'layout' && p.instead !== undefined ? { source: 'mergiraf', text: p.instead } : null;
+  });
   const segments = parseConflicts(file.original);
   const texts = blockResolutions(segments, file.result);
   const held = heldProposals(segments, file.result, proposals, texts);
