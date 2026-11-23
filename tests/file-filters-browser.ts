@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, setViewport, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -71,6 +71,8 @@ void app.whenReady().then(async () => {
   };
   try {
     await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters`);
+    // The header's actions are checked in their row, which needs the full 1280px a CI screen may not give the window.
+    await setViewport(window, 1280, 800);
     await openPr();
     // Tree internals are library-owned; assert its visible file labels as well as diff rows.
     await wait('window.deepAll(\'[data-item-path="tests/__snapshots__/worker.snap"]\').length>0');

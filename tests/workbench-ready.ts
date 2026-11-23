@@ -328,3 +328,30 @@ async function watchPage(window: BrowserWindow, options: { shareDebugger?: boole
 
   return { mark, report, stop };
 }
+
+const viewportNotes = new WeakSet<WebContents>();
+/**
+ * Lays the page out at exactly `width` × `height`, whatever the window. CI desktops clamp native windows to their
+ * screen: on the Windows runners a 1280 or 1600px window opens narrower, so `win.setSize` never reaches its width and
+ * the PR header collapses actions a check expects in its row. Chromium's viewport override is independent of the
+ * screen (as tests/stack-layout-browser.ts does). The first call says when the window was clamped, and by what screen.
+ */
+export async function setViewport(window: BrowserWindow, width: number, height: number): Promise<void> {
+  const contents = window.webContents;
+  if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
+  if (!viewportNotes.has(contents)) {
+    viewportNotes.add(contents);
+    const [innerWidth, innerHeight] = await contents.executeJavaScript('[innerWidth, innerHeight]') as [number, number];
+    const { screen } = await import('electron');
+    const area = screen.getDisplayMatching(window.getBounds()).workAreaSize;
+    if (innerWidth < width || innerHeight < height)
+      console.log(`Viewport: the window lays out at ${innerWidth}×${innerHeight} on a ${area.width}×${area.height} work area; emulating ${width}×${height}.`);
+  }
+  await contents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await contents.executeJavaScript(`innerWidth===${width} && innerHeight===${height}`)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`The page did not lay out at ${width}×${height}`);
+}
