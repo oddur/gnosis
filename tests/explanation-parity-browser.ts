@@ -368,7 +368,8 @@ void app.whenReady().then(async () => {
     await settle();
     await wait(`!!document.querySelector(${JSON.stringify(topic)}+' .diff-gap[data-hunk-header][data-stuck]')`);
     const pinned = await js<{ file: number; hunk: number; scroller: number }>(`(()=>{const g=document.querySelector(${JSON.stringify(topic)});
-      return {scroller:Math.round(document.querySelector('.explanation-document').getBoundingClientRect().top),file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round(g.querySelector('.diff-gap[data-stuck]').getBoundingClientRect().top)}})()`);
+      return {scroller:Math.round(document.querySelector('.explanation-document').getBoundingClientRect().top),file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round((b=>b.getBoundingClientRect().top+parseFloat(getComputedStyle(b).borderTopWidth))(g.querySelector('.diff-gap[data-stuck]')))}})()`);
+    // The bar's own top, under its air (the top border that slides under the file header when it pins).
     assert.ok(Math.abs(pinned.hunk - pinned.file + 1) <= 1, `The hunk header pins right under the file header: ${JSON.stringify(pinned)}`);
     await capture('explanation-pinned', region('.explanation-document', 0, 260));
     // The same pinned crumbs in the topic, inside the explanation document's scroller (#417).
@@ -576,7 +577,7 @@ void app.whenReady().then(async () => {
       throw new Error(`Not pinned: ${state}`, { cause: error });
     }
     const conflictPinned = await js<{ file: number; hunk: number }>(`(()=>{const g=document.querySelector(${JSON.stringify(conflictDiff)});
-      return {file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round(g.querySelector('.diff-gap[data-stuck]').getBoundingClientRect().top)}})()`);
+      return {file:Math.round(g.querySelector('.changes-file-header').getBoundingClientRect().bottom),hunk:Math.round((b=>b.getBoundingClientRect().top+parseFloat(getComputedStyle(b).borderTopWidth))(g.querySelector('.diff-gap[data-stuck]')))}})()`);
     assert.ok(Math.abs(conflictPinned.hunk - conflictPinned.file + 1) <= 1, `The hunk header pins right under the file header: ${JSON.stringify(conflictPinned)}`);
     await capture('conflicts-pinned', region('.conflict-scroll', 0, 260));
     await js("[...document.querySelectorAll('.conflict-heading button')].find(b=>b.textContent.trim()==='Close').click()");
