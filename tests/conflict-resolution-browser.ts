@@ -1942,6 +1942,14 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /The file parses\. Every line of both sides is accounted for\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
+    // Settings › Code intelligence changes while the dialog is open (#464): with TypeScript off, the verdict made with it
+    // on no longer counts, and the conflict leaves Merged at once. On again, it is Merged again.
+    const typescript = (on: boolean) =>
+      js(`(async()=>{const p=await window.electronAPI.loadPreferences();const c={...p.codeIntelligence};c.disabled=${on ? "(c.disabled??[]).filter(l=>l!=='typescript')" : "[...(c.disabled??[]),'typescript']"};const next={...p,codeIntelligence:c};await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));})()`);
+    await typescript(false);
+    await wait(`${block(0)}?.dataset.bucket!=='merged'`);
+    await typescript(true);
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
     await js(`${showMerged}.click()`);
     await wait(

@@ -1,5 +1,5 @@
 import { diffArrays } from 'diff';
-import { blockResolutions, restoreMarkers, withProposals } from './conflict-carry';
+import { blockResolutions, heldProposals, restoreMarkers, withProposals } from './conflict-carry';
 import {
   conflictCount,
   editOpen,
@@ -1369,11 +1369,12 @@ export function withoutUnchosen(
   if (!proposals?.some(Boolean)) return undefined;
   const segments = parseConflicts(file.original);
   const texts = blockResolutions(segments, file.result);
-  if (!texts) return undefined;
+  const held = heldProposals(segments, file.result, proposals, texts);
+  if (!texts || !held) return undefined;
   const restore = proposals.flatMap((proposal, index) =>
     proposal &&
     !needsNoChoice(proposal, verdict, index) &&
-    texts[index] === proposal.text &&
+    held[index] &&
     !file.picks?.[index] &&
     !file.edits?.[index]
       ? [index]

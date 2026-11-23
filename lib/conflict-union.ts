@@ -512,23 +512,30 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 /** What an order-free unit is: both sides' units must all be one kind. */
 type OrderKind = 'method' | 'member' | 'import';
 /**
- * Where order doesn't matter (#476), the provable core only: per language, the parent node that holds the units (and,
- * where the parent type is ambiguous, the node that holds it), the unit types, and their kind. Plain methods of a class,
- * impl or interface body (Go: methods with a receiver); TypeScript interface and type-literal members, which are types
- * only; imports in Go, Rust, Java and C#. Nothing else: no fields, enum members, functions, keys, cases, list items or
- * statements, no JavaScript, TypeScript or Python imports.
+ * One kind of order-free unit: the parent node that holds the units (and, where the parent type is ambiguous, the node
+ * that holds it), the unit types, and, for a kind whose order can matter elsewhere, its proof (#481): given the units'
+ * parent and every unit both sides added, true only when no order of them can change what the program does.
  */
-const SCRIPT_ORDER_FREE = [
-  { parents: ['class_body'], types: ['method_definition'], kind: 'method' as const },
-  {
-    parents: ['interface_body', 'object_type'],
-    types: ['method_signature', 'property_signature'],
-    kind: 'member' as const,
-  },
+interface OrderFree {
+  parents: string[];
+  containers?: string[];
+  types: string[];
+  kind: OrderKind;
+  prove?: (units: RangeUnits, added: readonly RangeUnit[]) => boolean;
+}
+/**
+ * Where order doesn't matter (#476), the provable core only: plain methods of a class, impl or interface body (Go:
+ * methods with a receiver); TypeScript interface and type-literal members, which are types only; imports in Go, Rust,
+ * Java and C#. Since #481, with its own proof (docs/conflict-resolution.md): TypeScript `import type`. Nothing else: no
+ * fields, enum members, functions, keys, cases, list items or statements, no other JavaScript, TypeScript or Python
+ * imports. Rust enum variants and struct fields stay out: a crate root can rename the derives that read them.
+ */
+const SCRIPT_ORDER_FREE: OrderFree[] = [
+  { parents: ['class_body'], types: ['method_definition'], kind: 'method' },
+  { parents: ['program'], types: ['import_statement'], kind: 'import', prove: typeImports },
+  { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'], kind: 'member' },
 ];
-const ORDER_FREE: Partial<
-  Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[]; kind: OrderKind }[]>
-> = {
+const ORDER_FREE: Partial<Record<SyntaxLanguage, OrderFree[]>> = {
   typescript: SCRIPT_ORDER_FREE,
   tsx: SCRIPT_ORDER_FREE,
   javascript: [{ parents: ['class_body'], types: ['method_definition'], kind: 'method' }],
@@ -557,8 +564,21 @@ const PLAIN_NAMES = new Set(['identifier', 'property_identifier', 'field_identif
 const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
 /** Nodes that attach to the next declaration: a decorator, annotation or attribute just before the insertion. */
 const ATTACHING = new Set(['decorator', 'annotation', 'marker_annotation', 'attribute_list', 'attribute_item']);
+/**
+ * Comments that apply to the next line or declaration, whichever side's comes first: compiler and linter directives
+ * (`@ts-ignore`, `eslint-disable-next-line`, `nolint`, `noqa`, `type: ignore`, `go:` and `+build` lines), formatter
+ * switches, and doc comments (`/**`, `///`), which JSDoc types and `@deprecated` ride on.
+ */
+const DIRECTIVE =
+  /@ts-|eslint-|prettier-ignore|biome-ignore|deno-lint|oxlint|nolint|noqa|type:\s*ignore|pyright:|pylint:|mypy:|pragma|rustfmt|clippy|NOSONAR|istanbul|c8 ignore|v8 ignore|noinspection|ReSharper|@formatter|^\/\/\s*(?:go:|\+build|#)|^\/\*\*|^\/\/\//i;
 /** The units that aren't comments: comments ride along with the side that wrote them. */
 const real = (units: readonly RangeUnit[]) => units.filter((u) => !COMMENTS.has(u.type));
+/** A directive comment that applies to what follows it: just before the insertion, or last in a side's lines. */
+function directed(side: RangeUnits) {
+  const last = side.units.at(-1);
+  const trailing = last && COMMENTS.has(last.type) ? [last.name] : [];
+  return [...(side.comments ?? []), ...trailing].some((text) => DIRECTIVE.test(text.trim()));
+}
 
 /** What orderFree needs to know of the file: its path. */
 export interface OrderContext {
@@ -566,10 +586,10 @@ export interface OrderContext {
 }
 /**
  * Both sides inserted these whole nodes at one place, and their order can't change what the program does (#476): every
- * node, on both sides, is one allowed kind of one parent (ORDER_FREE, or a package.json dependency list), none
- * decorated, annotated or attributed, nothing that attaches to the next declaration just before them, each side adds at
- * least one, and no name (with its parameter types, for overloads) is added by both. Anything else, or any doubt, is
- * false.
+ * node, on both sides, is one allowed kind of one parent (ORDER_FREE, or a known JSON file's keyed object), with that
+ * kind's proof where it has one; none decorated, annotated or attributed; nothing that attaches to the next declaration
+ * just before them, and no directive comment there or at the end of a side; each side adds at least one, and no name
+ * (with its parameter types, for overloads) is added by both. Anything else, or any doubt, is false.
  */
 export function orderFree(
   language: SyntaxLanguage,
@@ -581,15 +601,17 @@ export function orderFree(
   const [a, b] = [real(ours.units), real(theirs.units)];
   if (!a.length || !b.length) return false;
   if ([ours.before, theirs.before].some((type) => type !== undefined && ATTACHING.has(type))) return false;
-  if (language === 'json') return dependencies(ours, theirs, context.path);
+  if (directed(ours) || directed(theirs)) return false;
+  if (language === 'json') return keyedObject(ours, theirs, context.path);
   const allowed = (ORDER_FREE[language] ?? []).filter(
     (k) =>
       k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
   );
-  const kindOf = (u: RangeUnit) => allowed.find((k) => k.types.includes(u.type))?.kind;
-  const kinds = new Set([...a, ...b].map(kindOf));
-  const [kind] = kinds;
-  if (kinds.size !== 1 || !kind) return false;
+  const ruleOf = (u: RangeUnit) => allowed.find((k) => k.types.includes(u.type));
+  const rules = new Set([...a, ...b].map(ruleOf));
+  const [rule] = rules;
+  if (rules.size !== 1 || !rule) return false;
+  const { kind } = rule;
   // Python runs default values and annotations when it runs `def`, in order; a `__name` is mangled with its class.
   const python = (u: RangeUnit) =>
     language !== 'python' ||
@@ -605,7 +627,7 @@ export function orderFree(
     (kind === 'import' || PLAIN_NAMES.has(u.nameKind ?? '')) &&
     python(u) &&
     using(u);
-  if (![...a, ...b].every(fits)) return false;
+  if (![...a, ...b].every(fits) || (rule.prove && !rule.prove(ours, [...a, ...b]))) return false;
   // An import by its line; a method by its name, with its parameter types where overloads differ by them.
   const key = (u: RangeUnit) =>
     kind === 'import'
@@ -617,6 +639,17 @@ export function orderFree(
   return !b.some((u) => mine.has(key(u)));
 }
 
+/**
+ * TypeScript imports: an import runs its module, in order, and nothing in the syntax tree shows that a module has no
+ * side effects, so a value import is never order-free. `import type …` is erased whole from the output (even with
+ * `verbatimModuleSyntax`), so it runs nothing: both sides' imports must all be `import type`, binding different names.
+ * `import { type A }` is not: it can leave `import {} from './a'`, which runs the module.
+ */
+function typeImports(_units: RangeUnits, added: readonly RangeUnit[]) {
+  const binds = added.flatMap((u) => u.binds ?? []);
+  return added.every((u) => u.typeOnly && u.binds?.length) && new Set(binds).size === binds.length;
+}
+
 /** A JSON string, read as JSON reads it; undefined for anything else. */
 function jsonString(text: string | undefined) {
   if (text === undefined || !/^"(?:[^"\\]|\\.)*"$/.test(text.trim())) return undefined;
@@ -626,19 +659,37 @@ function jsonString(text: string | undefined) {
     return undefined;
   }
 }
-/** The package.json objects whose keys are package names only, at the top of the file. */
-const DEPENDENCIES = new Set(['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']);
 /**
- * package.json dependency lists (#476): both sides added whole pairs to one of the top-level dependency lists, and
- * every key in it, old and new, is different. No other JSON object: tools read keys in order (`exports`, `scripts`
- * globs, `moduleNameMapper`).
+ * Known JSON files and the top-level objects in them whose keys are looked up by name only, never read in order: per
+ * file name, the owning keys. package.json's dependency lists (#476), `peerDependenciesMeta` (per package) and
+ * `engines` (per tool); a tsconfig or jsconfig's `compilerOptions` (per option) (#481).
  */
-function dependencies(ours: RangeUnits, theirs: RangeUnits, path: string) {
+const KEYED_OBJECTS: [RegExp, ReadonlySet<string>][] = [
+  [
+    /(^|[\\/])package\.json$/,
+    new Set([
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+      'peerDependenciesMeta',
+      'engines',
+    ]),
+  ],
+  [/(^|[\\/])(tsconfig(\.[\w-]+)?|jsconfig)\.json$/, new Set(['compilerOptions'])],
+];
+/**
+ * A known file's keyed object (KEYED_OBJECTS): both sides added whole pairs to one of its top-level objects that are
+ * read by key only, and every key in it, old and new, is different. No other JSON object: tools read keys in order
+ * (`exports`, `scripts` globs, `moduleNameMapper`), or break ties by order (`compilerOptions.paths`).
+ */
+function keyedObject(ours: RangeUnits, theirs: RangeUnits, path: string) {
   const all = ours.all;
-  if (!/(^|[\\/])package\.json$/.test(path) || ours.parent !== 'object' || !all) return false;
+  const owners = KEYED_OBJECTS.find(([file]) => file.test(path))?.[1];
+  if (!owners || ours.parent !== 'object' || !all) return false;
   if (![...ours.units, ...theirs.units, ...all].every((u) => u.type === 'pair')) return false;
   const owner = ours.path?.map(jsonString);
-  if (owner?.length !== 1 || !DEPENDENCIES.has(owner[0] ?? '')) return false;
+  if (owner?.length !== 1 || !owners.has(owner[0] ?? '')) return false;
   const keys = all.flatMap((u) => jsonString(u.name) ?? []);
   return keys.length === all.length && new Set(keys).size === keys.length;
 }

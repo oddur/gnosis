@@ -40,7 +40,7 @@ import {
   type ConflictModel,
 } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
-import { blockFingerprints } from '../lib/conflict-stats';
+import { blockFingerprints, type StatsBlockRef } from '../lib/conflict-stats';
 import { nextCompare } from '../lib/conflict-shortcuts';
 import type { PrFileContents } from '../lib/pr-changes';
 import type { Preferences } from '../lib/types';
@@ -620,15 +620,22 @@ export function ConflictDiff({
   onAllResolved?: () => void;
   picks?: BlockPicks;
   onPick?: (index: number, choice: BlockPick | undefined) => void;
-  /** Each choice with the one it replaces and the conflict's fingerprint, for the local stats. Undefined is Undo. */
-  onChoice?: (key: string | undefined, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
+  /**
+   * Each choice with the one it replaces and the conflict's index and fingerprint, for the local stats. Undefined is
+   * Undo.
+   */
+  onChoice?: (block: StatsBlockRef | undefined, before: BlockPick | undefined, after: BlockPick | undefined, picked: BlockPick | undefined) => void;
 }) {
   // Once per file version, never on a click.
   const statsKeys = useMemo(() => (onChoice ? blockFingerprints(original) : undefined), [original, !onChoice]);
+  const statsBlock = (index: number) => {
+    const key = statsKeys?.[index];
+    return key === undefined ? undefined : { key, index };
+  };
   const cycleCompare = useRef<() => boolean>(undefined);
   const { root, model, total, choose, undo, editStart, saveEdit } = useConflictChoices({
     cycleCompare,
-    onChoice: onChoice && ((index, before, after, picked) => onChoice(statsKeys?.[index], before, after, picked)),
+    onChoice: onChoice && ((index, before, after, picked) => onChoice(statsBlock(index), before, after, picked)),
     original,
     contents,
     proposals,

@@ -12,6 +12,7 @@ import {
   mergedUndoRate,
   normalizeConflictStats,
   preparedBuckets,
+  carryStatsBlocks,
   validChoice,
 } from '../lib/conflict-stats';
 import { CONFLICT_STATS_NAME, STATS_LOADING, createConflictStatsStore } from '../src/conflict-stats-store';
@@ -134,8 +135,9 @@ void test('item 10 and storage: counts persist, Reset writes before it forgets, 
   for (const secret of ['secret', 'launch', 'hunter2', 'swordfish', 'github.com', 'feature', '.ts'])
     assert.equal(text.includes(secret), false, `The saved stats contain "${secret}"`);
   assert.equal(saved.size, 1, 'One record for the whole app');
-  assert.deepEqual(store.reset(), emptyConflictStats());
-  assert.deepEqual(createConflictStatsStore(createMemoryStorage(saved)).get(), emptyConflictStats());
+  // Reset zeroes the counts and starts the next epoch.
+  assert.deepEqual(store.reset(), { ...emptyConflictStats(), epoch: 1 });
+  assert.deepEqual(createConflictStatsStore(createMemoryStorage(saved)).get(), { ...emptyConflictStats(), epoch: 1 });
   // Saved data not loaded: Reset is refused and writes nothing; a count is dropped, never written as zeros.
   let loaded = false;
   const writes: unknown[] = [];
@@ -314,4 +316,93 @@ void test('item 1: undone and re-chosen count once per conflict, saved on the dr
   assert.equal(markChoice(reopened, { path: 'other.ts', key: launch, count: 'undone' }), undefined);
   assert.equal(markChoice(reopened, { path: SECRET, key: 'abc:12', count: 'undone' }), undefined);
   assert.equal(markChoice(session([file(true)]), { path: SECRET, key: launch, count: 'undone' }), undefined);
+});
+
+void test('#490 1: a choice counts on the conflict at its index, also among identical conflicts', () => {
+  const s = session([file(true, { original: `${LAUNCH}middle\n${LAUNCH}`, proposals: [null, null] })]);
+  opened(s);
+  const [first, second] = blockFingerprints(s.files[0].original);
+  assert.equal(first, second);
+  assert.deepEqual(markChoice(s, { path: SECRET, key: second, index: 1, count: 'rechosen' }), {
+    kind: 'bucket',
+    bucket: 'decide',
+    count: 'rechosen',
+  });
+  assert.deepEqual(s.files[0].statsBlocks?.map((b) => !!b?.rechosen), [false, true]);
+  // The first is its own conflict: it still counts once.
+  assert.ok(markChoice(s, { path: SECRET, key: first, index: 0, count: 'rechosen' }));
+  // A stale index, whose conflict has another fingerprint, falls back to the first conflict with the fingerprint.
+  const [launch, code] = blockFingerprints(session([file(true)]).files[0].original);
+  const other = session([file(true)]);
+  opened(other);
+  assert.deepEqual(markChoice(other, { path: SECRET, key: launch, index: 1, count: 'undone' }), { kind: 'bucket', bucket: 'merged', count: 'undone' });
+  assert.equal(other.files[0].statsBlocks?.[0]?.undone, true);
+  assert.ok(markChoice(other, { path: SECRET, key: code, index: 1, count: 'rechosen' }));
+  // The renderer's index is checked like the rest of the choice.
+  const id = 'a'.repeat(64);
+  assert.deepEqual(validChoice({ id, path: SECRET, key: launch, index: 1, count: 'undone' }), { id, path: SECRET, key: launch, index: 1, count: 'undone' });
+  assert.equal(validChoice({ id, path: SECRET, key: launch, index: -1, count: 'undone' }), undefined);
+  assert.equal(validChoice({ id, path: SECRET, key: launch, index: 1.5, count: 'undone' }), undefined);
+});
+
+void test('#490 3: after the base moved, each unchanged conflict keeps its counted block and flags', () => {
+  const old = session([file(true)]);
+  opened(old);
+  const [launch] = blockFingerprints(old.files[0].original);
+  assert.ok(markChoice(old, { path: SECRET, key: launch, count: 'undone' }));
+  // Main moved: the second conflict changed, the first is the same.
+  const moved = file(true, { original: `${LAUNCH}middle\n${block('const code = 1;', 'const code = 3;')}` });
+  carryStatsBlocks(moved, old.files[0]);
+  assert.deepEqual(moved.statsBlocks, [{ key: launch, bucket: 'merged', undone: true }, null]);
+  // The undo is not counted again, and the changed conflict counts as shown on the next open.
+  const next = session([moved]);
+  assert.equal(markChoice(next, { path: SECRET, key: launch, count: 'undone' }), undefined);
+  assert.deepEqual(opened(next).events, [{ kind: 'bucket', bucket: 'decide', count: 'shown', by: 1 }]);
+  // No conflict in common: nothing carried.
+  const fresh = file(true, { original: block('a', 'b') });
+  carryStatsBlocks(fresh, old.files[0]);
+  assert.equal(fresh.statsBlocks, undefined);
+});
+
+void test('#490 4: a whole-file proposal counts each conflict as accepted in the bucket it was shown in, never Decide', () => {
+  const wholeFile = { source: 'mergiraf' as const, text: 'const launch = 3;\nmiddle\nconst code = "both";\n' };
+  const f = file(true, { wholeFile });
+  const [launch, code] = blockFingerprints(f.original);
+  f.statsBlocks = [
+    { key: launch, bucket: 'merged' },
+    { key: code, bucket: 'decide' },
+  ];
+  f.result = wholeFile.text;
+  assert.deepEqual(countPushed(session([f])), [
+    { kind: 'session', count: 'pushed' },
+    { kind: 'bucket', bucket: 'merged', count: 'accepted', by: 1 },
+  ]);
+});
+
+void test('#490 5: after Reset, conflicts counted before count nothing more, and count as shown again', () => {
+  const s = session([file(true)]);
+  opened(s);
+  const [launch] = blockFingerprints(s.files[0].original);
+  // Reset: epoch 1. The old blocks are no longer counted ones.
+  assert.equal(markChoice(structuredClone(s), { path: SECRET, key: launch, count: 'undone' }, 1), undefined);
+  assert.deepEqual(countPushed(structuredClone(s), 1), [], 'Nothing pushed counts against a reset');
+  const again = countOpened(undefined, s, { restart: false, keep: false }, [], 1);
+  assert.deepEqual(again.events.filter((e) => e.kind === 'bucket'), [
+    { kind: 'bucket', bucket: 'merged', count: 'shown', by: 1 },
+    { kind: 'bucket', bucket: 'decide', count: 'shown', by: 1 },
+  ]);
+  assert.deepEqual(s.files[0].statsBlocks?.map((b) => b?.epoch), [1, 1]);
+  assert.deepEqual(markChoice(s, { path: SECRET, key: launch, count: 'undone' }, 1), { kind: 'bucket', bucket: 'merged', count: 'undone' });
+  // Undone never goes above shown: once per conflict in the epoch.
+  assert.equal(markChoice(s, { path: SECRET, key: launch, count: 'undone' }, 1), undefined);
+});
+
+void test('#490 6: an Undo never counts under Decide', () => {
+  const s = session([file(true)]);
+  opened(s);
+  const [, code] = blockFingerprints(s.files[0].original);
+  assert.equal(s.files[0].statsBlocks?.[1]?.bucket, 'decide');
+  assert.equal(markChoice(s, { path: SECRET, key: code, index: 1, count: 'undone' }), undefined);
+  assert.equal(s.files[0].statsBlocks[1].undone, undefined);
+  assert.ok(markChoice(s, { path: SECRET, key: code, index: 1, count: 'rechosen' }));
 });

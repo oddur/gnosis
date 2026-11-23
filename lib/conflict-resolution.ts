@@ -407,6 +407,17 @@ export function hasConflictMarkers(text: string) {
   return MARKER_LINES.test(text);
 }
 
+/**
+ * The file's whole-file proposal by source: structural merge's (`'mergiraf'`), or the move rule's (`'moved'`,
+ * lib/conflict-moved.ts). Undefined for none, or one from another source.
+ */
+export function wholeFileFrom<S extends ConflictProposal['source']>(
+  file: Pick<ConflictFile, 'wholeFile'>,
+  source: S
+): (ConflictProposal & { source: S }) | undefined {
+  return file.wholeFile?.source === source ? (file.wholeFile as ConflictProposal & { source: S }) : undefined;
+}
+
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
 /** Derive the stage from the displayed draft, including edits not saved yet. */
 export function conflictFileStage(

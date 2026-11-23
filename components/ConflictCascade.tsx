@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cascadePrLine, cascadeReviewLine, cascadeSentence, type CascadeState } from '../lib/conflict-cascade';
 import { hasConflictMarkers, type ConflictSession } from '../lib/conflict-resolution';
 import { Button } from './ui/button';
@@ -17,6 +17,8 @@ export interface ConflictCascade {
 export function useConflictCascade(session: ConflictSession | undefined, busy: boolean): ConflictCascade {
   const [value, setValue] = useState<{ key: string; state: CascadeState | undefined }>();
   const [retries, setRetries] = useState(0);
+  /** The Check again clicks already sent: only the click itself skips the back-off, never a later ask. */
+  const sent = useRef(0);
   const ready =
     !!session &&
     session.status === 'editing' &&
@@ -38,7 +40,8 @@ export function useConflictCascade(session: ConflictSession | undefined, busy: b
         // An older main process, or a test without the handler: nothing shows.
         () => {}
       );
-    void read(retries > 0);
+    void read(retries > sent.current);
+    sent.current = retries;
     const off = api.onConflictCascadeChanged?.((changed) => {
       if (changed === id) void read();
     });
