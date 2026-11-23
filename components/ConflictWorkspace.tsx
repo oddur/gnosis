@@ -106,10 +106,9 @@ import {
   typeErrorOf,
   withTypeError,
 } from '../lib/conflict-verify';
-import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
+import { verdictKey, verdictRuns } from '../lib/conflict-verdict-key';
 import { summaryEntry } from '../lib/conflict-header';
-import { currentCodeIntelligence } from '../lib/use-syntax-contents';
-import { codeIntelligenceSettings } from '../lib/code-intelligence';
+import { useDisabledLanguages } from '../lib/use-syntax-contents';
 import { useConflictChoiceStats } from '../lib/use-conflict-stats';
 import { ModelProposalWaits, useConflictModel } from '../lib/use-conflict-model';
 import { checkFormatting, checkSyntax } from '../lib/syntax-scope-client';
@@ -685,7 +684,7 @@ export function ConflictWorkspace({
   // Checks of each file's proposals, by path, with the fingerprint of the proposals they checked. A result for other
   // proposals never counts: the file's proposals are Check until their own checks finish.
   const [verdicts, setVerdicts] = useState<Record<string, { key: string; verdict: Verdict }>>({});
-  const checking = useRef(new Map<string, string>());
+  const checking = useRef(verdictRuns());
   // The main process checks proposals and saves the result with the draft (src/conflict-checks.ts). The worker checks
   // only a file whose draft has no result for its proposals: a draft from an earlier build, or a session made in a test.
   // The opt-in type check (#445 item 24): its status, from the main process while this draft is open.
@@ -717,21 +716,24 @@ export function ConflictWorkspace({
   const typeNoteOf = (f: ConflictFile) => typeErrorOf(f, typeCheck);
   // Settings › Code intelligence as it is now (#464): turning a language off while the dialog is open drops the verdicts
   // made with it on, and the buckets follow at once.
-  const disabled = useMemo(
-    () => disabledLanguages(preferences ? codeIntelligenceSettings(preferences) : currentCodeIntelligence()),
-    [preferences?.codeIntelligence]
-  );
+  const disabled = useDisabledLanguages(preferences);
   const verdictOf = (f: ConflictFile) => {
-    if (f.verdict?.key === verdictKey(f, disabled)) return withTypeError(f.verdict.verdict, typeNoteOf(f));
+    if (f.verdict?.key === verdictKey(f, disabled)) {
+      // The saved verdict stands: a check of the dialog's still in flight for the file no longer counts.
+      checking.current.drop(f.path);
+      return withTypeError(f.verdict.verdict, typeNoteOf(f));
+    }
     const entry = f.proposals || f.wholeFile ? verdicts[f.path] : undefined;
     return entry?.key === verdictKey(f, disabled) ? withTypeError(entry.verdict, typeNoteOf(f)) : undefined;
   };
   useEffect(() => {
+    // A settings change drops every check in flight: it read the settings while it ran (lib/conflict-verdict-key.ts).
+    checking.current.sync(disabled.join());
     for (const f of session?.files ?? []) {
       if (!f.proposals && !f.wholeFile) continue;
       const key = verdictKey(f, disabled);
-      if (verdictOf(f) || checking.current.get(f.path) === key) continue;
-      checking.current.set(f.path, key);
+      if (verdictOf(f) || checking.current.running(f.path, key)) continue;
+      const run = checking.current.start(f.path, key);
       void (
         f.wholeFile
           ? verifyWholeFile(f, f.wholeFile, checkSyntax)
@@ -740,7 +742,7 @@ export function ConflictWorkspace({
         .catch(() => ({ merged: false, note: 'Gnosis couldn’t check this result.' }))
         // A slower check of earlier proposals never replaces the result for the current ones.
         .then((verdict) => {
-          if (checking.current.get(f.path) === key)
+          if (checking.current.accepts(f.path, run))
             setVerdicts((previous) => ({ ...previous, [f.path]: { key, verdict } }));
         });
     }

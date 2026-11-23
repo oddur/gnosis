@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { verdictRuns } from '../lib/conflict-verdict-key';
 import {
   canRetryStructural,
   conflictFileAction,
@@ -114,4 +115,31 @@ void test('Try structural merge again shows only on the prepared draft, where it
     false,
     'A whole-file proposal already holds the result'
   );
+});
+
+void test('a check of the dialog’s own started before a settings change never counts, even when the key comes back (#531)', () => {
+  const runs = verdictRuns();
+  runs.sync('');
+  const off = 'key-with-typescript-off';
+  // TypeScript off: a check starts.
+  runs.sync('typescript');
+  const early = runs.start('src/a.ts', off);
+  assert.equal(runs.running('src/a.ts', off), true);
+  // On, then off again before it lands: the same key, but it read the settings while they changed.
+  runs.sync('');
+  runs.sync('typescript');
+  assert.equal(runs.running('src/a.ts', off), false, 'A new check starts');
+  assert.equal(runs.accepts('src/a.ts', early), false, 'The early result is dropped');
+  const late = runs.start('src/a.ts', off);
+  assert.equal(runs.accepts('src/a.ts', late), true);
+  // A newer check for the path wins over an older one.
+  const newer = runs.start('src/a.ts', 'other-key');
+  assert.equal(runs.accepts('src/a.ts', late), false);
+  // The saved verdict stands for the path: nothing in flight counts.
+  runs.drop('src/a.ts');
+  assert.equal(runs.accepts('src/a.ts', newer), false);
+  // The same settings again change nothing.
+  const kept = runs.start('src/b.ts', off);
+  runs.sync('typescript');
+  assert.equal(runs.accepts('src/b.ts', kept), true);
 });
