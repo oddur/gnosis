@@ -172,7 +172,9 @@ void test('the sampler names the functions inside a long task that no span cover
     await new Promise((resolve) => setTimeout(resolve, 60));
     const task = mainLoopReport().longTasks.find((t) => t.duration >= 150);
     assert.ok(task, 'The block is a long task');
-    assert.deepEqual(task.spans, [], 'No span names it');
+    // The monitor lists garbage-collection pauses as spans on purpose (src/main-blocking.ts), and a minor GC can land
+    // inside any 180 ms of work: a Windows runner had one of 31 ms. The point here is that no work span names it.
+    assert.deepEqual(task.spans.filter((span) => !span.name.startsWith('gc')), [], 'No work span names it');
     assert.ok(task.profile && task.profile.samples > 5, `The sampler took samples inside it: ${JSON.stringify(task.profile)}`);
     assert.ok(task.profile.total.some((fn) => /^unnamedPeriodicWork\d* /.test(fn.name)), `The work is named: ${JSON.stringify(task.profile)}`);
   } finally {

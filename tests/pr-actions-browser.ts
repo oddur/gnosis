@@ -61,7 +61,7 @@ void app.whenReady().then(async () => {
       window.actionState=url=>{const member=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);if(!member)throw Error('Unknown mock PR');const stack=q.items.find(i=>i.subject.members.some(m=>m.url===url)&&i.subject.kind==='stack');return {...member,account:'oddur',id:'PR_'+member.number,checkedAt:Date.now(),state:member.merged?'MERGED':'OPEN',headSha:window.changedHead?'changed-head':window.pushedHead??member.headSha,headRepo:member.repo,repository:member.repo,archived:false,canWrite:!window.denyWrite,mergeable:window.conflicts?'CONFLICTING':'MERGEABLE',mergeState:window.conflicts?'DIRTY':'CLEAN',methods:['SQUASH','MERGE','REBASE'],defaultMethod:'SQUASH',autoMerge:member.autoMerge?.method??null,canEnableAuto:true,canDisableAuto:true,canUpdateBranch:true,canChangeDraft:!window.denyWrite,mergeQueue:false,inMergeQueue:false,stack:stack&&window.nativeStack?{number:8,baseBranch:'main',complete:true,mergeQueue:false,members:stack.subject.members.map(m=>({...m,state:'OPEN'}))}:null};};
       const originalStatus=window.electronAPI.getPrStatus;
       window.electronAPI.getPrStatus=async(...args)=>{const result=await originalStatus(...args);const state=window.actionState(args[0]);return {...result,isDraft:state.isDraft,signals:{...result.signals,checkedAt:Date.now(),readiness:{...result.signals.readiness,isDraft:state.isDraft,mergeable:state.mergeable,mergeState:state.mergeState}}};};
-      window.electronAPI.getPrActionState=async(url)=>window.actionState(url);
+      window.stateCalls=0;window.electronAPI.getPrActionState=async(url)=>{window.stateCalls++;await window.stateHold;return window.actionState(url);};
       window.headerState=null;window.electronAPI.conflictHeader=async(url)=>{window.headerUrl=url;return window.headerState;};
       window.electronAPI.onConflictHeaderChanged=cb=>{window.headerChanged=cb;return()=>{};};
       window.electronAPI.getStackMergePlan=async urls=>{const members=urls.map(window.actionState);return {target:members.at(-1),members,baseBranch:members[0].baseBranch,methods:['SQUASH','MERGE','REBASE'],mergeQueue:false,createStack:!window.nativeStack};};
@@ -279,6 +279,25 @@ void app.whenReady().then(async () => {
     await wait(`${toggle('Auto-merge')}?.textContent.includes('Rebase')`);
     await flip('Auto-merge');
     await wait("window.writes.at(-1)?.kind==='disable-auto'");
+
+    // A change that finishes while the merge confirmation loads reads GitHub's state again. That read once took the
+    // confirmation's counter and threw its plan away, leaving an empty confirmation (main's macOS readiness run).
+    await js('window.actionHold=new Promise(r=>window.releaseAction=r);0');
+    await flip('Auto-merge');
+    await wait("window.writes.at(-1)?.kind==='enable-auto'");
+    await js('window.stateHold=new Promise(r=>window.releaseState=r);0');
+    await click('Merge');
+    await wait("!!document.querySelector('.pr-merge-confirm')");
+    const readsBefore = await js<number>('window.stateCalls');
+    await js('window.releaseAction();window.actionHold=undefined');
+    await wait(`window.stateCalls>${readsBefore}`);
+    await js('window.releaseState();window.stateHold=undefined');
+    await wait("!!document.querySelector('.pr-merge-confirm .pr-action-members') && [...document.querySelectorAll('.pr-merge-confirm button')].some(b=>b.textContent==='Merge pull request'&&!b.disabled)");
+    await click('Cancel');
+    await wait("!document.querySelector('.pr-merge-confirm')");
+    await flip('Auto-merge');
+    await wait("window.writes.at(-1)?.kind==='disable-auto'");
+    await wait(`${toggle('Auto-merge')}?.getAttribute('aria-checked')==='false' && ${toggle('Auto-merge')}?.getAttribute('aria-busy')!=='true'`);
 
     // Update is one menu; each way keeps its confirmation.
     await updateItem('Update with rebase…');

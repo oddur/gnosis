@@ -191,21 +191,26 @@ export function PrActions({
   const identity = JSON.stringify([member.url, member.headSha, member.merged, member.state, stackMembers?.map((m) => [m.url, m.headSha])]);
   const current = useRef(identity);
   current.current = identity;
+  // Reads of GitHub's state for the header count apart from confirmations (`version`): a refresh that starts while a
+  // confirmation loads, such as ⋯ › Refresh just before Merge, must not discard its plan, and closing a confirmation
+  // must not drop the refresh after a merge.
+  const reads = useRef(0);
   async function refresh() {
-    const n = ++version.current;
+    const n = ++reads.current;
     setLoading(true);
     setError('');
     try {
       const next = await window.electronAPI.getPrActionState(member.url, true);
-      if (version.current === n) setState(next);
+      if (reads.current === n) setState(next);
     } catch (e) {
-      if (version.current === n) setError(messageOf(e));
+      if (reads.current === n) setError(messageOf(e));
     } finally {
-      if (version.current === n) setLoading(false);
+      if (reads.current === n) setLoading(false);
     }
   }
   useEffect(() => {
-    const n = ++version.current;
+    version.current++;
+    const n = ++reads.current;
     setState(undefined);
     setDialog(undefined);
     setError('');
@@ -214,17 +219,18 @@ export function PrActions({
       void window.electronAPI
         .getPrActionState(member.url)
         .then((next) => {
-          if (version.current === n) setState(next);
+          if (reads.current === n) setState(next);
         })
         .catch((e: unknown) => {
-          if (version.current === n) setError(messageOf(e));
+          if (reads.current === n) setError(messageOf(e));
         })
         .finally(() => {
-          if (version.current === n) setLoading(false);
+          if (reads.current === n) setLoading(false);
         });
     }
     return () => {
       version.current++;
+      reads.current++;
     };
   }, [identity]);
   useEffect(() => {
@@ -710,9 +716,9 @@ export function PrActions({
               allowed: state?.methods,
               load: () => {
                 if (state) return;
-                const n = version.current;
+                const n = reads.current;
                 void window.electronAPI.getPrActionState(member.url).then((next) => {
-                  if (version.current === n) setState(next);
+                  if (reads.current === n) setState(next);
                 }, () => undefined);
               },
             })
