@@ -10,12 +10,8 @@ import { fileWriter, resolverBaseline } from '../lib/conflict-diff';
 import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
-import {
-  hasConflictMarkers,
-  type ConflictRequest,
-  type ConflictSession,
-  type SavedBlockEdit,
-} from '../lib/conflict-resolution';
+import type { ConflictRequest, ConflictSession, SavedBlockEdit } from '../lib/conflict-resolution';
+import { markersLeft } from '../lib/conflict-carry';
 import { preparedDraft, unchosenConflicts, waitingHint } from '../lib/conflict-verify';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { useDisabledLanguages } from '../lib/use-syntax-contents';
@@ -243,7 +239,7 @@ export function RestackReview({
           {plan.blocked.files.map((file) => {
             const value = drafts[file.path] ?? file.result;
             const dirty = value !== file.result;
-            const markers = hasConflictMarkers(value);
+            const markers = markersLeft(file, value);
             const update = (text: string) => {
               const next = { ...drafts, [file.path]: text };
               setDrafts(next);

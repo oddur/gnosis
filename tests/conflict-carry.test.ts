@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   blockResolutions,
   carryFile,
+  markersLeft,
   relabelMarkers,
   revisionChange,
   withoutEarlierConflicts,
@@ -178,6 +179,46 @@ void test('carry keeps Use the proposal as your choice on a block it reuses (#44
   assert.equal(carried.reused, 1);
   assert.equal(carried.file.result, 'x\nab\ny\n');
   assert.deepEqual(carried.file.picks, ['proposal']);
+});
+
+void test('a lone ======= in Markdown is a heading only when it is outside every conflict, all of them decided (#457)', () => {
+  const md = (original: string) => ({ path: 'docs/usage.md', original, base: '', ours: '', theirs: '' });
+  // The heading sits in Git's merged text; the conflict below it is decided.
+  const below = `Usage\n=======\n\n${block('one\n', 'zero\n', 'two\n')}`;
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n'), false);
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\ntwo\n'), false, 'Both sides');
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\nthree\n'), false, 'Your own text for the conflict');
+  // The same draft in a file that isn't Markdown, or a conflict still open: strict.
+  assert.equal(markersLeft({ ...md(below), path: 'docs/usage.txt' }, 'Usage\n=======\n\none\n'), true);
+  assert.equal(markersLeft(md(below), below), true);
+  // Your edit outside the conflicts: the draft can't be split, so nothing proves the line is the heading.
+  assert.equal(markersLeft(md(below), 'Usage!\n=======\n\none\n'), true);
+  // The PR's lines end with the heading's text: Git's separator sits right under it. Left behind, it still counts.
+  const heading = `Intro\n${block('Usage\n', 'Use\n', 'How to use\n')}\nMore\n`;
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n=======\nHow to use\n\nMore\n'), true);
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n\nMore\n'), false);
+  // An underline inside a conflict can't be told apart from the separator: it counts, even as one side's text.
+  const inside = `${block('Usage\n=======\n', 'Use\n', 'Usage\n-----\n')}text\n`;
+  assert.equal(markersLeft(md(inside), 'Usage\n=======\ntext\n'), true);
+  // The other markers count everywhere.
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n>>>>>>> main\n'), true);
+  assert.equal(markersLeft(md(''), 'text\n'), false);
+});
+
+// #529 review: sides that hold their own marker lines make Git's blocks pair wrongly, so nothing is exempt.
+void test('a Markdown side with its own <<<<<<< or >>>>>>> line gets no heading exception', () => {
+  // `git merge-file -p ours base theirs` on these sides: Git's separator sits between two misread blocks.
+  const sides = {
+    base: 'start\nold\nend\n',
+    ours: 'start\nT\n=======\n>>>>>>> q\nend\n',
+    theirs: 'start\n<<<<<<< p\n=======\nU\nend\n',
+  };
+  const original = 'start\n<<<<<<< ours\nT\n=======\n>>>>>>> q\n=======\n<<<<<<< p\n=======\nU\n>>>>>>> theirs\nend\n';
+  const file = { path: 'docs/usage.md', original, ...sides };
+  // Both on the first block, main's on the second: the draft holds Git's separator, and it splits cleanly.
+  const draft = 'start\nT\n=======\nU\nend\n';
+  assert.ok(blockResolutions(parseConflicts(original), draft)?.every((text) => text !== undefined));
+  assert.equal(markersLeft(file, draft), true);
 });
 
 void test('a block carry cannot reuse takes the fresh proposal only when the fresh draft holds it (#451)', () => {

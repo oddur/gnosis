@@ -28,6 +28,7 @@ import {
   carryFile,
   heldProposals,
   conflictKeys,
+  markersLeft,
   relabelMarkers,
   revisionChange,
   withProposals,
@@ -1587,7 +1588,7 @@ export function createConflictResolutionService(deps: Deps) {
         !modelText &&
         !old.unsupported &&
         !next.unsupported &&
-        !hasConflictMarkers(old.result)
+        !markersLeft(old, old.result)
       ) {
         const merged = await mergeText(
           dir,
@@ -2170,7 +2171,7 @@ export function createConflictResolutionService(deps: Deps) {
   function assertReviewed(session: ConflictSession) {
     if (session.preparation === 'up-to-date')
       throw new Error('The PR already contains the base branch. No update is needed.');
-    if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
+    if (session.files.some((f) => !f.resolved || f.unsupported || markersLeft(f, f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
     // The same guard as Mark reviewed, at the last moment: a conflict in Check without a choice is never pushed.
     for (const file of session.files) assertChosen(file, { contents: file.result });
@@ -2841,7 +2842,7 @@ export function createConflictResolutionService(deps: Deps) {
               Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
             )
               throw new Error('This paused file cannot be edited.');
-            if (request.resolved && hasConflictMarkers(request.contents))
+            if (request.resolved && markersLeft(file, request.contents))
               throw new Error('Remove the remaining conflict markers first.');
             if (request.resolved) assertChosen(file, request);
             file.result = request.contents;
@@ -2914,7 +2915,7 @@ export function createConflictResolutionService(deps: Deps) {
             Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
           )
             throw new Error('This file cannot be saved in the conflict editor.');
-          if (request.resolved && hasConflictMarkers(request.contents))
+          if (request.resolved && markersLeft(file, request.contents))
             throw new Error('Remove the remaining conflict markers first.');
           if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { runConflictProcess } from './conflict-process';
 import { hasConflictMarkers, type ConflictFile } from '../lib/conflict-resolution';
+import { markersLeft } from '../lib/conflict-carry';
 
 /** Git's resolution memory is local to one account/repository, never the user's Git configuration. */
 export function createConflictMemory(directory: () => string) {
@@ -135,7 +136,7 @@ export function createConflictMemory(directory: () => string) {
         for (const file of files) {
           signal.throwIfAborted();
           if (file.unsupported || !hasConflictMarkers(file.original)) continue;
-          if (record && (!file.resolved || hasConflictMarkers(file.result))) continue;
+          if (record && (!file.resolved || markersLeft(file, file.result))) continue;
           // A synthetic path avoids checking out any repository-controlled paths or attributes.
           const stages = [];
           for (const [index, text] of [file.base, file.ours, file.theirs].entries()) {
@@ -153,7 +154,7 @@ export function createConflictMemory(directory: () => string) {
             await git(['rerere']);
           } else {
             const contents = await fs.readFile(path.join(temp, 'conflict.txt'), 'utf8');
-            if (contents !== file.original && !hasConflictMarkers(contents)) proposals.set(file.path, contents);
+            if (contents !== file.original && !markersLeft(file, contents)) proposals.set(file.path, contents);
           }
         }
         return proposals;
