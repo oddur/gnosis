@@ -430,6 +430,7 @@ export function writerOf(source: string | undefined, by?: string) {
       return 'you in an earlier merge';
     case 'union':
     case 'same':
+    case 'layout':
     case 'moved':
       return 'Gnosis’s rule';
     default:

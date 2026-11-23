@@ -42,13 +42,14 @@ export interface ConfirmItem {
 }
 /**
  * What made a file yours as a whole, when its conflicts can't be told apart: your edit (`manual`), the suggestion you
- * used (`agent`, or `mergiraf` asked for again), a remembered resolution (`rerere`), or its whole-file proposal.
+ * used (`agent`, or `mergiraf` asked for again), a remembered resolution (`rerere`), or its whole-file proposal:
+ * structural merge's (`whole-file`) or the moved-code rule's (`whole-moved`, lib/conflict-moved.ts).
  */
-export type ConfirmWhole = ConflictFile['source'] | 'whole-file';
+export type ConfirmWhole = ConflictFile['source'] | 'whole-file' | 'whole-moved';
 /** One file's part of one group: the change from `before` to `after`, with each conflict's lines in `after`. */
 export interface ConfirmFile {
   path: string;
-  /** main renamed the file: its path on the PR branch. */
+  /** main renamed the file: its path on the PR branch. Only Arriving from main's part has it: main made the rename. */
   previousPath?: string;
   before: string;
   after: string;
@@ -132,6 +133,9 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     pending: [],
     counts: { decided: 0, merged: 0, mainFiles: 0 },
   };
+  // The files main renamed, by their new path: one pass over the preview, not one per file.
+  const renamed = new Map<string, string>();
+  for (const p of preview) if (p.prevName && p.prevName !== p.name && !renamed.has(p.name)) renamed.set(p.name, p.prevName);
   for (const { file, buckets, picks } of files) {
     const segments = parseConflicts(file.original);
     const conflicts = segments.filter((s) => s.kind === 'conflict');
@@ -139,12 +143,12 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
       groups.pending.push({ path: file.path, conflicts: Math.max(1, conflicts.length) });
       continue;
     }
-    const previousPath = preview.find((p) => p.name === file.path && p.prevName && p.prevName !== file.path)?.prevName;
+    const previousPath = renamed.get(file.path);
+    // main's rename shows in Arriving from main only: the parts after it are already at the new path.
     const named = previousPath ? { previousPath } : {};
     const whole = (how: ConfirmWhole, before: string) =>
       groups.decided.push({
         path: file.path,
-        ...named,
         before,
         after: file.result,
         items: [],
@@ -160,7 +164,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
       });
     // A whole-file proposal also changes lines outside the conflicts: main's lines can't be told apart from it.
     if (file.wholeFile && file.result === file.wholeFile.text) {
-      whole('whole-file', file.ours);
+      whole(file.wholeFile.source === 'moved' ? 'whole-moved' : 'whole-file', file.ours);
       if (previousPath) groups.main.push(mainPart(file.path, named, file.ours, file.ours));
       continue;
     }
@@ -204,7 +208,6 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     const all = segmentsText(segments, textOf, isMerged);
     const part = (before: string, after: string, blocks: ConflictDiffBlock[]): ConfirmFile => ({
       path: file.path,
-      ...named,
       before,
       after,
       blocks,
@@ -262,7 +265,10 @@ export function patchNote(patch: {
 }) {
   const parts: string[] = [];
   const lines = patch.hunks.length > 0;
-  if (!lines && patch.type !== 'rename-pure' && (patch.prevObjectId || patch.newObjectId))
+  // Git writes an index line and no hunks for an empty file too: its blob is the empty one, not a binary.
+  if (!lines && patch.type === 'new' && emptyBlob(patch.newObjectId)) parts.push('Empty file added');
+  else if (!lines && patch.type === 'deleted' && emptyBlob(patch.prevObjectId)) parts.push('Empty file deleted');
+  else if (!lines && patch.type !== 'rename-pure' && (patch.prevObjectId || patch.newObjectId))
     parts.push(
       patch.type === 'new' ? 'Binary file added' : patch.type === 'deleted' ? 'Binary file deleted' : 'Binary file changed'
     );
@@ -272,6 +278,10 @@ export function patchNote(patch: {
   return parts.length ? parts.join(' · ') : undefined;
 }
 
+/** Git's id for the empty blob, in full or abbreviated as an index line writes it. */
+const EMPTY_BLOB = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
+const emptyBlob = (id: string | undefined) => !!id && id.length >= 7 && EMPTY_BLOB.startsWith(id);
+
 /** A whole file's note in the confirmation: what made it yours. */
 export function wholeNote(how: ConfirmWhole, conflicts: number, baseBranch: string) {
   const covers = `It covers ${conflicts} ${conflicts === 1 ? 'conflict' : 'conflicts'}`;
@@ -280,6 +290,8 @@ export function wholeNote(how: ConfirmWhole, conflicts: number, baseBranch: stri
       return `You edited this file, so its ${conflicts} ${conflicts === 1 ? 'conflict is' : 'conflicts are'} yours.`;
     case 'whole-file':
       return `You used structural merge’s result for the whole file. ${covers} and ${baseBranch}’s other lines in it.`;
+    case 'whole-moved':
+      return `You used the proposal for this file, where one side moved code and the other edited it. ${covers} and ${baseBranch}’s other lines in it.`;
     case 'mergiraf':
       return `You used the structural merge’s result for this file. ${covers}.`;
     case 'agent':

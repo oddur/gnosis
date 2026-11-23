@@ -252,6 +252,7 @@ function fromOutput(
 /** The resolver behind one block's result: its source, or the rule that Merged a structural merge's proposal. */
 function resolverOf(proposal: ConflictProposal, verdict: Verdict | undefined, index: number): Resolver {
   const note = blockVerdict(verdict, index)?.note ?? '';
+  if (proposal.source === 'layout') return 'reformat';
   if (proposal.source !== 'mergiraf') return proposal.source;
   if (note.startsWith(SAME_CHANGE)) return 'same';
   if (/only reformatted these lines/.test(note)) return 'reformat';
@@ -733,7 +734,7 @@ async function auditFile(
     for (const mutation of MUTATIONS) {
       if (mutation === 'touch-outside') {
         // Union and 'same' proposals are made from Git's conflict alone; only a whole output can touch other lines.
-        if (resolver === 'union' || proposal.source === 'same') continue;
+        if (resolver === 'union' || proposal.source === 'same' || proposal.source === 'layout') continue;
         await touchOutside(m, file, s.index, resolver, output, record);
         continue;
       }
