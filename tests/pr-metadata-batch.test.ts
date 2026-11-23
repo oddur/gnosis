@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Octokit } from '@octokit/rest';
 import { getPrMetadata } from '../lib/github';
-import { getPrMetadataBatch, readMetadataLike } from '../lib/pr-metadata-graphql';
+import { getPrMetadataBatch, prMetadataFromGraph, readMetadataLike, type GraphPrMetadata } from '../lib/pr-metadata-graphql';
 import { GITHUB_WRITE_EFFECTS } from '../lib/github-write-refresh';
 import { answerPrQuery, graphPr, queriedPrs, type RestPull } from './fake-pr-graphql';
 
@@ -318,4 +318,14 @@ void test('a missing PR, as GitHub answers it (null plus NOT_FOUND at the field)
   assert.equal((missing.error as { status?: number }).status, 404);
   assert.ok('metadata' in (result.get(url(1)) ?? {}));
   assert.equal(f.counts.rest, 0, 'the missing PR costs no REST read');
+});
+
+void test('a deleted head branch reads as headRefDeleted from GraphQL; unknown stays absent (#468)', () => {
+  const merged = graphPr(pull(8)) as unknown as GraphPrMetadata;
+  assert.equal(prMetadataFromGraph({ ...merged, headRef: null })?.headRefDeleted, true);
+  assert.equal(prMetadataFromGraph({ ...merged, headRef: { id: 'ref' } })?.headRefDeleted, false);
+  assert.equal(prMetadataFromGraph(merged)?.headRefDeleted, undefined);
+  // Without a head repository nothing says whether the branch is gone; when it merged is read too.
+  const gone = prMetadataFromGraph({ ...merged, headRef: null, headRepository: null, mergedAt: '2026-11-02T00:00:00Z' });
+  assert.deepEqual([gone?.headRefDeleted, gone?.headRepoUnknown, gone?.mergedAt], [undefined, true, '2026-11-02T00:00:00Z']);
 });

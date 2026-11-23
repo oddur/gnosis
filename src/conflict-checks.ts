@@ -9,7 +9,7 @@ import {
   type Verdict,
 } from '../lib/conflict-verify';
 import { parseConflicts } from '../lib/conflict-blocks';
-import { blockResolutions, restoreMarkers, withProposals } from '../lib/conflict-carry';
+import { blockResolutions, heldProposals, restoreMarkers, withProposals } from '../lib/conflict-carry';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 import { movedProposal } from '../lib/conflict-moved';
 import {
@@ -62,8 +62,9 @@ export function withoutUnconfirmed(
   });
   const segments = parseConflicts(file.original);
   const texts = blockResolutions(segments, file.result);
+  const held = heldProposals(segments, file.result, proposals, texts);
   // Only when the draft splits back into its conflicts exactly (restoreMarkers): anything else is left as it is.
-  const restore = texts ? drop.filter((index) => texts[index] === proposals[index]?.text) : [];
+  const restore = held ? drop.filter((index) => held[index]) : [];
   const restored = texts && restore.length ? restoreMarkers(segments, texts, file.result, restore) : undefined;
   const prepared = file.result === withProposals(file.original, proposals);
   const left = kept.some(Boolean);

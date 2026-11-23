@@ -136,6 +136,7 @@ export function FeedbackCodeThread({
             renderThread={() => <Fragment key={thread.id}>{renderThread(thread)}</Fragment>}
             plainGaps
             source={source}
+            keyScope={revision.url}
             theme={theme}
           />
         ) : (

@@ -217,6 +217,51 @@ void test('conflict stats: an open counts its conflicts once, Start over counts,
   const saved = JSON.stringify(f.deps.storage.read(CONFLICT_STATS_NAME));
   for (const secret of ['sample', 'answer', 'tester', 'github.com', 'feature']) assert.equal(saved.includes(secret), false);
 });
+void test('conflict stats: a choice made while Load latest holds the draft counts once, with its flag (#490 2)', async (t) => {
+  const f = await fixture(t);
+  const store = createConflictStatsStore(f.deps.storage);
+  const service = createConflictResolutionService({ ...f.deps, stats: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const session = (await run({ kind: 'open', url: f.state.url })).session;
+  const key = blockFingerprints(session.files[0].original)[0];
+  const choice = { id: session.id, path: 'sample.ts', key, index: 0, count: 'rechosen' as const };
+  // Load latest takes the lock; the choice arrives while it prepares the merge again.
+  let reached = () => {};
+  const reading = new Promise<void>((resolve) => (reached = resolve));
+  const loading = createConflictResolutionService({
+    ...f.deps,
+    stats: store,
+    read: () => {
+      reached();
+      return f.deps.read();
+    },
+  });
+  const latest = loading.run({ kind: 'open', url: f.state.url, restart: true, keep: true }, new AbortController().signal);
+  await reading;
+  loading.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 0, 'Counted only once its flag can be saved');
+  await latest;
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+  const draft = f.deps.storage.read(`conflict-draft:tester:${session.id}`) as ConflictSession;
+  assert.equal(draft.files[0].statsBlocks?.[0]?.rechosen, true, 'The flag is on the draft Load latest saved');
+  // So the same conflict never counts twice.
+  loading.countChoice(choice);
+  service.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+});
+void test('conflict stats: Start over and Load latest read the draft no more often than without stats (#490 7)', async (t) => {
+  const f = await fixture(t);
+  for (const keep of [false, true]) {
+    const reads = async (stats: boolean) => {
+      let n = 0;
+      const storage = { ...f.deps.storage, read: (key: string) => (n++, f.deps.storage.read(key)) };
+      const service = createConflictResolutionService({ ...f.deps, storage, ...(stats ? { stats: createConflictStatsStore(f.deps.storage) } : {}) });
+      await service.run({ kind: 'open', url: f.state.url, restart: true, keep }, new AbortController().signal);
+      return n;
+    };
+    assert.equal(await reads(true), await reads(false), keep ? 'Load latest' : 'Start over');
+  }
+});
 void test('conflict stats: a plain open reads the draft no more often than without stats (item 7)', async (t) => {
   const f = await fixture(t);
   const reads = async (stats: boolean) => {
@@ -1779,6 +1824,60 @@ void test('edits around the conflicts survive a moved base through a text merge'
   assert.match(merged, /a = 3;[\s\S]*f3 = 'moved'[\s\S]*b = 1;[\s\S]*g3 = 30;/);
 });
 
+// #451: a proposal stored beside the draft, never applied, is never applied by a base move either.
+void test('a base move never applies a proposal that was only stored beside the draft', async (t) => {
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: '// header 0\n\nexport const answer = 0;\n',
+    ours: '// header 0\n\nexport const answer = 1;\n',
+    theirs: '// header 0\n\nexport const answer = 2;\n',
+  });
+  // The checks would Merge it, so only the carry stands between it and the draft.
+  Object.assign(f.deps, {
+    verify: () => Promise.resolve({ merged: true, note: 'Merged.', blocks: [{ merged: true, note: 'Merged.' }] }),
+  });
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const saved = structuredClone(f.session);
+  const stored = saved.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  // As the reopen pass leaves it (#448): the proposal beside the draft, the draft still Git's conflict.
+  Object.assign(stored, {
+    proposals: [{ source: 'mergiraf', text: 'export const answer = 12;\n' }],
+    result: stored.original,
+    source: 'manual',
+    structuralRan: true,
+  });
+  delete stored.structuralNote;
+  f.deps.storage.write(key, saved);
+  let session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(session.files.find((x) => x.path === 'sample.ts')?.result, stored.original, 'Reopen leaves it beside');
+  // Your own resolution, with an edit above the conflict too, so a later text merge can fail. Saved once to get its
+  // verdict, then marked reviewed.
+  for (const file of session.files)
+    for (const resolved of [false, true])
+      session = (
+        await f.run({
+          kind: 'save',
+          id: session.id,
+          version: session.version,
+          path: file.path,
+          contents: file.path === 'sample.ts' ? '// header mine\n\nexport const answer = 3;\n' : file.result,
+          resolved,
+        })
+      ).session;
+  // main changes the same header line: the conflicts are the same, but your draft can't be carried.
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'sample.ts'), '// header main\n\nexport const answer = 2;\n');
+  await f.git('commit', '-am', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 1);
+  const file = reply.session.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  assert.doesNotMatch(file.result, /answer = 12/, 'The stored proposal is not the draft');
+  assert.equal(file.result, file.original, 'The conflict waits for you with its markers');
+  assert.deepEqual(file.proposals?.map((p) => p?.text), ['export const answer = 12;\n'], 'It stays offered');
+  assert.equal(file.resolved, false);
+});
+
 void test('the PR head moved: publishing is blocked and Load latest changes reuses resolutions for review', async (t) => {
   const f = await movingFixture(t);
   await f.git('checkout', 'feature');
@@ -2347,6 +2446,81 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
   );
   assert.equal(file.wholeFile, undefined);
   assert.equal(withProposals(file.original, file.proposals ?? []), before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+});
+
+void test('a reopen keeps a shown move proposal when the move rule can’t run again (#487)', async (t) => {
+  const { sample, resolved } = await movedCase();
+  const f = await fixture(t, false, sample);
+  let asked = 0;
+  const rule = (file: ConflictFile, disabled: SyntaxLanguage[]) => (asked++, moveProposer(movedEngine, disabled)(file));
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf'), moved: rule });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile?.source, 'moved');
+  // The worker crashes or times out now: it answers nothing. The reopen keeps the proposal, and doesn't ask again.
+  asked = 0;
+  Object.assign(f.deps, { moved: () => (asked++, Promise.resolve(undefined)) });
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(reopened.files[0].wholeFile?.text, resolved);
+  assert.equal(asked, 0, 'The same three versions: the move rule is not run again');
+  // TypeScript turned off in Settings: the rule wouldn't run, so the kept proposal goes.
+  Object.assign(f.deps, { disabledLanguages: () => ['typescript'] });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+  // A build without the move rule keeps none either.
+  Object.assign(f.deps, { disabledLanguages: () => [], moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile?.source, 'moved');
+  Object.assign(f.deps, { moved: undefined });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+});
+
+void test('Load latest gives a draft you changed no new move proposal (#487)', async (t) => {
+  const { sample } = await movedCase();
+  const f = await fixture(t, false, sample);
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf') });
+  // Prepared without the move rule; then you change the draft.
+  let { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile, undefined);
+  // Main's side for the conflict: your choice, carried over by Load latest.
+  const contents = session.files[0].original.replace(/<{7}[^]*?={7}\n([^]*?)>{7} [^\n]*\n/, '$1');
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: 'pricing.ts', contents, resolved: false })
+  ).session;
+  // Load latest with the move rule: the fresh merge would get a proposal, but your draft comes back.
+  Object.assign(f.deps, { moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true, keep: true })).session;
+  assert.equal(session.files[0].result, contents);
+  assert.equal(session.files[0].wholeFile, undefined);
+});
+
+void test('a file whose same-change proposals are taken back gets the move rule (#487)', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('The stand-in for structural merge is a shell script.');
+    return;
+  }
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: "f('w');\n",
+    ours: "f('x');\n",
+    theirs: 'f("x");\n',
+  });
+  // Structural merge leaves Git's conflict, where the 'same' rule proposes the PR's line; its check fails.
+  const script = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-fake-mergiraf-')), 'mergiraf');
+  t.after(() => fs.rm(path.dirname(script), { recursive: true, force: true }));
+  await fs.writeFile(script, '#!/bin/sh\ngit merge-file -p --diff3 "$3" "$2" "$4"\nexit 1\n', { mode: 0o755 });
+  const moved = { source: 'moved' as const, text: "f('x');\n", note: 'The PR moved f, and main edited it.' };
+  let asked = 0;
+  Object.assign(f.deps, {
+    mergiraf: () => script,
+    verify: () => Promise.resolve({ merged: false, note: 'Check it.' }),
+    moved: () => (asked++, Promise.resolve(moved)),
+  });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  const [file] = session.files;
+  assert.equal(file.proposals, undefined, 'The same-change proposal was taken back');
+  assert.equal(file.result, file.original);
+  assert.deepEqual(file.wholeFile, moved);
+  assert.equal(asked, 1);
+  assert.ok(file.verdict, 'The move proposal is checked');
+  assert.notEqual(file.verdict.verdict.merged, true);
 });
 
 // #493: the lines a resolver wrote keep their marks while its text is the baseline, and lose them once it isn't.

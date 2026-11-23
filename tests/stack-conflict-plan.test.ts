@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { attentionItems } from '../lib/attention';
+import { ATTENTION_LABEL, attentionItems } from '../lib/attention';
 import { menubarRow } from '../lib/menubar-state';
-import { rebaseWords } from '../lib/morning';
+import { FIX_LABEL, rebaseWords } from '../lib/morning';
 import { mergedParent, stackConflictPlan } from '../lib/stack-conflict-plan';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { QueueItem, ReviewMember, ReviewSubject } from '../lib/workbench';
@@ -48,29 +48,56 @@ void test('a PR whose parent merged has to move only while it targets the merged
   const parent = mine(101, { merged: true, state: 'closed' });
   const child = mine(102, { baseBranch: 'feature-101' });
   const subject = stack([parent, child]);
-  const found = mergedParent(subject, child, clear(child));
+  const found = mergedParent(subject, child);
   assert.deepEqual([found?.parent.number, found?.onto], [101, 'main']);
   // On main, conflicting for any reason: not a move. A squash-merged parent GitHub already moved is not detected.
   const moved = { ...child, baseBranch: 'main' };
-  assert.equal(mergedParent(stack([parent, moved]), moved, conflicted(moved)), undefined);
-  // The fresh base branch wins over the saved one.
-  assert.equal(mergedParent(subject, child, { ...clear(child), readiness: { ...clear(child).readiness!, baseBranch: 'main' } }), undefined);
+  assert.equal(mergedParent(stack([parent, moved]), moved), undefined);
+  // The PR's own base decides, never a status read's: every surface reads the same (#468).
+  const status = clear(child);
+  const readiness = status.readiness && { ...status.readiness, baseBranch: 'main' };
+  const plan468 = stackConflictPlan(subject, lookup([{ ...status, readiness }]));
+  assert.equal(plan468?.step.kind, 'move');
   // Move first, then resolve: a PR that targets the merged branch and conflicts is a move.
   const plan = stackConflictPlan(subject, lookup([conflicted(child)]));
   assert.equal(plan?.step.kind, 'move');
   assert.equal(plan?.step.text, '#101 merged. #102 needs to move onto main.');
 });
 
-void test('a merged long-lived branch, or a parent merged before the PR was opened, is not a stack parent', () => {
+void test('a merged long-lived branch that is still there is not a stack parent; a deleted branch always is (#468)', () => {
   // A develop → main release PR merged, and a feature PR targets develop: it does not have to move.
   const release = mine(100, { merged: true, state: 'closed', headBranch: 'develop' });
   const feature = mine(102, { baseBranch: 'develop' });
-  assert.equal(mergedParent(stack([release, feature]), feature, clear(feature)), undefined);
-  assert.equal(mergedParent(stack([{ ...release, headBranch: 'release/2026.11' }, { ...feature, baseBranch: 'release/2026.11' }]), { ...feature, baseBranch: 'release/2026.11' }), undefined);
-  // A branch named like the parent's, merged before this PR was opened.
-  const old = mine(101, { merged: true, state: 'closed', updatedAt: '2026-10-01T00:00:00Z' });
-  const later = mine(103, { baseBranch: 'feature-101', createdAt: '2026-11-01T00:00:00Z' });
-  assert.equal(mergedParent(stack([old, later]), later), undefined);
+  assert.equal(mergedParent(stack([release, feature]), feature), undefined);
+  for (const branch of ['main', 'master', 'develop', 'dev', 'trunk', 'next', 'stable', 'staging', 'production', 'release']) {
+    const pr = { ...feature, baseBranch: branch };
+    assert.equal(mergedParent(stack([{ ...release, headBranch: branch }, pr]), pr), undefined, branch);
+    // Deleted after the merge: a stack parent whatever its name (main into main is no stack at all).
+    if (branch !== 'main') assert.ok(mergedParent(stack([{ ...release, headBranch: branch, headRefDeleted: true }, pr]), pr), branch);
+  }
+  // Short-lived names that only look like release branches are stack parents.
+  for (const branch of ['hotfix/login', 'release-notes-fix', 'release/2026.11']) {
+    const pr = { ...feature, baseBranch: branch };
+    assert.ok(mergedParent(stack([{ ...release, headBranch: branch }, pr]), pr), branch);
+  }
+});
+
+void test('a parent is ignored when nothing proves the PR still has to move (#527 review)', () => {
+  const parent = mine(101, { merged: true, state: 'closed' });
+  const child = mine(102, { baseBranch: 'feature-101', createdAt: '2026-11-01T00:00:00Z' });
+  // A deleted fork's merged PR: its head repository is unknown.
+  assert.equal(mergedParent(stack([{ ...parent, headRepoUnknown: true }, child]), child), undefined);
+  // Merged into the PR's own base, or from a branch into itself.
+  const onMain = { ...child, baseBranch: 'main' };
+  assert.equal(mergedParent(stack([{ ...parent, headBranch: 'main' }, onMain]), onMain), undefined);
+  assert.equal(mergedParent(stack([{ ...parent, headBranch: 'feature-101', baseBranch: 'feature-101' }, child]), child), undefined);
+  // The branch lives on: only a parent that merged after the PR was opened counts, and an unknown time doesn't.
+  const lives = { ...parent, headRefDeleted: false };
+  assert.equal(mergedParent(stack([{ ...lives, mergedAt: '2026-10-01T00:00:00Z' }, child]), child), undefined);
+  assert.equal(mergedParent(stack([lives, child]), child), undefined);
+  assert.ok(mergedParent(stack([{ ...lives, mergedAt: '2026-11-02T00:00:00Z' }, child]), child));
+  // A comment on the merged parent changes nothing: the time is when it merged.
+  assert.ok(mergedParent(stack([{ ...lives, mergedAt: '2026-11-02T00:00:00Z', updatedAt: '2026-12-01T00:00:00Z' }, child]), child));
 });
 
 void test('"parent merged" is derived as an attention row on your PR, with one wording', () => {
@@ -83,6 +110,7 @@ void test('"parent merged" is derived as an attention row on your PR, with one w
   assert.deepEqual(row.kinds, ['restack']);
   assert.equal(row.group, 'fix');
   assert.equal(row.detail, 'Parent #101 merged');
+  assert.equal(ATTENTION_LABEL.restack, FIX_LABEL.restack, 'One label everywhere');
   assert.deepEqual(row.target, { kind: 'pr', pr: { host: 'github.com', owner: 'o', repo: 'r', number: 102 }, tab: 'summary' });
   assert.deepEqual(menubarRow(row, LOGIN).labels, ['Parent #101 merged']);
   assert.equal(rebaseWords(item.subject, child), 'needs to move onto main after #101 merged');

@@ -1704,14 +1704,16 @@ void app.whenReady().then(async () => {
       );
     for (let n = 0; n < 200 && (await namedSides('pr')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual((await namedSides('pr')).slice(0, 2), ['pr PR', 'base main']);
-    // Lines revealed in PR survive a round trip through main and both: the PR diff stays mounted while hidden.
-    const prGaps = () =>
-      js<number>("document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length");
-    // The PR diff's lines on screen, as text: the revealed ones are those shown now that weren't before.
-    const prLines = () =>
+    // Lines revealed in PR survive a round trip through main and both (#486): each mode keeps its reveals for the
+    // session, and only the mode on screen is mounted.
+    const gapsIn = (mode: string) => `document.querySelectorAll('.conflict-compare-diff[data-compare=${mode}] .diff-gap-text').length`;
+    const prGaps = () => js<number>(gapsIn('pr'));
+    // A mode's diff lines on screen, as text: the revealed ones are those shown now that weren't before.
+    const linesIn = (mode: string) =>
       js<string[]>(
-        "[...document.querySelectorAll('.conflict-compare-diff[data-compare=pr] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)"
+        `[...document.querySelectorAll('.conflict-compare-diff[data-compare=${mode}] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)`
       );
+    const prLines = () => linesIn('pr');
     const gapsBefore = await prGaps();
     assert.ok(gapsBefore > 0, 'the PR diff has hidden lines to reveal');
     const linesBefore = await prLines();
@@ -1726,8 +1728,10 @@ void app.whenReady().then(async () => {
       'main',
       'focus moves to the active switch button, not to the body'
     );
+    assert.equal(await js("document.querySelectorAll('.conflict-compare-diff').length"), 1, 'No hidden PR diff');
     await compareWith('both');
     await compareWith('pr');
+    await wait(`${gapsIn('pr')}===${gapsRevealed} && !!document.querySelector('.conflict-compare-diff[data-compare=pr] diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
     assert.equal(await prGaps(), gapsRevealed, 'revealed lines are kept across PR → main → both → PR');
     const after = await prLines();
     assert.ok(
@@ -1752,6 +1756,23 @@ void app.whenReady().then(async () => {
     // Against main the diff shows main's lines first; they keep main's tint and name, the PR's keep the PR's.
     for (let n = 0; n < 200 && (await namedSides('main')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual((await namedSides('main')).slice(0, 2), ['base main', 'pr PR']);
+    // Main keeps its own reveals across a round trip too (#486), apart from PR's: they are lines of another version.
+    const mainGaps = await js<number>(gapsIn('main'));
+    assert.ok(mainGaps > 0, 'the main diff has hidden lines to reveal');
+    const mainBefore = await linesIn('main');
+    await js("document.querySelector('.conflict-compare-diff[data-compare=main] .diff-gap-text').click()");
+    await wait(`${gapsIn('main')}<${mainGaps}`);
+    const mainRevealed = (await linesIn('main')).filter((line) => !mainBefore.includes(line));
+    const mainGapsRevealed = await js<number>(gapsIn('main'));
+    assert.ok(mainRevealed.length > 0, 'the reveal in main shows new lines');
+    await compareWith('pr');
+    await wait(`${gapsIn('pr')}===${gapsRevealed}`);
+    await compareWith('main');
+    await wait(`${gapsIn('main')}===${mainGapsRevealed} && !!document.querySelector('.conflict-compare-diff[data-compare=main] diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
+    const mainLinesExpr = `[...document.querySelectorAll('.conflict-compare-diff[data-compare=main] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)`;
+    // main's revealed lines are visible again.
+    await wait(`(()=>{const shown=${mainLinesExpr};return ${JSON.stringify(mainRevealed)}.every(l=>shown.includes(l));})()`);
+    await captureAll('compare-main-reveals-kept');
     // J and K still visit both.
     await js(`${block(0)}.focus()`);
     await key('j');
