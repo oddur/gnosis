@@ -8,6 +8,7 @@ import {
 } from './conflict-blocks';
 import { holdsResolverLines } from './conflict-diff';
 import {
+  OPEN_CLOSE_LINES,
   hasConflictMarkers,
   type ConflictFile,
   type ConflictProposal,
@@ -138,6 +139,42 @@ export function blockResolutions(segments: ConflictSegment[], result: string): (
     if (error === tooMany) return undefined;
     throw error;
   }
+}
+
+const MARKDOWN = /\.(?:md|mdx|markdown|mdown|mkd)$/i;
+/** Whether a draft splits into its conflicts with none open and no marker in any: by `original` and the draft. */
+const splitCache: { original: string; contents: string; clean: boolean }[] = [];
+function decidedClean(original: string, contents: string) {
+  const known = splitCache.find((entry) => entry.original === original && entry.contents === contents);
+  if (known) return known.clean;
+  const texts = blockResolutions(parseConflicts(original), contents);
+  const clean = !!texts && texts.every((text) => text !== undefined && !hasConflictMarkers(text));
+  splitCache.unshift({ original, contents, clean });
+  splitCache.length = Math.min(splitCache.length, 16);
+  return clean;
+}
+
+/**
+ * Conflict markers left in a file's draft (#457). The file status, Mark reviewed, the carry, remembered resolutions and
+ * every guard before a push use this one check.
+ *
+ * Every marker line counts, a lone `=======` too, with one exception that needs proof. In Markdown, `=======` under a
+ * line of text is a setext heading. It doesn't count when the draft splits into Git's conflicts with every conflict
+ * decided, and no conflict's text holds such a line: then each one is in Git's merged text outside the conflicts, as
+ * the PR and main wrote it, and never Git's separator. Anything else counts: a draft that can't be split, a conflict
+ * left open, or an underline inside a conflict, where it can't be told apart from the separator.
+ *
+ * The split needs Git's blocks read right, so a side that holds its own `<<<<<<<`, `|||||||` or `>>>>>>>` line,
+ * which can pair Git's markers wrongly, gets no exception (#529 review).
+ */
+export function markersLeft(
+  file: Pick<ConflictFile, 'path' | 'original' | 'base' | 'ours' | 'theirs'>,
+  contents: string
+): boolean {
+  if (!hasConflictMarkers(contents)) return false;
+  if (!MARKDOWN.test(file.path) || OPEN_CLOSE_LINES.test(contents)) return true;
+  if ([file.base, file.ours, file.theirs].some((side) => OPEN_CLOSE_LINES.test(side))) return true;
+  return !decidedClean(file.original, contents);
 }
 
 export interface CarriedFile {
@@ -295,7 +332,7 @@ export function withResult(old: ConflictFile, next: ConflictFile, result: string
   return {
     ...next,
     result,
-    resolved: resolved && !hasConflictMarkers(result),
+    resolved: resolved && !markersLeft(next, result),
     source: carried ? old.source : next.source,
     ...(carried && old.explanation ? { explanation: old.explanation } : {}),
     ...(resolver !== undefined ? { resolverText: resolver } : {}),

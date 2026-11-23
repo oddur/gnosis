@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { confirmCount, confirmGroups, confirmWritten, needsYou, patchNote, wholeNote } from '../lib/conflict-confirm';
 import { blockBuckets, fileStatus, type Verdict } from '../lib/conflict-verify';
 import type { BlockPicks } from '../lib/conflict-blocks';
-import { conflictFileStage, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
+import { conflictFileStage } from '../lib/conflict-markers';
+import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
 /** The push confirmation's groups (#445 item 12): You decided, Merged for you, Arriving from main. */
 const original =

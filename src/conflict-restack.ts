@@ -10,7 +10,14 @@ import {
 } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
-import { blockResolutions, carryFile, carrySource, type CarriedFile, type CarrySource } from '../lib/conflict-carry';
+import {
+  blockResolutions,
+  carryFile,
+  carrySource,
+  markersLeft,
+  type CarriedFile,
+  type CarrySource,
+} from '../lib/conflict-carry';
 import { blockBuckets } from '../lib/conflict-verify';
 import type { CascadePr } from '../lib/conflict-cascade';
 
@@ -125,7 +132,7 @@ export function carryList(files: ConflictFile[]): ConflictFile[] {
   const seen = new Set<string>();
   let bytes = 0;
   for (const file of [...files].reverse()) {
-    if (file.unsupported || !file.resolved || hasConflictMarkers(file.result)) continue;
+    if (file.unsupported || !file.resolved || markersLeft(file, file.result)) continue;
     const key = `${file.path}\0${file.original}`;
     const size = Buffer.byteLength(file.original + file.result);
     if (seen.has(key) || kept.length >= 50 || bytes + size > 4 * 1024 * 1024) continue;
@@ -155,6 +162,26 @@ function writable(state: PrActionState, session: ConflictSession): asserts state
     throw new Error(
       'Restacking currently requires all branches in the same repository so they can be pushed atomically.'
     );
+}
+
+/**
+ * Removes a restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the resolution
+ * memory keeps no preimage of a pause nobody resolved. `git` runs in the session repository. Never throws: a removal
+ * that fails is logged, and startup cleanup removes what is left.
+ */
+export async function removeRestackWorktree(git: Git, worktree: string, signal: AbortSignal) {
+  for (const args of [
+    ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
+    ['rebase', '--abort'],
+  ])
+    await git(['-C', worktree, ...args], undefined, [0, 1, 128], signal).catch(() => {});
+  try {
+    const { code, stderr } = await git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], signal);
+    // 128 is Git's own refusal, such as for a folder that is not a worktree (any more): logged too.
+    if (code) console.warn('[conflicts] Could not remove a restack worktree.', stderr.trim());
+  } catch (error) {
+    console.warn('[conflicts] Could not remove a restack worktree.', error);
+  }
 }
 
 /** Keep Git's worktree metadata path below its Windows limit; resume older drafts in place. */
@@ -271,7 +298,7 @@ export async function prepareRestack(
     // Your earlier choices first: structural merge runs only where a conflict is still open.
     const sources = [
       ...[...carry].reverse(),
-      ...session.files.filter((file) => file.resolved && !file.unsupported && !hasConflictMarkers(file.result)),
+      ...session.files.filter((file) => file.resolved && !file.unsupported && !markersLeft(file, file.result)),
     ];
     const carriedBlocks = new Map<ConflictFile, number[]>();
     const carriedTexts = new Map<ConflictFile, (string | undefined)[]>();
@@ -316,7 +343,7 @@ export async function prepareRestack(
     const done = new Set<string>();
     for (const file of work) {
       const buckets = replayBuckets(file, carriedBlocks.get(file));
-      if (hasConflictMarkers(file.result) || !buckets.every((bucket) => bucket === 'merged' || bucket === 'yours'))
+      if (markersLeft(file, file.result) || !buckets.every((bucket) => bucket === 'merged' || bucket === 'yours'))
         continue;
       await fs.writeFile(path.resolve(worktree, file.path), file.result);
       await git(['add', '--', file.path]);
@@ -426,7 +453,7 @@ export async function prepareRestack(
         const files = plan.blocked?.files ?? [];
         if (
           !files.length ||
-          files.some((file) => !file.resolved || file.unsupported || hasConflictMarkers(file.result))
+          files.some((file) => !file.resolved || file.unsupported || markersLeft(file, file.result))
         )
           throw new Error('Resolve and review every paused file before continuing the restack.');
         // A Continue that failed after Git moved on leaves this pause stored while the worktree is at a later step.
@@ -632,13 +659,8 @@ export async function prepareRestack(
     keepWorktree = false;
     return plan;
   } finally {
-    const cleanup = AbortSignal.timeout(30_000);
-    if (!keepWorktree) {
-      // An abandoned pause leaves no preimage of its own behind in the resolution memory.
-      await git(['rerere', 'clear'], undefined, [0, 1, 128], cleanup).catch(() => {});
-      await git(['rebase', '--abort'], undefined, [0, 1, 128], cleanup).catch(() => {});
-      await deps.git(['worktree', 'remove', '--force', worktree], undefined, [0, 128], cleanup).catch(() => {});
-    }
+    // An abandoned pause leaves no preimage of its own behind in the resolution memory.
+    if (!keepWorktree) await removeRestackWorktree(deps.git, worktree, AbortSignal.timeout(30_000));
   }
 }
 

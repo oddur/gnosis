@@ -358,10 +358,14 @@ export function changedFiles(before: ConflictSession, after: ConflictSession, ex
   const known = new Map(before.files.map((f) => [f.path, f.revision]));
   return after.files.filter((f) => f.path !== except && known.get(f.path) !== f.revision).map((f) => f.path);
 }
-/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
-const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
-const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
-/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
+/** A line Git writes around a conflict. A lone `=======` counts in every text; a draft goes through markersLeft. */
+const markerLines = (marks: string) => new RegExp(`^(?:${marks})(?:\\s|$)`, 'm');
+/** The marks Git opens and closes a conflict with, and puts before the common ancestor: never a heading underline. */
+const OPEN_CLOSE_MARKS = '<{7,}|>{7,}|\\|{7,}';
+const MARKER_LINES = markerLines(`${OPEN_CLOSE_MARKS}|={7,}`);
+/** A `<<<<<<<`, `|||||||` or `>>>>>>>` line: every marker but the separator (lib/conflict-carry.ts `markersLeft`). */
+export const OPEN_CLOSE_LINES = markerLines(OPEN_CLOSE_MARKS);
+/** Any conflict marker line left in a text, such as a proposal's. A file's draft goes through markersLeft. */
 export function hasConflictMarkers(text: string) {
   return MARKER_LINES.test(text);
 }
@@ -378,15 +382,6 @@ export function wholeFileFrom<S extends ConflictProposal['source']>(
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
-/** Derive the stage from the displayed draft, including edits not saved yet. */
-export function conflictFileStage(
-  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>,
-  contents = file.result
-): ConflictFileStage {
-  if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
-  return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
-}
-
 const isPick = (pick: unknown) =>
   pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
 /** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */

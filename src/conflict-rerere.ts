@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { runConflictProcess } from './conflict-process';
 import { hasConflictMarkers, type ConflictFile } from '../lib/conflict-resolution';
+import { markersLeft } from '../lib/conflict-carry';
 
 /** Git's resolution memory is local to one account/repository, never the user's Git configuration. */
 export function createConflictMemory(directory: () => string) {
@@ -64,14 +66,23 @@ export function createConflictMemory(directory: () => string) {
   /**
    * A private copy of the resolution memory for a dry run (#445 item 22): the shared lock is held only while it is
    * copied. The repository's `rr-cache` points at the copy until `release`, which restores the shared memory and
-   * deletes the copy with whatever the dry run recorded in it.
+   * deletes the copy with whatever the dry run recorded in it. Each file is a copy-on-write clone where the file system
+   * has them (APFS, Btrfs), so the copy costs almost nothing; elsewhere it is a plain copy. A copy that fails or is
+   * stopped (`signal`) is deleted at once.
    */
   async function snapshot(scope: string, repo: string, signal?: AbortSignal) {
     const copy = path.join(repo, `${PREVIEW_COPY}${crypto.randomBytes(8).toString('hex')}`);
     const cache = await withCache(
       scope,
       async (cache) => {
-        await fs.cp(cache, copy, { recursive: true });
+        try {
+          await fs.cp(cache, copy, { recursive: true, mode: constants.COPYFILE_FICLONE });
+          // Stopped while it copied: the caller already gave up on it, and nothing else would delete it until startup.
+          signal?.throwIfAborted();
+        } catch (error) {
+          await fs.rm(copy, { recursive: true, force: true });
+          throw error;
+        }
         return cache;
       },
       signal
@@ -125,7 +136,7 @@ export function createConflictMemory(directory: () => string) {
         for (const file of files) {
           signal.throwIfAborted();
           if (file.unsupported || !hasConflictMarkers(file.original)) continue;
-          if (record && (!file.resolved || hasConflictMarkers(file.result))) continue;
+          if (record && (!file.resolved || markersLeft(file, file.result))) continue;
           // A synthetic path avoids checking out any repository-controlled paths or attributes.
           const stages = [];
           for (const [index, text] of [file.base, file.ours, file.theirs].entries()) {
@@ -143,7 +154,7 @@ export function createConflictMemory(directory: () => string) {
             await git(['rerere']);
           } else {
             const contents = await fs.readFile(path.join(temp, 'conflict.txt'), 'utf8');
-            if (contents !== file.original && !hasConflictMarkers(contents)) proposals.set(file.path, contents);
+            if (contents !== file.original && !markersLeft(file, contents)) proposals.set(file.path, contents);
           }
         }
         return proposals;
@@ -156,11 +167,15 @@ export function createConflictMemory(directory: () => string) {
     apply: (scope: string, files: ConflictFile[], signal: AbortSignal) => useFiles(scope, files, false, signal),
     record: (scope: string, files: ConflictFile[], signal: AbortSignal) => useFiles(scope, files, true, signal),
     snapshot,
-    /** Leftover preview copies (a quit during a dry run): the repository uses the shared memory again. */
+    /**
+     * Leftover preview copies (a quit during a dry run): the repository uses the shared memory again. Never waits for
+     * the shared lock: while another PR of the scope holds it, such as for a whole restack, the link is left for the
+     * repository's next use to restore (`attach`).
+     */
     async repair(scope: string, repo: string) {
       const target = path.join(repo, 'rr-cache');
       const link = await fs.readlink(target).catch(() => undefined);
-      if (link && isPreviewCopy(repo, link)) await withCache(scope, (cache) => attach(repo, cache));
+      if (link && isPreviewCopy(repo, link) && !locks.has(scope)) await withCache(scope, (cache) => attach(repo, cache));
       for (const name of await fs.readdir(repo).catch(() => [] as string[]))
         if (name.startsWith(PREVIEW_COPY)) await fs.rm(path.join(repo, name), { recursive: true, force: true });
     },

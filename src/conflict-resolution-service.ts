@@ -30,6 +30,7 @@ import {
   carryFile,
   heldProposals,
   conflictKeys,
+  markersLeft,
   relabelMarkers,
   revisionChange,
   withProposals,
@@ -98,7 +99,14 @@ import type { PrActionState } from '../lib/pr-actions';
 import { hasMergeConflicts } from '../lib/merge-conflicts';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
-import { cascadeOutcomes, carryList, prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
+import {
+  cascadeOutcomes,
+  carryList,
+  prepareRestack,
+  publishRestack,
+  removeRestackWorktree,
+  restackWorktreePath,
+} from './conflict-restack';
 import type { CascadePreview } from '../lib/conflict-cascade';
 import {
   SHARED_LAYOUT_FILE,
@@ -132,6 +140,15 @@ export const BACKGROUND_YIELDED = 'Background preparation stopped for your reque
 export const NO_PERMISSION = 'You need permission to update this open PR branch.';
 /** Background drafts kept, newest first, and the age after which one leaves (src/conflict-precompute.ts). */
 const BACKGROUND_DRAFTS = 8;
+/**
+ * The reopen pass's total time (#450): structural merge for files of a draft that never had it. The saved draft shows
+ * once it is over; what it doesn't reach waits for the next reopen, and Suggest tries any file at once.
+ */
+const REOPEN_STRUCTURAL_BUDGET = 2000;
+/** Less time than this left in the reopen pass: a file doesn't start. */
+const REOPEN_MIN_START = 250;
+/** A file the reopen pass starts within this long of its start had the pass's whole time. */
+const REOPEN_START_SLACK = 100;
 const BACKGROUND_AGE = 7 * 24 * 60 * 60 * 1000;
 interface Context {
   account: string;
@@ -151,6 +168,8 @@ interface Deps {
    * 30000. Tests change them.
    */
   structuralTimeouts?: [number, number, number];
+  /** The reopen pass's total time (#450); REOPEN_STRUCTURAL_BUDGET by default. */
+  reopenStructuralBudget?: number;
   suggest: (
     context: { session: ConflictSession; file: ConflictFile; instructions: string },
     signal: AbortSignal
@@ -259,6 +278,16 @@ export function createConflictResolutionService(deps: Deps) {
   const busy = new Set<string>();
   /** Waiting for a PR's lock to be free (`freed`): told when its holder lets go (`release`). */
   const waiters = new Map<string, (() => void)[]>();
+  /**
+   * Requests of yours on their way to the PR's lock, by draft key: they stop background work first (`yieldToYou`).
+   * Meanwhile the lock is not free for background work that waits (`freed`), so it never takes the lock ahead of you.
+   */
+  const yours = new Map<string, number>();
+  function wakeWaiters(key: string) {
+    const waiting = waiters.get(key) ?? [];
+    waiters.delete(key);
+    for (const wake of waiting) wake();
+  }
   function release(key: string) {
     busy.delete(key);
     // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
@@ -266,24 +295,36 @@ export function createConflictResolutionService(deps: Deps) {
     if (queued) saveTypeErrors(key, queued);
     // Choices made while the holder had the draft are counted now, with their flags, after its last write.
     if (pendingChoices.has(key)) saveChoices(key);
-    const waiting = waiters.get(key) ?? [];
-    waiters.delete(key);
-    for (const wake of waiting) wake();
+    wakeWaiters(key);
   }
-  /** Resolves once nobody holds the PR's lock. `signal` stops the wait. */
-  async function freed(key: string, signal: AbortSignal) {
-    while (busy.has(key)) {
+  /** Your request has the lock, or gave up on it: background work that waits may go once nobody holds it. */
+  function yourTurnEnded(key: string) {
+    const left = (yours.get(key) ?? 1) - 1;
+    if (left > 0) yours.set(key, left);
+    else yours.delete(key);
+    if (!left && !busy.has(key)) wakeWaiters(key);
+  }
+  /**
+   * Resolves once nobody holds the PR's lock and, for background work (`background`), no request of yours waits for
+   * it. A request of yours waits only for the holder. `signal` stops the wait.
+   */
+  async function freed(key: string, signal: AbortSignal, background = true) {
+    while (busy.has(key) || (background && yours.has(key))) {
       signal.throwIfAborted();
       await new Promise<void>((resolve, reject) => {
-        const stop = () => reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped.'));
+        const wake = () => {
+          signal.removeEventListener('abort', stop);
+          resolve();
+        };
+        // A stopped wait leaves the list at once: aborted waits never pile up.
+        const stop = () => {
+          const left = (waiters.get(key) ?? []).filter((waiting) => waiting !== wake);
+          if (left.length) waiters.set(key, left);
+          else waiters.delete(key);
+          reject(signal.reason instanceof Error ? signal.reason : new Error('Stopped.'));
+        };
         signal.addEventListener('abort', stop, { once: true });
-        waiters.set(key, [
-          ...(waiters.get(key) ?? []),
-          () => {
-            signal.removeEventListener('abort', stop);
-            resolve();
-          },
-        ]);
+        waiters.set(key, [...(waiters.get(key) ?? []), wake]);
       });
     }
   }
@@ -1318,7 +1359,12 @@ export function createConflictResolutionService(deps: Deps) {
     signal: AbortSignal,
     report: (text: string) => void,
     /** Store what it proposes beside the draft, without applying it: the draft may be your own. */
-    keepDraft = false
+    keepDraft = false,
+    /**
+     * The whole pass's time, for the reopen pass (#450): no retry, and a file it can't start in time is left for the next
+     * reopen or an explicit Suggest.
+     */
+    total?: number
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
     if (!queue.length) return files;
@@ -1351,11 +1397,12 @@ export function createConflictResolutionService(deps: Deps) {
       }
       return files;
     }
-    // A note from an earlier try (no binary, out of time) gives way to this one.
-    for (const file of queue) delete file.structuralNote;
     report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
     /** Keeps what structural merge proposed for one file. False when it ran out of time. */
     const propose = async (file: ConflictFile, budget: number) => {
+      // A note from an earlier try (no binary, out of time) gives way to this one. A file the pass never reaches keeps
+      // its note, and with it "Try structural merge again".
+      delete file.structuralNote;
       const started = Date.now();
       let output: string;
       try {
@@ -1388,8 +1435,13 @@ export function createConflictResolutionService(deps: Deps) {
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
     /**
-     * Four files at a time. A file that runs out of time goes on `late`; each other one goes to `done`, which runs the
-     * move rule on it.
+     * The most time each file was given. Only a file that had the whole first-try budget counts as run (#450): `first`,
+     * or the reopen pass's whole time when that is shorter. One started near the pass's end doesn't.
+     */
+    const tried = new Map<ConflictFile, number>();
+    /**
+     * Four files at a time. A file that runs out of time, or gets no time, goes on `late`; each other one goes to
+     * `done`, which runs the move rule on it.
      */
     const pool = async (
       files: ConflictFile[],
@@ -1398,28 +1450,46 @@ export function createConflictResolutionService(deps: Deps) {
       done: (file: ConflictFile) => Promise<void>
     ) => {
       const work = async () => {
-        for (let file = files.shift(); file; file = files.shift())
-          if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
+        for (let file = files.shift(); file; file = files.shift()) {
+          const time = budget();
+          if (time > 0) tried.set(file, Math.max(time, tried.get(file) ?? 0));
+          if (time <= 0 || !(await propose(file, time))) late.push(file);
           else await done(file);
+        }
       };
       await Promise.all([work(), work(), work(), work()]);
     };
+    const end = total === undefined ? Infinity : Date.now() + total;
+    /** The first try's budget: `first`, or what is left of the reopen pass. Too little left to merge a file is none. */
+    const firstBudget = () => {
+      const left = end - Date.now();
+      return left < Math.min(first, REOPEN_MIN_START) ? 0 : Math.min(first, left);
+    };
+    // A reopen pass's first four files start a moment after it does: they count as having its whole time.
+    const whole = total === undefined ? first : Math.min(first, total) - REOPEN_START_SLACK;
     const late: ConflictFile[] = [];
     // The pool takes files off the list it is given. Each file has its own first budget: the move rule runs as each
     // finishes.
-    await pool([...queue], () => first, late, afterStructural);
+    await pool([...queue], firstBudget, late, afterStructural);
     // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening. The
-    // move rule waits until the pool is done, so its time never comes out of that shared limit.
-    const deadline = Date.now() + cap;
+    // move rule waits until the pool is done, so its time never comes out of that shared limit. The reopen pass has no
+    // retry: what it can't finish waits for the next reopen or for Suggest.
     const failed: ConflictFile[] = [];
     const retried: ConflictFile[] = [];
-    await pool(late, () => Math.min(retry, deadline - Date.now()), failed, (file) => {
-      retried.push(file);
-      return Promise.resolve();
-    });
+    if (total === undefined) {
+      const deadline = Date.now() + cap;
+      await pool(late, () => Math.min(retry, deadline - Date.now()), failed, (file) => {
+        retried.push(file);
+        return Promise.resolve();
+      });
+    } else failed.push(...late);
     for (const file of failed) {
+      // Never tried, or cut short by the reopen pass's end: no note, and the next reopen tries it again.
+      if ((tried.get(file) ?? 0) < whole) continue;
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
+      // It ran: a reopen doesn't wait for it again. "Try structural merge again" does, with the Suggest budget.
+      file.structuralRan = true;
     }
     for (const file of [...retried, ...failed]) await afterStructural(file);
     return files;
@@ -1520,7 +1590,7 @@ export function createConflictResolutionService(deps: Deps) {
         !modelText &&
         !old.unsupported &&
         !next.unsupported &&
-        !hasConflictMarkers(old.result)
+        !markersLeft(old, old.result)
       ) {
         const merged = await mergeText(
           dir,
@@ -1793,7 +1863,8 @@ export function createConflictResolutionService(deps: Deps) {
           untried,
           signal,
           report,
-          true
+          true,
+          deps.reopenStructuralBudget ?? REOPEN_STRUCTURAL_BUDGET
         );
       // A draft saved before the main process checked proposals, or by a build without the checks, gets them now.
       if ((await check(saved.files, signal, report)) || untried.length) {
@@ -2109,7 +2180,7 @@ export function createConflictResolutionService(deps: Deps) {
   function assertReviewed(session: ConflictSession) {
     if (session.preparation === 'up-to-date')
       throw new Error('The PR already contains the base branch. No update is needed.');
-    if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
+    if (session.files.some((f) => !f.resolved || f.unsupported || markersLeft(f, f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
     // The same guard as Mark reviewed, at the last moment: a conflict in Check without a choice is never pushed.
     for (const file of session.files) assertChosen(file, { contents: file.result });
@@ -2194,42 +2265,29 @@ export function createConflictResolutionService(deps: Deps) {
     drafts.sort((a, b) => b.at - a.at);
     return drafts.filter((draft, i) => i >= keep || Date.now() - draft.at > BACKGROUND_AGE);
   }
-  /** Removes a draft and its cache, as Discard does. */
-  /**
-   * Removes a paused restack's private worktree. Its rerere state is cleared and its rebase aborted first, so the
-   * resolution memory keeps no preimage of a pause nobody resolved.
-   */
+  /** Removes a paused restack's private worktree (`removeRestackWorktree`). */
   async function abandonWorktree(ctx: Context, id: string, token: string) {
     const worktree = await restackWorktreePath(await directory(ctx.account, id), token);
     const signal = AbortSignal.timeout(30_000);
-    if (await exists(worktree))
-      for (const args of [
-        ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
-        ['rebase', '--abort'],
-      ])
-        await git(ctx, id, ['-C', worktree, ...args], signal, undefined, [0, 1, 128]).catch(() => {});
-    await git(ctx, id, ['worktree', 'remove', '--force', worktree], signal, undefined, [0, 128]);
+    await removeRestackWorktree((args, input, allowed) => git(ctx, id, args, signal, input, allowed), worktree, signal);
   }
   /** Every `restack-*` worktree but the paused restack's own: its rerere state is cleared, then it is removed. */
   async function removeLeftoverWorktrees(dir: string, saved: ConflictSession) {
     const token = saved.restack?.status === 'blocked' ? saved.restack.token : undefined;
     const own = token ? new Set([`restack-${token}`, `restack-${token.slice(0, 16)}`]) : new Set<string>();
     const signal = AbortSignal.timeout(30_000);
+    const local = (args: string[], input?: string, allowed?: number[]) => runGit(dir, args, signal, { input, allowed });
     let removedAny = false;
     for (const name of await fs.readdir(dir).catch(() => [] as string[])) {
       if (!/^restack-[a-f0-9]+$/.test(name) || own.has(name)) continue;
       const worktree = path.join(dir, name);
-      for (const args of [
-        ['-c', 'rerere.enabled=true', 'rerere', 'clear'],
-        ['rebase', '--abort'],
-      ])
-        await runGit(dir, ['-C', worktree, ...args], signal, { allowed: [0, 1, 128] }).catch(() => {});
-      await runGit(dir, ['worktree', 'remove', '--force', worktree], signal, { allowed: [0, 128] }).catch(() => {});
+      await removeRestackWorktree(local, worktree, signal);
       await fs.rm(worktree, { recursive: true, force: true });
       removedAny = true;
     }
     if (removedAny) await runGit(dir, ['worktree', 'prune'], signal, { allowed: [0, 128] }).catch(() => {});
   }
+  /** Removes a draft and its cache, as Discard does. */
   async function drop(account: string, id: string) {
     write(storageKey(account, id), null);
     writeCarry(account, id, []);
@@ -2241,7 +2299,7 @@ export function createConflictResolutionService(deps: Deps) {
   /** Drops a background draft under the PR's lock, so no run or open interleaves. Skipped while the PR is busy. */
   async function dropBackground(account: string, id: string) {
     const key = storageKey(account, id);
-    if (busy.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
+    if (busy.has(key) || yours.has(key) || !(deps.storage.read(key) as ConflictSession | undefined)?.background) return;
     // A request of yours that comes meanwhile waits for the drop to finish; it is short.
     await asBackground(key, undefined, () => drop(account, id));
   }
@@ -2365,7 +2423,7 @@ export function createConflictResolutionService(deps: Deps) {
       // Your draft, or a push still to restack: nothing to do, before any work. open() keeps the full rule.
       const saved = deps.storage.read(key) as ConflictSession | undefined;
       if (saved && !saved.background && (saved.status === 'editing' || saved.restack || saved.undoing)) return saved;
-      if (busy.has(key)) return undefined;
+      if (busy.has(key) || yours.has(key)) return undefined;
       return asBackground(key, signal, async (yielding) => {
         await maintenance;
         return open(ctx, url, false, false, yielding, () => {}, files);
@@ -2382,8 +2440,8 @@ export function createConflictResolutionService(deps: Deps) {
       if (!ctx.token || !ctx.account) throw new Error('Connect GitHub before resolving conflicts.');
       if (!/^[a-f0-9]{64}$/.test(id) || !Number.isSafeInteger(version)) throw new Error('Invalid conflict session.');
       const key = storageKey(ctx.account, id);
-      // Another operation holds the PR: wait until it lets go, then try once.
-      if (busy.has(key)) await freed(key, signal);
+      // Another operation holds the PR, or a request of yours is on its way: wait until both are done, then try once.
+      await freed(key, signal);
       if (busy.has(key)) return undefined;
       return asBackground(key, signal, async (yielding) => {
         await maintenance;
@@ -2661,21 +2719,27 @@ export function createConflictResolutionService(deps: Deps) {
       const id = request.kind === 'open' ? hash(request.url) : request.id;
       const key = storageKey(ctx.account, id);
       // Background work on this PR stops for you; only another request of yours makes this one wait.
-      // A background run that took the lock while this waited gives way too. A save waits for the request before it
-      // (an open from another view of the PR, say) and then goes on from the draft that request left.
-      for (;;) {
-        do await yieldToYou(key);
-        while (backgroundWork.has(key));
-        if (!busy.has(key) || request.kind !== 'save') break;
-        // Bounded: a save behind a long request fails as busy, and the view's autosave tries again later.
-        const waited = AbortSignal.any([signal, AbortSignal.timeout(deps.saveWait ?? SAVE_WAIT)]);
-        await freed(key, waited).catch((error: unknown) => {
-          if (signal.aborted) throw error;
-        });
-        if (waited.aborted && !signal.aborted) break;
+      // A background run that took the lock while this waited gives way too, and background work waiting for the lock
+      // stays back meanwhile (`yours`). A save waits for the request before it (an open from another view of the PR,
+      // say) and then goes on from the draft that request left.
+      yours.set(key, (yours.get(key) ?? 0) + 1);
+      try {
+        for (;;) {
+          do await yieldToYou(key);
+          while (backgroundWork.has(key));
+          if (!busy.has(key) || request.kind !== 'save') break;
+          // Bounded: a save behind a long request fails as busy, and the view's autosave tries again later.
+          const waited = AbortSignal.any([signal, AbortSignal.timeout(deps.saveWait ?? SAVE_WAIT)]);
+          await freed(key, waited, false).catch((error: unknown) => {
+            if (signal.aborted) throw error;
+          });
+          if (waited.aborted && !signal.aborted) break;
+        }
+        if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
+        busy.add(key);
+      } finally {
+        yourTurnEnded(key);
       }
-      if (busy.has(key)) throw new Error('A conflict operation is already running for this PR.');
-      busy.add(key);
       try {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
@@ -2787,7 +2851,7 @@ export function createConflictResolutionService(deps: Deps) {
               Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
             )
               throw new Error('This paused file cannot be edited.');
-            if (request.resolved && hasConflictMarkers(request.contents))
+            if (request.resolved && markersLeft(file, request.contents))
               throw new Error('Remove the remaining conflict markers first.');
             if (request.resolved) assertChosen(file, request);
             file.result = request.contents;
@@ -2860,7 +2924,7 @@ export function createConflictResolutionService(deps: Deps) {
             Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
           )
             throw new Error('This file cannot be saved in the conflict editor.');
-          if (request.resolved && hasConflictMarkers(request.contents))
+          if (request.resolved && markersLeft(file, request.contents))
             throw new Error('Remove the remaining conflict markers first.');
           if (request.resolved) assertChosen(file, request);
           if (file.result !== request.contents) {
