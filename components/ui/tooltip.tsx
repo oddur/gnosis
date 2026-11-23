@@ -15,49 +15,70 @@ const TooltipHidden = React.createContext(false);
  * A tooltip closes when the window loses focus and when its trigger is hidden. Workspaces and the queue behind an
  * open PR stay mounted inside React <Activity>, which hides the trigger but not the portaled tooltip: an open tooltip
  * stayed painted after its control was gone, and with no trigger box to follow it sat in the window's top-left corner
- * over the macOS window buttons. Hiding an Activity destroys its layout effects, which is the signal used here.
+ * over the macOS window buttons. Hiding an Activity destroys its layout effects, which is the signal used here. Rows
+ * carry many tooltips, so a closed one adds no effects or listeners: `WhileOpen` watches only while it is open.
  */
 function Tooltip({
   open: openProp,
   defaultOpen = false,
   onOpenChange,
+  children,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
   const [uncontrolled, setUncontrolled] = React.useState(defaultOpen);
   const open = openProp ?? uncontrolled;
+  // Radix waits for an exit animation before removing the content, and that wait is an effect Activity has destroyed,
+  // so a hidden scope renders no content at all.
+  const [hidden, setHidden] = React.useState(false);
+  // What the last change asked for: tells a close apart from Activity hiding an open tooltip.
+  const requested = React.useRef(open);
   const change = React.useCallback(
     (next: boolean) => {
+      requested.current = next;
       if (openProp === undefined) setUncontrolled(next);
       onOpenChange?.(next);
     },
     [openProp, onOpenChange]
   );
-  // Radix waits for an exit animation before removing the content, and that wait is an effect Activity has destroyed,
-  // so a hidden scope renders no content at all.
-  const [hidden, setHidden] = React.useState(false);
-  const latest = React.useRef({ open, change });
-  React.useLayoutEffect(() => {
-    latest.current = { open, change };
-  });
-  React.useLayoutEffect(() => {
-    setHidden(false);
-    return () => {
-      if (!latest.current.open) return;
-      setHidden(true);
-      latest.current.change(false);
-    };
-  }, []);
-  React.useEffect(() => {
-    if (!open) return;
-    const close = () => latest.current.change(false);
-    window.addEventListener('blur', close);
-    return () => window.removeEventListener('blur', close);
-  }, [open]);
   return (
     <TooltipHidden.Provider value={hidden}>
-      <TooltipPrimitive.Root data-slot="tooltip" open={open} onOpenChange={change} {...props} />
+      <TooltipPrimitive.Root data-slot="tooltip" open={open} onOpenChange={change} {...props}>
+        {children}
+      </TooltipPrimitive.Root>
+      {open && <WhileOpen change={change} requested={requested} setHidden={setHidden} />}
     </TooltipHidden.Provider>
   );
+}
+
+function WhileOpen({
+  change,
+  requested,
+  setHidden,
+}: {
+  change: (open: boolean) => void;
+  requested: React.RefObject<boolean>;
+  setHidden: (hidden: boolean) => void;
+}) {
+  const latest = React.useRef(change);
+  React.useLayoutEffect(() => {
+    latest.current = change;
+  });
+  React.useLayoutEffect(() => {
+    requested.current = true;
+    setHidden(false);
+    return () => {
+      // A close already went through `change`; anything else that removes this watcher while open is a hidden scope.
+      if (!requested.current) return;
+      setHidden(true);
+      latest.current(false);
+    };
+  }, [requested, setHidden]);
+  React.useEffect(() => {
+    const close = () => latest.current(false);
+    window.addEventListener('blur', close);
+    return () => window.removeEventListener('blur', close);
+  }, []);
+  return null;
 }
 
 /**
