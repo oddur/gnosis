@@ -1142,6 +1142,10 @@ function failActiveGenerations() {
 }
 
 let savingBeforeQuit: Promise<boolean> | null = null;
+function quitFailureDetail(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith('Saved work isn’t available.') ? message : `${message}\nFree some disk space, then try quitting again.`;
+}
 /**
  * Saves user work and closes saved data. Resolves true when the app may quit: work saved, or the
  * user chose to quit without saving. Resolves false when the user keeps the app open.
@@ -1166,7 +1170,8 @@ function saveBeforeQuit(): Promise<boolean> {
       return true;
     } catch (error: unknown) {
       const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Keep open', 'Quit without saving'], defaultId: 0, cancelId: 0,
-        message: 'Some changes could not be saved', detail: `${error instanceof Error ? error.message : String(error)}\nFree some disk space, then try quitting again.` });
+        // Saved data that couldn't open again already says what to do (`SAVED_WORK_NO_DISK`): its advice isn't repeated.
+        message: 'Some changes could not be saved', detail: quitFailureDetail(error) });
       if (response === 1) cacheFlushed = true;
       // Kept open: saved data opens again, so later saves (a conflict draft, a review) don't fail on a closed store.
       // What the close couldn't save is still queued, and is saved now.

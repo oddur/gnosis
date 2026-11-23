@@ -9,7 +9,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
-import { SAVED_WORK_UNAVAILABLE, SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
+import { SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE, SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -173,13 +173,24 @@ void test('an unreadable saved draft offers Start over; a failed save of a reada
   assert.notEqual(saveFailed.recovery, 'start-over');
 });
 
-void test('saved work that isn’t available says to restart, with no Try again', () => {
+void test('saved work that isn’t available says the change wasn’t saved, and what to do', () => {
+  const describe = (message: string, stage: 'prepare' | 'other') =>
+    describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${message}`, { stage });
   for (const stage of ['prepare', 'other'] as const) {
-    const copy = describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${SAVED_WORK_UNAVAILABLE}`, {
-      stage,
-    });
-    assert.equal(`${copy.title} ${copy.body}`, 'Saved work isn’t available. Restart Gnosis. Your last change wasn’t saved. Nothing was pushed.');
-    assert.equal(copy.recovery, undefined, 'Trying again would fail the same way');
+    // Closed after a quit that couldn't save: Keep open opens it again, so Try again can work.
+    const closed = describe(SAVED_WORK_UNAVAILABLE, stage);
+    assert.equal(
+      `${closed.title} ${closed.body}`,
+      'Saved work isn’t available. Your last change wasn’t saved. Nothing was pushed. Try again, or restart Gnosis.'
+    );
+    assert.equal(closed.recovery, 'retry');
+    // It couldn't open again: only a restart helps.
+    const gone = describe(SAVED_WORK_NO_DISK, stage);
+    assert.equal(
+      `${gone.title} ${gone.body}`,
+      'Saved work isn’t available. Your last change wasn’t saved. Nothing was pushed. Free some disk space, then restart Gnosis.'
+    );
+    assert.equal(gone.recovery, undefined, 'Trying again would fail the same way');
   }
 });
 

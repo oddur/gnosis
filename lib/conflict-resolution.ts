@@ -377,6 +377,8 @@ export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace b
  * couldn't save. What you just changed was not saved, and only a restart opens saved data again.
  */
 export const SAVED_WORK_UNAVAILABLE = 'Saved work isn’t available. Restart Gnosis.';
+/** Saved data could not open again after a quit that couldn't save (src/app-data-store.ts `reopen`). */
+export const SAVED_WORK_NO_DISK = 'Saved work isn’t available. Free some disk space, then restart Gnosis.';
 /** A saved draft the service can't use (`draftProblem`). Start over prepares the merge again. */
 export const UNREADABLE_DRAFT = 'This saved draft couldn’t be read.';
 /**

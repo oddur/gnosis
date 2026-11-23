@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { createAppDataStore, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
+import { createAppDataStore, SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
 import { httpDocuments } from '../src/command-search-service';
 import { maintainDatabase } from '../src/sqlite-maintain';
 const fixture = () => fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-state-'));
@@ -385,8 +385,9 @@ void test('close reports a failed final save and still stops the worker', async 
     db.close();
     store.write('workbench:alice', queue()); // fails on every flush
     await assert.rejects(store.close(), /simulated disk failure/);
-    // The worker is gone, so the database is released (Windows refuses to delete an open file).
-    await store.close();
+    // The worker is gone, so the database is released (Windows refuses to delete an open file). Closing again still
+    // reports the unsaved work, so a second quit asks again instead of quitting quietly.
+    await assert.rejects(store.close(), { message: SAVED_WORK_UNAVAILABLE });
     store = createAppDataStore();
     await store.open(dir);
   } finally {
@@ -411,17 +412,22 @@ void test('after a close that could not save, a flush says the work is unsaved, 
     // Before the fix this rejected with "Storage is not ready". It still rejects: the queued save is not on disk, and
     // a caller must never read it as saved.
     await assert.rejects(store.flush(), { message: SAVED_WORK_UNAVAILABLE });
+    // Writes and row changes while it is closed are queued, not lost: the close didn't save, so the app runs on.
     store.write('workbench:bob', queue('bob'));
-    assert.equal(store.lostWrites(), 1, 'A write while closed is counted, as after any close');
+    store.patch(mutedName, { put: { one: { at: 1 } } });
+    await assert.rejects(store.flush(), { message: SAVED_WORK_UNAVAILABLE }, 'Never reads as saved');
+    assert.equal(store.lostWrites(), 0);
     await assert.rejects(store.search({ account: 'alice', query: 'x' } as never), { message: SAVED_WORK_UNAVAILABLE });
-    // Keep open (src/main.ts `saveBeforeQuit`) opens saved data again.
+    // Keep open (src/main.ts `saveBeforeQuit`) opens saved data again, and the queue goes to disk.
     await store.reopen();
     await store.flush();
     store.write('workbench:carol', queue('carol'));
     await store.close();
     store = createAppDataStore();
     await store.open(dir);
-    assert.equal((store.read('workbench:alice') as { account: string }).account, 'alice', 'The queued save landed');
+    assert.equal((store.read('workbench:alice') as { account: string }).account, 'alice', 'The failed final save landed');
+    assert.equal((store.read('workbench:bob') as { account: string }).account, 'bob', 'The write while closed landed');
+    assert.deepEqual(store.take(mutedName), { entries: { one: { at: 1 } } }, 'The row change while closed landed');
     assert.equal((store.read('workbench:carol') as { account: string }).account, 'carol', 'Saving works again');
   } finally {
     console.error = error;
@@ -444,9 +450,11 @@ void test('a reopen that fails leaves every later request saying to restart', as
     // The directory is gone, so saved data can't open again.
     fs.rmSync(dir, { recursive: true, force: true });
     fs.writeFileSync(dir, 'not a directory');
-    await assert.rejects(store.reopen(), { message: SAVED_WORK_UNAVAILABLE });
-    await assert.rejects(store.flush(), { message: SAVED_WORK_UNAVAILABLE });
-    await assert.rejects(store.search({ account: 'alice', query: 'x' } as never), { message: SAVED_WORK_UNAVAILABLE });
+    await assert.rejects(store.reopen(), { message: SAVED_WORK_NO_DISK });
+    await assert.rejects(store.flush(), { message: SAVED_WORK_NO_DISK });
+    await assert.rejects(store.search({ account: 'alice', query: 'x' } as never), { message: SAVED_WORK_NO_DISK });
+    // The next quit is not silent: it reports the unsaved work, so "Some changes could not be saved" shows again.
+    await assert.rejects(store.close(), { message: SAVED_WORK_NO_DISK });
   } finally {
     console.error = error;
     await store.close().catch(() => {});

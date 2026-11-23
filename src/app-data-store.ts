@@ -1,5 +1,5 @@
 import { noteWork } from '../lib/perf-trace';
-import { SAVED_WORK_UNAVAILABLE } from '../lib/conflict-resolution';
+import { SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE } from '../lib/conflict-resolution';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MaintainResult } from './sqlite-maintain';
 import type { SearchRequest, LocalSearchResponse, SearchOp } from './command-search-service';
@@ -93,7 +93,7 @@ export function createMemoryStorage(saved = new Map<string, string>()): StateSto
     flush: () => Promise.resolve(),
   };
 }
-export { SAVED_WORK_UNAVAILABLE };
+export { SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE };
 export function createAppDataStore() {
   let worker: Worker | undefined;
   /** Where `open` read from, for `reopen`. */
@@ -105,6 +105,13 @@ export function createAppDataStore() {
   let writing: Promise<void> | undefined;
   /** Set once the worker is told to close. No write can reach the database after that. */
   let closed = false;
+  /**
+   * The close could not save everything. Writes after it are queued, not lost, for `reopen` (Keep open) to save; until
+   * then a flush says they aren't saved. Only after a clean close are late writes counted as lost.
+   */
+  let closeFailed = false;
+  /** A write after a clean close: quit is under way, and it is counted quietly. */
+  const late = () => closed && !closeFailed;
   let lost = 0;
   const updates = new Map<string, unknown>();
   const patches = new Map<string, PendingPatch>();
@@ -250,6 +257,7 @@ export function createAppDataStore() {
       if (worker) throw new Error('Storage already opened');
       opened = directory;
       closed = false;
+      closeFailed = false;
       // Forge builds the worker alongside main.js. tsx is only used by source-level tests.
       worker = __filename.endsWith('.ts')
         ? new Worker(`require('tsx/cjs'); require(${JSON.stringify(path.join(__dirname, 'app-data-worker.ts'))})`, {
@@ -304,7 +312,7 @@ export function createAppDataStore() {
       } catch (error) {
         // Every later request says what to do. The cause goes to the log.
         console.error('Saved work could not open again:', error);
-        failure = new Error(SAVED_WORK_UNAVAILABLE);
+        failure = new Error(SAVED_WORK_NO_DISK);
         // `open` may have started a worker before it failed: stop it, so the database is released.
         const active = worker as Worker | undefined;
         worker = undefined;
@@ -339,7 +347,7 @@ export function createAppDataStore() {
       const removed = value === null || value === undefined;
       if (removed) Reflect.deleteProperty(all, name);
       else all[name] = value;
-      if (closed) return lose(name);
+      if (late()) return lose(name);
       updates.set(name, removed ? null : value);
       // The whole state replaces any row changes queued before it.
       patches.delete(name);
@@ -352,14 +360,14 @@ export function createAppDataStore() {
       if (updates.has(name) && updates.get(name) === null) {
         const next = applyPatch(undefined, change);
         if (!taken.has(name)) all[name] = next;
-        if (closed) return lose(name);
+        if (late()) return lose(name);
         updates.set(name, next);
         schedule();
         return;
       }
       // A state nobody has taken stays readable.
       if (name in all) all[name] = applyPatch(all[name], change);
-      if (closed) return lose(name);
+      if (late()) return lose(name);
       // A queued whole state already carries the change; otherwise queue the rows. Rows apply after
       // whole states in the same transaction.
       if (updates.has(name) && name in all) updates.set(name, all[name]);
@@ -374,11 +382,11 @@ export function createAppDataStore() {
     loadReviewState: (legacy: Record<string, string>) => call<Record<string, unknown>>('review-load', legacy),
     // Review state goes straight to the worker, so a save sent before close is ordered ahead of it.
     saveReviewState: async (value: ReviewStateWrite) => {
-      if (closed) return lose('review state');
+      if (late()) return lose('review state');
       await call('review-save', value);
     },
     saveFileProgress: async (value: FileProgressPatch) => {
-      if (closed) return lose('file progress');
+      if (late()) return lose('file progress');
       await call('progress-save', value);
     },
     /** Writes that arrived after close, for tests and diagnostics. */
@@ -396,29 +404,37 @@ export function createAppDataStore() {
       for (const name of taken) Reflect.deleteProperty(values, name);
     },
     async close() {
-      if (!worker) return;
+      if (!worker) {
+        // Closed already, or never reopened: unsaved work is reported again, so quitting asks again.
+        if (failure) throw failure;
+        if (dirty()) throw new Error(SAVED_WORK_UNAVAILABLE);
+        return;
+      }
       const active = worker;
       // A failed final save must still release the database: report it, but always stop the worker.
-      let failure: unknown;
+      let failed: unknown;
       // Writes that arrive while the final flush runs join it. The check and `closed` are synchronous,
       // so nothing can slip in between the last flush and the close request.
       do {
         try {
           await flush();
         } catch (error) {
-          failure = error;
+          failed = error;
         }
-      } while (!failure && dirty());
+      } while (!failed && dirty());
+      // Set with `closed`, so a write during the close request below is queued, not lost.
+      closeFailed = !!failed;
       closed = true;
       try {
         await call('close');
       } catch (error) {
-        failure ??= error;
+        failed ??= error;
+        closeFailed = true;
       } finally {
         worker = undefined;
         await active.terminate();
       }
-      if (failure) throw failure;
+      if (failed) throw failed;
     },
   };
   return store;

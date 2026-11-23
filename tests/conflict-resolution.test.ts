@@ -1627,6 +1627,10 @@ void test('after a quit that could not save, a prepare says to restart, and Keep
   await assert.rejects(real.store().close(), /simulated disk failure/);
   db.exec('DROP TRIGGER fail_write');
   db.close();
+  // A background drop whose save fails keeps the draft's cache: its removal waits for the save.
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', f.session.id);
+  await assert.rejects(real.service.trimBackground(0), { message: SAVED_WORK_UNAVAILABLE });
+  assert.ok(await fs.stat(cache).catch(() => undefined), 'The cache is still there');
   // Before the fix your prepare rejected with "Storage is not ready". While the store is closed it says the work wasn't
   // saved, and what to do; it never reads as saved.
   await assert.rejects(real.run({ kind: 'open', url: f.state.url }), { message: SAVED_WORK_UNAVAILABLE });
