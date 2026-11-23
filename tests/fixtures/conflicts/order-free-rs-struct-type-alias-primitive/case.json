@@ -1,0 +1,8 @@
+{
+  "description": "#481 review: both sides add fields that look scalar, but `type bool = String` makes `bool` a String in this file. Fields drop in declaration order, so their order can be the program.",
+  "language": "rust",
+  "category": "semantic/order",
+  "expected": {
+    "src/limits.rs": "any-but-merged"
+  }
+}

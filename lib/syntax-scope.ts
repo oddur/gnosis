@@ -577,6 +577,8 @@ export interface RangeUnits {
   before?: string;
   /** For a JSON object: the keys of the pairs that hold it, from the document's top. */
   path?: string[];
+  /** The text of the comments just before the units (`before` skips them). */
+  comments?: string[];
   /** For a Rust enum's variants or a struct's fields: the item that holds them (rangeOwner). */
   owner?: RangeOwner;
 }
@@ -585,9 +587,19 @@ export interface RangeOwner {
   /** Each attribute on the item and on every item around it, inner attributes included, as written inside `#[…]`. */
   attributes: string[];
   /** Every variant or field of the item, in order: its discriminant or type as written, and whether it has fields or attributes. */
-  members: { name: string; value?: string; type?: string; fields?: boolean; attributed?: boolean }[];
-  /** The text of each `use` and `extern crate` in the file, with its attributes: either can rename a derive. */
+  members: { value?: string; type?: string; fields?: boolean; attributed?: boolean }[];
+  /** The item has type or const parameters: a parameter can be named like a primitive. */
+  generic?: boolean;
+  file: RustFile;
+}
+/** What a Rust file brings into scope that a proof must rule out, read once per tree (rustFile). */
+export interface RustFile {
+  /** The text of each `use` and `extern crate`, with its attributes: either can rename a derive or a primitive type. */
   uses: string[];
+  /** The names of the file's types, traits and modules: `struct u8`, `type bool`, `mod std`. */
+  types: string[];
+  /** A macro is called where items go: it can declare anything. */
+  macros: boolean;
 }
 /** An import statement's `type` keyword (on the statement, not on one name) and the local names it binds. */
 function scriptImport(node: Node) {
@@ -615,8 +627,31 @@ function attributesBefore(node: Node) {
   }
   return found;
 }
-/** A Rust enum's or struct's attributes, members and the file's `use` lines; undefined for any other list. */
-function rangeOwner(list: Node): RangeOwner | undefined {
+const rustFiles = new WeakMap<TreeSitter.Tree, RustFile>();
+/** The file's `use` lines, type names and item-level macro calls, once per tree. */
+function rustFile(tree: TreeSitter.Tree): RustFile {
+  let found = rustFiles.get(tree);
+  if (!found) {
+    const root = tree.rootNode;
+    const uses = root
+      .descendantsOfType(['use_declaration', 'extern_crate_declaration'])
+      .map((n) => [...attributesBefore(n).map((a) => `#[${a}] `), squash(n.text)].join(''));
+    const types = root
+      .descendantsOfType(['struct_item', 'enum_item', 'union_item', 'type_item', 'trait_item', 'mod_item'])
+      .flatMap((n) => n.childForFieldName('name')?.text ?? []);
+    const macros = root
+      .descendantsOfType('macro_invocation')
+      .some((n) => {
+        const at = n.parent?.type === 'expression_statement' ? n.parent.parent : n.parent;
+        return at?.type === 'source_file' || at?.type === 'declaration_list';
+      });
+    found = { uses, types, macros };
+    rustFiles.set(tree, found);
+  }
+  return found;
+}
+/** A Rust enum's or struct's attributes and members, and its file's names; undefined for any other list. */
+function rangeOwner(tree: TreeSitter.Tree, list: Node): RangeOwner | undefined {
   const item = list.parent;
   if (!item || !['enum_variant_list', 'field_declaration_list'].includes(list.type)) return undefined;
   if (item.type !== 'enum_item' && item.type !== 'struct_item') return undefined;
@@ -639,7 +674,6 @@ function rangeOwner(list: Node): RangeOwner | undefined {
     const value = c.childForFieldName('value');
     const type = c.childForFieldName('type');
     members.push({
-      name: c.childForFieldName('name')?.text ?? squash(c.text),
       ...(value ? { value: squash(value.text) } : {}),
       ...(type ? { type: squash(type.text) } : {}),
       ...(c.childForFieldName('body') ? { fields: true } : {}),
@@ -648,12 +682,9 @@ function rangeOwner(list: Node): RangeOwner | undefined {
     });
     attributed = false;
   }
-  let root: Node = list;
-  while (root.parent) root = root.parent;
-  const uses = root
-    .descendantsOfType(['use_declaration', 'extern_crate_declaration'])
-    .map((n) => [...attributesBefore(n).map((a) => `#[${a}] `), squash(n.text)].join(''));
-  return { attributes, members, uses };
+  const parameters = item.childForFieldName('type_parameters');
+  const generic = !!parameters?.namedChildren.some((c) => !/lifetime/.test(c.type));
+  return { attributes, members, ...(generic ? { generic } : {}), file: rustFile(tree) };
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -714,12 +745,17 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
     // An object's keys are read whole, and its place in its document.
     const whole = node.type === 'object';
     let previous = hit[0].previousNamedSibling;
-    while (previous && /comment/.test(previous.type)) previous = previous.previousNamedSibling;
+    /** The comments between the node before and the units: a directive there applies to whatever comes first. */
+    const comments: string[] = [];
+    while (previous && /comment/.test(previous.type)) {
+      comments.unshift(previous.text);
+      previous = previous.previousNamedSibling;
+    }
     const path: string[] = [];
     if (node.type === 'object')
       for (let at: Node | null = node.parent; at; at = at.parent)
         if (at.type === 'pair') path.unshift(at.childForFieldName('key')?.text ?? '');
-    const owner = rangeOwner(node);
+    const owner = rangeOwner(tree, node);
     return {
       ...(owner ? { owner } : {}),
       parent: node.type,
@@ -727,6 +763,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       units,
       ...(whole ? { all: node.namedChildren.map(unitOf) } : {}),
       ...(previous ? { before: previous.type } : {}),
+      ...(comments.length ? { comments } : {}),
       ...(node.type === 'object' ? { path } : {}),
     };
   }

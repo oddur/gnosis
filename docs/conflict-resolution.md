@@ -211,7 +211,7 @@ When both sides insert whole definitions at the same place, Gnosis proposes both
 - Go, Rust and Java imports of one kind, and plain C# `using` lines. These languages don't run code when they import.
 - The keys of `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies` in `package.json`. Package managers read these lists as sets of names. See also known JSON files below.
 
-For every kind, each side must add at least one node, no name may be added twice, and no decorator or attribute may stand just before the insertion, where it would attach to whichever node comes first.
+For every kind, each side must add at least one node, and no name may be added twice. Nothing that attaches to the next node may stand just before the insertion, or at the end of a side's lines, because it would attach to whichever side comes first. That includes decorators and attributes, doc comments (`/** … */`, `///`), and directive comments such as `// @ts-ignore`, `// @ts-expect-error`, `// eslint-disable-next-line`, `// nolint`, `# noqa`, `# type: ignore` and `//go:` lines.
 
 Each kind below has its own proof. A case that the proof does not cover stays in Check.
 
@@ -220,7 +220,7 @@ Each kind below has its own proof. A case that the proof does not cover stays in
 - Every variant, old and new, is a unit variant with an explicit integer discriminant, and no two discriminants are equal.
 - The enum and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and `Hash`. These derives read only the variant's name or its discriminant.
 - No variant has an attribute, such as `#[default]` or `#[serde(rename)]`.
-- No `use` or `extern crate` in the file can put another macro under one of those derive names: no rename, no glob outside `std`, `core` and `alloc`, and no `macro_use`.
+- Nothing in the file can put another macro under one of those derive names. That rules out a `use` that names one from outside `std`, `core` and `alloc`, a rename, a glob outside those crates, any `#[macro_use]`, an `extern crate … as std` (or `core`, `alloc`), a type or module named `std`, `core` or `alloc`, and a macro called where items go, which can declare anything.
 
 Rust has no reflection over variants, so nothing else can see their order.
 
@@ -230,13 +230,17 @@ Rust has no reflection over variants, so nothing else can see their order.
 - Every field, old and new, is an integer, a float, `bool`, `char` or `&str`. These types run no code when they are dropped.
 - No field has an attribute.
 - The struct and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Clone`, `Copy`, `PartialEq`, `Eq` and `Default`. On these types, these derives combine each field's result in a way that does not depend on the order.
+- No `use`, `extern crate`, type, trait or module in the file is named like a primitive type or `str`. `use crate::guard::Guard as u8`, `type bool = String` and `struct u8(String)` would each make a scalar-looking field own something with drop glue.
+- The struct has no type parameters, which could also be named like a primitive. Lifetimes are fine.
 - The derive names are not renamed, as for enums.
 
-Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields.
+Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields. One caveat: `std::mem::offset_of!` and unsafe code can read the offsets rustc chose, and those can change with the order. Code that depends on them relies on a layout that Rust does not specify.
+
+**What a Rust proof can't see.** The checks read one file. A crate root (`lib.rs` or `main.rs`) can still rename things for every file: `#[macro_use] extern crate x` brings in x's macros, which could include a derive named like a std one, and `extern crate x as std` in a `#![no_std]` crate makes `std::` mean x. Gnosis refuses both when they are in the file itself. It can't see them in another file. A crate would have to define a derive named exactly `Clone`, `Debug` or `PartialEq` for this to matter.
 
 **TypeScript type imports.** An import runs its module, and modules run in the order they are imported. Nothing in a syntax tree shows that a module has no side effects, such as a polyfill or a registration. So JavaScript, TypeScript and Python imports are never order-free in general, and they stay in Check. The exception is `import type …`: TypeScript erases it whole from the output, also with `verbatimModuleSyntax`, so it runs nothing. Both sides' imports must all be `import type`, and they must bind different names. `import { type A } from './a'` is not an exception: it can leave `import {} from './a'`, which still runs the module.
 
-**Known JSON files.** A JSON object has no order of its own, but the tool that reads it can read the keys in order. Node matches `exports` in order, `npm-run-all` runs `scripts` globs in order, jest tries `moduleNameMapper` in order, and TypeScript tries `compilerOptions.paths` in order. So keys are order-free only in known files, in top-level objects that their tool reads by key:
+**Known JSON files.** A JSON object has no order of its own, but the tool that reads it can read the keys in order. Node matches `exports` in order, `npm-run-all` runs `scripts` globs in order, jest tries `moduleNameMapper` in order, and TypeScript picks the `compilerOptions.paths` pattern with the longest prefix before `*`, and the first one between two of the same length. So keys are order-free only in known files, in top-level objects that their tool reads by key:
 
 - `package.json`: the four dependency lists, `peerDependenciesMeta` (per package) and `engines` (per tool).
 - `tsconfig.json`, `tsconfig.<name>.json` and `jsconfig.json`: `compilerOptions` (per option). An object inside it, such as `paths`, is not covered.
@@ -270,6 +274,7 @@ The resolver audit checks the checks. Each resolver and rule runs over the lab's
 | `swap-order` | Two lines of one function body, both from one side, change places. |
 | `duplicate-unit` | A one-line unit that one side added, such as an enum variant, a field, an import or a key, is repeated after itself. |
 | `swap-units` | Two lines that one side added together change places. The two sides' additions may change places; one side's own may not. |
+| `change-context` | Around a conflict Merged as order-free, the file changes on all three sides so that the proof no longer holds: a `PartialOrd`, `Debug` or `repr` on the item, a `use` that could rename a derive, `macro_use`, a renamed `std`, an item macro, a primitive alias, implicit discriminants, `String` fields, value imports for type imports, or another JSON file name. The conflict must not stay Merged. |
 | `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
 | `cross-anchor` | A line one side changed moves past lines the other side inserted next to it, before or after it in the ancestor. |
 | `change-number`, `change-string` | A number or a string in the result changes. |

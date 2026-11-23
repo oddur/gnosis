@@ -1013,18 +1013,79 @@ void test('#481: known JSON files’ keyed objects are order-free; nested and un
     ['moduleNameMapper', 'jest.config.json'],
   ])
     assert.equal((await keyed(owner, path)).merged, false, `${path} ${owner}`);
-  // `paths` inside compilerOptions: TypeScript tries its patterns, so it is not a top-level keyed object.
+  // `paths` inside compilerOptions: the longest prefix before `*` wins, and between two of the same length the first
+  // does. `@x/*.js` and `@x/*` both match `@x/a.js` with the prefix `@x/`: the order picks the file.
   const paths = await samePlace(
     'tsconfig.json',
     '{\n  "compilerOptions": {\n    "paths": {\n      "@a/*": ["a/*"],\n',
     '      "@z/*": ["z/*"]\n    }\n  }\n}\n',
-    '      "@b/*": ["b/*"],\n',
-    '      "@*": ["c/*"],\n',
-    '      "@b/*": ["b/*"],\n      "@*": ["c/*"],\n'
+    '      "@x/*.js": ["js/*"],\n',
+    '      "@x/*": ["any/*"],\n',
+    '      "@x/*.js": ["js/*"],\n      "@x/*": ["any/*"],\n'
   );
   assert.equal(paths.merged, false);
   // The same option on both sides: Check.
   assert.equal((await keyed('compilerOptions', 'tsconfig.json', '    "strict": true,\n', '    "strict": false,\n')).merged, false);
+});
+
+void test('#481 review: a primitive renamed in the file, a renamed std crate or an item macro keeps Rust fields in Check', async () => {
+  const options = (head: string, field = '    depth: u8,\n') =>
+    samePlace('src/options.rs', `${head}pub struct Options {\n    pub width: u32,\n`, '}\n', field, '    weight: f64,\n', field + '    weight: f64,\n');
+  assert.equal((await options('')).merged, true);
+  for (const head of [
+    'use crate::guard::Guard as u8;\n',
+    'use crate::types::u8;\n',
+    'type bool = String;\n',
+    'struct u8(String);\n',
+    'mod std {}\n',
+    'extern crate guard as u32;\n',
+    'extern crate fake as std;\n#[derive(Clone)]\n',
+    '#[macro_use]\nextern crate derives;\n#[derive(Clone)]\n',
+    'make_types!();\n',
+  ])
+    assert.equal((await options(head)).merged, false, head);
+  // A type parameter can be named like a primitive.
+  const generic = await samePlace(
+    'src/options.rs',
+    'pub struct Options<u8> {\n    pub width: u32,\n',
+    '}\n',
+    '    depth: u8,\n',
+    '    weight: f64,\n',
+    '    depth: u8,\n    weight: f64,\n'
+  );
+  assert.equal(generic.merged, false);
+  // Enums too: a renamed std crate or `macro_use` can put another macro under a derive's name.
+  const color = (head: string) =>
+    samePlace('src/color.rs', `${head}pub enum Color {\n    Red = 1,\n`, '}\n', '    Green = 2,\n', '    Blue = 3,\n', '    Green = 2,\n    Blue = 3,\n');
+  for (const head of ['extern crate fake as std;\n#[derive(Debug)]\n', '#[macro_use]\nextern crate derives;\n#[derive(Debug)]\n'])
+    assert.equal((await color(head)).merged, false, head);
+});
+
+void test('#481 review: a directive comment just before the insertion, or last in a side, keeps it in Check', async () => {
+  const shape = (head: string, ours = '  depth: number;\n', theirs = '  weight: number;\n') =>
+    samePlace('src/options.ts', `export interface Options {\n  width: number;\n${head}`, '}\n', ours, theirs, ours + theirs);
+  assert.equal((await shape('')).merged, true);
+  assert.equal((await shape('  // Sizes.\n')).merged, true, 'a plain comment');
+  for (const head of [
+    '  // @ts-ignore\n',
+    '  // @ts-expect-error\n',
+    '  // eslint-disable-next-line\n',
+    '  /** @deprecated */\n',
+  ])
+    assert.equal((await shape(head)).merged, false, head);
+  // At the end of one side's lines, it applies to the other side's first line when that side comes second.
+  assert.equal((await shape('', '  depth: number;\n  // @ts-ignore\n')).merged, false);
+  const go = await samePlace(
+    'main.go',
+    'package main\n\nimport (\n\t"fmt"\n\t// nolint\n',
+    ')\n\nfunc main() {\n\tfmt.Println(os.Args, strings.ToUpper(""))\n}\n',
+    '\t"os"\n',
+    '\t"strings"\n',
+    '\t"os"\n\t"strings"\n'
+  );
+  assert.equal(go.merged, false);
+  const rust = await samePlace('src/color.rs', 'pub enum Color {\n    Red = 1,\n    // rustfmt::skip\n', '}\n', '    Green = 2,\n', '    Blue = 3,\n', '    Green = 2,\n    Blue = 3,\n');
+  assert.equal(rust.merged, false);
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {

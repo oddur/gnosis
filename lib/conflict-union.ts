@@ -336,25 +336,30 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 /** What an order-free unit is: both sides' units must all be one kind. */
 type OrderKind = 'method' | 'member' | 'import' | 'variant' | 'field';
 /**
- * Where order doesn't matter (#476), the provable core only: per language, the parent node that holds the units (and,
- * where the parent type is ambiguous, the node that holds it), the unit types, and their kind. Plain methods of a class,
- * impl or interface body (Go: methods with a receiver); TypeScript interface and type-literal members, which are types
- * only; imports in Go, Rust, Java and C#. Since #481, each with its own proof (`proved`, and docs/conflict-resolution.md):
- * Rust enum variants and struct fields. Nothing else: no other fields, enum members, functions, keys, cases, list items or statements, no
- * JavaScript, TypeScript or Python imports.
+ * One kind of order-free unit: the parent node that holds the units (and, where the parent type is ambiguous, the node
+ * that holds it), the unit types, and, for a kind whose order can matter elsewhere, its proof (#481): given the units'
+ * parent and every unit both sides added, true only when no order of them can change what the program does.
  */
-const SCRIPT_ORDER_FREE = [
-  { parents: ['class_body'], types: ['method_definition'], kind: 'method' as const },
-  { parents: ['program'], types: ['import_statement'], kind: 'import' as const },
-  {
-    parents: ['interface_body', 'object_type'],
-    types: ['method_signature', 'property_signature'],
-    kind: 'member' as const,
-  },
+interface OrderFree {
+  parents: string[];
+  containers?: string[];
+  types: string[];
+  kind: OrderKind;
+  prove?: (units: RangeUnits, added: readonly RangeUnit[]) => boolean;
+}
+/**
+ * Where order doesn't matter (#476), the provable core only: plain methods of a class, impl or interface body (Go:
+ * methods with a receiver); TypeScript interface and type-literal members, which are types only; imports in Go, Rust,
+ * Java and C#. Since #481, each with its own proof (docs/conflict-resolution.md): TypeScript `import type`, Rust enum
+ * variants and struct fields. Nothing else: no other fields, enum members, functions, keys, cases, list items or
+ * statements, no other JavaScript, TypeScript or Python imports.
+ */
+const SCRIPT_ORDER_FREE: OrderFree[] = [
+  { parents: ['class_body'], types: ['method_definition'], kind: 'method' },
+  { parents: ['program'], types: ['import_statement'], kind: 'import', prove: typeImports },
+  { parents: ['interface_body', 'object_type'], types: ['method_signature', 'property_signature'], kind: 'member' },
 ];
-const ORDER_FREE: Partial<
-  Record<SyntaxLanguage, { parents: string[]; containers?: string[]; types: string[]; kind: OrderKind }[]>
-> = {
+const ORDER_FREE: Partial<Record<SyntaxLanguage, OrderFree[]>> = {
   typescript: SCRIPT_ORDER_FREE,
   tsx: SCRIPT_ORDER_FREE,
   javascript: [{ parents: ['class_body'], types: ['method_definition'], kind: 'method' }],
@@ -376,8 +381,20 @@ const ORDER_FREE: Partial<
     { parents: ['declaration_list'], containers: ['impl_item'], types: ['function_item'], kind: 'method' },
     { parents: ['source_file'], types: ['use_declaration'], kind: 'import' },
     { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'], kind: 'import' },
-    { parents: ['enum_variant_list'], containers: ['enum_item'], types: ['enum_variant'], kind: 'variant' },
-    { parents: ['field_declaration_list'], containers: ['struct_item'], types: ['field_declaration'], kind: 'field' },
+    {
+      parents: ['enum_variant_list'],
+      containers: ['enum_item'],
+      types: ['enum_variant'],
+      kind: 'variant',
+      prove: rustVariants,
+    },
+    {
+      parents: ['field_declaration_list'],
+      containers: ['struct_item'],
+      types: ['field_declaration'],
+      kind: 'field',
+      prove: rustFields,
+    },
   ],
 };
 /** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
@@ -385,8 +402,21 @@ const PLAIN_NAMES = new Set(['identifier', 'property_identifier', 'field_identif
 const COMMENTS = new Set(['comment', 'line_comment', 'block_comment']);
 /** Nodes that attach to the next declaration: a decorator, annotation or attribute just before the insertion. */
 const ATTACHING = new Set(['decorator', 'annotation', 'marker_annotation', 'attribute_list', 'attribute_item']);
+/**
+ * Comments that apply to the next line or declaration, whichever side's comes first: compiler and linter directives
+ * (`@ts-ignore`, `eslint-disable-next-line`, `nolint`, `noqa`, `type: ignore`, `go:` and `+build` lines), formatter
+ * switches, and doc comments (`/**`, `///`), which JSDoc types and `@deprecated` ride on.
+ */
+const DIRECTIVE =
+  /@ts-|eslint-|prettier-ignore|biome-ignore|deno-lint|oxlint|nolint|noqa|type:\s*ignore|pyright:|pylint:|mypy:|pragma|rustfmt|clippy|NOSONAR|istanbul|c8 ignore|v8 ignore|noinspection|ReSharper|@formatter|^\/\/\s*(?:go:|\+build|#)|^\/\*\*|^\/\/\//i;
 /** The units that aren't comments: comments ride along with the side that wrote them. */
 const real = (units: readonly RangeUnit[]) => units.filter((u) => !COMMENTS.has(u.type));
+/** A directive comment that applies to what follows it: just before the insertion, or last in a side's lines. */
+function directed(side: RangeUnits) {
+  const last = side.units.at(-1);
+  const trailing = last && COMMENTS.has(last.type) ? [last.name] : [];
+  return [...(side.comments ?? []), ...trailing].some((text) => DIRECTIVE.test(text.trim()));
+}
 
 /** What orderFree needs to know of the file: its path. */
 export interface OrderContext {
@@ -394,10 +424,10 @@ export interface OrderContext {
 }
 /**
  * Both sides inserted these whole nodes at one place, and their order can't change what the program does (#476): every
- * node, on both sides, is one allowed kind of one parent (ORDER_FREE, or a package.json dependency list), none
- * decorated, annotated or attributed, nothing that attaches to the next declaration just before them, each side adds at
- * least one, and no name (with its parameter types, for overloads) is added by both. Anything else, or any doubt, is
- * false.
+ * node, on both sides, is one allowed kind of one parent (ORDER_FREE, or a known JSON file's keyed object), with that
+ * kind's proof where it has one; none decorated, annotated or attributed; nothing that attaches to the next declaration
+ * just before them, and no directive comment there or at the end of a side; each side adds at least one, and no name
+ * (with its parameter types, for overloads) is added by both. Anything else, or any doubt, is false.
  */
 export function orderFree(
   language: SyntaxLanguage,
@@ -409,15 +439,17 @@ export function orderFree(
   const [a, b] = [real(ours.units), real(theirs.units)];
   if (!a.length || !b.length) return false;
   if ([ours.before, theirs.before].some((type) => type !== undefined && ATTACHING.has(type))) return false;
-  if (language === 'json') return dependencies(ours, theirs, context.path);
+  if (directed(ours) || directed(theirs)) return false;
+  if (language === 'json') return keyedObject(ours, theirs, context.path);
   const allowed = (ORDER_FREE[language] ?? []).filter(
     (k) =>
       k.parents.includes(ours.parent) && (!k.containers || (ours.container && k.containers.includes(ours.container)))
   );
-  const kindOf = (u: RangeUnit) => allowed.find((k) => k.types.includes(u.type))?.kind;
-  const kinds = new Set([...a, ...b].map(kindOf));
-  const [kind] = kinds;
-  if (kinds.size !== 1 || !kind) return false;
+  const ruleOf = (u: RangeUnit) => allowed.find((k) => k.types.includes(u.type));
+  const rules = new Set([...a, ...b].map(ruleOf));
+  const [rule] = rules;
+  if (rules.size !== 1 || !rule) return false;
+  const { kind } = rule;
   // Python runs default values and annotations when it runs `def`, in order; a `__name` is mangled with its class.
   const python = (u: RangeUnit) =>
     language !== 'python' ||
@@ -433,7 +465,7 @@ export function orderFree(
     (kind === 'import' || PLAIN_NAMES.has(u.nameKind ?? '')) &&
     python(u) &&
     using(u);
-  if (![...a, ...b].every(fits) || !proved(language, kind, ours, [...a, ...b])) return false;
+  if (![...a, ...b].every(fits) || (rule.prove && !rule.prove(ours, [...a, ...b]))) return false;
   // An import by its line; a method by its name, with its parameter types where overloads differ by them.
   const key = (u: RangeUnit) =>
     kind === 'import'
@@ -445,24 +477,62 @@ export function orderFree(
   return !b.some((u) => mine.has(key(u)));
 }
 
+/**
+ * TypeScript imports: an import runs its module, in order, and nothing in the syntax tree shows that a module has no
+ * side effects, so a value import is never order-free. `import type …` is erased whole from the output (even with
+ * `verbatimModuleSyntax`), so it runs nothing: both sides' imports must all be `import type`, binding different names.
+ * `import { type A }` is not: it can leave `import {} from './a'`, which runs the module.
+ */
+function typeImports(_units: RangeUnits, added: readonly RangeUnit[]) {
+  const binds = added.flatMap((u) => u.binds ?? []);
+  return added.every((u) => u.typeOnly && u.binds?.length) && new Set(binds).size === binds.length;
+}
+
 /** Lint and documentation attributes, and `cfg`, which keeps or drops the whole item: none of them reads an order. */
 const INERT_ATTRIBUTES = /^(?:allow|warn|deny|forbid|expect|cfg)\s*\(|^doc\b/;
+const DERIVE = /^derive\s*\(([^()]*)\)$/;
+/** A `use` of std, core or alloc, which the file can't have renamed (rustFile refuses `extern crate … as std`). */
+const STD_USE = /^(?:pub(?:\([^)]*\))? )?use (?:::)?(?:std|core|alloc)::/;
+/** `#[macro_use]` brings a crate's macros in under their own names; `extern crate x as std` makes `std::` mean x. */
+const RENAMES_STD = /macro_use|extern crate .* as (?:std|core|alloc)\b/;
+/** Rust's primitive types: a field of one has no drop glue, unless the file names something else after it. */
+const PRIMITIVES = ['i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'].concat([
+  'f32',
+  'f64',
+  'bool',
+  'char',
+  'str',
+]);
+const PRIMITIVE_WORD = new RegExp(`\\b(?:${PRIMITIVES.join('|')})\\b`);
+/** Names that change what Rust code in the file means when the file declares them: the primitives and the std crates. */
+const RESERVED = new Set([...PRIMITIVES, 'std', 'core', 'alloc']);
+/** A word regex for each derive set, compiled once. */
+const deriveWords = new WeakMap<ReadonlySet<string>, RegExp>();
 /**
- * Every attribute on a Rust item and around it is inert or a `derive` of only these std derives, and no `use` or
- * `extern crate` in the file could bring another macro under one of their names (a glob or a rename, or `macro_use`).
+ * Every attribute on a Rust item and around it is inert or a `derive` of only these std derives, and nothing in the file
+ * could put another macro under one of their names: a glob or a `use` naming one outside std, core and alloc, a
+ * `macro_use`, an `extern crate … as std`, a type or module named like std, or a macro called where items go, which can
+ * declare anything. A crate root's `#[macro_use] extern crate` is in another file: docs/conflict-resolution.md says so.
  */
 function rustAttributes(owner: RangeOwner, derives: ReadonlySet<string>) {
+  let named = deriveWords.get(derives);
+  if (!named) deriveWords.set(derives, (named = new RegExp(`\\b(?:${[...derives].join('|')})\\b`)));
+  const words = named;
   const derived = (text: string) => {
-    const list = /^derive\s*\(([^()]*)\)$/.exec(text)?.[1];
+    const list = DERIVE.exec(text)?.[1];
     return list !== undefined && list.split(',').every((name) => !name.trim() || derives.has(name.trim()));
   };
-  const named = (text: string) => [...derives].some((name) => new RegExp(`\\b${name}\\b`).test(text));
-  const std = (text: string) => /^(?:pub(?:\([^)]*\))? )?use (?:::)?(?:std|core|alloc)::/.test(text);
   const safe = (text: string) =>
-    !/macro_use/.test(text) &&
-    (!/\*|\{/.test(text) || std(text)) &&
-    (!named(text) || (std(text) && !/ as /.test(text)));
-  return owner.attributes.every((a) => INERT_ATTRIBUTES.test(a) || derived(a)) && owner.uses.every(safe);
+    !RENAMES_STD.test(text) &&
+    (!/\*|\{/.test(text) || STD_USE.test(text)) &&
+    (!words.test(text) || (STD_USE.test(text) && !/ as /.test(text)));
+  const { file } = owner;
+  return (
+    !file.macros &&
+    !file.types.some((name) => RESERVED.has(name)) &&
+    owner.attributes.every((a) => INERT_ATTRIBUTES.test(a) || derived(a)) &&
+    file.uses.every(safe)
+  );
 }
 /** A Rust integer literal's value, `-` allowed; undefined for anything else (a constant, an expression). */
 function rustInteger(text: string | undefined) {
@@ -475,50 +545,43 @@ function rustInteger(text: string | undefined) {
   const value = BigInt(digits.toLowerCase());
   return match[1] ? -value : value;
 }
-/** Derives that, on scalar fields, combine each field's result without an order: a copy, a default, `==` and `&&`. */
-const STRUCT_DERIVES = new Set(['Clone', 'Copy', 'PartialEq', 'Eq', 'Default']);
-/** Field types with no drop glue and nothing to run: Rust's scalars, and borrowed strings. */
-const SCALAR = /^(?:[iu](?:8|16|32|64|128|size)|f32|f64|bool|char|&(?:'[\p{L}_][\p{L}\p{N}_]* )?str)$/u;
 /** Derives that never read a fieldless enum's variant order once each variant has its own value. */
 const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash']);
 /**
- * The per-kind proofs (#481), for kinds whose order can matter elsewhere.
- *
  * Rust enum variants: a variant's order sets only its implicit discriminant (what `as` casts read) and what derives
  * that look at the order read (`PartialOrd`, `Ord`, serde's variant index). So every variant, old and new, is a unit
  * variant with an explicit integer discriminant, all different; nothing but lint, `doc` and `cfg` attributes and
- * ENUM_DERIVES sit on the enum or around it, no variant has an attribute (`#[default]`, `#[serde(…)]`), and no `use`
- * could rename a derive. Rust has no reflection over variants.
- *
- * Rust struct fields: their order is the drop order, what `Debug`, `PartialOrd`, `Ord`, `Hash` and serde read, and,
- * with `#[repr]`, the layout. So every field, old and new, is a named field of a scalar type or `&str` (no drop glue,
- * nothing to run), with no attribute; and nothing but lint, `doc` and `cfg` attributes and STRUCT_DERIVES sit on the
- * struct or around it. Without `#[repr]` the layout is unspecified (rustc reorders fields), and struct literals and
- * patterns name their fields.
- *
- * TypeScript imports: an import runs its module, in order, and nothing in the syntax tree shows that a module has no
- * side effects, so a value import is never order-free. `import type …` is erased whole from the output (even with
- * `verbatimModuleSyntax`), so it runs nothing: both sides' imports must all be `import type`, binding different names.
- * `import { type A }` is not: it can leave `import {} from './a'`, which runs the module.
+ * ENUM_DERIVES sit on the enum or around it (rustAttributes), and no variant has an attribute (`#[default]`,
+ * `#[serde(…)]`). Rust has no reflection over variants.
  */
-function proved(language: SyntaxLanguage, kind: OrderKind, units: RangeUnits, added: RangeUnit[]) {
-  if (language === 'typescript' || language === 'tsx') {
-    if (kind !== 'import') return true;
-    const binds = added.flatMap((u) => u.binds ?? []);
-    return added.every((u) => u.typeOnly && u.binds?.length) && new Set(binds).size === binds.length;
-  }
-  if (kind !== 'variant' && kind !== 'field') return true;
+function rustVariants(units: RangeUnits) {
   const owner = units.owner;
-  if (kind === 'field')
-    return (
-      !!owner &&
-      rustAttributes(owner, STRUCT_DERIVES) &&
-      owner.members.every((m) => !m.attributed && SCALAR.test(m.type ?? ''))
-    );
   if (!owner || !rustAttributes(owner, ENUM_DERIVES)) return false;
   const values = owner.members.map((m) => (m.fields || m.attributed ? undefined : rustInteger(m.value)));
   if (values.some((v) => v === undefined)) return false;
   return new Set(values.map(String)).size === values.length;
+}
+/** Derives that, on scalar fields, combine each field's result without an order: a copy, a default, `==` and `&&`. */
+const STRUCT_DERIVES = new Set(['Clone', 'Copy', 'PartialEq', 'Eq', 'Default']);
+/** Field types with no drop glue and nothing to run: Rust's scalars, and borrowed strings. */
+const SCALAR = /^(?:[iu](?:8|16|32|64|128|size)|f32|f64|bool|char|&(?:'[\p{L}_][\p{L}\p{N}_]* )?str)$/u;
+/**
+ * Rust struct fields: their order is the drop order, what `Debug`, `PartialOrd`, `Ord`, `Hash` and serde read, and,
+ * with `#[repr]`, the layout. So every field, old and new, is a named field of a primitive scalar type or `&str` (no
+ * drop glue, nothing to run), with no attribute, in a struct without type parameters; no `use`, `extern crate`, type or
+ * module in the file is named like a primitive; and nothing but lint, `doc` and `cfg` attributes and STRUCT_DERIVES sit
+ * on the struct or around it (rustAttributes). Without `#[repr]` the layout is unspecified (rustc reorders fields;
+ * `offset_of!` reads it), and struct literals and patterns name their fields.
+ */
+function rustFields(units: RangeUnits) {
+  const owner = units.owner;
+  return (
+    !!owner &&
+    !owner.generic &&
+    rustAttributes(owner, STRUCT_DERIVES) &&
+    !owner.file.uses.some((text) => PRIMITIVE_WORD.test(text)) &&
+    owner.members.every((m) => !m.attributed && SCALAR.test(m.type ?? ''))
+  );
 }
 
 /** A JSON string, read as JSON reads it; undefined for anything else. */
@@ -552,9 +615,9 @@ const KEYED_OBJECTS: [RegExp, ReadonlySet<string>][] = [
 /**
  * A known file's keyed object (KEYED_OBJECTS): both sides added whole pairs to one of its top-level objects that are
  * read by key only, and every key in it, old and new, is different. No other JSON object: tools read keys in order
- * (`exports`, `scripts` globs, `moduleNameMapper`, `compilerOptions.paths`).
+ * (`exports`, `scripts` globs, `moduleNameMapper`), or break ties by order (`compilerOptions.paths`).
  */
-function dependencies(ours: RangeUnits, theirs: RangeUnits, path: string) {
+function keyedObject(ours: RangeUnits, theirs: RangeUnits, path: string) {
   const all = ours.all;
   const owners = KEYED_OBJECTS.find(([file]) => file.test(path))?.[1];
   if (!owners || ours.parent !== 'object' || !all) return false;
