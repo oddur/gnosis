@@ -21,6 +21,7 @@ import {
   type ConflictSession,
 } from '../lib/conflict-resolution';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
+import { adopt, loadedOf, reconcile, type LoadedFile } from '../lib/conflict-loaded';
 import { withProposals } from '../lib/conflict-carry';
 import type { PrActionState } from '../lib/pr-actions';
 import { blockBuckets, CHECKS_VERSION, unchosenConflicts, verifyProposals } from '../lib/conflict-verify';
@@ -406,6 +407,103 @@ void test('a refused save says why; Keep my edit replaces the file with your tex
       f.run({ ...f.saveFrom(kept, 'other.ts', 'export const other = 3;\n'), version }),
       (error: Error) => error.message === SAVE_REFUSALS.pushed
     );
+});
+/**
+ * The Conflicts view's rule (lib/conflict-loaded.ts) on the real service: a save sends the revision its text came from,
+ * and a newer draft reloads or holds each file another view changed. In each case the other view's change survives and
+ * the stale save is refused.
+ */
+function view(session: ConflictSession) {
+  const loaded = new Map<string, LoadedFile>();
+  adopt(loaded, session, 'all');
+  return {
+    loaded,
+    save: (latest: ConflictSession, path: string, contents: string, extra: object = {}) => ({
+      kind: 'save' as const,
+      id: latest.id,
+      version: latest.version,
+      path,
+      contents,
+      resolved: false,
+      base: loaded.get(path)?.revision,
+      ...extra,
+    }),
+  };
+}
+void test('the view’s rule: a held edit restored on reopen still saves from what it came from, so it is refused', async (t) => {
+  const f = await twoFiles(t);
+  const a = view(f.session);
+  // Another view saves sample.ts; A's autosave of its own edit is refused and held.
+  await f.run(f.saveFrom(f.session, 'sample.ts', 'export const answer = 2;\n', { picks: ['theirs'] }));
+  await assert.rejects(f.run(a.save(f.session, 'sample.ts', 'export const answer = 3;\n')), (e: Error) => e.message === SAVE_REFUSALS.changed);
+  const heldFrom = a.loaded.get('sample.ts');
+  assert.ok(heldFrom);
+  // A reopens: every file is read afresh, but the held file stays on what the edit came from.
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  adopt(a.loaded, reopened, 'all');
+  a.loaded.set('sample.ts', { ...loadedOf(f.fileOf(reopened, 'sample.ts')), revision: heldFrom.revision });
+  // Any path that saves it now (Mark reviewed, leaving the view) is refused; the other view's file stays.
+  await assert.rejects(
+    f.run(a.save(reopened, 'sample.ts', 'export const answer = 3;\n', { resolved: true })),
+    (e: Error) => e.message === SAVE_REFUSALS.changed
+  );
+  const stored = f.deps.storage.read(f.key) as ConflictSession;
+  assert.equal(f.fileOf(stored, 'sample.ts').result, 'export const answer = 2;\n');
+  assert.deepEqual(f.fileOf(stored, 'sample.ts').picks, ['theirs']);
+});
+void test('the view’s rule: the selected file another view changed is held when the save of another file goes on', async (t) => {
+  const f = await twoFiles(t);
+  const a = view(f.session);
+  // A edits sample.ts (selected, not saved yet); another view saves sample.ts meanwhile.
+  await f.run(f.saveFrom(f.session, 'sample.ts', 'export const answer = 2;\n'));
+  // A's save of other.ts goes on from the newer draft; the reply brings the other view's sample.ts.
+  const reply = (await f.run(a.save(f.session, 'other.ts', 'export const other = 1;\n'))).session;
+  adopt(a.loaded, reply, ['other.ts']);
+  const typedHere = (path: string) => path === 'sample.ts';
+  const { reload, hold } = reconcile(a.loaded, reply, typedHere);
+  assert.deepEqual(reload, []);
+  assert.equal(hold?.path, 'sample.ts');
+  assert.equal(hold.reason, 'changed');
+  // The selected file is no exception: its save still comes from A's older revision, and is refused.
+  await assert.rejects(
+    f.run(a.save(reply, 'sample.ts', 'export const answer = 3;\n')),
+    (e: Error) => e.message === SAVE_REFUSALS.changed
+  );
+  assert.equal(f.fileOf(f.deps.storage.read(f.key) as ConflictSession, 'sample.ts').result, 'export const answer = 2;\n');
+  // With nothing of A's own on it, the file is read afresh instead, and its next save goes on from the new one.
+  const fresh = view(f.session);
+  const reread = reconcile(fresh.loaded, reply, () => false);
+  assert.ok(reread.reload.includes('sample.ts'));
+  assert.equal(fresh.loaded.get('sample.ts')?.revision, f.fileOf(reply, 'sample.ts').revision);
+});
+void test('the view’s rule: read afresh to retry, the selected file drops your older choices for it', async (t) => {
+  const f = await twoFiles(t);
+  // A kept the PR's side on sample.ts and saved it; the view's own choice equals what it saved.
+  const saved = (await f.run(f.saveFrom(f.session, 'sample.ts', 'export const answer = 1;\n', { picks: ['ours'] }))).session;
+  const a = view(saved);
+  // Another view keeps main's side there, and its reopen pass moves the draft on.
+  await f.run(f.saveFrom(saved, 'sample.ts', 'export const answer = 2;\n', { picks: ['theirs'] }));
+  await assert.rejects(f.run({ kind: 'preview', id: saved.id, version: saved.version }), /saved resolution changed/);
+  // Review and push reads the draft afresh: nothing of A's own differs from what it loaded, so sample.ts reloads.
+  const latest = (await f.run({ kind: 'open', url: f.state.url })).session;
+  const { reload, hold } = reconcile(a.loaded, latest, () => false);
+  assert.deepEqual(reload, ['sample.ts'], 'the view forgets its own pick for sample.ts and shows the saved one');
+  assert.equal(hold, undefined);
+  // A stale save with A's older choice, from before the reload, is refused; the other view's choice stays.
+  await assert.rejects(
+    f.run(f.saveFrom(saved, 'sample.ts', 'export const answer = 1;\n', { picks: ['ours'], version: latest.version })),
+    (e: Error) => e.message === SAVE_REFUSALS.changed
+  );
+  const stored = f.deps.storage.read(f.key) as ConflictSession;
+  assert.deepEqual(f.fileOf(stored, 'sample.ts').picks, ['theirs']);
+  // The review flag is part of the revision too: a save from before another view's Mark reviewed is refused.
+  const reviewed = structuredClone(stored);
+  f.fileOf(reviewed, 'sample.ts').resolved = true;
+  f.deps.storage.write(f.key, reviewed);
+  await assert.rejects(
+    f.run(f.saveFrom(stored, 'sample.ts', 'export const answer = 2;\n')),
+    (e: Error) => e.message === SAVE_REFUSALS.changed
+  );
 });
 void test('a save waits a bounded time for another request on the PR, then fails as busy', async (t) => {
   const f = await twoFiles(t);

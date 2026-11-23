@@ -104,12 +104,13 @@ import {
 const SAVE_WAIT = 30_000;
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 /**
- * A file's saved draft, named (`ConflictFile.revision`): its conflicts, then its draft, proposals, choices and edits.
+ * A file's saved draft, named (`ConflictFile.revision`): its conflicts, then its draft, review flag, proposals, choices
+ * and edits.
  * Exact, so a save from another view's draft of the file is never taken for this one.
  */
 const fileRevision = (f: ConflictFile) =>
   `${hash(`${f.path}\0${f.original}`).slice(0, 16)}.${hash(
-    JSON.stringify([f.path, f.original, f.result, f.proposals ?? null, f.picks ?? null, f.edits ?? null])
+    JSON.stringify([f.path, f.original, f.result, f.resolved, f.proposals ?? null, f.picks ?? null, f.edits ?? null])
   ).slice(0, 32)}`;
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
 const repoName = (value: string) => /^[\w.-]+\/[\w.-]+$/.test(value);
@@ -460,7 +461,8 @@ export function createConflictResolutionService(deps: Deps) {
     pendingTypeErrors.delete(key);
     const saved = deps.storage.read(key) as ConflictSession | undefined;
     if (saved && (!match || match(saved)) && applyTypeErrors(saved, result)) {
-      write(key, saved);
+      // A demotion can reopen a reviewed file: its revision moves, so a save from before it is refused.
+      write(key, stamped(saved));
       void deps.storage.flush();
     }
   }
@@ -638,11 +640,14 @@ export function createConflictResolutionService(deps: Deps) {
       ? SAVE_REFUSALS.changed
       : SAVE_REFUSALS.conflicts;
   }
+  /** Names each file's saved draft (`fileRevision`) before a write that may change one. */
+  function stamped(session: ConflictSession) {
+    for (const f of session.files) f.revision = fileRevision(f);
+    return session;
+  }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    withChoices(key, session);
-    for (const f of session.files) f.revision = fileRevision(f);
-    write(key, session);
+    write(key, stamped(withChoices(key, session)));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -2580,7 +2585,7 @@ export function createConflictResolutionService(deps: Deps) {
             await persist(stored);
           } else if (stored && counted?.changed) {
             // Saved with the next write; the open never waits for it.
-            write(key, withChoices(key, stored));
+            write(key, stamped(withChoices(key, stored)));
           }
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);

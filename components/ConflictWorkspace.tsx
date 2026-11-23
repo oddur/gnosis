@@ -70,7 +70,6 @@ import type { ActivityTask } from '../lib/activity';
 import {
   SAVE_REFUSALS,
   STALE_DRAFT,
-  changedFiles,
   refusedSave,
   type SaveRefusal,
   hasConflictMarkers,
@@ -83,6 +82,7 @@ import {
   type SavedBlockEdit,
   type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
+import { adopt, editsJson, loadedOf, picksJson, reconcile, type LoadedFile } from '../lib/conflict-loaded';
 import {
   conflictPushNeedsWorkflow,
   githubWriteError,
@@ -636,9 +636,14 @@ export function ConflictWorkspace({
   const [restackDirty, setRestackDirty] = useState(false);
   const [session, setSessionState] = useState<ConflictSession>();
   const sessionRef = useRef<ConflictSession>(undefined);
+  // What the view's text and own choices for each file came from (lib/conflict-loaded.ts): saves send it as `base`.
+  const loaded = useRef(new Map<string, LoadedFile>());
+  const reconcileRef = useRef<(value: ConflictSession) => void>(undefined);
+  /** A newer saved draft: files another writer changed are read afresh, or held when you changed them too. */
   const setSession = (value: ConflictSession) => {
     sessionRef.current = value;
     setSessionState(value);
+    reconcileRef.current?.(value);
   };
   const [selected, setSelectedState] = useState('');
   const selectedRef = useRef('');
@@ -654,7 +659,12 @@ export function ConflictWorkspace({
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'failed'>('idle');
   // Your edit the service refused: the footer asks which draft of the file to keep. Nothing saves meanwhile.
-  const [held, setHeld] = useState<HeldEdit>();
+  const [held, setHeldState] = useState<HeldEdit>();
+  const heldRef = useRef<HeldEdit>(undefined);
+  const setHeld = (value: HeldEdit | undefined) => {
+    heldRef.current = value;
+    setHeldState(value);
+  };
   const [error, setError] = useState('');
   const [failedKind, setFailedKind] = useState<ConflictRequest['kind'] | 'open'>();
   // GitHub refuses a push that changes workflow files from a sign-in without `workflow`. The sign-in it refused, so
@@ -710,8 +720,8 @@ export function ConflictWorkspace({
     return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.edits ?? []) ? undefined : own;
   };
   /**
-   * A save of `file` from `session`. `base` is the file's revision your edit started from: another writer may move the
-   * draft on meanwhile, and the save still lands while this file is as you saw it.
+   * A save of `file` from `session`. `base` is the revision your text and choices for the file came from (`loaded`):
+   * another writer may move the draft on meanwhile, and the save still lands while this file is as you saw it.
    */
   const saveRequest = (
     session: ConflictSession,
@@ -726,7 +736,8 @@ export function ConflictWorkspace({
     path: file.path,
     contents,
     resolved,
-    ...(file.revision ? { base: file.revision } : {}),
+    // What your text came from, never a newer revision: a view another view overtook is refused, whatever saves it.
+    ...(loaded.current.get(file.path)?.revision ? { base: loaded.current.get(file.path)?.revision } : {}),
     ...own,
   });
   /** Your unsaved choices and edits for these files go: the saved ones show and save from now on. */
@@ -739,17 +750,22 @@ export function ConflictWorkspace({
     setPicks(without);
     setEdits(without);
   };
-  /** Keeps an edit the service refused, with your choices for it, and pauses autosave until you choose. */
-  const hold = ({ session, file, text, reason }: { session: ConflictSession; file: ConflictFile; text: string; reason: SaveRefusal }) => {
+  /**
+   * Keeps your edit of a file another view changed, with your choices for it, and pauses its saves until you choose.
+   * `was`: what your edit came from.
+   */
+  const hold = ({ session, path, was, text, reason }: { session: ConflictSession; path: string; was: LoadedFile; text: string; reason: SaveRefusal }) => {
+    const ownPicks = picksState.current[path];
+    const ownEdits = editsState.current[path];
     const edit: HeldEdit = {
       key: heldKey(session),
       id: session.id,
-      path: file.path,
+      path,
       text,
-      original: file.original,
-      revision: file.revision,
-      picks: picksRef.current(file),
-      edits: editsRef.current(file),
+      original: was.original,
+      revision: was.revision,
+      picks: ownPicks?.original === was.original ? ownPicks.picks : undefined,
+      edits: ownEdits?.original === was.original ? ownEdits.edits : undefined,
       reason,
       at: Date.now(),
     };
@@ -757,6 +773,32 @@ export function ConflictWorkspace({
     heldEdits.set(edit.key, edit);
     pruneHeld(session.account);
     setHeld(edit);
+  };
+  const picksState = useRef(picks);
+  picksState.current = picks;
+  const editsState = useRef(edits);
+  editsState.current = edits;
+  /** Your text, choices or edits for the file differ from what it was loaded from. */
+  const changedHere = (path: string, was: LoadedFile) => {
+    if (path === selectedRef.current && contentsRef.current !== was.result) return true;
+    const ownPicks = picksState.current[path];
+    const ownEdits = editsState.current[path];
+    return (
+      (ownPicks?.original === was.original && picksJson(ownPicks.picks) !== was.picks) ||
+      (ownEdits?.original === was.original && editsJson(ownEdits.edits) !== was.edits)
+    );
+  };
+  reconcileRef.current = (value: ConflictSession) => {
+    const { reload, hold: changed } = reconcile(loaded.current, value, changedHere, heldRef.current?.path);
+    forgetOwn(reload);
+    const shown = reload.includes(selectedRef.current) && value.files.find((f) => f.path === selectedRef.current);
+    if (shown) setContents(shown.result);
+    if (changed && !heldRef.current)
+      hold({
+        session: value,
+        ...changed,
+        text: changed.path === selectedRef.current ? contentsRef.current : changed.was.result,
+      });
   };
   /** Your picks and edits for a save request, where they changed. */
   const ownToSave = (f: ConflictFile) => {
@@ -986,10 +1028,11 @@ export function ConflictWorkspace({
         !value.stale &&
         current &&
         !current.unsupported &&
+        // A held edit waits for your choice in the footer: nothing saves it before.
+        heldRef.current?.path !== path &&
         (text !== current.result || Object.keys(own).length > 0)
       ) {
         setSaveState('saving');
-        const before = value;
         try {
           value = (
             await window.electronAPI.conflictResolution(
@@ -998,12 +1041,11 @@ export function ConflictWorkspace({
           ).session;
         } catch (e) {
           const reason = refusedSave(e);
-          if (reason) hold({ session: value, file: current, text, reason });
+          if (reason) hold({ session: value, path, was: loaded.current.get(path) ?? loadedOf(current), text, reason });
           throw e;
         }
-        // The save went on from a draft another view moved on: your own choices for the files it changed are older
-        // than theirs, and must never be saved over them.
-        forgetOwn(changedFiles(before, value, path));
+        // Your save of this file is the saved file now; any other file the reply changed is read afresh or held.
+        adopt(loaded.current, value, [path]);
       }
       if (value !== sessionRef.current) setSession(value);
       setSaveState('idle');
@@ -1043,6 +1085,8 @@ export function ConflictWorkspace({
         const before = saved.files.find((f) => f.path === path)?.result;
         const reply = await window.electronAPI.conflictResolution({ kind: 'model', id: saved.id, version: saved.version, path, index });
         const after = reply.session.files.find((f) => f.path === path);
+        // The proposal went into this file by your request: its saved state is the view's.
+        adopt(loaded.current, reply.session, [path]);
         setSession(reply.session);
         // Typing meanwhile wins: your next save keeps your text, and the proposal stays one choice away.
         if (selectedRef.current === path && contentsRef.current === before && after) setContents(after.result);
@@ -1067,7 +1111,6 @@ export function ConflictWorkspace({
       let request = build(saved);
       kind = request.kind;
       const typed = contentsRef.current;
-      let known = saved;
       let reply: ConflictReply;
       try {
         reply = await window.electronAPI.conflictResolution(request);
@@ -1077,14 +1120,18 @@ export function ConflictWorkspace({
         if (!retriesOnReload(request, e) || contentsRef.current !== typed) throw e;
         const latest = await window.electronAPI.conflictResolution({ kind: 'open', url });
         if (contentsRef.current !== typed || latest.session.stale || latest.session.status !== 'editing') throw e;
-        forgetOwn(changedFiles(known, latest.session, selectedRef.current));
-        known = latest.session;
+        // Read afresh: each file another view changed is reloaded, or held when you changed it too.
         apply(latest, selectedRef.current);
+        if (heldRef.current) throw e;
         request = build(latest.session);
         reply = await window.electronAPI.conflictResolution(request);
       }
-      // A save that went on from a draft another view moved on: their newer choices win on the files they changed.
-      forgetOwn(changedFiles(known, reply.session, selectedRef.current));
+      // What this request wrote for you is the view's; any other file the reply changed is read afresh or held (after).
+      adopt(
+        loaded.current,
+        reply.session,
+        request.kind === 'save' || request.kind === 'resolve' || request.kind === 'model' ? [request.path] : 'all'
+      );
       after(reply, request);
       return true;
     } catch (e) {
@@ -1146,6 +1193,11 @@ export function ConflictWorkspace({
       const still = waiting && reason ? { ...waiting, reason } : undefined;
       if (still) heldEdits.set(key, still);
       else heldEdits.delete(key);
+      // Read afresh: every file is the view's as saved now. A held edit stays on what it came from, so nothing saves
+      // it over the other view's file; Keep my edit alone moves it on, with your text.
+      adopt(loaded.current, reply.session, 'all');
+      if (still && file) loaded.current.set(file.path, { ...loadedOf(file), revision: still.revision });
+      setHeld(still);
       apply(reply, file ? file.path : selectedRef.current);
       if (file && (mine ? !still : still?.reason === 'changed')) {
         // Your text on screen; with Keep my edit, your own choices for it too, never older ones.
@@ -1155,7 +1207,6 @@ export function ConflictWorkspace({
           setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: mine.edits ?? [] } }));
         }
       }
-      setHeld(still);
       setSaveState('idle');
       setResetPrompt(false);
       setOutcome('');
@@ -1194,6 +1245,8 @@ export function ConflictWorkspace({
     setPreview(undefined);
     setConfirming(false);
     setBaseNote('');
+    // The draft is yours again as saved: every file is read afresh.
+    adopt(loaded.current, next, 'all');
     apply({ session: next }, next.files.at(0)?.path ?? selectedRef.current);
     // The footer shows a hint before the outcome: clear it, so the undo's outcome is what it says.
     setHint('');
@@ -1362,8 +1415,10 @@ export function ConflictWorkspace({
     const edit = held;
     if (!edit || pending.current) return;
     // What is on screen now: you may have typed or chosen more since the refusal.
+    // Back on the file after showing another, the screen shows the saved file: your held text is still the edit.
     const shown = selectedRef.current === edit.path ? sessionRef.current?.files.find((f) => f.path === edit.path) : undefined;
-    const mine = shown
+    const typed = shown && contentsRef.current !== shown.result;
+    const mine = typed
       ? { ...edit, text: contentsRef.current, picks: picksRef.current(shown), edits: editsRef.current(shown) }
       : edit;
     heldEdits.delete(edit.key);

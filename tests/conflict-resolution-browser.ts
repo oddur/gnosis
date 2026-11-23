@@ -230,7 +230,7 @@ void app.whenReady().then(async () => {
     await js(`import('/lib/conflict-resolution.ts').then(m=>{
       window.refusals=m.SAVE_REFUSALS;window.stale=m.STALE_DRAFT;
       const h=t=>{let a=0x811c9dc5;for(let i=0;i<t.length;i++)a=Math.imul(a^t.charCodeAt(i),16777619);return (a>>>0).toString(36)+'-'+t.length};
-      window.rev=f=>h(f.path+'\\0'+f.original)+'.'+h(JSON.stringify([f.result,f.proposals??null,f.picks??null,f.edits??null]));
+      window.rev=f=>h(f.path+'\\0'+f.original)+'.'+h(JSON.stringify([f.result,f.resolved,f.proposals??null,f.picks??null,f.edits??null]));
       const handle=window.electronAPI.conflictResolution;
       window.electronAPI.conflictResolution=async req=>{
         const reply=await handle(req);
