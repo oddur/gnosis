@@ -2394,6 +2394,81 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
   assert.equal(withProposals(file.original, file.proposals ?? []), before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
 });
 
+void test('a reopen keeps a shown move proposal when the move rule can’t run again (#487)', async (t) => {
+  const { sample, resolved } = await movedCase();
+  const f = await fixture(t, false, sample);
+  let asked = 0;
+  const rule = (file: ConflictFile, disabled: SyntaxLanguage[]) => (asked++, moveProposer(movedEngine, disabled)(file));
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf'), moved: rule });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile?.source, 'moved');
+  // The worker crashes or times out now: it answers nothing. The reopen keeps the proposal, and doesn't ask again.
+  asked = 0;
+  Object.assign(f.deps, { moved: () => (asked++, Promise.resolve(undefined)) });
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(reopened.files[0].wholeFile?.text, resolved);
+  assert.equal(asked, 0, 'The same three versions: the move rule is not run again');
+  // TypeScript turned off in Settings: the rule wouldn't run, so the kept proposal goes.
+  Object.assign(f.deps, { disabledLanguages: () => ['typescript'] });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+  // A build without the move rule keeps none either.
+  Object.assign(f.deps, { disabledLanguages: () => [], moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile?.source, 'moved');
+  Object.assign(f.deps, { moved: undefined });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+});
+
+void test('Load latest gives a draft you changed no new move proposal (#487)', async (t) => {
+  const { sample } = await movedCase();
+  const f = await fixture(t, false, sample);
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf') });
+  // Prepared without the move rule; then you change the draft.
+  let { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile, undefined);
+  // Main's side for the conflict: your choice, carried over by Load latest.
+  const contents = session.files[0].original.replace(/<{7}[^]*?={7}\n([^]*?)>{7} [^\n]*\n/, '$1');
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: 'pricing.ts', contents, resolved: false })
+  ).session;
+  // Load latest with the move rule: the fresh merge would get a proposal, but your draft comes back.
+  Object.assign(f.deps, { moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true, keep: true })).session;
+  assert.equal(session.files[0].result, contents);
+  assert.equal(session.files[0].wholeFile, undefined);
+});
+
+void test('a file whose same-change proposals are taken back gets the move rule (#487)', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('The stand-in for structural merge is a shell script.');
+    return;
+  }
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: "f('w');\n",
+    ours: "f('x');\n",
+    theirs: 'f("x");\n',
+  });
+  // Structural merge leaves Git's conflict, where the 'same' rule proposes the PR's line; its check fails.
+  const script = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-fake-mergiraf-')), 'mergiraf');
+  t.after(() => fs.rm(path.dirname(script), { recursive: true, force: true }));
+  await fs.writeFile(script, '#!/bin/sh\ngit merge-file -p --diff3 "$3" "$2" "$4"\nexit 1\n', { mode: 0o755 });
+  const moved = { source: 'moved' as const, text: "f('x');\n", note: 'The PR moved f, and main edited it.' };
+  let asked = 0;
+  Object.assign(f.deps, {
+    mergiraf: () => script,
+    verify: () => Promise.resolve({ merged: false, note: 'Check it.' }),
+    moved: () => (asked++, Promise.resolve(moved)),
+  });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  const [file] = session.files;
+  assert.equal(file.proposals, undefined, 'The same-change proposal was taken back');
+  assert.equal(file.result, file.original);
+  assert.deepEqual(file.wholeFile, moved);
+  assert.equal(asked, 1);
+  assert.ok(file.verdict, 'The move proposal is checked');
+  assert.notEqual(file.verdict.verdict.merged, true);
+});
+
 // #493: the lines a resolver wrote keep their marks while its text is the baseline, and lose them once it isn't.
 void test('a suggestion that declines keeps the marks; Reset clears the resolver text, so a line you type is never marked', async (t) => {
   const { draftWritten, resolverBaseline } = await import('../lib/conflict-diff');
