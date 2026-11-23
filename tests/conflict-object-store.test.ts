@@ -1,4 +1,5 @@
 import { test, type TestContext } from 'node:test';
+import { assertSavedState } from '../src/app-data-store';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -102,7 +103,11 @@ function service(
   const deps = {
     storage: {
       read: (key: string) => structuredClone(data.get(key)),
-      write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+      write: (key: string, value: unknown) => {
+        assertSavedState(key, value);
+        if (value === null || value === undefined) data.delete(key);
+        else data.set(key, structuredClone(value));
+      },
       flush: async () => {},
       names: () => [...data.keys()],
     },

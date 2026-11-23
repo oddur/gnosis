@@ -337,10 +337,10 @@ void test('patch writes only the listed rows', async () => {
     await store.flush();
     assert.deepEqual(changes.rows(), ['delete:entry:c', 'update:entry:b']);
     changes.close();
-    // Only unread progress, mutes and stars accept row changes.
+    // Only unread progress, mutes and stars accept row changes: the worker refuses the patch alone.
     store.patch('workbench:alice', { put: { a: 1 } });
-    await assert.rejects(store.flush(), /Invalid saved change/);
-    await store.close().catch(() => {});
+    await store.flush();
+    await store.close();
     store = createAppDataStore();
     await store.open(dir);
     assert.deepEqual(store.take(mutedName), { entries: { a: { seq: 0 }, b: { seq: 1, title: 'changed' } } });
@@ -380,8 +380,11 @@ void test('close reports a failed final save and still stops the worker', async 
   let store = createAppDataStore();
   try {
     await store.open(dir);
-    store.patch('workbench:alice', { put: { a: 1 } }); // rejected by the worker on every flush
-    await assert.rejects(store.close(), /Invalid saved change/);
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    db.close();
+    store.write('workbench:alice', queue()); // fails on every flush
+    await assert.rejects(store.close(), /simulated disk failure/);
     // The worker is gone, so the database is released (Windows refuses to delete an open file).
     await store.close();
     store = createAppDataStore();
@@ -549,6 +552,82 @@ void test('the worker exiting after a clean close does not fail the closed store
     assert.deepEqual(store.read('workbench:late'), queue('late'));
   } finally {
     console.warn = warn;
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('a state the worker refuses is dropped alone: a valid write in the same flush lands (#534)', async (t) => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const warned: string[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warned.push(args.join(' ')));
+  const since = `overview-since-${'c'.repeat(64)}.json`;
+  try {
+    await store.open(dir);
+    // An object, so it passes the write-time rule, but the worker refuses a review queue without subjects.
+    store.write('workbench:alice', { account: 'alice' });
+    store.write(since, { version: 1, events: [{ at: 1 }] });
+    await store.flush();
+    assert.ok(warned.some((line) => line.includes('refused a workbench state')), 'The refusal is logged by kind');
+    assert.ok(!warned.some((line) => line.includes('alice')), 'No account in the log');
+    // Nothing is retried, and later saves go on.
+    store.write(since, { version: 1, events: [{ at: 2 }] });
+    await store.flush();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.read(since), { version: 1, events: [{ at: 2 }] });
+    assert.equal(store.read('workbench:alice'), undefined);
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('a state that cannot be sent to the worker is dropped alone; the others are saved (#534)', async (t) => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  t.mock.method(console, 'warn', () => {});
+  const since = `overview-since-${'d'.repeat(64)}.json`;
+  try {
+    await store.open(dir);
+    store.write('menubar-hint', { run: () => {} });
+    store.write(since, { version: 1, events: [] });
+    await store.flush();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.read(since), { version: 1, events: [] });
+    assert.equal(store.read('menubar-hint'), undefined);
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('null removes a state; a patch after a queued removal saves only its own rows (#534)', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch(mutedName, { put: { a: { v: 1 }, b: { v: 1 } } });
+    await store.flush();
+    store.write(mutedName, null);
+    store.patch(mutedName, { put: { c: { v: 1 } } });
+    assert.deepEqual(store.read(mutedName), { entries: { c: { v: 1 } } });
+    await store.flush();
+    store.write('conflict-draft:tester:' + 'e'.repeat(64), { id: 'x' });
+    await store.flush();
+    store.write('conflict-draft:tester:' + 'e'.repeat(64), null);
+    assert.ok(!store.names().includes('conflict-draft:tester:' + 'e'.repeat(64)));
+    assert.throws(() => store.write('conflict-restack-carry:tester:x', []), /must be an object/);
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.read(mutedName), { entries: { c: { v: 1 } } });
+    assert.equal(store.read('conflict-draft:tester:' + 'e'.repeat(64)), undefined);
+  } finally {
     await store.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }

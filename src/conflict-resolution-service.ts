@@ -375,11 +375,14 @@ export function createConflictResolutionService(deps: Deps) {
    * in it: it stays in the main process, and survives a preparation that fails.
    */
   const carryKey = (account: string, id: string) => `conflict-restack-carry:${account}:${id}`;
-  const readCarry = (account: string, id: string) =>
-    (deps.storage.read(carryKey(account, id)) as ConflictFile[] | null | undefined) ?? [];
+  /** Saved as `{ files }`: a saved state is an object. A bare array is a carry saved before that. */
+  const readCarry = (account: string, id: string): ConflictFile[] => {
+    const saved = deps.storage.read(carryKey(account, id)) as { files?: ConflictFile[] } | ConflictFile[] | null | undefined;
+    return (Array.isArray(saved) ? saved : saved?.files) ?? [];
+  };
   const writeCarry = (account: string, id: string, files: ConflictFile[]) => {
     if (files.length || readCarry(account, id).length)
-      deps.storage.write(carryKey(account, id), files.length ? files : null);
+      deps.storage.write(carryKey(account, id), files.length ? { files } : null);
   };
   const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
   /** Model requests by conflict (`modelKey`), and the checked replies waiting for the workspace to use them. */
@@ -484,6 +487,29 @@ export function createConflictResolutionService(deps: Deps) {
     if (typed) applyTypeErrors(session, typed);
     pendingTypeErrors.delete(key);
     return session;
+  }
+  /** Drafts whose problem was logged: the header reads them often, and once is enough. */
+  const unreadableLogged = new Set<string>();
+  /**
+   * The saved draft, or its `problem` when this build can't use it (`draftProblem`): then nothing of it is read, so it
+   * never shows as reviewed or pushed. The field that failed is logged once, with no file content.
+   */
+  function readDraft(account: string, id: string): { saved?: ConflictSession; problem?: string } {
+    const key = storageKey(account, id);
+    const stored = deps.storage.read(key);
+    if (stored === undefined || stored === null) return {};
+    const problem = draftProblem(stored, account, id);
+    if (!problem) return { saved: stored as ConflictSession };
+    if (!unreadableLogged.has(key)) {
+      unreadableLogged.add(key);
+      const published = (stored as { status?: unknown }).status === 'published';
+      console.warn(
+        `[conflicts] A saved draft couldn’t be read: its ${problem} is missing or invalid.${
+          published ? ' Start over drops its undo point and its list of dependent PRs to restack.' : ''
+        }`
+      );
+    }
+    return { problem };
   }
   /** `pushed` per draft and head: a draft can be megabytes, so it is read once per change (#445 item 25). */
   const pushedCache = new Map<string, { headSha: string; value: PushedUpdate | undefined }>();
@@ -1744,14 +1770,9 @@ export function createConflictResolutionService(deps: Deps) {
     if (!oid(state.headSha) || !oid(state.baseSha))
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
-    const stored = deps.storage.read(storageKey(ctx.account, id));
+    const { saved, problem } = readDraft(ctx.account, id);
     // A draft this build can't use is never read further. Start over prepares the merge again and replaces it.
-    const problem = stored === undefined || stored === null ? undefined : draftProblem(stored, ctx.account, id);
-    if (problem) {
-      console.warn(`[conflicts] A saved draft couldn’t be read: its ${problem} is missing or invalid.`);
-      if (!restart || background) throw new Error(UNREADABLE_DRAFT);
-    }
-    const saved = problem ? undefined : (stored as ConflictSession | undefined);
+    if (problem && (!restart || background)) throw new Error(UNREADABLE_DRAFT);
     read?.(saved);
     // A pending undo (#445 item 25) is settled only when you open the PR, from the remote. Background work never
     // replaces or settles it.
@@ -2491,7 +2512,7 @@ export function createConflictResolutionService(deps: Deps) {
     draft(url: string, headSha: string) {
       const ctx = deps.context();
       if (!ctx.account) return undefined;
-      const saved = deps.storage.read(storageKey(ctx.account, hash(url))) as ConflictSession | undefined;
+      const { saved } = readDraft(ctx.account, hash(url));
       return saved?.status === 'editing' && saved.headSha === headSha && saved.files.length ? saved : undefined;
     },
     /**
@@ -2504,7 +2525,7 @@ export function createConflictResolutionService(deps: Deps) {
       const key = storageKey(ctx.account, hash(url));
       const known = pushedCache.get(key);
       if (known?.headSha === headSha) return known.value;
-      const saved = deps.storage.read(key) as ConflictSession | undefined;
+      const { saved } = readDraft(ctx.account, hash(url));
       const value = saved && saved.commitSha === headSha ? undoTarget(saved) : undefined;
       pushedCache.delete(key);
       pushedCache.set(key, { headSha, value });

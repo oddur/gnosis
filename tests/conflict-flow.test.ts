@@ -163,18 +163,14 @@ void test('a check of the dialog’s own started before a settings change never 
   assert.equal(runs.accepts('src/b.ts', kept), true);
 });
 
-void test('an unreadable saved draft offers Start over, never the raw storage key', () => {
-  const key = 'conflict-draft:oddur:' + 'a'.repeat(64);
-  for (const raw of [
-    `Error invoking remote method 'conflict-resolution': Error: Invalid saved state: ${key}`,
-    `Incomplete saved state: ${key}`,
-    UNREADABLE_DRAFT,
-  ]) {
-    const copy = describeConflictError(raw, { stage: 'other' });
-    assert.equal(`${copy.title} ${copy.body}`, 'This saved draft couldn’t be read. Start over to prepare the merge again.');
-    assert.equal(copy.recovery, 'start-over');
-    assert.ok(!JSON.stringify(copy).includes('conflict-draft:'), 'The storage key is never shown');
-  }
+void test('an unreadable saved draft offers Start over; a failed save of a readable one never does', () => {
+  const copy = describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${UNREADABLE_DRAFT}`, {
+    stage: 'other',
+  });
+  assert.equal(`${copy.title} ${copy.body}`, 'This saved draft couldn’t be read. Start over to prepare the merge again.');
+  assert.equal(copy.recovery, 'start-over');
+  const saveFailed = describeConflictError(`Invalid saved state: conflict-draft:oddur:${'a'.repeat(64)}`, { stage: 'other' });
+  assert.notEqual(saveFailed.recovery, 'start-over');
 });
 
 void test('a saved draft is readable with fields from a newer build, and names the first field it cannot use', () => {

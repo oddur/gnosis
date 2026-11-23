@@ -1168,15 +1168,14 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
-    // A saved draft the service can't read never shows its storage key: the view explains, and Start over prepares the
-    // merge again, both when opening and from the footer while you work.
-    const unreadable = `Error invoking remote method 'conflict-resolution': Error: Invalid saved state: conflict-draft:klang:${'a'.repeat(64)}`;
+    // A saved draft the service can't read: the view explains, and Start over prepares the merge again, both when
+    // opening and from the footer while you work.
+    const unreadable = "Error invoking remote method 'conflict-resolution': Error: This saved draft couldn’t be read.";
     const unreadableCopy = 'This saved draft couldn’t be read. Start over to prepare the merge again.';
     await js(`window.failOpen=${JSON.stringify(unreadable)}`);
     await open();
     await wait("document.querySelector('.conflict-state[data-state=failed] .conflict-error')");
     assert.equal(await js("document.querySelector('.conflict-error-title').textContent"), 'This saved draft couldn’t be read.');
-    assert.equal(await js("document.body.textContent.includes('conflict-draft:')"), false);
     await js('window.failOpen=undefined');
     await click('Start over');
     await wait("window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).restart===true");
@@ -1185,7 +1184,6 @@ void app.whenReady().then(async () => {
     await click('Start over with latest code…');
     await click('Start over');
     await wait(`document.querySelector('.conflict-footer [data-error]')?.textContent===${JSON.stringify(unreadableCopy)}`);
-    assert.equal(await js("document.body.textContent.includes('conflict-draft:')"), false);
     await capture('unreadable-draft');
     await js('window.failOpen=undefined');
     const startOverCalls = await js<number>('window.conflictCalls.length');

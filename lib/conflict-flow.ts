@@ -150,9 +150,8 @@ export function describeConflictError(
       body: 'Nothing was pushed or overwritten. Load the saved draft, then go on from it.',
       recovery: 'reload',
     };
-  // A draft the service can't use, or saved data that refused it: Start over prepares the merge again. Never the raw
-  // storage key.
-  if (raw.startsWith(UNREADABLE_DRAFT) || /^(?:Invalid|Incomplete) saved state\b/.test(raw))
+  // A draft the service can't use (`draftProblem`): Start over prepares the merge again.
+  if (raw.startsWith(UNREADABLE_DRAFT))
     return { title: UNREADABLE_DRAFT, body: 'Start over to prepare the merge again.', recovery: 'start-over' };
   if (/^The PR now targets a different base branch/.test(raw))
     return {

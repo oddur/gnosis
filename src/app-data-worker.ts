@@ -270,10 +270,26 @@ port.on('message', (request: Request) => {
         if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-stores-v1')) importLegacyStores(args.directory);
         result = states();
       } else if (method === 'write') {
+        // Each state and patch in its own savepoint: one the worker refuses is rolled back alone and named in the reply,
+        // and the others commit. A SQLite error (disk, lock) still fails the whole write, for the store to retry.
+        const refused: [string, string][] = [];
+        const item = (name: string, apply: () => void) => {
+          db.exec('SAVEPOINT item');
+          try {
+            apply();
+            db.exec('RELEASE item');
+          } catch (error) {
+            db.exec('ROLLBACK TO item');
+            db.exec('RELEASE item');
+            if (String((error as { code?: unknown }).code).startsWith('ERR_SQLITE')) throw error;
+            refused.push([name, error instanceof Error ? error.message : String(error)]);
+          }
+        };
         transaction(() => {
-          for (const [name, value] of args.states) write(name, value);
-          for (const [name, change] of args.patches) patch(name, change);
+          for (const [name, value] of args.states) item(name, () => write(name, value));
+          for (const [name, change] of args.patches) item(name, () => patch(name, change));
         });
+        result = { refused };
       } else if (method === 'clear-github') {
         transaction(() => {
           // Search also contains derived GitHub text; it can be rebuilt from surviving saved reviews.

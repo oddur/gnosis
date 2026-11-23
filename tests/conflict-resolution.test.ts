@@ -10,7 +10,7 @@ import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDir
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
-import { createAppDataStore } from '../src/app-data-store';
+import { assertSavedState, createAppDataStore } from '../src/app-data-store';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { conflictFileStage } from '../lib/conflict-markers';
 import {
@@ -92,11 +92,25 @@ async function fixture(
   } as PrActionState;
   const data = new Map<string, unknown>();
   const context = { account: 'tester', token: 'not-a-real-token' };
+  // GNOSIS_TEST_REAL_STORE=1 runs the suite over the app's saved data (worker and SQLite) instead of a map.
+  let real: ReturnType<typeof createAppDataStore> | undefined;
+  if (process.env.GNOSIS_TEST_REAL_STORE) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-state-'));
+    real = createAppDataStore();
+    await real.open(stateDir);
+    const opened = real;
+    t.after(async () => {
+      await opened.close();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    });
+  }
   const deps = {
-    storage: {
+    storage: real ?? {
       read: (key: string) => structuredClone(data.get(key)),
       write: (key: string, value: unknown) => {
-        data.set(key, structuredClone(value));
+        assertSavedState(key, value);
+        if (value === null || value === undefined) data.delete(key);
+        else data.set(key, structuredClone(value));
       },
       flush: async () => {},
     },
@@ -115,7 +129,7 @@ async function fixture(
   const service = createConflictResolutionService(deps);
   const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
   const { session } = await run({ kind: 'open', url: state.url });
-  return { service, run, session, git, state, deps, context, remote };
+  return { service, run, session, git, state, deps, context, remote, data };
 }
 void test('real Git conflicts: draft, proposal, preview and guarded publication preserve clean base changes', async (t) => {
   const f = await fixture(t);
@@ -1614,11 +1628,19 @@ void test('a saved draft that can’t be read asks you to start over, and Start 
   t.mock.method(console, 'warn', (...args: unknown[]) => warned.push(args.join(' ')));
   f.deps.storage.write(key, { ...f.session, files: [{ ...f.session.files[0], resolved: 'yes' }] });
   await assert.rejects(f.run({ kind: 'open', url: f.state.url }), new RegExp(UNREADABLE_DRAFT));
+  // The PR header reads it too: never as a draft to continue, or as reviewed.
+  assert.equal(f.service.draft(f.state.url, f.session.headSha), undefined);
   assert.ok(
     warned.some((line) => String(line).includes('files[0].resolved')),
     'The field that failed is logged, with no file content'
   );
   assert.ok(!warned.some((line) => String(line).includes('answer')), 'No file content is logged');
+  assert.equal(warned.length, 1, 'Logged once');
+  // A pushed draft: Start over drops its undo point, and the log says so.
+  const other = createConflictResolutionService(f.deps);
+  f.deps.storage.write(key, { ...f.session, status: 'published', commitSha: f.session.headSha, files: [{ ...f.session.files[0], resolved: 1 }] });
+  assert.equal(other.pushed(f.state.url, f.session.headSha), undefined, 'Never offered as a pushed update to undo');
+  assert.ok(warned.some((line) => String(line).includes('drops its undo point and its list of dependent PRs')));
   const fresh = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
   assert.equal(fresh.files[0].resolved, false, 'Nothing reads as reviewed');
   assert.equal((f.deps.storage.read(key) as ConflictSession).files[0].resolved, false);
@@ -1670,7 +1692,11 @@ void test('evicting a background draft drops it under its own account, never ano
   const service = createConflictResolutionService({
     storage: {
       read: (key: string) => structuredClone(data.get(key)),
-      write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+      write: (key: string, value: unknown) => {
+        assertSavedState(key, value);
+        if (value === null || value === undefined) data.delete(key);
+        else data.set(key, structuredClone(value));
+      },
       flush: async () => {},
       names: () => [...data.keys()],
     },
@@ -1684,7 +1710,7 @@ void test('evicting a background draft drops it under its own account, never ano
   const [ann, bob] = await Promise.all(['ann', 'bob'].map((account) => conflictSessionDirectory(dir, account, id)));
   await Promise.all([ann, bob].map((d) => fs.mkdir(d, { recursive: true })));
   await service.trimBackground(0);
-  assert.equal(data.get(`conflict-draft:ann:${id}`), null);
+  assert.equal(data.get(`conflict-draft:ann:${id}`), undefined);
   assert.equal(await fs.stat(ann).catch(() => undefined), undefined, 'Ann’s cache is removed');
   assert.deepEqual(data.get(`conflict-draft:bob:${id}`), { id, account: 'bob', status: 'editing', files: [] });
   assert.ok(await fs.stat(bob), 'Bob’s cache stays');
@@ -3199,7 +3225,7 @@ void test('your choice in a paused replay carries to the same conflict after Pre
     })
   ).session;
   assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
-  assert.equal(f.deps.storage.read(`conflict-restack-carry:tester:${session.id}`), null, 'Publishing clears the carry');
+  assert.equal(f.deps.storage.read(`conflict-restack-carry:tester:${session.id}`), undefined, 'Publishing clears the carry');
 });
 void test('replay buckets fail closed: only an unchanged, checked proposal is Merged', () => {
   const original = '<<<<<<< HEAD\na\n||||||| base\nx\n=======\nb\n>>>>>>> pr\n';
@@ -3334,7 +3360,12 @@ void test('the cascade preview dry-runs the stack before the push and changes no
   // Your choice for PR 3's conflict, carried as in a restack (matched on the conflict's text, not its labels): PR 3 is
   // settled by it, and PR 4 replays.
   const conflict = '<<<<<<< parent\nexport const answer = 3;\n||||||| base\nexport const answer = 1;\n=======\nexport const answer = 4;\n>>>>>>> pr\n';
-  f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, [
+  // Saved by an earlier build as a bare array: still read. The real store refuses to save one now.
+  const seedCarry = (files: ConflictFile[]) =>
+    process.env.GNOSIS_TEST_REAL_STORE
+      ? f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, { files })
+      : f.data.set(`conflict-restack-carry:tester:${f.session.id}`, files);
+  seedCarry([
     { path: 'sample.ts', mode: '', base: '', ours: '', theirs: '', original: conflict, result: 'export const answer = 5;\n', resolved: true, source: 'manual' },
   ]);
   preview = await f.service.previewCascade(f.session.id, f.session.version, signal);
@@ -3373,11 +3404,13 @@ void test('a request of yours stops a running cascade preview, which gives way (
   const f = await cascadeStack(t);
   const before = await f.refs();
   const running = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  // Watched from the start: it may give way before the save below resolves.
+  const stopped = assert.rejects(running, (error: Error) => error.message === BACKGROUND_YIELDED);
   const { session } = await f.service.run(
     { kind: 'save', id: f.session.id, version: f.session.version, path: 'sample.ts', contents: 'export const answer = 7;\n', resolved: true },
     new AbortController().signal
   );
-  await assert.rejects(running, (error: Error) => error.message === BACKGROUND_YIELDED);
+  await stopped;
   assert.equal(session.version, f.session.version + 1, 'Your save went through');
   assert.deepEqual(await f.refs(), before, 'The stopped run removed its worktree and changed no ref');
   // Nothing to preview while the draft has a file that isn't reviewed.
@@ -3831,7 +3864,7 @@ void test('an unsettled undo whose branch can’t be read says so, and can be di
   assert.match(undoCopy.unsettledUndoCopy('unread', 'feature'), /^Gnosis couldn’t read feature/);
   assert.match(undoCopy.unsettledUndoCopy('elsewhere', 'feature'), /^feature is at another commit/);
   await unreadable.run({ kind: 'discard', id: kept.id, version: kept.version }, signal);
-  assert.equal(f.deps.storage.read(key), null);
+  assert.equal(f.deps.storage.read(key), undefined);
   assert.equal(await f.git('rev-parse', 'feature'), f.merge, 'Nothing was pushed');
 });
 void test('undo trusts the remote, not GitHub’s lagging head, and matches the exact branch ref', async (t) => {

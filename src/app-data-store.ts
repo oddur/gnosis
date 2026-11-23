@@ -33,6 +33,14 @@ interface PendingPatch {
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
+/**
+ * The rule for a whole state, in every storage: an object (`renderer:` states excepted), or `null`/`undefined` to
+ * remove it. Refused at write time, so a value the worker would refuse is never queued.
+ */
+export function assertSavedState(name: string, value: unknown) {
+  if (value !== null && value !== undefined && !name.startsWith('renderer:') && !isRecord(value))
+    throw new Error(`Saved state ${name.split(':')[0]} must be an object.`);
+}
 /** Applies a patch to a loaded row state, in place. */
 function applyPatch(state: unknown, change: RowPatch): Record<string, unknown> {
   const entries = isRecord(state) && isRecord(state.entries) ? state.entries : {};
@@ -73,6 +81,7 @@ export function createMemoryStorage(saved = new Map<string, string>()): StateSto
       return load(name);
     },
     write(name, value) {
+      assertSavedState(name, value);
       taken.delete(name);
       if (value === null || value === undefined) saved.delete(name);
       else saved.set(name, JSON.stringify(value));
@@ -129,14 +138,49 @@ export function createAppDataStore() {
     lost++;
     console.warn(`Saved work is closed, so a late ${what} was not saved (${lost} lost).`);
   }
+  /** Waits before retrying a failed flush: from 500 ms, doubling to 30 s. Reset by a flush that reaches the disk. */
+  let retryDelay = 0;
   function schedule() {
     if (scheduled) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      void flush().catch((error: unknown) => console.error('Saved work could not be persisted:', error));
+      void flush().catch((error: unknown) => {
+        console.error('Saved work could not be persisted:', error);
+        if (failure || closed) return;
+        retryDelay = Math.min(retryDelay ? retryDelay * 2 : 500, 30_000);
+        setTimeout(() => {
+          if (dirty()) schedule();
+        }, retryDelay).unref();
+      });
     });
   }
+  /** Names only the kind of state in a log: never an account or a hash. */
+  const kind = (name: string) => name.split(':')[0].replace(/-[a-f0-9]{64}.*$/, '');
+  /** Puts failed items back for retry, under any newer change to the same rows. */
+  function requeue(states: [string, unknown][], changed: [string, PendingPatch][]) {
+    for (const [name, value] of states) if (!updates.has(name)) updates.set(name, values && name in values ? values[name] : value);
+    for (const [name, change] of changed) {
+      if (updates.has(name)) continue;
+      const newer = patches.get(name);
+      if (newer) {
+        mergePatch(change, {
+          ...(newer.header ? { header: newer.header } : {}),
+          put: Object.fromEntries(newer.put),
+          remove: [...newer.remove],
+        });
+      }
+      patches.set(name, change);
+    }
+  }
+  const clonable = (value: unknown) => {
+    try {
+      structuredClone(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   async function flush(): Promise<void> {
     if (failure) throw failure;
     if (writing) {
@@ -149,31 +193,42 @@ export function createAppDataStore() {
     const changed = [...patches];
     updates.clear();
     patches.clear();
-    // postMessage clones now, before callers can mutate the in-memory state again. One transaction.
-    writing = call<unknown>('write', {
+    const rows = (change: PendingPatch) => ({
+      ...(change.header ? { header: change.header } : {}),
+      put: [...change.put],
+      remove: [...change.remove],
+    });
+    // postMessage clones now, before callers can mutate the in-memory state again. One transaction; the worker refuses
+    // a bad state or patch alone and names it, and the others are saved.
+    writing = call<{ refused?: [string, string][] } | undefined>('write', {
       states,
-      patches: changed.map(([name, change]) => [
-        name,
-        { ...(change.header ? { header: change.header } : {}), put: [...change.put], remove: [...change.remove] },
-      ]),
+      patches: changed.map(([name, change]) => [name, rows(change)]),
     })
-      .then(() => {})
+      .then((result) => {
+        retryDelay = 0;
+        // A refused item is never retried: it would be refused again, and hold back nothing else.
+        for (const [name, message] of result?.refused ?? [])
+          console.warn(`Saved work refused a ${kind(name)} state and dropped it: ${message.split(name).join(kind(name))}`);
+      })
       .catch((error: unknown) => {
-        // Keep the latest snapshot for retry after a recoverable disk/lock failure.
-        for (const [name, value] of states) if (!updates.has(name)) updates.set(name, values?.[name] ?? value);
-        // Failed row changes go back underneath any newer change to the same rows.
-        for (const [name, change] of changed) {
-          if (updates.has(name)) continue;
-          const newer = patches.get(name);
-          if (newer) {
-            mergePatch(change, {
-              ...(newer.header ? { header: newer.header } : {}),
-              put: Object.fromEntries(newer.put),
-              remove: [...newer.remove],
-            });
-          }
-          patches.set(name, change);
+        // A value that can't be sent to the worker: each item is cloned alone to find it, and only it is dropped.
+        if (error instanceof Error && error.name === 'DataCloneError') {
+          let dropped = 0;
+          const keep = (name: string, value: unknown) => {
+            if (clonable(value)) return true;
+            dropped++;
+            console.warn(`Saved work dropped a ${kind(name)} state that can't be saved.`);
+            return false;
+          };
+          requeue(
+            states.filter(([name, value]) => keep(name, value)),
+            changed.filter(([name, change]) => keep(name, rows(change)))
+          );
+          if (dropped) return;
+          throw error;
         }
+        // A disk or lock failure: keep the latest snapshot and retry.
+        requeue(states, changed);
         throw error;
       })
       .finally(() => {
@@ -246,9 +301,8 @@ export function createAppDataStore() {
       const all = assertReady();
       // A whole state is an object (`renderer:` states excepted). Refused here, before it is queued: a value the worker
       // refuses would fail every later flush, and with it every save in the app.
+      assertSavedState(name, value);
       const removed = value === null || value === undefined;
-      if (!removed && !name.startsWith('renderer:') && !isRecord(value))
-        throw new Error(`Saved state ${name.split(':')[0]} must be an object.`);
       if (removed) Reflect.deleteProperty(all, name);
       else all[name] = value;
       if (closed) return lose(name);
@@ -259,6 +313,16 @@ export function createAppDataStore() {
     },
     patch(name: string, change: RowPatch) {
       const all = assertReady();
+      // After a queued removal, the patch's rows alone are the state, in memory and on disk: queued as rows, they
+      // would land on top of the old rows the removal had not yet deleted.
+      if (updates.has(name) && updates.get(name) === null) {
+        const next = applyPatch(undefined, change);
+        if (!taken.has(name)) all[name] = next;
+        if (closed) return lose(name);
+        updates.set(name, next);
+        schedule();
+        return;
+      }
       // A state nobody has taken stays readable.
       if (name in all) all[name] = applyPatch(all[name], change);
       if (closed) return lose(name);
