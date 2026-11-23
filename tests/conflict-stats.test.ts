@@ -321,7 +321,7 @@ void test('item 1: undone and re-chosen count once per conflict, saved on the dr
 void test('#490 1: a choice counts on the conflict at its index, also among identical conflicts', () => {
   const s = session([file(true, { original: `${LAUNCH}middle\n${LAUNCH}`, proposals: [null, null] })]);
   opened(s);
-  const [first, second] = blockFingerprints(s.files[0].original, SECRET);
+  const [first, second] = blockFingerprints(s.files[0].original);
   assert.equal(first, second);
   assert.deepEqual(markChoice(s, { path: SECRET, key: second, index: 1, count: 'rechosen' }), {
     kind: 'bucket',
@@ -331,11 +331,12 @@ void test('#490 1: a choice counts on the conflict at its index, also among iden
   assert.deepEqual(s.files[0].statsBlocks?.map((b) => !!b?.rechosen), [false, true]);
   // The first is its own conflict: it still counts once.
   assert.ok(markChoice(s, { path: SECRET, key: first, index: 0, count: 'rechosen' }));
-  // An index whose conflict has another fingerprint counts nothing.
-  const [launch, code] = blockFingerprints(session([file(true)]).files[0].original, SECRET);
+  // A stale index, whose conflict has another fingerprint, falls back to the first conflict with the fingerprint.
+  const [launch, code] = blockFingerprints(session([file(true)]).files[0].original);
   const other = session([file(true)]);
   opened(other);
-  assert.equal(markChoice(other, { path: SECRET, key: launch, index: 1, count: 'undone' }), undefined);
+  assert.deepEqual(markChoice(other, { path: SECRET, key: launch, index: 1, count: 'undone' }), { kind: 'bucket', bucket: 'merged', count: 'undone' });
+  assert.equal(other.files[0].statsBlocks?.[0]?.undone, true);
   assert.ok(markChoice(other, { path: SECRET, key: code, index: 1, count: 'rechosen' }));
   // The renderer's index is checked like the rest of the choice.
   const id = 'a'.repeat(64);
@@ -347,7 +348,7 @@ void test('#490 1: a choice counts on the conflict at its index, also among iden
 void test('#490 3: after the base moved, each unchanged conflict keeps its counted block and flags', () => {
   const old = session([file(true)]);
   opened(old);
-  const [launch] = blockFingerprints(old.files[0].original, SECRET);
+  const [launch] = blockFingerprints(old.files[0].original);
   assert.ok(markChoice(old, { path: SECRET, key: launch, count: 'undone' }));
   // Main moved: the second conflict changed, the first is the same.
   const moved = file(true, { original: `${LAUNCH}middle\n${block('const code = 1;', 'const code = 3;')}` });
@@ -366,7 +367,7 @@ void test('#490 3: after the base moved, each unchanged conflict keeps its count
 void test('#490 4: a whole-file proposal counts each conflict as accepted in the bucket it was shown in, never Decide', () => {
   const wholeFile = { source: 'mergiraf' as const, text: 'const launch = 3;\nmiddle\nconst code = "both";\n' };
   const f = file(true, { wholeFile });
-  const [launch, code] = blockFingerprints(f.original, SECRET);
+  const [launch, code] = blockFingerprints(f.original);
   f.statsBlocks = [
     { key: launch, bucket: 'merged' },
     { key: code, bucket: 'decide' },
@@ -381,7 +382,7 @@ void test('#490 4: a whole-file proposal counts each conflict as accepted in the
 void test('#490 5: after Reset, conflicts counted before count nothing more, and count as shown again', () => {
   const s = session([file(true)]);
   opened(s);
-  const [launch] = blockFingerprints(s.files[0].original, SECRET);
+  const [launch] = blockFingerprints(s.files[0].original);
   // Reset: epoch 1. The old blocks are no longer counted ones.
   assert.equal(markChoice(structuredClone(s), { path: SECRET, key: launch, count: 'undone' }, 1), undefined);
   assert.deepEqual(countPushed(structuredClone(s), 1), [], 'Nothing pushed counts against a reset');
@@ -399,7 +400,7 @@ void test('#490 5: after Reset, conflicts counted before count nothing more, and
 void test('#490 6: an Undo never counts under Decide', () => {
   const s = session([file(true)]);
   opened(s);
-  const [, code] = blockFingerprints(s.files[0].original, SECRET);
+  const [, code] = blockFingerprints(s.files[0].original);
   assert.equal(s.files[0].statsBlocks?.[1]?.bucket, 'decide');
   assert.equal(markChoice(s, { path: SECRET, key: code, index: 1, count: 'undone' }), undefined);
   assert.equal(s.files[0].statsBlocks[1].undone, undefined);

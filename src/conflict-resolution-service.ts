@@ -400,7 +400,9 @@ export function createConflictResolutionService(deps: Deps) {
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
   const statsEpoch = () => deps.stats?.epoch?.() ?? 0;
   /** Counts the choices and saves their flags on the draft, while nobody holds its lock. Never throws. */
-  function saveChoices(key: string, choices = pendingChoices.get(key) ?? []) {
+  /** `extra`: a choice made while nobody holds the lock, counted with any still waiting. */
+  function saveChoices(key: string, extra: readonly Omit<ConflictChoice, 'id'>[] = []) {
+    const choices = [...(pendingChoices.get(key) ?? []), ...extra];
     pendingChoices.delete(key);
     uncounted(() => {
       const ctx = deps.context();
@@ -1526,7 +1528,7 @@ export function createConflictResolutionService(deps: Deps) {
         report
       );
       // Each conflict that is the same as before keeps its counted block, flags included (lib/conflict-stats.ts).
-      const epoch = deps.stats ? uncounted(statsEpoch) : undefined;
+      const epoch = uncounted(statsEpoch);
       if (epoch !== undefined) for (const file of fresh) carryStatsBlocks(file, before.get(file.path), epoch);
       const carried = await carryFiles(await directory(ctx.account, session.id), previous, fresh, true, signal);
       session.baseSha = live.baseSha;

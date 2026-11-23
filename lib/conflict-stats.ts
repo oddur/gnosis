@@ -142,17 +142,30 @@ const fnv = (text: string) => {
   for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
   return `${(hash >>> 0).toString(36)}:${text.length}`;
 };
+/** A 53-bit hash of a text (cyrb53) with its length: a cache key that is not the text itself. */
+const contentKey = (text: string) => {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}:${text.length}`;
+};
 /**
- * Fingerprints by file version, keyed by the path and a short hash of the text: computed once per `original`, and the
- * cache never holds the file texts themselves.
+ * Fingerprints by file version, keyed by a hash of the text: computed once per `original`, and the cache never holds
+ * the file texts themselves.
  */
 const fingerprints = new Map<string, readonly string[]>();
 /**
  * A short fingerprint of each conflict block of a file (FNV-1a and length of its three sides, without Git's marker
  * labels), so a saved bucket counts only for the same conflict, also after the base branch moved or Load latest.
  */
-export function blockFingerprints(original: string, path = ''): readonly string[] {
-  const id = `${path}\0${fnv(original)}`;
+export function blockFingerprints(original: string): readonly string[] {
+  const id = contentKey(original);
   let keys = fingerprints.get(id);
   if (!keys) {
     keys = parseConflicts(original).flatMap((s) =>
@@ -165,14 +178,14 @@ export function blockFingerprints(original: string, path = ''): readonly string[
 }
 const inEpoch = (block: StatsBlock, epoch: number) => (block.epoch ?? 0) === epoch;
 /** The file's saved block, by index, while it belongs to the same conflict and was counted in this `epoch`. */
-export function savedStatsBlock(file: Pick<ConflictFile, 'path' | 'original' | 'statsBlocks'>, index: number, epoch = 0) {
+export function savedStatsBlock(file: Pick<ConflictFile, 'original' | 'statsBlocks'>, index: number, epoch = 0) {
   const block = file.statsBlocks?.[index];
-  return block && block.key === blockFingerprints(file.original, file.path)[index] && inEpoch(block, epoch)
+  return block && block.key === blockFingerprints(file.original)[index] && inEpoch(block, epoch)
     ? block
     : undefined;
 }
 /** The saved blocks of these files, by fingerprint, for a new version of one of them: in order, each used once. */
-function reusableBlocks(sources: readonly Pick<ConflictFile, 'path' | 'original' | 'statsBlocks'>[], epoch: number) {
+function reusableBlocks(sources: readonly Pick<ConflictFile, 'original' | 'statsBlocks'>[], epoch: number) {
   const reusable = new Map<string, StatsBlock[]>();
   for (const source of sources)
     (source.statsBlocks ?? []).forEach((_, index) => {
@@ -188,7 +201,7 @@ function reusableBlocks(sources: readonly Pick<ConflictFile, 'path' | 'original'
  */
 export function carryStatsBlocks(file: ConflictFile, old: ConflictFile | undefined, epoch = 0) {
   const reusable = reusableBlocks(old ? [old] : [], epoch);
-  const blocks = blockFingerprints(file.original, file.path).map((key) => reusable.get(key)?.shift() ?? null);
+  const blocks = blockFingerprints(file.original).map((key) => reusable.get(key)?.shift() ?? null);
   if (blocks.some(Boolean)) file.statsBlocks = blocks;
   else delete file.statsBlocks;
 }
@@ -241,7 +254,7 @@ export function countOpened(
   // Set inside the map below: any conflict counted now, or counted before.
   const seen = { fresh: false, counted: false };
   for (const file of session.files) {
-    const keys = blockFingerprints(file.original, file.path);
+    const keys = blockFingerprints(file.original);
     if (!keys.length || file.unsupported) continue;
     // Saved blocks of this file and, with keep, of its earlier version, by fingerprint. A block counted before a
     // reset is not one: its conflict counts as shown again.
@@ -291,7 +304,7 @@ export function countPushed(session: ConflictSession, epoch = 0): ConflictStatsE
   const accepted = new Map<StatsBucket, number>();
   const add = (bucket: StatsBucket) => accepted.set(bucket, (accepted.get(bucket) ?? 0) + 1);
   for (const file of session.files) {
-    const keys = blockFingerprints(file.original, file.path);
+    const keys = blockFingerprints(file.original);
     const blocks = keys.map((_, index) => savedStatsBlock(file, index, epoch));
     if (!blocks.some(Boolean)) continue;
     counted = true;
@@ -342,9 +355,11 @@ export function markChoice(
 ): ConflictStatsEvent | undefined {
   const file = session.files.find((f) => f.path === choice.path);
   if (!file) return undefined;
-  const keys = blockFingerprints(file.original, file.path);
-  const index = choice.index ?? keys.indexOf(choice.key);
-  const block = keys[index] === choice.key ? savedStatsBlock(file, index, epoch) : undefined;
+  const keys = blockFingerprints(file.original);
+  // The index decides among identical conflicts; a stale one falls back to the first conflict with the fingerprint.
+  const index =
+    choice.index !== undefined && keys[choice.index] === choice.key ? choice.index : keys.indexOf(choice.key);
+  const block = index < 0 ? undefined : savedStatsBlock(file, index, epoch);
   if (!block || block[choice.count] || (choice.count === 'undone' && block.bucket === 'decide')) return undefined;
   block[choice.count] = true;
   return { kind: 'bucket', bucket: block.bucket, count: choice.count };
