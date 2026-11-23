@@ -56,6 +56,11 @@ const PROPOSAL_WORDS: Record<
     offer: () => 'Proposal from structural merge: combine both sides’ changes',
     check: false,
   },
+  layout: {
+    done: () => 'Gnosis’s rule kept the edit in the reformatted layout',
+    offer: () => 'Proposal from Gnosis’s rule: keep the edit in the reformatted layout',
+    check: false,
+  },
   moved: {
     done: () => 'Gnosis’s rule applied the edit where the code moved',
     offer: () => 'Proposal from Gnosis’s rule: apply the edit where the code moved',

@@ -1,3 +1,4 @@
+import { diffArrays } from 'diff';
 import { parseConflicts, textLines as lines, type ConflictBlock } from './conflict-blocks';
 import type { ConflictProposal } from './conflict-resolution';
 import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
@@ -68,50 +69,212 @@ export function commaUnion(block: Pick<ConflictBlock, 'base' | 'ours' | 'theirs'
 /** Tokens as the layout checks read them: runs of whitespace, words and numbers, and each other character. */
 export const layoutTokens = (text: string) => text.match(/\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu) ?? [];
 
+/** Token diffs longer than this many edits are not compared: the layout rule and check give up (fail closed). */
+const LAYOUT_EDITS = 400;
+/** Blocks with more tokens than this, on any side, get no layout proposal. */
+const LAYOUT_TOKENS = 40_000;
+
+/** The tokens `after` drops from `before` and the ones it adds, in order. Undefined past LAYOUT_EDITS. */
+function tokenChanges(before: readonly string[], after: readonly string[]) {
+  const parts = diffArrays([...before], [...after], { maxEditLength: LAYOUT_EDITS });
+  if (!parts) return undefined;
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const part of parts)
+    if (part.removed) removed.push(...part.value);
+    else if (part.added) added.push(...part.value);
+  return `${removed.join('\u0000')}\u0001${added.join('\u0000')}`;
+}
 /**
- * Both sides may have made the same change in different layouts (#445 item 15): the same tokens, apart from line
- * breaks, quote marks and trailing commas. Only a candidate: the checks compare the two sides' syntax trees
- * (lib/conflict-verify.ts), and one they can't confirm is taken back (src/conflict-checks.ts). Spacing inside a line,
- * and everything inside a string or comment, must match; so must a line's indentation outside brackets in Python and
- * YAML.
+ * The proposal is the reformatting side's text with exactly the editing side's token changes, spaces in them
+ * included: the same whitespace, quotes and punctuation everywhere else. Any doubt (the two diffs pair tokens
+ * differently, or either is too long to compare) is a difference.
  */
-export function sameTokens(ours: string, theirs: string, indented: boolean) {
-  const read = (text: string) => {
-    /** `raw`: inside a string or comment, where brackets, commas and spacing are content. */
-    const tokens: { text: string; before: string; raw: boolean }[] = [];
-    let space = '';
-    let open: string | undefined; // the string's quote, or `//`, `#` or `/*`
-    let escaped = false;
-    for (const token of layoutTokens(text)) {
-      const raw = open !== undefined;
-      const blank = /^\s/.test(token);
-      if (blank && !raw) {
-        space += token;
-        continue;
-      }
-      const last = tokens.at(-1);
-      if (!raw && last?.text === ',' && !last.raw && /^[)\]}]$/.test(token)) {
-        // A trailing comma is dropped; its spacing joins the closing bracket's.
-        tokens.pop();
-        space = last.before + space;
-      }
-      const quote = (!raw && `'"\``.includes(token)) || (raw && token === open && !escaped);
-      tokens.push({ text: quote && token === '"' ? "'" : token, before: space, raw });
-      const adjacent = !space;
-      space = '';
-      if (!raw) {
-        if (quote) open = token;
-        else if (token === '#') open = '#';
-        else if ((token === '/' || token === '*') && last?.text === '/' && !last.raw && adjacent)
-          open = token === '/' ? '//' : '/*';
-      } else if (open === '//' || open === '#') {
-        if (blank && token.includes('\n')) open = undefined;
-      } else if (open === '/*') {
-        if (token === '/' && last?.text === '*' && adjacent) open = undefined;
-      } else if (quote) open = undefined;
-      escaped = raw && token === '\\' && !escaped;
+export function keepsLayout(block: { base: string; edited: string; formatted: string }, proposal: string) {
+  const edit = tokenChanges(layoutTokens(block.base), layoutTokens(block.edited));
+  return edit !== undefined && edit === tokenChanges(layoutTokens(block.formatted), layoutTokens(proposal));
+}
+
+/** Languages where '…' and "…" are the same string, so a formatter may swap them. */
+const QUOTES_ALIKE: ReadonlySet<SyntaxLanguage> = new Set(['typescript', 'tsx', 'javascript', 'python', 'yaml']);
+/** Languages whose comments start with `#`; the others' start with `//` or `/*`. */
+const HASH_COMMENTS: ReadonlySet<SyntaxLanguage> = new Set(['python', 'yaml']);
+/** Languages with backtick strings: template literals, Go's raw strings. */
+const BACKTICKS: ReadonlySet<SyntaxLanguage> = new Set(['typescript', 'tsx', 'javascript', 'go']);
+
+/**
+ * A text's code tokens, each with the whitespace before it, as the layout rules read them (sameTokens, layoutMerge).
+ * `key` is what two layouts of the same code share: the token, with one quote mark for strings where the language
+ * allows either, and in Python and YAML the indentation before a line outside brackets. Inside a string or comment
+ * (`raw`) every character is content. `comma`: a trailing comma before a closing bracket, which formatters add and
+ * drop. A Rust `'` starts a character only when it closes one character or escape later; otherwise it is a lifetime.
+ */
+function layoutRead(text: string, language: SyntaxLanguage) {
+  const indented = language === 'python' || language === 'yaml';
+  const hash = HASH_COMMENTS.has(language);
+  const tokens: { text: string; before: string; key: string; raw: boolean; comma: boolean }[] = [];
+  const all = layoutTokens(text);
+  let space = '';
+  let open: string | undefined; // the string's quote, or `//`, `#` or `/*`
+  let escaped = false;
+  let depth = 0;
+  for (let n = 0; n < all.length; n++) {
+    const token = all[n];
+    const raw = open !== undefined;
+    const blank = /^\s/.test(token);
+    if (blank && !raw) {
+      space += token;
+      continue;
     }
-    return { tokens, after: space };
+    const last = tokens.at(-1);
+    const quote = raw
+      ? token === open && !escaped
+      : token === '"' ||
+        (token === '`' && BACKTICKS.has(language)) ||
+        (token === "'" && (language !== 'rust' || all[n + 2] === "'" || (all[n + 1] === '\\' && all[n + 3] === "'")));
+    if (!raw && /^[)\]}]$/.test(token) && last?.text === ',' && !last.raw) last.comma = true;
+    const lead = !raw && indented && depth === 0 && /\n/.test(space) ? space.slice(space.lastIndexOf('\n')) : '';
+    const mark = quote && token === '"' && QUOTES_ALIKE.has(language) ? "'" : token;
+    tokens.push({ text: token, before: space, key: raw ? `\u0001${mark}` : lead + mark, raw, comma: false });
+    const adjacent = !space;
+    space = '';
+    if (!raw) {
+      depth += /^[([{]$/.test(token) ? 1 : /^[)\]}]$/.test(token) ? -1 : 0;
+      if (quote) open = token;
+      else if (token === '#' && hash) open = '#';
+      else if (!hash && (token === '/' || token === '*') && last?.text === '/' && !last.raw && adjacent)
+        open = token === '/' ? '//' : '/*';
+    } else if (open === '//' || open === '#') {
+      if (blank && token.includes('\n')) open = undefined;
+    } else if (open === '/*') {
+      if (token === '/' && last?.text === '*' && adjacent) open = undefined;
+    } else if (quote) open = undefined;
+    escaped = raw && token === '\\' && !escaped;
+  }
+  return { tokens, after: space };
+}
+
+/**
+ * One side only changed the layout of a conflict's lines (line breaks, spacing, trailing commas, quote marks where the
+ * language allows either) and the other changed its code: the editing side's token changes, in the reformatting side's
+ * layout, and which side reformatted. Undefined when neither or both sides changed code, when the edit touches a
+ * trailing comma the reformat added or dropped, or past the size limits. Only a candidate: the checks
+ * (lib/conflict-verify.ts `reformatted`) Merge it only when the syntax trees show it is the editing side's program and
+ * it is the reformatting side's text with only the editing side's token changes.
+ */
+export function layoutMerge(
+  block: Pick<ConflictBlock, 'base' | 'ours' | 'theirs'>,
+  language: SyntaxLanguage
+): { text: string; formatted: 'ours' | 'theirs' } | undefined {
+  if (block.base === undefined) return undefined;
+  const [base, ours, theirs] = [block.base, block.ours, block.theirs].map((text) => layoutRead(text, language));
+  if (Math.max(base.tokens.length, ours.tokens.length, theirs.tokens.length) > LAYOUT_TOKENS) return undefined;
+  const code = (read: typeof base) =>
+    read.tokens
+      .filter((t) => !t.comma)
+      .map((t) => t.key)
+      .join('\0');
+  const [b, o, t] = [base, ours, theirs].map(code);
+  const pr = b === o && block.ours !== block.base;
+  const main = b === t && block.theirs !== block.base;
+  if (pr === main) return undefined;
+  const [formatted, edited] = pr ? [ours, theirs] : [theirs, ours];
+  // Each ancestor token's counterpart in the reformatted side (-1: a trailing comma it dropped), and the trailing
+  // commas it added, by the ancestor token they come before.
+  const counterpart: number[] = [];
+  const added = new Map<number, number[]>();
+  let j = 0;
+  for (let i = 0; i <= base.tokens.length; i++) {
+    while (formatted.tokens[j]?.comma && base.tokens[i]?.key !== ',') added.set(i, [...(added.get(i) ?? []), j++]);
+    if (i === base.tokens.length) break;
+    if (formatted.tokens[j]?.key === base.tokens[i].key) counterpart[i] = j++;
+    else if (base.tokens[i].comma) counterpart[i] = -1;
+    else return undefined;
+  }
+  if (j !== formatted.tokens.length) return undefined;
+  const parts = diffArrays(
+    base.tokens.map((x) => x.key),
+    edited.tokens.map((x) => x.key),
+    { maxEditLength: LAYOUT_EDITS }
+  );
+  if (!parts) return undefined;
+  // The editing side's changes: runs of ancestor tokens [from, to) replaced by its tokens. `kept`: each ancestor token
+  // the editing side kept, as its own token.
+  const changes = new Map<number, { to: number; tokens: typeof edited.tokens }>();
+  const kept: number[] = [];
+  let at = 0;
+  let e = 0;
+  let last: { from: number; to: number; tokens: typeof edited.tokens } | undefined;
+  for (const part of parts) {
+    const count = part.value.length;
+    if (!part.added && !part.removed) {
+      for (let k = 0; k < count; k++) kept[at + k] = e + k;
+      at += count;
+      e += count;
+      last = undefined;
+      continue;
+    }
+    last ??= { from: at, to: at, tokens: [] };
+    if (part.removed) last.to = at += count;
+    else last.tokens.push(...edited.tokens.slice(e, (e += count)));
+    changes.set(last.from, last);
+  }
+  // An edit over a comma the reformat dropped, or an insertion where the reformat added one: no layout is the PR's.
+  for (const [from, change] of changes) {
+    for (let i = from; i < change.to; i++) if (counterpart[i] === -1 || (i > from && added.has(i))) return undefined;
+    if (from === change.to && added.has(from)) return undefined;
+  }
+  let text = '';
+  /** After a deletion, the next token keeps the editing side's spacing: the reformat's could join two words. */
+  let deleted = false;
+  for (let i = 0; ; ) {
+    for (const k of added.get(i) ?? []) text += formatted.tokens[k].before + formatted.tokens[k].text;
+    const change = changes.get(i);
+    change?.tokens.forEach((token, k) => {
+      // A replacement starts where the ancestor's first replaced token stood in the reformatted layout.
+      const before = k === 0 && change.to > i ? formatted.tokens[counterpart[i]].before : token.before;
+      text += before + token.text;
+    });
+    if (change && change.to > i) {
+      deleted = !change.tokens.length;
+      i = change.to;
+      continue;
+    }
+    if (i === base.tokens.length) break;
+    // A trailing comma the reformat dropped (-1) is left out.
+    if (counterpart[i] >= 0) {
+      const own = formatted.tokens[counterpart[i]];
+      text += (deleted ? edited.tokens[kept[i]].before : own.before) + own.text;
+    }
+    deleted = false;
+    i++;
+  }
+  text += formatted.after;
+  return text === block.ours || text === block.theirs ? undefined : { text, formatted: pr ? 'ours' : 'theirs' };
+}
+
+/**
+ * Both sides may have made the same change in different layouts (#445 item 15): the same tokens (layoutRead), apart
+ * from line breaks, quote marks where the language allows either, and trailing commas. Only a candidate: the checks
+ * compare the two sides' syntax trees (lib/conflict-verify.ts), and one they can't confirm is taken back
+ * (src/conflict-checks.ts). Spacing inside a line, and everything inside a string or comment, must match; so must a
+ * line's indentation outside brackets in Python and YAML.
+ */
+export function sameTokens(ours: string, theirs: string, language: SyntaxLanguage) {
+  const indented = language === 'python' || language === 'yaml';
+  /** The tokens without trailing commas: a dropped comma's spacing joins the closing bracket's. */
+  const read = (text: string) => {
+    const { tokens, after } = layoutRead(text, language);
+    const kept: typeof tokens = [];
+    let carry = '';
+    for (const token of tokens) {
+      if (token.comma) carry += token.before;
+      else {
+        kept.push({ ...token, before: carry + token.before });
+        carry = '';
+      }
+    }
+    return { tokens: kept, after };
   };
   const [a, b] = [read(ours), read(theirs)];
   if (a.tokens.length !== b.tokens.length || a.after !== b.after) return false;
@@ -121,14 +284,22 @@ export function sameTokens(ours: string, theirs: string, indented: boolean) {
     // Line breaks may differ between code tokens, except where they set a Python or YAML line's indentation.
     const wrapped = !t.raw && /\n/.test(t.before + other.before) && !(indented && depth === 0);
     if (!t.raw) depth += /^[([{]$/.test(t.text) ? 1 : /^[)\]}]$/.test(t.text) ? -1 : 0;
-    return t.text === other.text && t.raw === other.raw && (t.before === other.before || wrapped);
+    return t.key === other.key && (t.before === other.before || wrapped);
   });
 }
 
 /**
- * Each conflict that has no proposal gets the PR's version where both sides may have made the same change (sameTokens),
- * else the union of both sides' insertions, where there is one. Only in files with a grammar: without one, nothing can
- * tell whole definitions from lines whose order matters, or prove two layouts are the same code.
+ * Each conflict gets, in turn:
+ *
+ * - where one side only reformatted and the other edited, the edit in the reformatted layout (layoutMerge), when its
+ *   own text passes the layout check. It takes the place of structural merge's proposal only when that one lost the
+ *   layout, and keeps it (`instead`), so it is offered again if the checks don't Merge the rule's;
+ * - else its own proposal, if it has one;
+ * - else the PR's version where both sides may have made the same change (sameTokens);
+ * - else the union of both sides' insertions, where there is one.
+ *
+ * Only in files with a grammar: without one, nothing can tell whole definitions from lines whose order matters, or
+ * prove two layouts are the same code.
  */
 export function withUnions(
   path: string,
@@ -137,18 +308,23 @@ export function withUnions(
 ): (ConflictProposal | null)[] | undefined {
   const language = syntaxLanguage(path);
   if (!language) return proposals ? [...proposals] : undefined;
-  const indented = language === 'python' || language === 'yaml';
   const next = parseConflicts(original).flatMap((s): (ConflictProposal | null)[] => {
     if (s.kind !== 'conflict') return [];
     const own = proposals?.[s.index];
-    if (own) return [own];
     const { base, ours, theirs } = s.block;
-    if (base !== undefined && ours !== theirs && sameTokens(ours, theirs, indented))
+    const layout = !own || own.source === 'mergiraf' ? layoutMerge(s.block, language) : undefined;
+    if (layout && base !== undefined) {
+      const sides = { base, edited: layout.formatted === 'ours' ? theirs : ours, formatted: s.block[layout.formatted] };
+      if (keepsLayout(sides, layout.text) && (!own || !keepsLayout(sides, own.text)))
+        return [{ source: 'layout', text: layout.text, ...(own ? { instead: own.text } : {}) }];
+    }
+    if (own) return [own];
+    if (base !== undefined && ours !== theirs && sameTokens(ours, theirs, language))
       return [{ source: 'same', text: ours }];
     const union = unionOf(s.block);
     return [union ? { source: 'union', text: union.text } : null];
   });
-  return next.some((p) => p?.source === 'union' || p?.source === 'same')
+  return next.some((p) => p?.source === 'union' || p?.source === 'same' || p?.source === 'layout')
     ? next
     : proposals
       ? [...proposals]

@@ -156,17 +156,26 @@ export function useConflictChoices({
   // Conflicts whose proposal you accepted with A while it stays in Check: Accept's focus passes over them.
   const accepted = useRef(new Set<number>());
   // The conflict card that last had focus: A and U act on it while focus is on the view's own controls (V's switch,
-  // G's checkbox, the next action).
+  // G's checkbox, the next action: `data-conflict-control`).
   const lastCard = useRef<number>(undefined);
-  // The last A, with what it replaced, until another key, a click or a focus move: U then undoes it.
+  // The last A, with what it replaced, until another key, a click or a focus move of yours: U then undoes it.
   const lastAccept = useRef<{
     index: number;
     choice: ConflictModel['choices'][number];
     pick: BlockPick | undefined;
     edit: BlockEdit | null | undefined;
-    /** The conflict A sent focus to: focus arriving anywhere else in the view is a move of yours. */
-    target?: number;
   }>(undefined);
+  // True while Gnosis moves focus itself (A's next conflict, a check that finishes, a card mounting again): that focus
+  // move isn't yours, and U still undoes the last A (#508).
+  const movingFocus = useRef(false);
+  function focusCard(run: () => void) {
+    movingFocus.current = true;
+    try {
+      run();
+    } finally {
+      movingFocus.current = false;
+    }
+  }
   // Conflicts that need you: no proposal, or a proposal to check. J and K move between them; 1, 2 and 3 apply to them.
   const pendingSelector = '.conflict-block:is([data-state=open],[data-bucket=check])';
   const openBlocks = () => [...(root.current?.querySelectorAll<HTMLElement>(pendingSelector) ?? [])];
@@ -205,10 +214,7 @@ export function useConflictChoices({
       const index = card?.getAttribute('data-conflict-index');
       focused = card && index ? { index, card } : undefined;
       if (index && Number(index) >= 0) lastCard.current = Number(index);
-      // The accepted card taking focus back as it mounts again isn't a move of yours; keys and clicks end it already.
-      const at = index ? Number(index) : undefined;
-      if (lastAccept.current && at !== lastAccept.current.target && at !== lastAccept.current.index)
-        lastAccept.current = undefined;
+      if (!movingFocus.current) lastAccept.current = undefined;
     };
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget) focused = undefined;
@@ -220,9 +226,11 @@ export function useConflictChoices({
       const index = focused.index;
       focused = undefined;
       if (active && active !== document.body && !active.contains(element)) return;
-      element
-        .querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)
-        ?.focus({ preventScroll: true });
+      focusCard(() =>
+        element
+          .querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${index}"]`)
+          ?.focus({ preventScroll: true })
+      );
     });
     // A click anywhere is yours: U no longer undoes the last accept.
     const onPointerDown = () => (lastAccept.current = undefined);
@@ -244,7 +252,7 @@ export function useConflictChoices({
     const attempt = () => {
       if (!target?.isConnected) return;
       if (target.checkVisibility()) {
-        revealElement(target);
+        focusCard(() => revealElement(target));
         return;
       }
       const active = document.activeElement;
@@ -343,7 +351,6 @@ export function useConflictChoices({
   }, [model]);
   function focusAfterAccept(from: number) {
     const next = nextNeedingYou(openBlocks().map(indexOf).filter((index) => index >= 0), from, accepted.current);
-    if (lastAccept.current) lastAccept.current.target = next;
     if (next === undefined) onAllResolved?.();
     else reveal(root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${next}"]`));
   }
@@ -351,8 +358,9 @@ export function useConflictChoices({
   const focusedCard = () => {
     const card = document.activeElement?.closest<HTMLElement>('.conflict-block');
     if (card && root.current?.contains(card) && indexOf(card) >= 0) return card;
-    // Focus is on the view's own controls: the card you were on.
-    return lastCard.current === undefined
+    // Focus is on the view's own controls: the card you were on. Anywhere else (the page, the file list) no card has
+    // focus, and A takes the first conflict that needs you (#508).
+    return lastCard.current === undefined || !document.activeElement?.closest('[data-conflict-control]')
       ? undefined
       : (root.current?.querySelector<HTMLElement>(`.conflict-block[data-conflict-index="${lastCard.current}"]`) ?? undefined);
   };
@@ -393,8 +401,10 @@ export function useConflictChoices({
       },
       accept() {
         if (disabled) return false;
-        // The focused conflict, or the first that needs you; never the whole-file proposal, which Use this result takes.
-        const card = focusedCard() ?? openBlocks().find((block) => indexOf(block) >= 0);
+        // The focused conflict, or the first that needs you with a proposal of its own; never the whole-file proposal,
+        // which Use this result takes.
+        const card =
+          focusedCard() ?? openBlocks().find((block) => indexOf(block) >= 0 && !!proposals?.[indexOf(block)]);
         const index = indexOf(card ?? null);
         if (!card || index < 0 || !card.matches(pendingSelector) || !proposals?.[index]) return false;
         const before = {
