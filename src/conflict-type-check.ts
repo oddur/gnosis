@@ -218,7 +218,9 @@ async function compile(
   cwd: string,
   clone: string,
   signal: AbortSignal,
-  timeout: number
+  timeout: number,
+  /** The workspace packages linked to this worktree's own copies (`linkModules`). */
+  linked: ReadonlyMap<string, string> = new Map()
 ) {
   // No emit and no build info: nothing is written, also not through the linked node_modules. `--listFiles` says which
   // files were checked, so a project that checks none never reads as passed.
@@ -240,6 +242,8 @@ async function compile(
   // output, is a compiler that didn't run as expected.
   if (result.code > 2) throw new TypeCheckSkipped(`couldn’t run: the type checker exited with ${result.code}`);
   if ((result.code === 0) !== (diagnostics.length === 0)) throw new TypeCheckSkipped(INCOMPLETE);
+  const unresolved = unresolvedWorkspace(diagnostics, linked);
+  if (unresolved) throw new TypeCheckUnchecked(workspaceUnresolved(unresolved));
   const blocking = diagnostics.find(blocksChecking);
   if (blocking)
     throw new TypeCheckUnchecked(
@@ -298,65 +302,136 @@ async function unlinkModules(worktree: string) {
   }
 }
 
-/** A workspace package your clone links in node_modules, and the merge doesn't have. */
-export const workspaceMissing = (name: string) => `the workspace package ${name} isn’t in this tree`;
+/** Why a workspace package your clone links can't be checked against this tree. */
+export const workspaceNotFolder = (name: string) => `the workspace package ${name} isn’t a folder in this tree`;
+export const workspaceOutside = (name: string) => `the workspace package ${name} leads out of this tree`;
+export const workspaceRoot = (name: string) => `the workspace package ${name} is the repository’s root`;
+export const workspaceNoTypes = (name: string) => `workspace package ${name} has no built types in this tree`;
+export const workspaceUnresolved = (name: string) => `workspace package ${name} couldn’t be resolved in this tree`;
+
+/** Each entry of a node_modules folder, and of each `@scope` folder in it, by package name (`@scope/name`). */
+async function moduleEntries(modules: string, signal?: AbortSignal) {
+  const found: { name: string; link: boolean; folder: boolean }[] = [];
+  const read = (dir: string) => fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of await read(modules)) {
+    signal?.throwIfAborted();
+    if (entry.isDirectory() && entry.name.startsWith('@'))
+      for (const scoped of await read(path.join(modules, entry.name)))
+        found.push({ name: `${entry.name}/${scoped.name}`, link: scoped.isSymbolicLink(), folder: scoped.isDirectory() });
+    else found.push({ name: entry.name, link: entry.isSymbolicLink(), folder: entry.isDirectory() });
+  }
+  return found;
+}
 /**
  * Your clone's node_modules entries that are links into the clone itself, outside node_modules: a monorepo's workspace
  * packages (npm, Yarn and pnpm workspaces). By package name (`@scope/name`), with the folder relative to the clone.
  */
-export async function workspacePackages(clone: string, modules: string) {
+export async function workspacePackages(clone: string, modules: string, signal?: AbortSignal) {
   const root = await fs.realpath(clone);
   const realModules = await fs.realpath(modules);
   const inside = (target: string, folder: string) => target === folder || target.startsWith(folder + path.sep);
   const packages = new Map<string, string>();
-  const visit = async (name: string) => {
-    const entry = path.join(modules, name);
-    const stat = await fs.lstat(entry).catch(() => undefined);
-    if (stat?.isDirectory() && name.startsWith('@') && !name.includes('/')) {
-      for (const scoped of await fs.readdir(entry).catch(() => [] as string[])) await visit(`${name}/${scoped}`);
-      return;
-    }
-    if (!stat?.isSymbolicLink()) return;
-    const target = await fs.realpath(entry).catch(() => undefined);
+  for (const { name, link } of await moduleEntries(modules, signal)) {
+    if (!link) continue;
+    const target = await fs.realpath(path.join(modules, name)).catch(() => undefined);
     if (target && inside(target, root) && !inside(target, realModules)) packages.set(name, path.relative(root, target));
-  };
-  for (const name of await fs.readdir(modules)) await visit(name);
+  }
   return packages;
 }
+/** The file a package's types come from, as the compiler looks for it, relative to the package's folder. */
+async function typesEntry(folder: string) {
+  let manifest: Record<string, unknown> = {};
+  try {
+    manifest = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8')) as Record<string, unknown>;
+  } catch {
+    // No manifest: the compiler looks for an index file.
+  }
+  const fromExports = (value: unknown): string | undefined => {
+    if (!value || typeof value !== 'object') return undefined;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.types === 'string') return entry.types;
+    for (const key of ['.', 'import', 'require', 'default']) {
+      const found = fromExports(entry[key]);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+  const main = text(manifest.main);
+  return (
+    text(manifest.types) ??
+    text(manifest.typings) ??
+    fromExports(manifest.exports) ??
+    (main ? main.replace(/\.[cm]?js$/, '.d.ts') : undefined)
+  );
+}
+/** Whether the package's types are there: its declared types file, or else an index file. */
+async function hasTypes(folder: string) {
+  const declared = await typesEntry(folder);
+  const candidates = declared ? [declared] : ['index.d.ts', 'index.ts', 'index.tsx'];
+  for (const candidate of candidates)
+    if ((await fs.stat(path.join(folder, candidate)).catch(() => undefined))?.isFile()) return true;
+  return false;
+}
 /**
- * Links your clone's node_modules into a worktree. Without workspace packages it is one link to the folder. With them,
- * node_modules is a folder of links to each of the clone's entries, and each workspace package links to the worktree's
- * own copy instead of your clone's working copy: the merge is checked against the merge's packages. A workspace package
- * the worktree doesn't have, or that leads out of it, skips the check (fails closed).
+ * Links your clone's node_modules into a worktree, and returns the workspace packages it linked to the worktree's own
+ * copies (by name, with the folder relative to the worktree). Without workspace packages it is one link to the folder.
+ * With them, node_modules is a folder of links to each of the clone's entries, and each workspace package the tree has
+ * links to the tree's own copy, never your clone's working copy. A package the tree doesn't have is not linked at all:
+ * resolving it fails in this tree, and the error is compared as any other. Fails closed, the run doesn't check:
+ * - a package that is a file, leads out of the tree, or is the repository's root;
+ * - a package whose types aren't in the tree, such as untracked build output (`dist/*.d.ts`): the compiler would read
+ *   its values as `any` and miss errors.
  */
-async function linkModules(worktree: string, modules: string, packages: ReadonlyMap<string, string>) {
+async function linkModules(worktree: string, modules: string, packages: ReadonlyMap<string, string>, signal: AbortSignal) {
   const link = (target: string, at: string) =>
     fs.symlink(target, at, process.platform === 'win32' ? 'junction' : 'dir');
   const own = path.join(worktree, 'node_modules');
-  if (!packages.size) return link(modules, own);
+  const linked = new Map<string, string>();
+  if (!packages.size) {
+    await link(modules, own);
+    return linked;
+  }
   const real = await fs.realpath(worktree);
   const copies = new Map<string, string>();
   for (const [name, folder] of packages) {
-    const copy = await fs.realpath(path.join(worktree, folder)).catch(() => undefined);
-    if (!copy || !copy.startsWith(real + path.sep) || !(await fs.stat(copy)).isDirectory())
-      throw new TypeCheckSkipped(workspaceMissing(name));
+    signal.throwIfAborted();
+    const at = path.join(worktree, folder);
+    if (!(await fs.lstat(at).catch(() => undefined))) continue;
+    if (!folder) throw new TypeCheckSkipped(workspaceRoot(name));
+    const copy = await fs.realpath(at).catch(() => undefined);
+    if (!copy || !copy.startsWith(real + path.sep)) throw new TypeCheckSkipped(workspaceOutside(name));
+    if (!(await fs.stat(copy)).isDirectory()) throw new TypeCheckSkipped(workspaceNotFolder(name));
+    if (!(await hasTypes(copy))) throw new TypeCheckUnchecked(workspaceNoTypes(name));
     copies.set(name, copy);
+    linked.set(name, path.relative(real, copy).replaceAll('\\', '/'));
   }
   await fs.mkdir(own);
   // Only folders: a Windows junction can't link a file, and the compiler reads no file at the top of node_modules.
-  const entries = async (relative: string) => {
-    for (const name of await fs.readdir(path.join(modules, relative))) {
-      const entry = path.join(relative, name).replaceAll('\\', '/');
-      const copy = copies.get(entry);
-      if (copy) await link(copy, path.join(own, entry));
-      else if (!relative && name.startsWith('@') && [...copies.keys()].some((p) => p.startsWith(`${name}/`))) {
-        await fs.mkdir(path.join(own, name));
-        await entries(name);
-      } else if ((await fs.stat(path.join(modules, entry)).catch(() => undefined))?.isDirectory())
-        await link(path.join(modules, entry), path.join(own, entry));
-    }
-  };
-  await entries('');
+  // A package the tree doesn't have gets no entry.
+  for (const { name, folder, link: isLink } of await moduleEntries(modules, signal)) {
+    signal.throwIfAborted();
+    const copy = copies.get(name);
+    if (packages.has(name) && !copy) continue;
+    if (name.includes('/')) await fs.mkdir(path.join(own, path.dirname(name)), { recursive: true });
+    if (copy) await link(copy, path.join(own, name));
+    else if (folder || (isLink && (await fs.stat(path.join(modules, name)).catch(() => undefined))?.isDirectory()))
+      await link(path.join(modules, name), path.join(own, name));
+  }
+  return linked;
+}
+/**
+ * A workspace package the compiler couldn't resolve, in a file of the package or by its name: its values would read as
+ * `any` on both sides, and the comparison would excuse what it hides. Never excused: the run doesn't check.
+ */
+function unresolvedWorkspace(diagnostics: readonly TypeDiagnostic[], linked: ReadonlyMap<string, string>) {
+  for (const d of diagnostics) {
+    if (d.code !== 'TS2307' && d.code !== 'TS7016') continue;
+    for (const [name, folder] of linked)
+      if (d.file?.startsWith(`${folder}/`) || d.message.includes(`'${name}'`) || d.message.includes(`'${name}/`))
+        return name;
+  }
+  return undefined;
 }
 
 /** Where every run keeps its own folder, in the session directory. Startup cleanup removes what a crash left. */
@@ -410,7 +485,8 @@ export async function typeCheckMerge(options: {
     const compiler = await findCompiler(options.clone);
     if ('skipped' in compiler) return { state: 'skipped', reason: compiler.skipped };
     // A monorepo's workspace packages resolve to each worktree's own copy, never to your clone's working copy.
-    const packages = await workspacePackages(options.clone, compiler.modules);
+    const packages = await workspacePackages(options.clone, compiler.modules, signal);
+    const linked = new Map<string, ReadonlyMap<string, string>>();
     await fs.mkdir(folder, { recursive: true, mode: 0o700 });
     const checkout = async (name: string, commit: string) => {
       const worktree = path.join(folder, name);
@@ -421,7 +497,7 @@ export async function typeCheckMerge(options: {
       entry.admin = await adminFolder(worktree);
       // A linked node_modules, unless the tree has its own. A junction on Windows needs no privileges.
       if (!(await fs.lstat(path.join(worktree, 'node_modules')).catch(() => undefined)))
-        await linkModules(worktree, compiler.modules, packages);
+        linked.set(worktree, await linkModules(worktree, compiler.modules, packages, signal));
       return worktree;
     };
     const commit = (
@@ -443,10 +519,12 @@ export async function typeCheckMerge(options: {
       if (!parent || (parent !== real && !parent.startsWith(real + path.sep)) || (stat && !stat.isFile())) continue;
       await fs.writeFile(target, checkedText(file.result));
     }
-    const merged = await compile(options.run, compiler.tsc, merge, options.clone, signal, left());
+    const build = (worktree: string) =>
+      compile(options.run, compiler.tsc, worktree, options.clone, signal, left(), linked.get(worktree));
+    const merged = await build(merge);
     let head: TypeDiagnostic[] = [];
     if (merged.length)
-      head = await compile(options.run, compiler.tsc, await checkout('head', session.headSha), options.clone, signal, left());
+      head = await build(await checkout('head', session.headSha));
     const afterHead = newErrors(merged, head);
     // Each conflicted file's conflict lines, by path. A draft that can't be split into its conflicts has none.
     const lines = new Map(session.files.filter((f) => !f.unsupported).map((f) => [f.path, conflictLines(f)] as const));
@@ -463,7 +541,7 @@ export async function typeCheckMerge(options: {
     if (outside.length) {
       const base = await (async () => {
         try {
-          return await compile(options.run, compiler.tsc, await checkout('base', session.baseSha), options.clone, signal, left());
+          return await build(await checkout('base', session.baseSha));
         } catch (error) {
           if (options.signal.aborted) throw error;
           return undefined;

@@ -15,7 +15,9 @@ import {
   TypeCheckSkipped,
   typeCheckMerge,
   withoutRoots,
-  workspaceMissing,
+  workspaceNoTypes,
+  workspaceRoot,
+  workspaceUnresolved,
   NOT_SUPPORTED,
   TIMED_OUT,
   checkedText,
@@ -948,14 +950,61 @@ void test('type check: workspace packages resolve to the merge’s own copy, not
   assert.equal(await fs.readFile(path.join(linked, 'packages', 'util', 'index.ts'), 'utf8'), util);
 });
 
-void test('type check: a workspace package the merge doesn’t have skips the check (#499)', async (t) => {
-  const f = await fixture(t, { clone: await workspaceClone(t) });
-  assert.deepEqual(await f.settled(), { state: 'skipped', reason: workspaceMissing('@acme/util') });
-  assert.equal(f.runs.length, 0);
+void test('type check: a workspace package the tree doesn’t have is not linked, and its error is compared as any (#523)', async (t) => {
+  const f = await fixture(t, {
+    clone: await workspaceClone(t),
+    files: { 'use.ts': ['export {};\n', "import { value } from '@acme/util';\nexport const n = value;\n", 'export {};\n'] },
+  });
+  const status = await f.settled();
+  // The PR head can't resolve it either: only main's new use of `limit` is new.
+  assert.ok(status?.state === 'errors', JSON.stringify(status));
+  assert.ok(status.errors.every((e) => !e.includes('TS2307')), JSON.stringify(status));
+  await cleanedUp(f.sessionDir);
+});
+
+const unbuilt = (types: string) => JSON.stringify({ name: '@acme/util', types });
+void test('type check: a workspace package whose types aren’t built in the tree doesn’t check (#523)', async (t) => {
+  // The package's types are untracked build output: your clone has them, the merge's worktree doesn't.
+  const linked = await workspaceClone(t);
+  await fs.mkdir(path.join(linked, 'packages', 'util', 'dist'));
+  await fs.writeFile(path.join(linked, 'packages', 'util', 'dist', 'index.d.ts'), 'export declare const value: number;\n');
+  await fs.writeFile(path.join(linked, 'packages', 'util', 'package.json'), unbuilt('dist/index.d.ts'));
+  const manifest = unbuilt('dist/index.d.ts');
+  const f = await fixture(t, {
+    clone: linked,
+    files: {
+      'packages/util/package.json': [manifest, manifest, manifest],
+      'packages/util/index.ts': ['export const value = 1;\n', 'export const value = 1;\n', "export const value = 'one';\n"],
+    },
+  });
+  assert.deepEqual(await f.settled(), { state: 'unchecked', reason: workspaceNoTypes('@acme/util') });
   await cleanedUp(f.sessionDir);
   const saved = f.saved().files[0];
   assert.ok(saved.verdict);
-  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict.verdict), ['merged']);
+  assert.deepEqual(blockBuckets(saved, saved.result, saved.verdict.verdict), ['merged'], 'Nothing is demoted, nothing passed');
+});
+
+void test('type check: a workspace package that can’t resolve its own imports doesn’t check (#523)', async (t) => {
+  // pnpm keeps each package's dependencies in its own node_modules, which the worktree doesn't have.
+  const util = "import { pad } from 'left-pad';\nexport const value = pad;\n";
+  const f = await fixture(t, {
+    clone: await workspaceClone(t),
+    files: {
+      'packages/util/package.json': [UTIL_PACKAGE, UTIL_PACKAGE, UTIL_PACKAGE],
+      'packages/util/index.ts': [util, util, util],
+      'use.ts': ["import { value } from '@acme/util';\nexport const n = value;\n", "import { value } from '@acme/util';\nexport const n = value;\n", "import { value } from '@acme/util';\nexport const n = value;\n"],
+    },
+  });
+  assert.deepEqual(await f.settled(), { state: 'unchecked', reason: workspaceUnresolved('@acme/util') });
+  await cleanedUp(f.sessionDir);
+});
+
+void test('type check: a workspace package linked to the repository root skips with that reason (#523)', async (t) => {
+  const linked = await clone(t);
+  await fs.symlink('..', path.join(linked, 'node_modules', 'self'), 'dir');
+  const f = await fixture(t, { clone: linked });
+  assert.deepEqual(await f.settled(), { state: 'skipped', reason: workspaceRoot('self') });
+  await cleanedUp(f.sessionDir);
 });
 
 void test('type check: cleanup never removes a newer run’s worktree entry of the same name (#499)', async (t) => {
