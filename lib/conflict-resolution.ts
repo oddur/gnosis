@@ -104,14 +104,19 @@ export function wholeEditSnapshot(file: ConflictFile): WholeFileEdit {
 /** Undo of a whole-file edit: puts `before` back into `file`, and ends the edit. */
 export function restoreWholeEdit(file: ConflictFile, before: WholeFileEdit) {
   delete file.wholeEdit;
-  file.result = before.result;
-  file.resolved = before.resolved && !hasConflictMarkers(before.result);
-  file.source = before.source;
-  file.explanation = before.explanation;
-  file.resolverText = before.resolverText;
-  file.picks = before.picks;
-  file.edits = before.edits;
-  for (const key of ['explanation', 'resolverText', 'picks', 'edits'] as const) if (file[key] === undefined) delete file[key];
+  delete file.explanation;
+  delete file.resolverText;
+  delete file.picks;
+  delete file.edits;
+  const { explanation, resolverText, picks, edits } = before;
+  Object.assign(
+    file,
+    { result: before.result, resolved: before.resolved && !hasConflictMarkers(before.result), source: before.source },
+    explanation !== undefined ? { explanation } : {},
+    resolverText !== undefined ? { resolverText } : {},
+    picks ? { picks } : {},
+    edits ? { edits } : {}
+  );
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
