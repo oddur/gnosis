@@ -241,7 +241,7 @@ void app.whenReady().then(async () => {
         const rgb=v=>{c.clearRect(0,0,1,1);c.fillStyle='#000';c.fillStyle=v;c.fillRect(0,0,1,1);const d=c.getImageData(0,0,1,1).data;return '#'+[d[0],d[1],d[2]].map(n=>n.toString(16).padStart(2,'0')).join('')};
         const q=s=>root.querySelector(s);const style=s=>getComputedStyle(q(s));
         return {file:rgb(style('.changes-file-header').backgroundColor),fileText:rgb(style('.changes-file-header h2').color),hunk:rgb(style('.diff-gap[data-hunk-header]').backgroundColor),
-          hunkText:rgb(style('.diff-gap[data-hunk-header] .diff-gap-crumb').color),added:rgb(style('.diff-gap-added').color),keyword:q('.diff-gap-kind')?rgb(style('.diff-gap-kind').color):''}};
+          hunkText:rgb(style('.diff-gap[data-hunk-header] .diff-gap-crumb[data-innermost]').color),added:rgb(style('.diff-gap-added').color),keyword:q('.diff-gap-kind')?rgb(style('.diff-gap-kind').color):''}};
       void 0`);
 
     // ── Changes: src/scope.ts whole ──
