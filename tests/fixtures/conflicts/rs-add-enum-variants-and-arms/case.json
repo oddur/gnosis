@@ -1,5 +1,5 @@
 {
-  "description": "Both sides add a different enum variant and its match arm. The variants have no discriminants, so each takes the next value in order (#481), and match arms are always proposed as a union: both blocks are a proposal to check.",
+  "description": "Both sides add a different enum variant and its match arm. Rust enum variants stay in Check (#481: a crate root can rename the derives that read their order), and match arms are always proposed as a union: both blocks are a proposal to check.",
   "language": "rust",
   "category": "structure/both-add",
   "expected": {

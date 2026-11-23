@@ -887,82 +887,27 @@ void test('#476: package.json dependency lists are order-free; other JSON keys a
   assert.equal(cs.merged, false);
 });
 
-void test('#481: Rust enum variants are order-free only with explicit, different discriminants and order-blind derives', async () => {
-  const variants = '    Green = 2,\n    Blue = 3,\n';
-  const color = (head: string, ours = '    Green = 2,\n', theirs = '    Blue = 3,\n', path = 'src/color.rs') =>
-    samePlace(path, `${head}pub enum Color {\n    Red = 1,\n`, '}\n', ours, theirs, ours + theirs);
-  for (const head of ['', '#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n', '#[allow(dead_code)]\n/// Colors.\n']) {
-    const verdict = await color(head);
-    assert.equal(verdict.merged, true, `${head}: ${verdict.note}`);
-    assert.match(verdict.note, /their order doesn’t matter/);
-  }
-  // Either side first.
-  const flipped = await samePlace(
+void test('#481: Rust enum variants and struct fields stay in Check, even with explicit discriminants and scalar fields', async () => {
+  // A crate root's `#[macro_use] extern crate` can put another macro under a std derive's name for every file, and a
+  // check of one file can't see it.
+  const color = await samePlace(
     'src/color.rs',
-    'pub enum Color {\n    Red = 1,\n',
+    '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum Color {\n    Red = 1,\n',
     '}\n',
     '    Green = 2,\n',
     '    Blue = 3,\n',
-    '    Blue = 3,\n    Green = 2,\n'
+    '    Green = 2,\n    Blue = 3,\n'
   );
-  assert.equal(flipped.merged, true, flipped.note);
-  // Derives and attributes that read the order, or could: Check.
-  for (const head of [
-    '#[derive(PartialOrd, PartialEq)]\n',
-    '#[derive(Ord)]\n',
-    '#[derive(Serialize)]\n',
-    '#[derive(strum::EnumIter)]\n',
-    '#[repr(u8)]\n',
-    '#[cfg_attr(test, derive(PartialOrd))]\n',
-    'use serde::Serialize as Debug;\n#[derive(Debug)]\n',
-    'use my_macros::*;\n#[derive(Debug)]\n',
-  ])
-    assert.equal((await color(head)).merged, false, head);
-  // A variant without its own value takes the next one in order (`as` casts read it); a value that isn't a literal can
-  // be anything; two equal values; a variant with fields: Check.
-  assert.equal((await color('', '    Green,\n')).merged, false, 'implicit discriminant');
-  assert.equal((await samePlace('src/c.rs', 'enum C {\n    Red,\n', '}\n', '    Green = 2,\n', '    Blue = 3,\n', variants)).merged, false);
-  assert.equal((await color('', '    Green = BASE + 1,\n')).merged, false, 'not a literal');
-  assert.equal((await color('', '    Green = 0x3,\n')).merged, false, 'the same value as Blue');
-  assert.equal((await color('', '    Green(u8),\n')).merged, false, 'fields');
-  // An attribute on a variant (`#[default]`, serde renames) or around the enum: Check.
-  assert.equal((await color('', '    #[default]\n    Green = 2,\n')).merged, false);
-  const inside = await samePlace(
-    'src/color.rs',
-    '#[my_macro]\nmod colors {\n    pub enum Color {\n        Red = 1,\n',
-    '    }\n}\n',
-    '        Green = 2,\n',
-    '        Blue = 3,\n',
-    '        Green = 2,\n        Blue = 3,\n'
+  assert.equal(color.merged, false, color.note);
+  const options = await samePlace(
+    'src/options.rs',
+    'pub struct Options {\n    pub width: u32,\n',
+    '}\n',
+    '    depth: i64,\n',
+    '    weight: f64,\n',
+    '    depth: i64,\n    weight: f64,\n'
   );
-  assert.equal(inside.merged, false, 'an attribute macro on the module sees the enum');
-  // The same name on both sides: Check.
-  assert.equal((await color('', '    Green = 2,\n', '    Green = 3,\n')).merged, false);
-});
-
-void test('#481: Rust struct fields are order-free only for scalar fields and order-blind derives', async () => {
-  const options = (head: string, ours = '    depth: i64,\n', theirs = '    weight: f64,\n') =>
-    samePlace('src/options.rs', `${head}pub struct Options {\n    pub width: u32,\n`, '}\n', ours, theirs, ours + theirs);
-  for (const head of ['', '#[derive(Clone, Copy, PartialEq, Default)]\n', '#[allow(dead_code)]\n'])
-    assert.equal((await options(head)).merged, true, head);
-  assert.equal((await options('', "    pub name: &'static str,\n", '    pub on: bool,\n')).merged, true);
-  // Debug prints fields in order, PartialOrd and Hash read them in order, serde writes them in order, repr lays them
-  // out in order: Check.
-  for (const head of [
-    '#[derive(Debug)]\n',
-    '#[derive(PartialEq, PartialOrd)]\n',
-    '#[derive(Hash)]\n',
-    '#[derive(Serialize)]\n',
-    '#[repr(C)]\n',
-  ])
-    assert.equal((await options(head)).merged, false, head);
-  // Fields are dropped in order: a type that may run code when dropped (String, a guard, any type of the crate): Check.
-  for (const field of ['    name: String,\n', '    guard: MutexGuard<\'static, ()>,\n', '    inner: Inner,\n', '    list: Vec<u8>,\n'])
-    assert.equal((await options('', field)).merged, false, field);
-  // A field attribute (serde renames, cfg on one field): Check.
-  assert.equal((await options('', '    #[serde(rename = "d")]\n    depth: i64,\n')).merged, false);
-  // The same field on both sides: Check.
-  assert.equal((await options('', '    depth: i64,\n', '    depth: u8,\n')).merged, false);
+  assert.equal(options.merged, false, options.note);
 });
 
 void test('#481: TypeScript `import type` lines are order-free; value and side-effect imports are Check', async () => {
@@ -1028,39 +973,6 @@ void test('#481: known JSON files’ keyed objects are order-free; nested and un
   assert.equal((await keyed('compilerOptions', 'tsconfig.json', '    "strict": true,\n', '    "strict": false,\n')).merged, false);
 });
 
-void test('#481 review: a primitive renamed in the file, a renamed std crate or an item macro keeps Rust fields in Check', async () => {
-  const options = (head: string, field = '    depth: u8,\n') =>
-    samePlace('src/options.rs', `${head}pub struct Options {\n    pub width: u32,\n`, '}\n', field, '    weight: f64,\n', field + '    weight: f64,\n');
-  assert.equal((await options('')).merged, true);
-  for (const head of [
-    'use crate::guard::Guard as u8;\n',
-    'use crate::types::u8;\n',
-    'type bool = String;\n',
-    'struct u8(String);\n',
-    'mod std {}\n',
-    'extern crate guard as u32;\n',
-    'extern crate fake as std;\n#[derive(Clone)]\n',
-    '#[macro_use]\nextern crate derives;\n#[derive(Clone)]\n',
-    'make_types!();\n',
-  ])
-    assert.equal((await options(head)).merged, false, head);
-  // A type parameter can be named like a primitive.
-  const generic = await samePlace(
-    'src/options.rs',
-    'pub struct Options<u8> {\n    pub width: u32,\n',
-    '}\n',
-    '    depth: u8,\n',
-    '    weight: f64,\n',
-    '    depth: u8,\n    weight: f64,\n'
-  );
-  assert.equal(generic.merged, false);
-  // Enums too: a renamed std crate or `macro_use` can put another macro under a derive's name.
-  const color = (head: string) =>
-    samePlace('src/color.rs', `${head}pub enum Color {\n    Red = 1,\n`, '}\n', '    Green = 2,\n', '    Blue = 3,\n', '    Green = 2,\n    Blue = 3,\n');
-  for (const head of ['extern crate fake as std;\n#[derive(Debug)]\n', '#[macro_use]\nextern crate derives;\n#[derive(Debug)]\n'])
-    assert.equal((await color(head)).merged, false, head);
-});
-
 void test('#481 review: a directive comment just before the insertion, or last in a side, keeps it in Check', async () => {
   const shape = (head: string, ours = '  depth: number;\n', theirs = '  weight: number;\n') =>
     samePlace('src/options.ts', `export interface Options {\n  width: number;\n${head}`, '}\n', ours, theirs, ours + theirs);
@@ -1084,7 +996,14 @@ void test('#481 review: a directive comment just before the insertion, or last i
     '\t"os"\n\t"strings"\n'
   );
   assert.equal(go.merged, false);
-  const rust = await samePlace('src/color.rs', 'pub enum Color {\n    Red = 1,\n    // rustfmt::skip\n', '}\n', '    Green = 2,\n', '    Blue = 3,\n', '    Green = 2,\n    Blue = 3,\n');
+  const rust = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n    // rustfmt::skip\n',
+    '}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
   assert.equal(rust.merged, false);
 });
 

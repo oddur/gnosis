@@ -1,8 +1,0 @@
-{
-  "description": "#481: both sides add a field to a Rust struct that derives Debug. Debug prints the fields in order, so the order shows in logs and test snapshots.",
-  "language": "rust",
-  "category": "semantic/order",
-  "expected": {
-    "src/limits.rs": "any-but-merged"
-  }
-}

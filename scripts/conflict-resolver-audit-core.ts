@@ -489,7 +489,7 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
       return { skip: 'the result has no lines only one side added beside the other side’s' };
     }
     case 'duplicate-unit': {
-      // The order-free kinds (#481) are one line each: an enum variant, a field, an import, a JSON key. One such line a
+      // The order-free kinds (#481) are one line each: an interface member, an import, a JSON key. One such line a
       // side added, repeated after itself: a merge neither side wrote.
       const own = addedBy(target);
       const i = lines.findIndex((line) => own(line) && /[,;]\s*$/.test(line));
@@ -811,58 +811,13 @@ const ORDER_FREE_NOTE = /and their order doesn’t matter/;
 interface ContextChange {
   name: string;
   language: RegExp;
-  /** For Rust: the item that must hold the conflict, an enum's variants or a struct's fields. */
-  item?: 'enum' | 'struct';
   /** The changed path and text, or undefined when the change doesn't apply. */
-  apply: (path: string, text: string, conflict: string) => { path: string; text: string } | undefined;
+  apply: (path: string, text: string) => { path: string; text: string } | undefined;
 }
-const SCALARS = /\b(?:[iu](?:8|16|32|64|128|size)|f32|f64|bool|char)\b/;
-/** The header line of the Rust enum or struct that holds the conflict: the last one before the first marker. */
-function itemHeader(conflict: string) {
-  const lines = conflict.split(/(?<=\n)/);
-  const marker = lines.findIndex((l) => l.startsWith('<<<<<<<'));
-  return lines
-    .slice(0, marker < 0 ? lines.length : marker)
-    .reverse()
-    .find((l) => /^\s*(?:pub(?:\([^)]*\))? )?(?:enum|struct) \w+[^;]*\{\s*$/.test(l));
-}
-/** A line before the item that holds the conflict. */
-const beforeItem = (insert: string) => (path: string, text: string, conflict: string) => {
-  const header = itemHeader(conflict);
-  if (!header || !text.includes(header)) return undefined;
-  const indent = /^\s*/.exec(header)?.[0] ?? '';
-  return { path, text: text.replace(header, `${indent}${insert}${header.endsWith('\r\n') ? '\r\n' : '\n'}${header}`) };
-};
 /** Every match of `from` replaced by `to`. */
 const everywhere = (from: RegExp, to: string) => (path: string, text: string) =>
   from.test(text) ? { path, text: text.replace(new RegExp(from.source, `${from.flags}g`), to) } : undefined;
-const prepend = (line: string) => (path: string, text: string) => ({ path, text: `${line}\n${text}` });
-const rust = /\.rs$/;
 const CONTEXT_CHANGES: ContextChange[] = [
-  { name: 'derive PartialOrd', language: rust, apply: beforeItem('#[derive(PartialOrd)]') },
-  { name: 'repr', language: rust, apply: beforeItem('#[repr(C)]') },
-  { name: 'macro_use', language: rust, apply: prepend('#[macro_use]\nextern crate derives;') },
-  { name: 'std renamed', language: rust, apply: prepend('extern crate fake as std;') },
-  { name: 'item macro', language: rust, apply: prepend('make_items!();') },
-  { name: 'use x::Hash', language: rust, item: 'enum', apply: prepend('use x::Hash;') },
-  { name: 'implicit discriminants', language: rust, item: 'enum', apply: everywhere(/^(\s+\w+) = -?\d+,/m, '$1,') },
-  { name: 'derive Debug', language: rust, item: 'struct', apply: beforeItem('#[derive(Debug)]') },
-  { name: 'use x::PartialEq', language: rust, item: 'struct', apply: prepend('use x::PartialEq;') },
-  {
-    name: 'primitive alias',
-    language: rust,
-    item: 'struct',
-    apply: (path, text, conflict) => {
-      const scalar = SCALARS.exec(conflict.slice(conflict.indexOf('<<<<<<<')))?.[0];
-      return scalar ? { path, text: `type ${scalar} = String;\n${text}` } : undefined;
-    },
-  },
-  {
-    name: 'String fields',
-    language: rust,
-    item: 'struct',
-    apply: everywhere(/^(\s+(?:pub )?\w+): (?:[iu]\d+|[iu]size|f\d+|bool|char),/m, '$1: String,'),
-  },
   { name: 'value imports', language: /\.tsx?$/, apply: everywhere(/^import type /m, 'import ') },
   {
     name: 'unknown JSON file',
@@ -871,8 +826,7 @@ const CONTEXT_CHANGES: ContextChange[] = [
   },
 ];
 /**
- * The order-free proofs (#481) read the file around the insertion: the derives, attributes, `use` lines, types and file
- * name. Each change of CONTEXT_CHANGES is made on all three sides, the conflict and the structural merge's output alike,
+ * The order-free proofs (#481) read the file around the insertion: the kind of import, and the file name. Each change of CONTEXT_CHANGES is made on all three sides, the conflict and the structural merge's output alike,
  * and the conflict must then not be Merged.
  */
 async function changeContext(
@@ -882,16 +836,10 @@ async function changeContext(
   output: string,
   record: (r: Omit<MutationResult, 'case' | 'path'>) => void
 ) {
-  // Rust's proofs are for an enum's variants and a struct's fields; its imports need none.
-  const header = itemHeader(file.original);
-  const item = header && /\benum\b/.test(header) ? 'enum' : header ? 'struct' : undefined;
   for (const change of CONTEXT_CHANGES) {
     if (!change.language.test(file.path)) continue;
-    if (change.language === rust && (!item || (change.item && change.item !== item))) continue;
-    const texts = [file.base, file.ours, file.theirs, file.original, output].map((t) =>
-      change.apply(file.path, t, file.original)
-    );
-    if (texts.some((t) => !t) || texts[0]?.text === file.base) continue;
+    const texts = [file.base, file.ours, file.theirs, file.original, output].map((t) => change.apply(file.path, t));
+    if (texts.some((t) => !t) || (texts[0]?.text === file.base && texts[0].path === file.path)) continue;
     const [base, ours, theirs, original, merged] = texts as { path: string; text: string }[];
     // A change that reaches into a conflict changes it on one side only: not this mutation.
     if (

@@ -1,8 +1,0 @@
-{
-  "description": "#481: both sides add a variant with its own discriminant to a Rust enum whose derives never read variant order. Either order is the same program.",
-  "language": "rust",
-  "category": "structure/both-add",
-  "expected": {
-    "src/level.rs": "merged"
-  }
-}

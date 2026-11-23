@@ -1,8 +1,0 @@
-{
-  "description": "#481: both sides add a variant to a Rust enum that derives PartialOrd. Gnosis does not merge enums whose derives can compare or serialize variants for you.",
-  "language": "rust",
-  "category": "semantic/order",
-  "expected": {
-    "src/level.rs": "any-but-merged"
-  }
-}

@@ -579,27 +579,6 @@ export interface RangeUnits {
   path?: string[];
   /** The text of the comments just before the units (`before` skips them). */
   comments?: string[];
-  /** For a Rust enum's variants or a struct's fields: the item that holds them (rangeOwner). */
-  owner?: RangeOwner;
-}
-/** A Rust enum or struct whose variants or fields are the units, as the order-free proofs read it (#481). */
-export interface RangeOwner {
-  /** Each attribute on the item and on every item around it, inner attributes included, as written inside `#[…]`. */
-  attributes: string[];
-  /** Every variant or field of the item, in order: its discriminant or type as written, and whether it has fields or attributes. */
-  members: { value?: string; type?: string; fields?: boolean; attributed?: boolean }[];
-  /** The item has type or const parameters: a parameter can be named like a primitive. */
-  generic?: boolean;
-  file: RustFile;
-}
-/** What a Rust file brings into scope that a proof must rule out, read once per tree (rustFile). */
-export interface RustFile {
-  /** The text of each `use` and `extern crate`, with its attributes: either can rename a derive or a primitive type. */
-  uses: string[];
-  /** The names of the file's types, traits and modules: `struct u8`, `type bool`, `mod std`. */
-  types: string[];
-  /** A macro is called where items go: it can declare anything. */
-  macros: boolean;
 }
 /** An import statement's `type` keyword (on the statement, not on one name) and the local names it binds. */
 function scriptImport(node: Node) {
@@ -616,75 +595,6 @@ function scriptImport(node: Node) {
         }
   }
   return { typeOnly: node.children.some((c) => !c.isNamed && c.type === 'type'), binds };
-}
-/** The text inside `#[…]` of each attribute just before a node, comments aside. */
-function attributesBefore(node: Node) {
-  const found: string[] = [];
-  for (let at = node.previousNamedSibling; at; at = at.previousNamedSibling) {
-    if (/comment/.test(at.type)) continue;
-    if (at.type !== 'attribute_item') break;
-    found.unshift(squash(at.namedChildren.find((c) => c.type === 'attribute')?.text ?? at.text));
-  }
-  return found;
-}
-const rustFiles = new WeakMap<TreeSitter.Tree, RustFile>();
-/** The file's `use` lines, type names and item-level macro calls, once per tree. */
-function rustFile(tree: TreeSitter.Tree): RustFile {
-  let found = rustFiles.get(tree);
-  if (!found) {
-    const root = tree.rootNode;
-    const uses = root
-      .descendantsOfType(['use_declaration', 'extern_crate_declaration'])
-      .map((n) => [...attributesBefore(n).map((a) => `#[${a}] `), squash(n.text)].join(''));
-    const types = root
-      .descendantsOfType(['struct_item', 'enum_item', 'union_item', 'type_item', 'trait_item', 'mod_item'])
-      .flatMap((n) => n.childForFieldName('name')?.text ?? []);
-    const macros = root
-      .descendantsOfType('macro_invocation')
-      .some((n) => {
-        const at = n.parent?.type === 'expression_statement' ? n.parent.parent : n.parent;
-        return at?.type === 'source_file' || at?.type === 'declaration_list';
-      });
-    found = { uses, types, macros };
-    rustFiles.set(tree, found);
-  }
-  return found;
-}
-/** A Rust enum's or struct's attributes and members, and its file's names; undefined for any other list. */
-function rangeOwner(tree: TreeSitter.Tree, list: Node): RangeOwner | undefined {
-  const item = list.parent;
-  if (!item || !['enum_variant_list', 'field_declaration_list'].includes(list.type)) return undefined;
-  if (item.type !== 'enum_item' && item.type !== 'struct_item') return undefined;
-  const attributes: string[] = [];
-  for (let at: Node | null = item; at; at = at.parent) {
-    attributes.push(...attributesBefore(at));
-    for (const c of at.namedChildren)
-      if (c.type === 'inner_attribute_item')
-        attributes.push(squash(c.namedChildren.find((x) => x.type === 'attribute')?.text ?? c.text));
-  }
-  const members: RangeOwner['members'] = [];
-  const unit = list.type === 'enum_variant_list' ? 'enum_variant' : 'field_declaration';
-  let attributed = false;
-  for (const c of list.namedChildren) {
-    if (/comment/.test(c.type)) continue;
-    if (c.type === 'attribute_item') {
-      attributed = true;
-      continue;
-    }
-    const value = c.childForFieldName('value');
-    const type = c.childForFieldName('type');
-    members.push({
-      ...(value ? { value: squash(value.text) } : {}),
-      ...(type ? { type: squash(type.text) } : {}),
-      ...(c.childForFieldName('body') ? { fields: true } : {}),
-      // Anything but a plain variant or field (a macro call, say) counts as attributed: it can't be proved.
-      ...(attributed || c.type !== unit ? { attributed: true } : {}),
-    });
-    attributed = false;
-  }
-  const parameters = item.childForFieldName('type_parameters');
-  const generic = !!parameters?.namedChildren.some((c) => !/lifetime/.test(c.type));
-  return { attributes, members, ...(generic ? { generic } : {}), file: rustFile(tree) };
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -755,9 +665,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
     if (node.type === 'object')
       for (let at: Node | null = node.parent; at; at = at.parent)
         if (at.type === 'pair') path.unshift(at.childForFieldName('key')?.text ?? '');
-    const owner = rangeOwner(tree, node);
     return {
-      ...(owner ? { owner } : {}),
       parent: node.type,
       ...(node.parent ? { container: node.parent.type } : {}),
       units,

@@ -215,29 +215,6 @@ For every kind, each side must add at least one node, and no name may be added t
 
 Each kind below has its own proof. A case that the proof does not cover stays in Check.
 
-**Rust enum variants.** The order of the variants matters in three places: an implicit discriminant is the previous value plus one, which `as` casts read; derives such as `PartialOrd`, `Ord` and serde's variant index read the order; and macros on the enum or around it can read anything. So the variants are order-free only when all of the following are true:
-
-- Every variant, old and new, is a unit variant with an explicit integer discriminant, and no two discriminants are equal.
-- The enum and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and `Hash`. These derives read only the variant's name or its discriminant.
-- No variant has an attribute, such as `#[default]` or `#[serde(rename)]`.
-- Nothing in the file can put another macro under one of those derive names. That rules out a `use` that names one from outside `std`, `core` and `alloc`, a rename, a glob outside those crates, any `#[macro_use]`, an `extern crate … as std` (or `core`, `alloc`), a type or module named `std`, `core` or `alloc`, and a macro called where items go, which can declare anything.
-
-Rust has no reflection over variants, so nothing else can see their order.
-
-**Rust struct fields.** Rust drops fields in declaration order. `Debug` prints them in order, `PartialOrd`, `Ord` and `Hash` read them in order, serde writes them in order, and `#[repr]` lays them out in order. So the fields are order-free only when all of the following are true:
-
-- The struct has named fields. A tuple struct is built by position.
-- Every field, old and new, is an integer, a float, `bool`, `char` or `&str`. These types run no code when they are dropped.
-- No field has an attribute.
-- The struct and the items around it have only lint, `doc` and `cfg` attributes, and derives of only `Clone`, `Copy`, `PartialEq`, `Eq` and `Default`. On these types, these derives combine each field's result in a way that does not depend on the order.
-- No `use`, `extern crate`, type, trait or module in the file is named like a primitive type or `str`. `use crate::guard::Guard as u8`, `type bool = String` and `struct u8(String)` would each make a scalar-looking field own something with drop glue.
-- The struct has no type parameters, which could also be named like a primitive. Lifetimes are fine.
-- The derive names are not renamed, as for enums.
-
-Without `#[repr]` the layout is unspecified, and rustc reorders the fields anyway. Struct literals and patterns name their fields. One caveat: `std::mem::offset_of!` and unsafe code can read the offsets rustc chose, and those can change with the order. Code that depends on them relies on a layout that Rust does not specify.
-
-**What a Rust proof can't see.** The checks read one file. A crate root (`lib.rs` or `main.rs`) can still rename things for every file: `#[macro_use] extern crate x` brings in x's macros, which could include a derive named like a std one, and `extern crate x as std` in a `#![no_std]` crate makes `std::` mean x. Gnosis refuses both when they are in the file itself. It can't see them in another file. A crate would have to define a derive named exactly `Clone`, `Debug` or `PartialEq` for this to matter.
-
 **TypeScript type imports.** An import runs its module, and modules run in the order they are imported. Nothing in a syntax tree shows that a module has no side effects, such as a polyfill or a registration. So JavaScript, TypeScript and Python imports are never order-free in general, and they stay in Check. The exception is `import type …`: TypeScript erases it whole from the output, also with `verbatimModuleSyntax`, so it runs nothing. Both sides' imports must all be `import type`, and they must bind different names. `import { type A } from './a'` is not an exception: it can leave `import {} from './a'`, which still runs the module.
 
 **Known JSON files.** A JSON object has no order of its own, but the tool that reads it can read the keys in order. Node matches `exports` in order, `npm-run-all` runs `scripts` globs in order, jest tries `moduleNameMapper` in order, and TypeScript picks the `compilerOptions.paths` pattern with the longest prefix before `*`, and the first one between two of the same length. So keys are order-free only in known files, in top-level objects that their tool reads by key:
@@ -253,6 +230,7 @@ Every key in the object, old and new, must be different, and every child must be
 - C# enums: reflection (`GetFields`) returns members in declaration order in practice, and code that fills a list from it shows that order.
 - Java enums: `values()`, `ordinal()`, `compareTo`, `EnumSet` and `EnumMap` follow the order, and JPA stores the ordinal by default.
 - Python enums and dicts: iteration follows the definition order, `auto()` and aliases depend on it, and a dict walked for the first match runs the first key that matches.
+- Rust enum variants and struct fields. Their order matters through implicit discriminants (which `as` casts read), the drop order of fields, and derives that read the order, such as `PartialOrd`, `Ord`, `Hash`, `Debug` and serde. A proof would have to show that every derive on the item is a std one that ignores the order. A check of one file can't show that: a crate root (`lib.rs` or `main.rs`) can bring in another crate's macros with `#[macro_use] extern crate`, under the same names as the std derives, for every file in the crate.
 - Go struct fields: `encoding/json`, `fmt`, `encoding/binary`, `reflect` and positional literals follow the order. Java and C# fields: initializers run in order, and serializers follow the order. Python dataclass fields: the order is the order of `__init__`'s parameters.
 - List and array items: the order is the value.
 - Match arms and switch cases: an arm placed first wins when two arms can match, and a case without `break` or `return` falls through to the next one in JavaScript, TypeScript and Java. Arms with different literals, no guards and no fall-through would be order-free. But the structural merge never writes such a union, and Gnosis's own proposal to keep both sides is never Merged, so they stay in Check. Python's `match` also calls the subject's `__eq__`, which can match more than one literal.
@@ -274,7 +252,7 @@ The resolver audit checks the checks. Each resolver and rule runs over the lab's
 | `swap-order` | Two lines of one function body, both from one side, change places. |
 | `duplicate-unit` | A one-line unit that one side added, such as an enum variant, a field, an import or a key, is repeated after itself. |
 | `swap-units` | Two lines that one side added together change places. The two sides' additions may change places; one side's own may not. |
-| `change-context` | Around a conflict Merged as order-free, the file changes on all three sides so that the proof no longer holds: a `PartialOrd`, `Debug` or `repr` on the item, a `use` that could rename a derive, `macro_use`, a renamed `std`, an item macro, a primitive alias, implicit discriminants, `String` fields, value imports for type imports, or another JSON file name. The conflict must not stay Merged. |
+| `change-context` | Around a conflict Merged as order-free, the file changes on all three sides so that the proof no longer holds: type imports become value imports, or a known JSON file gets another name. The conflict must not stay Merged. |
 | `interleave-sides` | A line only one side added moves inside the other side's added lines, or past them. |
 | `cross-anchor` | A line one side changed moves past lines the other side inserted next to it, before or after it in the ancestor. |
 | `change-number`, `change-string` | A number or a string in the result changes. |

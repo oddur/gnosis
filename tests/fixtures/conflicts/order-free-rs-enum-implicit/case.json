@@ -1,8 +1,0 @@
-{
-  "description": "#481: both sides add a variant without a discriminant. Each variant then takes the next value in order, and `as u8` reads it, so the order is the program.",
-  "language": "rust",
-  "category": "semantic/order",
-  "expected": {
-    "src/level.rs": "any-but-merged"
-  }
-}

@@ -1,6 +1,6 @@
 import { parseConflicts, textLines as lines, type ConflictBlock } from './conflict-blocks';
 import type { ConflictProposal } from './conflict-resolution';
-import { syntaxLanguage, type RangeOwner, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
+import { syntaxLanguage, type RangeUnit, type RangeUnits, type SyntaxLanguage } from './syntax-scope';
 
 /**
  * Both sides added different definitions at the same place (#445, tier 3). Mergiraf leaves such a conflict open when
@@ -334,7 +334,7 @@ export function unionNote(language: SyntaxLanguage, ours: RangeUnits | undefined
 }
 
 /** What an order-free unit is: both sides' units must all be one kind. */
-type OrderKind = 'method' | 'member' | 'import' | 'variant' | 'field';
+type OrderKind = 'method' | 'member' | 'import';
 /**
  * One kind of order-free unit: the parent node that holds the units (and, where the parent type is ambiguous, the node
  * that holds it), the unit types, and, for a kind whose order can matter elsewhere, its proof (#481): given the units'
@@ -350,9 +350,9 @@ interface OrderFree {
 /**
  * Where order doesn't matter (#476), the provable core only: plain methods of a class, impl or interface body (Go:
  * methods with a receiver); TypeScript interface and type-literal members, which are types only; imports in Go, Rust,
- * Java and C#. Since #481, each with its own proof (docs/conflict-resolution.md): TypeScript `import type`, Rust enum
- * variants and struct fields. Nothing else: no other fields, enum members, functions, keys, cases, list items or
- * statements, no other JavaScript, TypeScript or Python imports.
+ * Java and C#. Since #481, with its own proof (docs/conflict-resolution.md): TypeScript `import type`. Nothing else: no
+ * fields, enum members, functions, keys, cases, list items or statements, no other JavaScript, TypeScript or Python
+ * imports. Rust enum variants and struct fields stay out: a crate root can rename the derives that read them.
  */
 const SCRIPT_ORDER_FREE: OrderFree[] = [
   { parents: ['class_body'], types: ['method_definition'], kind: 'method' },
@@ -381,20 +381,6 @@ const ORDER_FREE: Partial<Record<SyntaxLanguage, OrderFree[]>> = {
     { parents: ['declaration_list'], containers: ['impl_item'], types: ['function_item'], kind: 'method' },
     { parents: ['source_file'], types: ['use_declaration'], kind: 'import' },
     { parents: ['declaration_list'], containers: ['mod_item'], types: ['use_declaration'], kind: 'import' },
-    {
-      parents: ['enum_variant_list'],
-      containers: ['enum_item'],
-      types: ['enum_variant'],
-      kind: 'variant',
-      prove: rustVariants,
-    },
-    {
-      parents: ['field_declaration_list'],
-      containers: ['struct_item'],
-      types: ['field_declaration'],
-      kind: 'field',
-      prove: rustFields,
-    },
   ],
 };
 /** A name that is only a name: no computed `[key]`, string or number key, no private `#name`. */
@@ -486,102 +472,6 @@ export function orderFree(
 function typeImports(_units: RangeUnits, added: readonly RangeUnit[]) {
   const binds = added.flatMap((u) => u.binds ?? []);
   return added.every((u) => u.typeOnly && u.binds?.length) && new Set(binds).size === binds.length;
-}
-
-/** Lint and documentation attributes, and `cfg`, which keeps or drops the whole item: none of them reads an order. */
-const INERT_ATTRIBUTES = /^(?:allow|warn|deny|forbid|expect|cfg)\s*\(|^doc\b/;
-const DERIVE = /^derive\s*\(([^()]*)\)$/;
-/** A `use` of std, core or alloc, which the file can't have renamed (rustFile refuses `extern crate … as std`). */
-const STD_USE = /^(?:pub(?:\([^)]*\))? )?use (?:::)?(?:std|core|alloc)::/;
-/** `#[macro_use]` brings a crate's macros in under their own names; `extern crate x as std` makes `std::` mean x. */
-const RENAMES_STD = /macro_use|extern crate .* as (?:std|core|alloc)\b/;
-/** Rust's primitive types: a field of one has no drop glue, unless the file names something else after it. */
-const PRIMITIVES = ['i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'].concat([
-  'f32',
-  'f64',
-  'bool',
-  'char',
-  'str',
-]);
-const PRIMITIVE_WORD = new RegExp(`\\b(?:${PRIMITIVES.join('|')})\\b`);
-/** Names that change what Rust code in the file means when the file declares them: the primitives and the std crates. */
-const RESERVED = new Set([...PRIMITIVES, 'std', 'core', 'alloc']);
-/** A word regex for each derive set, compiled once. */
-const deriveWords = new WeakMap<ReadonlySet<string>, RegExp>();
-/**
- * Every attribute on a Rust item and around it is inert or a `derive` of only these std derives, and nothing in the file
- * could put another macro under one of their names: a glob or a `use` naming one outside std, core and alloc, a
- * `macro_use`, an `extern crate … as std`, a type or module named like std, or a macro called where items go, which can
- * declare anything. A crate root's `#[macro_use] extern crate` is in another file: docs/conflict-resolution.md says so.
- */
-function rustAttributes(owner: RangeOwner, derives: ReadonlySet<string>) {
-  let named = deriveWords.get(derives);
-  if (!named) deriveWords.set(derives, (named = new RegExp(`\\b(?:${[...derives].join('|')})\\b`)));
-  const words = named;
-  const derived = (text: string) => {
-    const list = DERIVE.exec(text)?.[1];
-    return list !== undefined && list.split(',').every((name) => !name.trim() || derives.has(name.trim()));
-  };
-  const safe = (text: string) =>
-    !RENAMES_STD.test(text) &&
-    (!/\*|\{/.test(text) || STD_USE.test(text)) &&
-    (!words.test(text) || (STD_USE.test(text) && !/ as /.test(text)));
-  const { file } = owner;
-  return (
-    !file.macros &&
-    !file.types.some((name) => RESERVED.has(name)) &&
-    owner.attributes.every((a) => INERT_ATTRIBUTES.test(a) || derived(a)) &&
-    file.uses.every(safe)
-  );
-}
-/** A Rust integer literal's value, `-` allowed; undefined for anything else (a constant, an expression). */
-function rustInteger(text: string | undefined) {
-  const match = /^(-\s*)?(0x[0-9a-f_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*)(?:[iu](?:8|16|32|64|128|size))?$/i.exec(
-    text?.trim() ?? ''
-  );
-  if (!match) return undefined;
-  const digits = match[2].replace(/_/g, '');
-  if (/^0[xob]$/i.test(digits)) return undefined;
-  const value = BigInt(digits.toLowerCase());
-  return match[1] ? -value : value;
-}
-/** Derives that never read a fieldless enum's variant order once each variant has its own value. */
-const ENUM_DERIVES = new Set(['Debug', 'Clone', 'Copy', 'PartialEq', 'Eq', 'Hash']);
-/**
- * Rust enum variants: a variant's order sets only its implicit discriminant (what `as` casts read) and what derives
- * that look at the order read (`PartialOrd`, `Ord`, serde's variant index). So every variant, old and new, is a unit
- * variant with an explicit integer discriminant, all different; nothing but lint, `doc` and `cfg` attributes and
- * ENUM_DERIVES sit on the enum or around it (rustAttributes), and no variant has an attribute (`#[default]`,
- * `#[serde(…)]`). Rust has no reflection over variants.
- */
-function rustVariants(units: RangeUnits) {
-  const owner = units.owner;
-  if (!owner || !rustAttributes(owner, ENUM_DERIVES)) return false;
-  const values = owner.members.map((m) => (m.fields || m.attributed ? undefined : rustInteger(m.value)));
-  if (values.some((v) => v === undefined)) return false;
-  return new Set(values.map(String)).size === values.length;
-}
-/** Derives that, on scalar fields, combine each field's result without an order: a copy, a default, `==` and `&&`. */
-const STRUCT_DERIVES = new Set(['Clone', 'Copy', 'PartialEq', 'Eq', 'Default']);
-/** Field types with no drop glue and nothing to run: Rust's scalars, and borrowed strings. */
-const SCALAR = /^(?:[iu](?:8|16|32|64|128|size)|f32|f64|bool|char|&(?:'[\p{L}_][\p{L}\p{N}_]* )?str)$/u;
-/**
- * Rust struct fields: their order is the drop order, what `Debug`, `PartialOrd`, `Ord`, `Hash` and serde read, and,
- * with `#[repr]`, the layout. So every field, old and new, is a named field of a primitive scalar type or `&str` (no
- * drop glue, nothing to run), with no attribute, in a struct without type parameters; no `use`, `extern crate`, type or
- * module in the file is named like a primitive; and nothing but lint, `doc` and `cfg` attributes and STRUCT_DERIVES sit
- * on the struct or around it (rustAttributes). Without `#[repr]` the layout is unspecified (rustc reorders fields;
- * `offset_of!` reads it), and struct literals and patterns name their fields.
- */
-function rustFields(units: RangeUnits) {
-  const owner = units.owner;
-  return (
-    !!owner &&
-    !owner.generic &&
-    rustAttributes(owner, STRUCT_DERIVES) &&
-    !owner.file.uses.some((text) => PRIMITIVE_WORD.test(text)) &&
-    owner.members.every((m) => !m.attributed && SCALAR.test(m.type ?? ''))
-  );
 }
 
 /** A JSON string, read as JSON reads it; undefined for anything else. */
