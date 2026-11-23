@@ -1,4 +1,10 @@
-import type { BaseMove, ConflictFile, ConflictFileStage } from './conflict-resolution';
+import {
+  SAVE_REFUSALS,
+  STALE_DRAFT,
+  type BaseMove,
+  type ConflictFile,
+  type ConflictFileStage,
+} from './conflict-resolution';
 import { githubWriteError, WORKFLOW_PERMISSION_LABEL, WORKFLOW_PUSH_WARNING } from './github-access';
 
 /**
@@ -75,7 +81,7 @@ export function localMergeCommands(session: {
   return [`git switch -- ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
-export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in';
+export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in' | 'reload';
 export interface ConflictErrorCopy {
   /** One plain sentence: what happened. */
   title: string;
@@ -128,6 +134,21 @@ export function describeConflictError(
     /PR or (?:its )?base branch changed/i.test(raw)
   )
     return { title: `Someone pushed to ${head} after you started.`, body: reload, recovery: 'load-latest', details };
+  // Another view pushed the resolution: it is on the PR branch, so never "nothing was pushed".
+  if (raw.startsWith(SAVE_REFUSALS.pushed))
+    return {
+      title: SAVE_REFUSALS.pushed,
+      body: 'Your last edit isn’t in it. Load the saved draft to see what was pushed.',
+      recovery: 'reload',
+    };
+  // Another view of the PR saved the draft after this one read it: nothing of either was overwritten.
+  const refused = (['changed', 'conflicts', 'left'] as const).some((reason) => raw.startsWith(SAVE_REFUSALS[reason]));
+  if (raw.startsWith(STALE_DRAFT) || refused)
+    return {
+      title: 'This draft changed in another view.',
+      body: 'Nothing was pushed or overwritten. Load the saved draft, then go on from it.',
+      recovery: 'reload',
+    };
   if (/^The PR now targets a different base branch/.test(raw))
     return {
       title: 'This PR now targets a different base branch.',
