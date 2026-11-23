@@ -6,6 +6,8 @@ import {
   CONFLICT_FILE_LIMIT,
   SAVE_REFUSALS,
   STALE_DRAFT,
+  UNREADABLE_DRAFT,
+  draftProblem,
   revisionConflicts,
   hasConflictMarkers,
   validateConflictRequest,
@@ -1672,7 +1674,14 @@ export function createConflictResolutionService(deps: Deps) {
     if (!oid(state.headSha) || !oid(state.baseSha))
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
-    const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    const stored = deps.storage.read(storageKey(ctx.account, id));
+    // A draft this build can't use is never read further. Start over prepares the merge again and replaces it.
+    const problem = stored === undefined || stored === null ? undefined : draftProblem(stored, ctx.account, id);
+    if (problem) {
+      console.warn(`[conflicts] A saved draft couldn’t be read: its ${problem} is missing or invalid.`);
+      if (!restart || background) throw new Error(UNREADABLE_DRAFT);
+    }
+    const saved = problem ? undefined : (stored as ConflictSession | undefined);
     read?.(saved);
     // A pending undo (#445 item 25) is settled only when you open the PR, from the remote. Background work never
     // replaces or settles it.

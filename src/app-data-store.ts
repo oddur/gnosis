@@ -20,7 +20,7 @@ export interface StateStorage {
   read(name: string): unknown;
   /** Hands a saved state to its store without a copy. Later reads and takes of the name return nothing. */
   take(name: string): unknown;
-  /** Replaces a whole state. */
+  /** Replaces a whole state. `null` or `undefined` removes it. */
   write(name: string, value: unknown): void;
   /** Changes only the listed rows of a row state. */
   patch(name: string, change: RowPatch): void;
@@ -74,7 +74,8 @@ export function createMemoryStorage(saved = new Map<string, string>()): StateSto
     },
     write(name, value) {
       taken.delete(name);
-      saved.set(name, JSON.stringify(value));
+      if (value === null || value === undefined) saved.delete(name);
+      else saved.set(name, JSON.stringify(value));
     },
     patch(name, change) {
       saved.set(name, JSON.stringify(applyPatch(load(name), change)));
@@ -242,9 +243,16 @@ export function createAppDataStore() {
       return value;
     },
     write(name: string, value: unknown) {
-      assertReady()[name] = value;
+      const all = assertReady();
+      // A whole state is an object (`renderer:` states excepted). Refused here, before it is queued: a value the worker
+      // refuses would fail every later flush, and with it every save in the app.
+      const removed = value === null || value === undefined;
+      if (!removed && !name.startsWith('renderer:') && !isRecord(value))
+        throw new Error(`Saved state ${name.split(':')[0]} must be an object.`);
+      if (removed) Reflect.deleteProperty(all, name);
+      else all[name] = value;
       if (closed) return lose(name);
-      updates.set(name, value);
+      updates.set(name, removed ? null : value);
       // The whole state replaces any row changes queued before it.
       patches.delete(name);
       schedule();

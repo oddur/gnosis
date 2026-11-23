@@ -1245,6 +1245,8 @@ export function ConflictWorkspace({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setFailedKind('open');
+      // A failed Start over shows why in the footer, with what to do next, in place of its question.
+      setResetPrompt(false);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -1723,6 +1725,10 @@ export function ConflictWorkspace({
     ) : copy.recovery === 'reload' ? (
       <Button size="sm" disabled={busy} onClick={() => void load()}>
         Load the saved draft
+      </Button>
+    ) : copy.recovery === 'start-over' ? (
+      <Button size="sm" disabled={busy} onClick={() => void load({ restart: true })}>
+        Start over
       </Button>
     ) : copy.recovery === 'retry' ? (
       <Button size="sm" disabled={busy} onClick={() => void load()}>
@@ -2492,7 +2498,10 @@ export function ConflictWorkspace({
                     </span>
                   )}
                   {/* The error names Load latest changes, so the footer offers it in place of the file action. */}
-                  {error && (errorCopy?.recovery === 'load-latest' || errorCopy?.recovery === 'reload')
+                  {error &&
+                  (errorCopy?.recovery === 'load-latest' ||
+                    errorCopy?.recovery === 'reload' ||
+                    errorCopy?.recovery === 'start-over')
                     ? recover(errorCopy)
                     : primaryButton}
                 </>

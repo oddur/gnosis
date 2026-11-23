@@ -9,7 +9,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
-import { SAVE_REFUSALS, STALE_DRAFT } from '../lib/conflict-resolution';
+import { SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -161,4 +161,46 @@ void test('a check of the dialog’s own started before a settings change never 
   const kept = runs.start('src/b.ts', off);
   runs.sync('typescript');
   assert.equal(runs.accepts('src/b.ts', kept), true);
+});
+
+void test('an unreadable saved draft offers Start over, never the raw storage key', () => {
+  const key = 'conflict-draft:oddur:' + 'a'.repeat(64);
+  for (const raw of [
+    `Error invoking remote method 'conflict-resolution': Error: Invalid saved state: ${key}`,
+    `Incomplete saved state: ${key}`,
+    UNREADABLE_DRAFT,
+  ]) {
+    const copy = describeConflictError(raw, { stage: 'other' });
+    assert.equal(`${copy.title} ${copy.body}`, 'This saved draft couldn’t be read. Start over to prepare the merge again.');
+    assert.equal(copy.recovery, 'start-over');
+    assert.ok(!JSON.stringify(copy).includes('conflict-draft:'), 'The storage key is never shown');
+  }
+});
+
+void test('a saved draft is readable with fields from a newer build, and names the first field it cannot use', () => {
+  const id = 'b'.repeat(64);
+  const file = { path: 'a.ts', base: '', ours: '', theirs: '', original: '<<<', result: '<<<', resolved: false };
+  const draft = {
+    id,
+    account: 'oddur',
+    url: 'https://github.com/o/r/pull/1',
+    headRepo: 'o/r',
+    baseRepo: 'o/r',
+    headBranch: 'feature',
+    baseBranch: 'main',
+    headSha: '1'.repeat(40),
+    baseSha: '2'.repeat(40),
+    version: 3,
+    status: 'editing',
+    files: [{ ...file, fromANewerBuild: { anything: true } }],
+    fromANewerBuild: 1,
+  };
+  assert.equal(draftProblem(draft, 'oddur', id), undefined);
+  assert.equal(draftProblem(null, 'oddur', id), 'draft');
+  assert.equal(draftProblem(draft, 'someone', id), 'account');
+  assert.equal(draftProblem({ ...draft, version: Number.NaN }, 'oddur', id), 'version');
+  assert.equal(draftProblem({ ...draft, files: {} }, 'oddur', id), 'files');
+  // Fail-closed: a `resolved` that isn't a boolean never reads as reviewed.
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, resolved: 'yes' }] }, 'oddur', id), 'files[0].resolved');
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, result: null }] }, 'oddur', id), 'files[0].result');
 });

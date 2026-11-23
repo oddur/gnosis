@@ -10,12 +10,14 @@ import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDir
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { createAppDataStore } from '../src/app-data-store';
 import { createConflictMemory } from '../src/conflict-rerere';
 import {
   hasConflictMarkers,
   conflictFileStage,
   changedFiles,
   SAVE_REFUSALS,
+  UNREADABLE_DRAFT,
   validateConflictRequest,
   type ConflictFile,
   type ConflictSession,
@@ -1493,6 +1495,87 @@ void test('a background draft is reused when you open the PR, becomes yours, and
   await f.service.trimBackground(0);
   assert.equal(f.service.draft(f.state.url, f.state.headSha), undefined);
   assert.equal(await fs.stat(cache).catch(() => undefined), undefined, 'Its cache is removed');
+});
+
+/** The service over the app's real saved data (src/app-data-store.ts), with its worker and SQLite. */
+async function realStorage(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-state-'));
+  let store = createAppDataStore();
+  await store.open(dir);
+  t.after(async () => {
+    await store.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const service = createConflictResolutionService({ ...f.deps, storage: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const reopen = async () => {
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    return store;
+  };
+  return { store: () => store, service, run, reopen };
+}
+
+void test('discarding a draft in the real saved data removes it, and later saves still persist', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  // Before the fix the worker refused the discard's `null` with "Invalid saved state: conflict-draft:…", and kept
+  // refusing it on every later flush, so no draft could be saved again until restart.
+  await real.run({ kind: 'discard', id: opened.id, version: opened.version });
+  assert.equal(real.store().read(key), undefined);
+  assert.ok(!real.store().names().includes(key), 'A discarded draft is not listed');
+  const fresh = (await real.run({ kind: 'open', url: f.state.url })).session;
+  const saved = (
+    await real.run({ kind: 'save', id: fresh.id, version: fresh.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, saved.version, 'The save after the discard is on disk');
+  assert.equal((store.read(key) as ConflictSession).files[0].result, 'x\n');
+});
+
+void test('dropping a background draft in the real saved data never blocks the next save (#445)', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const signal = new AbortController().signal;
+  assert.ok((await real.service.prepareInBackground(f.state.url, signal))?.background, 'Saved as a background draft');
+  // The startup clean-up (`maintain`) and trimming drop background drafts with a `null` write.
+  await real.service.trimBackground(0);
+  assert.equal(real.store().read(key), undefined);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  assert.ok(opened.files.length, 'Prepared again');
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, opened.version);
+});
+
+void test('the saved data refuses a draft that is not an object when it is written, and keeps saving others', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  assert.throws(() => real.store().write('conflict-draft:tester:' + '0'.repeat(64), ['not a draft']), /must be an object/);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  const store = await real.reopen();
+  assert.equal((store.read(`conflict-draft:tester:${opened.id}`) as ConflictSession).version, opened.version);
+});
+
+void test('a saved draft that can’t be read asks you to start over, and Start over replaces it', async (t) => {
+  const f = await fixture(t);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const warned: unknown[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warned.push(args.join(' ')));
+  f.deps.storage.write(key, { ...f.session, files: [{ ...f.session.files[0], resolved: 'yes' }] });
+  await assert.rejects(f.run({ kind: 'open', url: f.state.url }), new RegExp(UNREADABLE_DRAFT));
+  assert.ok(
+    warned.some((line) => String(line).includes('files[0].resolved')),
+    'The field that failed is logged, with no file content'
+  );
+  assert.ok(!warned.some((line) => String(line).includes('answer')), 'No file content is logged');
+  const fresh = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(fresh.files[0].resolved, false, 'Nothing reads as reviewed');
+  assert.equal((f.deps.storage.read(key) as ConflictSession).files[0].resolved, false);
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.version, fresh.version);
 });
 
 void test('your requests never fail on background work: it stops, or finishes its drop, and yours goes ahead (#445)', async (t) => {

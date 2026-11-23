@@ -140,6 +140,11 @@ function read(name: string): unknown {
   return value;
 }
 function write(name: string, value: unknown) {
+  // `null` removes the state: a discarded conflict draft, or a dropped background one.
+  if (value === null || value === undefined) {
+    db.prepare('DELETE FROM records WHERE name=?').run(name);
+    return;
+  }
   const previous = new Map(
     (db.prepare('SELECT id,payload FROM records WHERE name=?').all(name) as { id: string; payload: string }[]).map(
       (row) => [row.id, row.payload]
