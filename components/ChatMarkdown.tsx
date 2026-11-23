@@ -25,6 +25,7 @@ import { startupPreferences } from '../lib/startup-preferences';
 import { cn } from '../lib/utils';
 import { DiffFileHeader } from './DiffFileHeader';
 import { ReviewDiff } from './ReviewDiff';
+import { textHash } from '../lib/text-hash';
 
 /**
  * Chat messages, rendered by Words (@pierre/words) as they stream: new text fades in, a caret marks where it lands,
@@ -79,6 +80,7 @@ function useCodePlugins(id: string) {
 /** A closed diff fence: each file under its code-tier header, rendered as Changes renders it. */
 function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
   const files = useMemo(() => parseChatDiff(patch) ?? [], [patch]);
+  const patchKey = useMemo(() => textHash(patch), [patch]);
   // The saved appearance, as Changes uses it, until a change in Settings publishes another.
   const saved = useDiffAppearance(startupPreferences()?.diffAppearance);
   // Long lines wrap, as Feedback's threads do: the chat column is narrow.
@@ -105,6 +107,7 @@ function ChatDiff({ patch, theme }: { patch: string; theme: string }) {
               diffLayout="unified"
               appearance={appearance}
               slideIndex={-1}
+              keyScope={`chat:${patchKey}`}
               plainGaps
               theme={theme}
             />

@@ -1,0 +1,8 @@
+{
+  "description": "#481: the PR adds a polyfill import, main a module that reads the global it installs. Imports run their modules in order, and no syntax tree shows a module has no side effects, so the order is not free.",
+  "language": "typescript",
+  "category": "semantic/order",
+  "expected": {
+    "src/start.ts": "any-but-merged"
+  }
+}

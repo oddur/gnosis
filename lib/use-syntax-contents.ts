@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import {
   createSyntaxContentsScheduler,
   syntaxContentsDiagnostics,
@@ -22,7 +22,7 @@ import {
   type CodeIntelligenceSettings,
 } from './code-intelligence';
 import { preferencesReady, startupPreferences } from './startup-preferences';
-import { syntaxLanguage } from './syntax-scope';
+import { SYNTAX_LANGUAGES, syntaxLanguage, type SyntaxLanguage } from './syntax-scope';
 import { traceStructure } from './structure-trace';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import {
@@ -74,6 +74,28 @@ let codeSettings: CodeIntelligenceSettings = DEFAULT_CODE_INTELLIGENCE;
 const allowed = (path: string) => pathEnabled(codeSettings, path);
 /** The setting as last applied, for views without the preferences at hand (Explanation topics). */
 export const currentCodeIntelligence = (): CodeIntelligenceSettings => codeSettings;
+/**
+ * The languages Settings › Code intelligence turns off, as the syntax allow-list has them (`currentCodeIntelligence`):
+ * the conflict views key their verdicts with it (lib/conflict-verdict-key.ts), so they agree with what the checks parse.
+ * `preferences` only makes a change show at once; the value always comes from the allow-list. The same array while the
+ * languages stay the same, so an unrelated preferences save reruns nothing.
+ */
+export function useDisabledLanguages(preferences?: unknown): readonly SyntaxLanguage[] {
+  const [, changed] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const listener = () => changed();
+    window.addEventListener('gnosis-preferences-changed', listener);
+    const off = (window as { electronAPI?: Partial<Window['electronAPI']> }).electronAPI?.onPreferencesChanged?.(listener);
+    return () => {
+      window.removeEventListener('gnosis-preferences-changed', listener);
+      off?.();
+    };
+  }, []);
+  void preferences;
+  // As lib/conflict-verdict-key.ts `disabledLanguages` reads it.
+  const value = SYNTAX_LANGUAGES.filter((language) => !languageEnabled(codeSettings, language)).join();
+  return useMemo(() => (value ? (value.split(',') as SyntaxLanguage[]) : []), [value]);
+}
 /** Applies the setting to reads and parses; diffs pass it to their hooks too, so a change shows at once. */
 export function applyCodeIntelligence(settings: CodeIntelligenceSettings) {
   codeSettings = settings;

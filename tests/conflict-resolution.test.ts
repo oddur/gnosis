@@ -10,12 +10,14 @@ import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDir
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
+import { assertSavedState, createAppDataStore } from '../src/app-data-store';
 import { createConflictMemory } from '../src/conflict-rerere';
+import { conflictFileStage } from '../lib/conflict-markers';
 import {
   hasConflictMarkers,
-  conflictFileStage,
   changedFiles,
   SAVE_REFUSALS,
+  UNREADABLE_DRAFT,
   validateConflictRequest,
   type ConflictFile,
   type ConflictSession,
@@ -33,6 +35,7 @@ import { canRetryStructural } from '../lib/conflict-flow';
 import { cascadeSentence } from '../lib/conflict-cascade';
 import * as undoCopy from '../lib/conflict-undo';
 import { normalizeRepositorySettings } from '../lib/repository-settings';
+import { assertPerf, perfBudget } from './perf-budget';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 const exec = promisify(execFile);
@@ -89,11 +92,25 @@ async function fixture(
   } as PrActionState;
   const data = new Map<string, unknown>();
   const context = { account: 'tester', token: 'not-a-real-token' };
+  // GNOSIS_TEST_REAL_STORE=1 runs the suite over the app's saved data (worker and SQLite) instead of a map.
+  let real: ReturnType<typeof createAppDataStore> | undefined;
+  if (process.env.GNOSIS_TEST_REAL_STORE) {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-state-'));
+    real = createAppDataStore();
+    await real.open(stateDir);
+    const opened = real;
+    t.after(async () => {
+      await opened.close();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    });
+  }
   const deps = {
-    storage: {
+    storage: real ?? {
       read: (key: string) => structuredClone(data.get(key)),
       write: (key: string, value: unknown) => {
-        data.set(key, structuredClone(value));
+        assertSavedState(key, value);
+        if (value === null || value === undefined) data.delete(key);
+        else data.set(key, structuredClone(value));
       },
       flush: async () => {},
     },
@@ -112,7 +129,7 @@ async function fixture(
   const service = createConflictResolutionService(deps);
   const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
   const { session } = await run({ kind: 'open', url: state.url });
-  return { service, run, session, git, state, deps, context, remote };
+  return { service, run, session, git, state, deps, context, remote, data };
 }
 void test('real Git conflicts: draft, proposal, preview and guarded publication preserve clean base changes', async (t) => {
   const f = await fixture(t);
@@ -216,6 +233,51 @@ void test('conflict stats: an open counts its conflicts once, Start over counts,
   assert.equal(draft.files[0].statsBlocks[0].rechosen, true, 'The flag stayed through the save and the push');
   const saved = JSON.stringify(f.deps.storage.read(CONFLICT_STATS_NAME));
   for (const secret of ['sample', 'answer', 'tester', 'github.com', 'feature']) assert.equal(saved.includes(secret), false);
+});
+void test('conflict stats: a choice made while Load latest holds the draft counts once, with its flag (#490 2)', async (t) => {
+  const f = await fixture(t);
+  const store = createConflictStatsStore(f.deps.storage);
+  const service = createConflictResolutionService({ ...f.deps, stats: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const session = (await run({ kind: 'open', url: f.state.url })).session;
+  const key = blockFingerprints(session.files[0].original)[0];
+  const choice = { id: session.id, path: 'sample.ts', key, index: 0, count: 'rechosen' as const };
+  // Load latest takes the lock; the choice arrives while it prepares the merge again.
+  let reached = () => {};
+  const reading = new Promise<void>((resolve) => (reached = resolve));
+  const loading = createConflictResolutionService({
+    ...f.deps,
+    stats: store,
+    read: () => {
+      reached();
+      return f.deps.read();
+    },
+  });
+  const latest = loading.run({ kind: 'open', url: f.state.url, restart: true, keep: true }, new AbortController().signal);
+  await reading;
+  loading.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 0, 'Counted only once its flag can be saved');
+  await latest;
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+  const draft = f.deps.storage.read(`conflict-draft:tester:${session.id}`) as ConflictSession;
+  assert.equal(draft.files[0].statsBlocks?.[0]?.rechosen, true, 'The flag is on the draft Load latest saved');
+  // So the same conflict never counts twice.
+  loading.countChoice(choice);
+  service.countChoice(choice);
+  assert.equal(store.get().buckets.decide.rechosen, 1);
+});
+void test('conflict stats: Start over and Load latest read the draft no more often than without stats (#490 7)', async (t) => {
+  const f = await fixture(t);
+  for (const keep of [false, true]) {
+    const reads = async (stats: boolean) => {
+      let n = 0;
+      const storage = { ...f.deps.storage, read: (key: string) => (n++, f.deps.storage.read(key)) };
+      const service = createConflictResolutionService({ ...f.deps, storage, ...(stats ? { stats: createConflictStatsStore(f.deps.storage) } : {}) });
+      await service.run({ kind: 'open', url: f.state.url, restart: true, keep }, new AbortController().signal);
+      return n;
+    };
+    assert.equal(await reads(true), await reads(false), keep ? 'Load latest' : 'Start over');
+  }
 });
 void test('conflict stats: a plain open reads the draft no more often than without stats (item 7)', async (t) => {
   const f = await fixture(t);
@@ -1349,6 +1411,52 @@ void test('where structural merge leaves both sides’ new functions open, prepa
   );
 });
 
+// #457: a setext heading outside the conflicts is not a marker; Git's separator left behind still is.
+void test('a Markdown heading underlined with ======= can be reviewed, carried and pushed; a leftover separator cannot', async (t) => {
+  const f = await fixture(t, false, {
+    name: 'README.md',
+    base: 'Usage\n=======\n\nRun it 0 times.\n',
+    ours: 'Usage\n=======\n\nRun it 1 times.\n',
+    theirs: 'Usage\n=======\n\nRun it 2 times.\n',
+  });
+  const file = f.session.files[0];
+  assert.equal(conflictFileStage(file), 'conflicted');
+  // Git's separator left between both sides: refused, as in any file.
+  const leftover = file.original
+    .split('\n')
+    .filter((line) => !/^(<{7}|>{7}|\|{7})/.test(line))
+    .join('\n');
+  await assert.rejects(
+    f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: file.path, contents: leftover, resolved: true }),
+    /remaining conflict markers/
+  );
+  const resolved = 'Usage\n=======\n\nRun it 3 times.\n';
+  let session = (
+    await f.run({ kind: 'save', id: f.session.id, version: f.session.version, path: file.path, contents: resolved, resolved: true })
+  ).session;
+  assert.equal(conflictFileStage(session.files[0]), 'reviewed');
+  // main moves elsewhere: the file stays reviewed, and the push carries the heading.
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'later.txt'), 'Another PR merged.\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 0);
+  session = reply.session;
+  assert.equal(session.files[0].resolved, true);
+  assert.ok(reply.preview);
+  const published = await f.run({
+    kind: 'publish',
+    id: session.id,
+    version: session.version,
+    previewToken: reply.preview.token,
+    message: 'Merge main',
+  });
+  assert.equal(published.session.status, 'published');
+  assert.equal(await f.git('show', 'feature:README.md'), resolved.trimEnd());
+});
+
 void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
   const file: ConflictFile = {
     path: 'a.ts',
@@ -1450,6 +1558,95 @@ void test('a background draft is reused when you open the PR, becomes yours, and
   assert.equal(await fs.stat(cache).catch(() => undefined), undefined, 'Its cache is removed');
 });
 
+/** The service over the app's real saved data (src/app-data-store.ts), with its worker and SQLite. */
+async function realStorage(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-conflict-state-'));
+  let store = createAppDataStore();
+  await store.open(dir);
+  t.after(async () => {
+    await store.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const service = createConflictResolutionService({ ...f.deps, storage: store });
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  const reopen = async () => {
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    return store;
+  };
+  return { store: () => store, service, run, reopen };
+}
+
+void test('discarding a draft in the real saved data removes it, and later saves still persist', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  // Before the fix the worker refused the discard's `null` with "Invalid saved state: conflict-draft:…", and kept
+  // refusing it on every later flush, so no draft could be saved again until restart.
+  await real.run({ kind: 'discard', id: opened.id, version: opened.version });
+  assert.equal(real.store().read(key), undefined);
+  assert.ok(!real.store().names().includes(key), 'A discarded draft is not listed');
+  const fresh = (await real.run({ kind: 'open', url: f.state.url })).session;
+  const saved = (
+    await real.run({ kind: 'save', id: fresh.id, version: fresh.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, saved.version, 'The save after the discard is on disk');
+  assert.equal((store.read(key) as ConflictSession).files[0].result, 'x\n');
+});
+
+void test('dropping a background draft in the real saved data never blocks the next save (#445)', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const signal = new AbortController().signal;
+  assert.ok((await real.service.prepareInBackground(f.state.url, signal))?.background, 'Saved as a background draft');
+  // The startup clean-up (`maintain`) and trimming drop background drafts with a `null` write.
+  await real.service.trimBackground(0);
+  assert.equal(real.store().read(key), undefined);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  assert.ok(opened.files.length, 'Prepared again');
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, opened.version);
+});
+
+void test('the saved data refuses a draft that is not an object when it is written, and keeps saving others', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  assert.throws(() => real.store().write('conflict-draft:tester:' + '0'.repeat(64), ['not a draft']), /must be an object/);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  const store = await real.reopen();
+  assert.equal((store.read(`conflict-draft:tester:${opened.id}`) as ConflictSession).version, opened.version);
+});
+
+void test('a saved draft that can’t be read asks you to start over, and Start over replaces it', async (t) => {
+  const f = await fixture(t);
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const warned: unknown[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warned.push(args.join(' ')));
+  f.deps.storage.write(key, { ...f.session, files: [{ ...f.session.files[0], resolved: 'yes' }] });
+  await assert.rejects(f.run({ kind: 'open', url: f.state.url }), new RegExp(UNREADABLE_DRAFT));
+  // The PR header reads it too: never as a draft to continue, or as reviewed.
+  assert.equal(f.service.draft(f.state.url, f.session.headSha), undefined);
+  assert.ok(
+    warned.some((line) => String(line).includes('files[0].resolved')),
+    'The field that failed is logged, with no file content'
+  );
+  assert.ok(!warned.some((line) => String(line).includes('answer')), 'No file content is logged');
+  assert.equal(warned.length, 1, 'Logged once');
+  // A pushed draft: Start over drops its undo point, and the log says so.
+  const other = createConflictResolutionService(f.deps);
+  f.deps.storage.write(key, { ...f.session, status: 'published', commitSha: f.session.headSha, files: [{ ...f.session.files[0], resolved: 1 }] });
+  assert.equal(other.pushed(f.state.url, f.session.headSha), undefined, 'Never offered as a pushed update to undo');
+  assert.ok(warned.some((line) => String(line).includes('drops its undo point and its list of dependent PRs')));
+  const fresh = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(fresh.files[0].resolved, false, 'Nothing reads as reviewed');
+  assert.equal((f.deps.storage.read(key) as ConflictSession).files[0].resolved, false);
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.version, fresh.version);
+});
+
 void test('your requests never fail on background work: it stops, or finishes its drop, and yours goes ahead (#445)', async (t) => {
   const f = await fixture(t);
   const signal = new AbortController().signal;
@@ -1495,7 +1692,11 @@ void test('evicting a background draft drops it under its own account, never ano
   const service = createConflictResolutionService({
     storage: {
       read: (key: string) => structuredClone(data.get(key)),
-      write: (key: string, value: unknown) => void data.set(key, structuredClone(value)),
+      write: (key: string, value: unknown) => {
+        assertSavedState(key, value);
+        if (value === null || value === undefined) data.delete(key);
+        else data.set(key, structuredClone(value));
+      },
       flush: async () => {},
       names: () => [...data.keys()],
     },
@@ -1509,7 +1710,7 @@ void test('evicting a background draft drops it under its own account, never ano
   const [ann, bob] = await Promise.all(['ann', 'bob'].map((account) => conflictSessionDirectory(dir, account, id)));
   await Promise.all([ann, bob].map((d) => fs.mkdir(d, { recursive: true })));
   await service.trimBackground(0);
-  assert.equal(data.get(`conflict-draft:ann:${id}`), null);
+  assert.equal(data.get(`conflict-draft:ann:${id}`), undefined);
   assert.equal(await fs.stat(ann).catch(() => undefined), undefined, 'Ann’s cache is removed');
   assert.deepEqual(data.get(`conflict-draft:bob:${id}`), { id, account: 'bob', status: 'editing', files: [] });
   assert.ok(await fs.stat(bob), 'Bob’s cache stays');
@@ -1777,6 +1978,60 @@ void test('edits around the conflicts survive a moved base through a text merge'
   assert.equal(published.baseMoved?.conflicts, 0);
   const merged = await f.git('show', 'feature:sample.ts');
   assert.match(merged, /a = 3;[\s\S]*f3 = 'moved'[\s\S]*b = 1;[\s\S]*g3 = 30;/);
+});
+
+// #451: a proposal stored beside the draft, never applied, is never applied by a base move either.
+void test('a base move never applies a proposal that was only stored beside the draft', async (t) => {
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: '// header 0\n\nexport const answer = 0;\n',
+    ours: '// header 0\n\nexport const answer = 1;\n',
+    theirs: '// header 0\n\nexport const answer = 2;\n',
+  });
+  // The checks would Merge it, so only the carry stands between it and the draft.
+  Object.assign(f.deps, {
+    verify: () => Promise.resolve({ merged: true, note: 'Merged.', blocks: [{ merged: true, note: 'Merged.' }] }),
+  });
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const saved = structuredClone(f.session);
+  const stored = saved.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  // As the reopen pass leaves it (#448): the proposal beside the draft, the draft still Git's conflict.
+  Object.assign(stored, {
+    proposals: [{ source: 'mergiraf', text: 'export const answer = 12;\n' }],
+    result: stored.original,
+    source: 'manual',
+    structuralRan: true,
+  });
+  delete stored.structuralNote;
+  f.deps.storage.write(key, saved);
+  let session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(session.files.find((x) => x.path === 'sample.ts')?.result, stored.original, 'Reopen leaves it beside');
+  // Your own resolution, with an edit above the conflict too, so a later text merge can fail. Saved once to get its
+  // verdict, then marked reviewed.
+  for (const file of session.files)
+    for (const resolved of [false, true])
+      session = (
+        await f.run({
+          kind: 'save',
+          id: session.id,
+          version: session.version,
+          path: file.path,
+          contents: file.path === 'sample.ts' ? '// header mine\n\nexport const answer = 3;\n' : file.result,
+          resolved,
+        })
+      ).session;
+  // main changes the same header line: the conflicts are the same, but your draft can't be carried.
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'sample.ts'), '// header main\n\nexport const answer = 2;\n');
+  await f.git('commit', '-am', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 1);
+  const file = reply.session.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  assert.doesNotMatch(file.result, /answer = 12/, 'The stored proposal is not the draft');
+  assert.equal(file.result, file.original, 'The conflict waits for you with its markers');
+  assert.deepEqual(file.proposals?.map((p) => p?.text), ['export const answer = 12;\n'], 'It stays offered');
+  assert.equal(file.resolved, false);
 });
 
 void test('the PR head moved: publishing is blocked and Load latest changes reuses resolutions for review', async (t) => {
@@ -2169,6 +2424,113 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   assert.deepEqual(JSON.parse(file.proposals?.[0]?.text ?? ''), { left: 1, right: 2 });
 });
 
+// #450: reopening an old draft never waits long for structural merge, and never waits twice for the same file.
+void test('the reopen pass has a short time budget, and a file that timed out is left for Suggest', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const names = Array.from({ length: 8 }, (_, i) => `slow-${i}.json`);
+  const f = await fixture(
+    t,
+    false,
+    { ...jsonSample, name: names[0] },
+    names.slice(1).map((name) => ({ ...jsonSample, name }))
+  );
+  // A draft from before structural merge ran on reopen (#448): nothing recorded for any file.
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralNote;
+    delete file.structuralRan;
+    delete file.proposals;
+    delete file.verdict;
+    file.result = file.original;
+    file.source = 'manual';
+  }
+  f.deps.storage.write(key, old);
+  // Every file takes its whole budget, as a slow structural merge does, then prints Git's line merge.
+  const stub = await stubMergiraf(t, `sleep "$(awk "BEGIN { print $budget / 1000 }")"\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  const reopen = async () => {
+    const started = performance.now();
+    const { session } = await f.run({ kind: 'open', url: f.state.url });
+    return { session, ms: performance.now() - started };
+  };
+  const first = await reopen();
+  assertPerf('conflict reopen: 8 slow files never given structural merge', first.ms, perfBudget(3000));
+  // Four files at a time within the budget: those four time out and are noted, the others wait untouched.
+  const timedOut = first.session.files.filter((file) => file.structuralNote === 'Structural merge timed out.');
+  assert.equal(timedOut.length, 4);
+  for (const file of timedOut) assert.equal(file.structuralRan, true);
+  for (const file of first.session.files.filter((x) => !timedOut.includes(x))) {
+    assert.equal(file.structuralNote, undefined);
+    assert.equal(file.structuralRan, undefined);
+  }
+  for (const file of first.session.files) assert.equal(file.result, file.original, 'The pass never writes a draft');
+  // Each within what is left of the pass, and none with the Suggest budget: no retry.
+  assert.ok((await stub.budgets()).every((budget) => Number(budget) >= 250 && Number(budget) <= 2000));
+  // The next reopen takes the other four; then nothing is left to wait for.
+  const second = await reopen();
+  assertPerf('conflict reopen: the 4 slow files left', second.ms, perfBudget(3000));
+  assert.ok(second.session.files.every((file) => file.structuralRan));
+  const runs = (await stub.budgets()).length;
+  const third = await reopen();
+  assert.equal((await stub.budgets()).length, runs, 'A file that timed out is not tried on reopen again');
+  assertPerf('conflict reopen: every file tried', third.ms, perfBudget(500));
+  // "Try structural merge again" is still offered for it.
+  assert.ok(third.session.files.every((file) => canRetryStructural(file, file.result === file.original)));
+});
+
+// #530 review: only a file that had the pass's whole time counts as run, and one the pass never reaches keeps its note.
+void test('the reopen pass marks only files it gave its whole time; one it never reaches keeps its note', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const names = Array.from({ length: 12 }, (_, i) => `slow-${String(i).padStart(2, '0')}.json`);
+  const f = await fixture(
+    t,
+    false,
+    { ...jsonSample, name: names[0] },
+    names.slice(1).map((name) => ({ ...jsonSample, name }))
+  );
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  // As a build without Mergiraf left it: every file noted, none run.
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralRan;
+    delete file.proposals;
+    delete file.verdict;
+    file.structuralNote = 'Structural merge isn’t available in this build.';
+    file.result = file.original;
+    file.source = 'manual';
+  }
+  f.deps.storage.write(key, old);
+  const stub = await stubMergiraf(t, `sleep "$(awk "BEGIN { print $budget / 1000 }")"\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  // 500 ms a file, 800 ms for the pass: four files get 500 ms, the next four what is left, about 300 ms.
+  Object.assign(f.deps, { structuralTimeouts: [500, 10_000, 30_000], reopenStructuralBudget: 800 });
+  const { session } = await f.run({ kind: 'open', url: f.state.url });
+  const budgets = (await stub.budgets()).map(Number);
+  const whole = budgets.filter((budget) => budget === 500).length;
+  const short = budgets.filter((budget) => budget < 500).length;
+  assert.equal(whole, 4);
+  const timedOut = session.files.filter((file) => file.structuralRan);
+  assert.equal(timedOut.length, whole, 'Only the files with the whole time count as run');
+  for (const file of timedOut) assert.equal(file.structuralNote, 'Structural merge timed out.');
+  // Cut short: tried, so the old note is gone, but no new one, and the next reopen tries it again.
+  const cut = session.files.filter((file) => !file.structuralRan && file.structuralNote === undefined);
+  assert.equal(cut.length, short);
+  // Never reached: the old note stays.
+  const unreached = session.files.filter((file) => file.structuralNote === 'Structural merge isn’t available in this build.');
+  assert.equal(unreached.length, names.length - whole - short);
+  assert.ok(unreached.length > 0);
+  assert.ok(unreached.every((file) => file.structuralRan === undefined));
+});
+
 void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
   if (process.platform === 'win32') {
     t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
@@ -2243,7 +2605,7 @@ void test('a file structural merge proposed nothing for says why, and a base mov
   assert.notEqual(runs, 0, 'Structural merge ran again on the new versions');
 });
 
-void test('a file structural merge gave no result stays eligible, and the next reopen with Mergiraf replaces the note', async (t) => {
+void test('a build without Mergiraf leaves a file eligible; one that timed out is left for Try structural merge again', async (t) => {
   if (process.platform === 'win32' || !(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs a POSIX shell and npm run prepare:mergiraf.');
     return;
@@ -2255,20 +2617,30 @@ void test('a file structural merge gave no result stays eligible, and the next r
   let file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
   assert.equal(file.structuralNote, 'Structural merge isn’t available in this build.');
   assert.equal(file.structuralRan, undefined);
-  // Out of time with no retry budget left: also no result.
+  // Out of time with no retry budget left: no result, but it ran, so a reopen doesn't wait for it again (#450).
   const stub = await stubMergiraf(t, 'exec sleep 30\n');
   f.deps.mergiraf = () => stub.binary;
   Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 0] });
   file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.deepEqual(await stub.budgets(), ['100']);
   assert.equal(file.structuralNote, 'Structural merge timed out.');
-  assert.equal(file.structuralRan, undefined);
-  // Mergiraf is back: the pass runs, its proposal waits beside the draft, and the old note is gone.
-  f.deps.mergiraf = () => nativeMergiraf;
-  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.equal(file.structuralRan, true);
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  const session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(structural, 0, 'The reopen pass leaves it alone');
+  file = session.files[0];
+  assert.equal(file.structuralNote, 'Structural merge timed out.');
+  assert.ok(canRetryStructural(file, true), 'Try structural merge again is offered');
+  // Asked for, it runs with the Suggest budget.
+  file = (
+    await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'mergiraf', path: file.path })
+  ).session.files[0];
+  assert.ok(structural > 0);
   assert.equal(file.structuralNote, undefined);
-  assert.equal(file.result, file.original);
   assert.ok(file.proposals?.[0]);
 });
 
@@ -2347,6 +2719,81 @@ void test('the move rule never replaces per-conflict proposals or the draft', as
   );
   assert.equal(file.wholeFile, undefined);
   assert.equal(withProposals(file.original, file.proposals ?? []), before(fn('multiply', 'a * b') + fn('divide', 'a / b')));
+});
+
+void test('a reopen keeps a shown move proposal when the move rule can’t run again (#487)', async (t) => {
+  const { sample, resolved } = await movedCase();
+  const f = await fixture(t, false, sample);
+  let asked = 0;
+  const rule = (file: ConflictFile, disabled: SyntaxLanguage[]) => (asked++, moveProposer(movedEngine, disabled)(file));
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf'), moved: rule });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile?.source, 'moved');
+  // The worker crashes or times out now: it answers nothing. The reopen keeps the proposal, and doesn't ask again.
+  asked = 0;
+  Object.assign(f.deps, { moved: () => (asked++, Promise.resolve(undefined)) });
+  const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(reopened.files[0].wholeFile?.text, resolved);
+  assert.equal(asked, 0, 'The same three versions: the move rule is not run again');
+  // TypeScript turned off in Settings: the rule wouldn't run, so the kept proposal goes.
+  Object.assign(f.deps, { disabledLanguages: () => ['typescript'] });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+  // A build without the move rule keeps none either.
+  Object.assign(f.deps, { disabledLanguages: () => [], moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile?.source, 'moved');
+  Object.assign(f.deps, { moved: undefined });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+});
+
+void test('Load latest gives a draft you changed no new move proposal (#487)', async (t) => {
+  const { sample } = await movedCase();
+  const f = await fixture(t, false, sample);
+  Object.assign(f.deps, { mergiraf: () => path.join(os.tmpdir(), 'no-such-mergiraf') });
+  // Prepared without the move rule; then you change the draft.
+  let { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  assert.equal(session.files[0].wholeFile, undefined);
+  // Main's side for the conflict: your choice, carried over by Load latest.
+  const contents = session.files[0].original.replace(/<{7}[^]*?={7}\n([^]*?)>{7} [^\n]*\n/, '$1');
+  session = (
+    await f.run({ kind: 'save', id: session.id, version: session.version, path: 'pricing.ts', contents, resolved: false })
+  ).session;
+  // Load latest with the move rule: the fresh merge would get a proposal, but your draft comes back.
+  Object.assign(f.deps, { moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  session = (await f.run({ kind: 'open', url: f.state.url, restart: true, keep: true })).session;
+  assert.equal(session.files[0].result, contents);
+  assert.equal(session.files[0].wholeFile, undefined);
+});
+
+void test('a file whose same-change proposals are taken back gets the move rule (#487)', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('The stand-in for structural merge is a shell script.');
+    return;
+  }
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: "f('w');\n",
+    ours: "f('x');\n",
+    theirs: 'f("x");\n',
+  });
+  // Structural merge leaves Git's conflict, where the 'same' rule proposes the PR's line; its check fails.
+  const script = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-fake-mergiraf-')), 'mergiraf');
+  t.after(() => fs.rm(path.dirname(script), { recursive: true, force: true }));
+  await fs.writeFile(script, '#!/bin/sh\ngit merge-file -p --diff3 "$3" "$2" "$4"\nexit 1\n', { mode: 0o755 });
+  const moved = { source: 'moved' as const, text: "f('x');\n", note: 'The PR moved f, and main edited it.' };
+  let asked = 0;
+  Object.assign(f.deps, {
+    mergiraf: () => script,
+    verify: () => Promise.resolve({ merged: false, note: 'Check it.' }),
+    moved: () => (asked++, Promise.resolve(moved)),
+  });
+  const { session } = await f.run({ kind: 'open', url: f.state.url, restart: true });
+  const [file] = session.files;
+  assert.equal(file.proposals, undefined, 'The same-change proposal was taken back');
+  assert.equal(file.result, file.original);
+  assert.deepEqual(file.wholeFile, moved);
+  assert.equal(asked, 1);
+  assert.ok(file.verdict, 'The move proposal is checked');
+  assert.notEqual(file.verdict.verdict.merged, true);
 });
 
 // #493: the lines a resolver wrote keep their marks while its text is the baseline, and lose them once it isn't.
@@ -2778,7 +3225,7 @@ void test('your choice in a paused replay carries to the same conflict after Pre
     })
   ).session;
   assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
-  assert.equal(f.deps.storage.read(`conflict-restack-carry:tester:${session.id}`), null, 'Publishing clears the carry');
+  assert.equal(f.deps.storage.read(`conflict-restack-carry:tester:${session.id}`), undefined, 'Publishing clears the carry');
 });
 void test('replay buckets fail closed: only an unchanged, checked proposal is Merged', () => {
   const original = '<<<<<<< HEAD\na\n||||||| base\nx\n=======\nb\n>>>>>>> pr\n';
@@ -2913,7 +3360,12 @@ void test('the cascade preview dry-runs the stack before the push and changes no
   // Your choice for PR 3's conflict, carried as in a restack (matched on the conflict's text, not its labels): PR 3 is
   // settled by it, and PR 4 replays.
   const conflict = '<<<<<<< parent\nexport const answer = 3;\n||||||| base\nexport const answer = 1;\n=======\nexport const answer = 4;\n>>>>>>> pr\n';
-  f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, [
+  // Saved by an earlier build as a bare array: still read. The real store refuses to save one now.
+  const seedCarry = (files: ConflictFile[]) =>
+    process.env.GNOSIS_TEST_REAL_STORE
+      ? f.deps.storage.write(`conflict-restack-carry:tester:${f.session.id}`, { files })
+      : f.data.set(`conflict-restack-carry:tester:${f.session.id}`, files);
+  seedCarry([
     { path: 'sample.ts', mode: '', base: '', ours: '', theirs: '', original: conflict, result: 'export const answer = 5;\n', resolved: true, source: 'manual' },
   ]);
   preview = await f.service.previewCascade(f.session.id, f.session.version, signal);
@@ -2952,11 +3404,13 @@ void test('a request of yours stops a running cascade preview, which gives way (
   const f = await cascadeStack(t);
   const before = await f.refs();
   const running = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  // Watched from the start: it may give way before the save below resolves.
+  const stopped = assert.rejects(running, (error: Error) => error.message === BACKGROUND_YIELDED);
   const { session } = await f.service.run(
     { kind: 'save', id: f.session.id, version: f.session.version, path: 'sample.ts', contents: 'export const answer = 7;\n', resolved: true },
     new AbortController().signal
   );
-  await assert.rejects(running, (error: Error) => error.message === BACKGROUND_YIELDED);
+  await stopped;
   assert.equal(session.version, f.session.version + 1, 'Your save went through');
   assert.deepEqual(await f.refs(), before, 'The stopped run removed its worktree and changed no ref');
   // Nothing to preview while the draft has a file that isn't reviewed.
@@ -3046,6 +3500,81 @@ void test('a wait for the resolution memory stops on abort, and never lets two t
   await after;
   assert.equal(most, 1, 'The next task ran only after the first let go');
   assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), []);
+});
+
+void test('a stopped snapshot deletes its private copy, whenever the stop lands (#496)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-memory-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const memory = createConflictMemory(() => dir);
+  const repo = path.join(dir, 'repo');
+  await fs.mkdir(repo);
+  // A memory with enough entries that copying it takes a while.
+  await memory.withRepository('scope', repo, async () => {
+    const cache = path.resolve(repo, await fs.readlink(path.join(repo, 'rr-cache')));
+    for (let i = 0; i < 400; i++) {
+      await fs.mkdir(path.join(cache, `entry-${i}`));
+      await fs.writeFile(path.join(cache, `entry-${i}`, 'preimage'), 'x'.repeat(1024));
+    }
+  });
+  for (const delay of [0, 1, 5, 20]) {
+    const controller = new AbortController();
+    const copying = memory.snapshot('scope', repo, controller.signal);
+    setTimeout(() => controller.abort(new Error('stopped')), delay);
+    const restore = await copying.catch(() => undefined);
+    await restore?.();
+    // The next task on the scope runs once the copy task is done, stopped or not.
+    await memory.withRepository('scope', repo, () => Promise.resolve());
+    assert.deepEqual((await fs.readdir(repo)).filter((name) => name.startsWith('rr-cache-preview-')), [], `stop after ${delay} ms`);
+  }
+});
+void test('startup repair never waits for a scope another PR holds; the next use restores the memory (#496)', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-memory-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const memory = createConflictMemory(() => dir);
+  const [busy, left] = [path.join(dir, 'busy'), path.join(dir, 'left')];
+  await Promise.all([fs.mkdir(busy), fs.mkdir(left)]);
+  // What a quit during a dry run leaves: rr-cache pointing at a private copy.
+  await memory.withRepository('scope', left, () => Promise.resolve());
+  const shared = path.resolve(left, await fs.readlink(path.join(left, 'rr-cache')));
+  const copy = path.join(left, 'rr-cache-preview-0123456789abcdef');
+  await fs.mkdir(copy);
+  await fs.unlink(path.join(left, 'rr-cache'));
+  await fs.symlink(copy, path.join(left, 'rr-cache'));
+  // Another PR of the scope holds the memory, as a whole restack does.
+  let release = () => {};
+  let started = () => {};
+  const holds = new Promise<void>((resolve) => (started = resolve));
+  const holding = memory.withRepository(
+    'scope',
+    busy,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+        started();
+      })
+  );
+  await holds;
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Repair waited for the lock')), 10_000).unref());
+  await Promise.race([memory.repair('scope', left), timeout]);
+  assert.equal(await fs.stat(copy).catch(() => undefined), undefined, 'The copy is gone without waiting');
+  release();
+  await holding;
+  await memory.withRepository('scope', left, () => Promise.resolve());
+  assert.equal(path.resolve(left, await fs.readlink(path.join(left, 'rr-cache'))), shared, 'The next use restores the link');
+});
+void test('a cascade preview waiting for the lock stays back while a request of yours takes it (#496)', async (t) => {
+  const f = await cascadeStack(t);
+  const held = f.hold();
+  const first = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  await held.arrived;
+  // A second run waits for the lock; then a request of yours comes, which stops the first.
+  const second = f.service.previewCascade(f.session.id, f.session.version, new AbortController().signal);
+  const mine = f.service.run({ kind: 'open', url: f.state.url }, new AbortController().signal);
+  held.release();
+  await assert.rejects(first, (error: Error) => error.message === BACKGROUND_YIELDED);
+  assert.equal((await mine).session.version, f.session.version);
+  // The waiting run never took the lock ahead of you, so nothing stopped it: it runs once you are done.
+  assert.ok(await second);
 });
 
 // Undo this update (#445 item 25): the previous head goes back with a lease on the merge commit.
@@ -3335,7 +3864,7 @@ void test('an unsettled undo whose branch can’t be read says so, and can be di
   assert.match(undoCopy.unsettledUndoCopy('unread', 'feature'), /^Gnosis couldn’t read feature/);
   assert.match(undoCopy.unsettledUndoCopy('elsewhere', 'feature'), /^feature is at another commit/);
   await unreadable.run({ kind: 'discard', id: kept.id, version: kept.version }, signal);
-  assert.equal(f.deps.storage.read(key), null);
+  assert.equal(f.deps.storage.read(key), undefined);
   assert.equal(await f.git('rev-parse', 'feature'), f.merge, 'Nothing was pushed');
 });
 void test('undo trusts the remote, not GitHub’s lagging head, and matches the exact branch ref', async (t) => {

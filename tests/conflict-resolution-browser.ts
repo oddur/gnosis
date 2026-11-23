@@ -1168,6 +1168,30 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
+    // A saved draft the service can't read: the view explains, and Start over prepares the merge again, both when
+    // opening and from the footer while you work.
+    const unreadable = "Error invoking remote method 'conflict-resolution': Error: This saved draft couldn’t be read.";
+    const unreadableCopy = 'This saved draft couldn’t be read. Start over to prepare the merge again.';
+    await js(`window.failOpen=${JSON.stringify(unreadable)}`);
+    await open();
+    await wait("document.querySelector('.conflict-state[data-state=failed] .conflict-error')");
+    assert.equal(await js("document.querySelector('.conflict-error-title').textContent"), 'This saved draft couldn’t be read.');
+    await js('window.failOpen=undefined');
+    await click('Start over');
+    await wait("window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).restart===true");
+    await wait("document.querySelector('.conflict-footer')");
+    await js(`window.failOpen=${JSON.stringify(unreadable)}`);
+    await click('Start over with latest code…');
+    await click('Start over');
+    await wait(`document.querySelector('.conflict-footer [data-error]')?.textContent===${JSON.stringify(unreadableCopy)}`);
+    await capture('unreadable-draft');
+    await js('window.failOpen=undefined');
+    const startOverCalls = await js<number>('window.conflictCalls.length');
+    await click('Start over');
+    await wait(`window.conflictCalls.length>${startOverCalls} && !document.querySelector('.conflict-footer [data-error]')`);
+    assert.equal(await js('window.conflictCalls.at(-1).restart'), true);
+    await click('Close');
+
     // Edge screens drop the resolve controls and draft status, and name the state.
     const noResolveChrome = async () => {
       for (const selector of [
@@ -1704,14 +1728,16 @@ void app.whenReady().then(async () => {
       );
     for (let n = 0; n < 200 && (await namedSides('pr')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual((await namedSides('pr')).slice(0, 2), ['pr PR', 'base main']);
-    // Lines revealed in PR survive a round trip through main and both: the PR diff stays mounted while hidden.
-    const prGaps = () =>
-      js<number>("document.querySelectorAll('.conflict-compare-diff[data-compare=pr] .diff-gap-text').length");
-    // The PR diff's lines on screen, as text: the revealed ones are those shown now that weren't before.
-    const prLines = () =>
+    // Lines revealed in PR survive a round trip through main and both (#486): each mode keeps its reveals for the
+    // session, and only the mode on screen is mounted.
+    const gapsIn = (mode: string) => `document.querySelectorAll('.conflict-compare-diff[data-compare=${mode}] .diff-gap-text').length`;
+    const prGaps = () => js<number>(gapsIn('pr'));
+    // A mode's diff lines on screen, as text: the revealed ones are those shown now that weren't before.
+    const linesIn = (mode: string) =>
       js<string[]>(
-        "[...document.querySelectorAll('.conflict-compare-diff[data-compare=pr] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)"
+        `[...document.querySelectorAll('.conflict-compare-diff[data-compare=${mode}] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)`
       );
+    const prLines = () => linesIn('pr');
     const gapsBefore = await prGaps();
     assert.ok(gapsBefore > 0, 'the PR diff has hidden lines to reveal');
     const linesBefore = await prLines();
@@ -1726,8 +1752,10 @@ void app.whenReady().then(async () => {
       'main',
       'focus moves to the active switch button, not to the body'
     );
+    assert.equal(await js("document.querySelectorAll('.conflict-compare-diff').length"), 1, 'No hidden PR diff');
     await compareWith('both');
     await compareWith('pr');
+    await wait(`${gapsIn('pr')}===${gapsRevealed} && !!document.querySelector('.conflict-compare-diff[data-compare=pr] diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
     assert.equal(await prGaps(), gapsRevealed, 'revealed lines are kept across PR → main → both → PR');
     const after = await prLines();
     assert.ok(
@@ -1752,6 +1780,23 @@ void app.whenReady().then(async () => {
     // Against main the diff shows main's lines first; they keep main's tint and name, the PR's keep the PR's.
     for (let n = 0; n < 200 && (await namedSides('main')).length < 2; n++) await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual((await namedSides('main')).slice(0, 2), ['base main', 'pr PR']);
+    // Main keeps its own reveals across a round trip too (#486), apart from PR's: they are lines of another version.
+    const mainGaps = await js<number>(gapsIn('main'));
+    assert.ok(mainGaps > 0, 'the main diff has hidden lines to reveal');
+    const mainBefore = await linesIn('main');
+    await js("document.querySelector('.conflict-compare-diff[data-compare=main] .diff-gap-text').click()");
+    await wait(`${gapsIn('main')}<${mainGaps}`);
+    const mainRevealed = (await linesIn('main')).filter((line) => !mainBefore.includes(line));
+    const mainGapsRevealed = await js<number>(gapsIn('main'));
+    assert.ok(mainRevealed.length > 0, 'the reveal in main shows new lines');
+    await compareWith('pr');
+    await wait(`${gapsIn('pr')}===${gapsRevealed}`);
+    await compareWith('main');
+    await wait(`${gapsIn('main')}===${mainGapsRevealed} && !!document.querySelector('.conflict-compare-diff[data-compare=main] diffs-container')?.shadowRoot?.querySelector('[data-line]')`);
+    const mainLinesExpr = `[...document.querySelectorAll('.conflict-compare-diff[data-compare=main] diffs-container')].flatMap(h=>[...(h.shadowRoot?.querySelectorAll('[data-line]')??[])]).filter(r=>r.checkVisibility()).map(r=>(r.querySelector('[data-column-content]')??r).textContent)`;
+    // main's revealed lines are visible again.
+    await wait(`(()=>{const shown=${mainLinesExpr};return ${JSON.stringify(mainRevealed)}.every(l=>shown.includes(l));})()`);
+    await captureAll('compare-main-reveals-kept');
     // J and K still visit both.
     await js(`${block(0)}.focus()`);
     await key('j');
@@ -1811,6 +1856,14 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>(`${block(0)}.querySelector('.conflict-block-note-line').textContent`), /The file parses\. Every line of both sides is accounted for\./);
     assert.equal(await stage(), 'resolved', 'With the switch on, a Merged file still waits for your review');
     await captureAll('buckets-merged');
+    // Settings › Code intelligence changes while the dialog is open (#464): with TypeScript off, the verdict made with it
+    // on no longer counts, and the conflict leaves Merged at once. On again, it is Merged again.
+    const typescript = (on: boolean) =>
+      js(`(async()=>{const p=await window.electronAPI.loadPreferences();const c={...p.codeIntelligence};c.disabled=${on ? "(c.disabled??[]).filter(l=>l!=='typescript')" : "[...(c.disabled??[]),'typescript']"};const next={...p,codeIntelligence:c};await window.electronAPI.savePreferences(next);window.dispatchEvent(new CustomEvent('gnosis-preferences-changed',{detail:next}));})()`);
+    await typescript(false);
+    await wait(`${block(0)}?.dataset.bucket!=='merged'`);
+    await typescript(true);
+    await wait(`${block(0)}?.dataset.bucket==='merged'`);
     // Off: files whose every conflict is Merged are marked reviewed for you. Nothing is pushed.
     await js(`${showMerged}.click()`);
     await wait(

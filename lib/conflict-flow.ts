@@ -1,6 +1,7 @@
 import {
   SAVE_REFUSALS,
   STALE_DRAFT,
+  UNREADABLE_DRAFT,
   type BaseMove,
   type ConflictFile,
   type ConflictFileStage,
@@ -81,7 +82,7 @@ export function localMergeCommands(session: {
   return [`git switch -- ${shellQuote(headBranch)}`, 'git pull', ...base].join('\n');
 }
 
-export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in' | 'reload';
+export type ConflictRecovery = 'load-latest' | 'check-again' | 'retry' | 'sign-in' | 'reload' | 'start-over';
 export interface ConflictErrorCopy {
   /** One plain sentence: what happened. */
   title: string;
@@ -149,6 +150,9 @@ export function describeConflictError(
       body: 'Nothing was pushed or overwritten. Load the saved draft, then go on from it.',
       recovery: 'reload',
     };
+  // A draft the service can't use (`draftProblem`): Start over prepares the merge again.
+  if (raw.startsWith(UNREADABLE_DRAFT))
+    return { title: UNREADABLE_DRAFT, body: 'Start over to prepare the merge again.', recovery: 'start-over' };
   if (/^The PR now targets a different base branch/.test(raw))
     return {
       title: 'This PR now targets a different base branch.',

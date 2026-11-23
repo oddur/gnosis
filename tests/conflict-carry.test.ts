@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockResolutions, carryFile, relabelMarkers, revisionChange } from '../lib/conflict-carry';
+import {
+  blockResolutions,
+  carryFile,
+  markersLeft,
+  relabelMarkers,
+  revisionChange,
+  withoutEarlierConflicts,
+} from '../lib/conflict-carry';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { describeBaseMove, describeConflictError } from '../lib/conflict-flow';
 import type { ConflictFile } from '../lib/conflict-resolution';
@@ -172,4 +179,87 @@ void test('carry keeps Use the proposal as your choice on a block it reuses (#44
   assert.equal(carried.reused, 1);
   assert.equal(carried.file.result, 'x\nab\ny\n');
   assert.deepEqual(carried.file.picks, ['proposal']);
+});
+
+void test('a lone ======= in Markdown is a heading only when it is outside every conflict, all of them decided (#457)', () => {
+  const md = (original: string) => ({ path: 'docs/usage.md', original, base: '', ours: '', theirs: '' });
+  // The heading sits in Git's merged text; the conflict below it is decided.
+  const below = `Usage\n=======\n\n${block('one\n', 'zero\n', 'two\n')}`;
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n'), false);
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\ntwo\n'), false, 'Both sides');
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\nthree\n'), false, 'Your own text for the conflict');
+  // The same draft in a file that isn't Markdown, or a conflict still open: strict.
+  assert.equal(markersLeft({ ...md(below), path: 'docs/usage.txt' }, 'Usage\n=======\n\none\n'), true);
+  assert.equal(markersLeft(md(below), below), true);
+  // Your edit outside the conflicts: the draft can't be split, so nothing proves the line is the heading.
+  assert.equal(markersLeft(md(below), 'Usage!\n=======\n\none\n'), true);
+  // The PR's lines end with the heading's text: Git's separator sits right under it. Left behind, it still counts.
+  const heading = `Intro\n${block('Usage\n', 'Use\n', 'How to use\n')}\nMore\n`;
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n=======\nHow to use\n\nMore\n'), true);
+  assert.equal(markersLeft(md(heading), 'Intro\nUsage\n\nMore\n'), false);
+  // An underline inside a conflict can't be told apart from the separator: it counts, even as one side's text.
+  const inside = `${block('Usage\n=======\n', 'Use\n', 'Usage\n-----\n')}text\n`;
+  assert.equal(markersLeft(md(inside), 'Usage\n=======\ntext\n'), true);
+  // The other markers count everywhere.
+  assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n>>>>>>> main\n'), true);
+  assert.equal(markersLeft(md(''), 'text\n'), false);
+});
+
+// #529 review: sides that hold their own marker lines make Git's blocks pair wrongly, so nothing is exempt.
+void test('a Markdown side with its own <<<<<<< or >>>>>>> line gets no heading exception', () => {
+  // `git merge-file -p ours base theirs` on these sides: Git's separator sits between two misread blocks.
+  const sides = {
+    base: 'start\nold\nend\n',
+    ours: 'start\nT\n=======\n>>>>>>> q\nend\n',
+    theirs: 'start\n<<<<<<< p\n=======\nU\nend\n',
+  };
+  const original = 'start\n<<<<<<< ours\nT\n=======\n>>>>>>> q\n=======\n<<<<<<< p\n=======\nU\n>>>>>>> theirs\nend\n';
+  const file = { path: 'docs/usage.md', original, ...sides };
+  // Both on the first block, main's on the second: the draft holds Git's separator, and it splits cleanly.
+  const draft = 'start\nT\n=======\nU\nend\n';
+  assert.ok(blockResolutions(parseConflicts(original), draft)?.every((text) => text !== undefined));
+  assert.equal(markersLeft(file, draft), true);
+});
+
+void test('a block carry cannot reuse takes the fresh proposal only when the fresh draft holds it (#451)', () => {
+  const original = `x\n${block('a\n', 'o\n', 'b\n')}y\n${block('c\n', 'p\n', 'd\n')}z\n`;
+  // You decided the first block; the second is still Git's conflict.
+  const old = file(original, `x\na\ny\n${block('c\n', 'p\n', 'd\n')}z\n`);
+  const first = block('a\n', 'o\n', 'b\n', 'f'.repeat(40));
+  const second = block('c\n', 'p\n', 'd\n', 'f'.repeat(40));
+  const fresh = `x\n${first}y\n${second}z\n`;
+  const proposals = [null, { source: 'mergiraf' as const, text: 'cd\n' }];
+  // Stored beside the fresh draft, never applied: the open block keeps its markers and the proposal stays offered.
+  const beside = carryFile(old, { ...file(fresh), proposals }, false);
+  assert.equal(beside.reused, 1);
+  assert.equal(beside.open, 1);
+  assert.equal(beside.file.result, `x\na\ny\n${second}z\n`);
+  assert.deepEqual(beside.file.proposals, proposals);
+  // Applied by preparation to the same conflict you left open: still open (#528).
+  const applied = carryFile(old, { ...file(fresh, `x\n${first}y\ncd\nz\n`), proposals }, false);
+  assert.equal(applied.file.result, `x\na\ny\n${second}z\n`);
+  // A new conflict, applied by preparation: it shows its proposal.
+  const changed = block('c\n', 'p\n', 'D\n', 'f'.repeat(40));
+  const renewed = carryFile(old, { ...file(`x\n${first}y\n${changed}z\n`, `x\n${first}y\ncd\nz\n`), proposals }, false);
+  assert.equal(renewed.open, 1);
+  assert.equal(renewed.file.result, 'x\na\ny\ncd\nz\n');
+});
+
+void test('after a base move, a conflict you left open stays open even when its file changed; a new one takes its proposal (#528)', () => {
+  // You decided the first conflict and reset the second: open, its proposal offered beside it.
+  const old = file(`x\n${block('a\n', 'o\n', 'b\n')}y\n${block('c\n', 'p\n', 'd\n')}z\n`);
+  old.result = `x\na\ny\n${block('c\n', 'p\n', 'd\n')}z\n`;
+  old.proposals = [null, { source: 'mergiraf', text: 'cd\n' }];
+  // main changed the first conflict: the file is prepared again, with fresh proposals applied to both.
+  const first = block('a\n', 'o\n', 'B\n', 'f'.repeat(40));
+  const second = block('c\n', 'p\n', 'd\n', 'f'.repeat(40));
+  const fresh = `x\n${first}y\n${second}z\n`;
+  const proposals = [{ source: 'mergiraf' as const, text: 'aB\n' }, { source: 'mergiraf' as const, text: 'cd\n' }];
+  const next = { ...file(fresh, 'x\naB\ny\ncd\nz\n'), proposals };
+  const carried = carryFile(old, next, false);
+  assert.equal(carried.reused, 0);
+  assert.equal(carried.file.result, `x\naB\ny\n${second}z\n`, 'The new conflict takes its proposal; the open one stays open');
+  // A draft that can't be carried at all: the same rule on the fresh merge.
+  assert.equal(withoutEarlierConflicts({ ...old, result: 'edited\n' }, next), `x\naB\ny\n${second}z\n`);
+  assert.equal(withoutEarlierConflicts(file('nothing\n'), next), undefined, 'Every conflict is new');
 });

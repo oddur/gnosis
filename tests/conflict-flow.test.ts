@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { verdictRuns } from '../lib/conflict-verdict-key';
 import {
   canRetryStructural,
   conflictFileAction,
@@ -8,7 +9,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
-import { SAVE_REFUSALS, STALE_DRAFT } from '../lib/conflict-resolution';
+import { SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -133,4 +134,69 @@ void test('Try structural merge again shows only on the prepared draft, where it
     false,
     'A whole-file proposal already holds the result'
   );
+});
+
+void test('a check of the dialog’s own started before a settings change never counts, even when the key comes back (#531)', () => {
+  const runs = verdictRuns();
+  runs.sync('');
+  const off = 'key-with-typescript-off';
+  // TypeScript off: a check starts.
+  runs.sync('typescript');
+  const early = runs.start('src/a.ts', off);
+  assert.equal(runs.running('src/a.ts', off), true);
+  // On, then off again before it lands: the same key, but it read the settings while they changed.
+  runs.sync('');
+  runs.sync('typescript');
+  assert.equal(runs.running('src/a.ts', off), false, 'A new check starts');
+  assert.equal(runs.accepts('src/a.ts', early), false, 'The early result is dropped');
+  const late = runs.start('src/a.ts', off);
+  assert.equal(runs.accepts('src/a.ts', late), true);
+  // A newer check for the path wins over an older one.
+  const newer = runs.start('src/a.ts', 'other-key');
+  assert.equal(runs.accepts('src/a.ts', late), false);
+  // The saved verdict stands for the path: nothing in flight counts.
+  runs.drop('src/a.ts');
+  assert.equal(runs.accepts('src/a.ts', newer), false);
+  // The same settings again change nothing.
+  const kept = runs.start('src/b.ts', off);
+  runs.sync('typescript');
+  assert.equal(runs.accepts('src/b.ts', kept), true);
+});
+
+void test('an unreadable saved draft offers Start over; a failed save of a readable one never does', () => {
+  const copy = describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${UNREADABLE_DRAFT}`, {
+    stage: 'other',
+  });
+  assert.equal(`${copy.title} ${copy.body}`, 'This saved draft couldn’t be read. Start over to prepare the merge again.');
+  assert.equal(copy.recovery, 'start-over');
+  const saveFailed = describeConflictError(`Invalid saved state: conflict-draft:oddur:${'a'.repeat(64)}`, { stage: 'other' });
+  assert.notEqual(saveFailed.recovery, 'start-over');
+});
+
+void test('a saved draft is readable with fields from a newer build, and names the first field it cannot use', () => {
+  const id = 'b'.repeat(64);
+  const file = { path: 'a.ts', base: '', ours: '', theirs: '', original: '<<<', result: '<<<', resolved: false };
+  const draft = {
+    id,
+    account: 'oddur',
+    url: 'https://github.com/o/r/pull/1',
+    headRepo: 'o/r',
+    baseRepo: 'o/r',
+    headBranch: 'feature',
+    baseBranch: 'main',
+    headSha: '1'.repeat(40),
+    baseSha: '2'.repeat(40),
+    version: 3,
+    status: 'editing',
+    files: [{ ...file, fromANewerBuild: { anything: true } }],
+    fromANewerBuild: 1,
+  };
+  assert.equal(draftProblem(draft, 'oddur', id), undefined);
+  assert.equal(draftProblem(null, 'oddur', id), 'draft');
+  assert.equal(draftProblem(draft, 'someone', id), 'account');
+  assert.equal(draftProblem({ ...draft, version: Number.NaN }, 'oddur', id), 'version');
+  assert.equal(draftProblem({ ...draft, files: {} }, 'oddur', id), 'files');
+  // Fail-closed: a `resolved` that isn't a boolean never reads as reviewed.
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, resolved: 'yes' }] }, 'oddur', id), 'files[0].resolved');
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, result: null }] }, 'oddur', id), 'files[0].result');
 });

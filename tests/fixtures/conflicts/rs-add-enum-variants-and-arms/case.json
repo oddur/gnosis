@@ -1,8 +1,8 @@
 {
-  "description": "Both sides add a different enum variant and its match arm.",
+  "description": "Both sides add a different enum variant and its match arm. Rust enum variants stay in Check (#481: a crate root can rename the derives that read their order), and match arms are always proposed as a union: both blocks are a proposal to check.",
   "language": "rust",
   "category": "structure/both-add",
   "expected": {
-    "src/color.rs": "merged"
+    "src/color.rs": "check"
   }
 }

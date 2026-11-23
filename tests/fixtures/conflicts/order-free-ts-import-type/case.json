@@ -1,0 +1,8 @@
+{
+  "description": "#481: both sides add an `import type` line. TypeScript erases type imports whole, so they run nothing, in either order.",
+  "language": "typescript",
+  "category": "structure/both-add",
+  "expected": {
+    "src/describe.ts": "merged"
+  }
+}

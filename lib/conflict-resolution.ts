@@ -307,6 +307,30 @@ export interface SavedBlockEdit {
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 /** A request made from an earlier version of the draft, refused. */
 export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
+/** A saved draft the service can't use (`draftProblem`). Start over prepares the merge again. */
+export const UNREADABLE_DRAFT = 'This saved draft couldn’t be read.';
+/**
+ * The first field of a saved draft that can't be used, or undefined. Only the fields every step reads are checked:
+ * fields from a newer build are left alone. `resolved` must be a boolean, so nothing reads as reviewed by mistake.
+ */
+export function draftProblem(value: unknown, account: string, id: string): string | undefined {
+  const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!record(value)) return 'draft';
+  if (value.account !== account) return 'account';
+  if (value.id !== id) return 'id';
+  if (value.status !== 'editing' && value.status !== 'published') return 'status';
+  if (!Number.isSafeInteger(value.version)) return 'version';
+  for (const field of ['url', 'headRepo', 'baseRepo', 'headBranch', 'baseBranch', 'headSha', 'baseSha'])
+    if (typeof value[field] !== 'string') return field;
+  if (!Array.isArray(value.files)) return 'files';
+  for (const [index, file] of value.files.entries()) {
+    if (!record(file)) return `files[${index}]`;
+    for (const field of ['path', 'original', 'result', 'base', 'ours', 'theirs'])
+      if (typeof file[field] !== 'string') return `files[${index}].${field}`;
+    if (typeof file.resolved !== 'boolean') return `files[${index}].resolved`;
+  }
+  return undefined;
+}
 /**
  * Why the service refused a save made from an earlier version of the draft (`refusedSave`). The renderer matches the
  * message to say what happened and offer what can still be done.
@@ -334,24 +358,30 @@ export function changedFiles(before: ConflictSession, after: ConflictSession, ex
   const known = new Map(before.files.map((f) => [f.path, f.revision]));
   return after.files.filter((f) => f.path !== except && known.get(f.path) !== f.revision).map((f) => f.path);
 }
-/** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
-const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
-const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
-/** Any conflict marker line left in a text: the file status, Mark reviewed and every guard before a push use it. */
+/** A line Git writes around a conflict. A lone `=======` counts in every text; a draft goes through markersLeft. */
+const markerLines = (marks: string) => new RegExp(`^(?:${marks})(?:\\s|$)`, 'm');
+/** The marks Git opens and closes a conflict with, and puts before the common ancestor: never a heading underline. */
+const OPEN_CLOSE_MARKS = '<{7,}|>{7,}|\\|{7,}';
+const MARKER_LINES = markerLines(`${OPEN_CLOSE_MARKS}|={7,}`);
+/** A `<<<<<<<`, `|||||||` or `>>>>>>>` line: every marker but the separator (lib/conflict-carry.ts `markersLeft`). */
+export const OPEN_CLOSE_LINES = markerLines(OPEN_CLOSE_MARKS);
+/** Any conflict marker line left in a text, such as a proposal's. A file's draft goes through markersLeft. */
 export function hasConflictMarkers(text: string) {
   return MARKER_LINES.test(text);
 }
 
-export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
-/** Derive the stage from the displayed draft, including edits not saved yet. */
-export function conflictFileStage(
-  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>,
-  contents = file.result
-): ConflictFileStage {
-  if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
-  return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
+/**
+ * The file's whole-file proposal by source: structural merge's (`'mergiraf'`), or the move rule's (`'moved'`,
+ * lib/conflict-moved.ts). Undefined for none, or one from another source.
+ */
+export function wholeFileFrom<S extends ConflictProposal['source']>(
+  file: Pick<ConflictFile, 'wholeFile'>,
+  source: S
+): (ConflictProposal & { source: S }) | undefined {
+  return file.wholeFile?.source === source ? (file.wholeFile as ConflictProposal & { source: S }) : undefined;
 }
 
+export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
 const isPick = (pick: unknown) =>
   pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
 /** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */

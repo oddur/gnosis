@@ -10,15 +10,11 @@ import { fileWriter, resolverBaseline } from '../lib/conflict-diff';
 import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
-import {
-  hasConflictMarkers,
-  type ConflictRequest,
-  type ConflictSession,
-  type SavedBlockEdit,
-} from '../lib/conflict-resolution';
+import type { ConflictRequest, ConflictSession, SavedBlockEdit } from '../lib/conflict-resolution';
+import { markersLeft } from '../lib/conflict-carry';
 import { preparedDraft, unchosenConflicts, waitingHint } from '../lib/conflict-verify';
-import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
-import { currentCodeIntelligence } from '../lib/use-syntax-contents';
+import { verdictKey } from '../lib/conflict-verdict-key';
+import { useDisabledLanguages } from '../lib/use-syntax-contents';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
@@ -87,6 +83,8 @@ export function RestackReview({
 }) {
   const plan = session.restack;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // The same languages the main workspace keys its verdicts with (lib/use-syntax-contents.ts).
+  const disabled = useDisabledLanguages(preferences);
   // Your Keep choices per paused file, so one whose text equals the proposal reads as yours, not Merged.
   const [picks, setPicks] = useState<Partial<Record<string, (BlockPick | undefined)[]>>>({});
   // Your in-place edits per paused file (#445 item 11), kept across saves while the file's conflict is the same, so an
@@ -241,7 +239,7 @@ export function RestackReview({
           {plan.blocked.files.map((file) => {
             const value = drafts[file.path] ?? file.result;
             const dirty = value !== file.result;
-            const markers = hasConflictMarkers(value);
+            const markers = markersLeft(file, value);
             const update = (text: string) => {
               const next = { ...drafts, [file.path]: text };
               setDrafts(next);
@@ -259,7 +257,7 @@ export function RestackReview({
             // Mark reviewed waits for a choice on every conflict in Check, as in the main workspace (fail closed).
             // Only a verdict made for this draft counts, as in the service's guard; a stale one Merges nothing.
             const current =
-              file.verdict?.key === verdictKey({ ...file, result: value }, disabledLanguages(currentCodeIntelligence()))
+              file.verdict?.key === verdictKey({ ...file, result: value }, disabled)
                 ? file.verdict.verdict
                 : undefined;
             const unchosen = unchosenConflicts(file, value, current, filePicks, fileEdits);

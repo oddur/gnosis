@@ -561,6 +561,9 @@ export interface RangeUnit {
   returns?: boolean;
   /** Its first line, spaces squashed: an import's whole text. */
   head?: string;
+  /** A JavaScript or TypeScript import: `import type …`, which TypeScript erases, and the local names it binds. */
+  typeOnly?: boolean;
+  binds?: string[];
 }
 /** The whole nodes in some lines and the node that holds them. Undefined when a node reaches past the lines. */
 export interface RangeUnits {
@@ -574,6 +577,24 @@ export interface RangeUnits {
   before?: string;
   /** For a JSON object: the keys of the pairs that hold it, from the document's top. */
   path?: string[];
+  /** The text of the comments just before the units (`before` skips them). */
+  comments?: string[];
+}
+/** An import statement's `type` keyword (on the statement, not on one name) and the local names it binds. */
+function scriptImport(node: Node) {
+  const binds: string[] = [];
+  const clause = node.namedChildren.find((c) => c.type === 'import_clause');
+  for (const c of clause?.namedChildren ?? []) {
+    if (c.type === 'identifier') binds.push(c.text);
+    else if (c.type === 'namespace_import') binds.push(...c.namedChildren.filter((x) => x.type === 'identifier').map((x) => x.text));
+    else if (c.type === 'named_imports')
+      for (const s of c.namedChildren)
+        if (s.type === 'import_specifier') {
+          const local = s.childForFieldName('alias') ?? s.childForFieldName('name');
+          if (local) binds.push(local.text);
+        }
+  }
+  return { typeOnly: node.children.some((c) => !c.isNamed && c.type === 'type'), binds };
 }
 /** Lines [start, end] (1-based, inclusive) as whole nodes of one parent (lib/conflict-union.ts). */
 export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): RangeUnits | undefined {
@@ -620,6 +641,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
         ...(decorated ? { decorated } : {}),
         ...(annotated ? { annotated } : {}),
         head: squash(c.text.split('\n')[0]),
+        ...(c.type === 'import_statement' ? scriptImport(c) : {}),
       };
     };
     const units: RangeUnit[] = [];
@@ -633,7 +655,12 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
     // An object's keys are read whole, and its place in its document.
     const whole = node.type === 'object';
     let previous = hit[0].previousNamedSibling;
-    while (previous && /comment/.test(previous.type)) previous = previous.previousNamedSibling;
+    /** The comments between the node before and the units: a directive there applies to whatever comes first. */
+    const comments: string[] = [];
+    while (previous && /comment/.test(previous.type)) {
+      comments.unshift(previous.text);
+      previous = previous.previousNamedSibling;
+    }
     const path: string[] = [];
     if (node.type === 'object')
       for (let at: Node | null = node.parent; at; at = at.parent)
@@ -644,6 +671,7 @@ export function rangeUnits(tree: TreeSitter.Tree, start: number, end: number): R
       units,
       ...(whole ? { all: node.namedChildren.map(unitOf) } : {}),
       ...(previous ? { before: previous.type } : {}),
+      ...(comments.length ? { comments } : {}),
       ...(node.type === 'object' ? { path } : {}),
     };
   }

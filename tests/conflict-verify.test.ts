@@ -32,12 +32,8 @@ import {
   type Analyse,
   type Equivalent,
 } from '../lib/conflict-verify';
-import {
-  conflictFileStage,
-  hasConflictMarkers,
-  type ConflictFile,
-  type ConflictProposal,
-} from '../lib/conflict-resolution';
+import { conflictFileStage } from '../lib/conflict-markers';
+import { hasConflictMarkers, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
 
 /** Conflict buckets and their checks (phase 1 of the conflict redesign), with the real tree-sitter grammars. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -309,14 +305,15 @@ void test('review probe: a lost definition is excused only by its exact name, in
   });
 });
 
-void test('review probe: carrying a draft forward uses the fresh proposal for a conflict it cannot carry', () => {
+void test('review probe: carrying a draft forward uses the fresh proposal for a new conflict it cannot carry', () => {
   const proposals = [merged(imports), merged(three + four)];
   const next = file(proposals);
-  // The earlier draft resolved only an older version of the second conflict.
+  // The earlier draft resolved only an older version of the second conflict, and left the first open.
   const old = file([null, null], { original: original.replace('return 3;', 'return 30;') });
   old.result = old.original.replace(/<<<<<<< feature\nexport[\s\S]*?>>>>>>> main\n/, three.replace('3', '30'));
   const carried = carryFile(old, next, true);
-  assert.equal(carried.file.result, withProposals(original, proposals));
+  // The second conflict is new: its fresh proposal. The first was open before and stays open (#528).
+  assert.equal(carried.file.result, withProposals(original, [null, proposals[1]]));
   assert.equal(carried.file.resolved, false);
   assert.deepEqual(carried.file.proposals, proposals);
 });
@@ -885,6 +882,126 @@ void test('#476: package.json dependency lists are order-free; other JSON keys a
     '    Green = 2,\n    Blue = 3,\n'
   );
   assert.equal(cs.merged, false);
+});
+
+void test('#481: Rust enum variants and struct fields stay in Check, even with explicit discriminants and scalar fields', async () => {
+  // A crate root's `#[macro_use] extern crate` can put another macro under a std derive's name for every file, and a
+  // check of one file can't see it.
+  const color = await samePlace(
+    'src/color.rs',
+    '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum Color {\n    Red = 1,\n',
+    '}\n',
+    '    Green = 2,\n',
+    '    Blue = 3,\n',
+    '    Green = 2,\n    Blue = 3,\n'
+  );
+  assert.equal(color.merged, false, color.note);
+  const options = await samePlace(
+    'src/options.rs',
+    'pub struct Options {\n    pub width: u32,\n',
+    '}\n',
+    '    depth: i64,\n',
+    '    weight: f64,\n',
+    '    depth: i64,\n    weight: f64,\n'
+  );
+  assert.equal(options.merged, false, options.note);
+});
+
+void test('#481: TypeScript `import type` lines are order-free; value and side-effect imports are Check', async () => {
+  const imports = (ours: string, theirs: string, path = 'src/index.ts') =>
+    samePlace(path, "import type { A } from './a';\n", '\nexport const x = 1;\n', ours, theirs, ours + theirs);
+  for (const path of ['src/index.ts', 'src/view.tsx']) {
+    const verdict = await imports("import type { B } from './b';\n", "import type C, { D as E } from './c';\n", path);
+    assert.equal(verdict.merged, true, `${path}: ${verdict.note}`);
+    assert.match(verdict.note, /different imports here/);
+  }
+  assert.equal((await imports("import type * as B from './b';\n", "import type { C } from './c';\n")).merged, true);
+  // A value import runs its module; so may `import { type C }` (it can leave `import {} from './c'`); a bare import is
+  // only a side effect: Check.
+  for (const other of ["import { C } from './c';\n", "import { type C } from './c';\n", "import './c';\n"])
+    assert.equal((await imports("import type { B } from './b';\n", other)).merged, false, other);
+  // One name bound by both sides: Check.
+  assert.equal((await imports("import type { B } from './b';\n", "import type { B } from './c';\n")).merged, false);
+  // JavaScript has no type imports, and its imports run in order: Check.
+  const js = await samePlace(
+    'src/index.js',
+    "import { a } from './a';\n",
+    '\nexport const x = a;\n',
+    "import { b } from './b';\n",
+    "import { c } from './c';\n",
+    "import { b } from './b';\nimport { c } from './c';\n"
+  );
+  assert.equal(js.merged, false);
+});
+
+void test('#481: known JSON files’ keyed objects are order-free; nested and unknown objects are Check', async () => {
+  const keyed = (owner: string, path: string, ours = '    "b": "2",\n', theirs = '    "c": "3",\n') =>
+    samePlace(path, `{\n  "${owner}": {\n    "a": "1",\n`, '    "z": "26"\n  }\n}\n', ours, theirs, ours + theirs);
+  for (const [owner, path] of [
+    ['engines', 'package.json'],
+    ['peerDependenciesMeta', 'packages/ui/package.json'],
+    ['compilerOptions', 'tsconfig.json'],
+    ['compilerOptions', 'tsconfig.build.json'],
+    ['compilerOptions', 'jsconfig.json'],
+  ]) {
+    const verdict = await keyed(owner, path);
+    assert.equal(verdict.merged, true, `${path} ${owner}: ${verdict.note}`);
+  }
+  // Keys read in order, or by tools Gnosis doesn't know: Check.
+  for (const [owner, path] of [
+    ['scripts', 'package.json'],
+    ['compilerOptions', 'config.json'],
+    ['include', 'tsconfig.json'],
+    ['moduleNameMapper', 'jest.config.json'],
+  ])
+    assert.equal((await keyed(owner, path)).merged, false, `${path} ${owner}`);
+  // `paths` inside compilerOptions: the longest prefix before `*` wins, and between two of the same length the first
+  // does. `@x/*.js` and `@x/*` both match `@x/a.js` with the prefix `@x/`: the order picks the file.
+  const paths = await samePlace(
+    'tsconfig.json',
+    '{\n  "compilerOptions": {\n    "paths": {\n      "@a/*": ["a/*"],\n',
+    '      "@z/*": ["z/*"]\n    }\n  }\n}\n',
+    '      "@x/*.js": ["js/*"],\n',
+    '      "@x/*": ["any/*"],\n',
+    '      "@x/*.js": ["js/*"],\n      "@x/*": ["any/*"],\n'
+  );
+  assert.equal(paths.merged, false);
+  // The same option on both sides: Check.
+  assert.equal((await keyed('compilerOptions', 'tsconfig.json', '    "strict": true,\n', '    "strict": false,\n')).merged, false);
+});
+
+void test('#481 review: a directive comment just before the insertion, or last in a side, keeps it in Check', async () => {
+  const shape = (head: string, ours = '  depth: number;\n', theirs = '  weight: number;\n') =>
+    samePlace('src/options.ts', `export interface Options {\n  width: number;\n${head}`, '}\n', ours, theirs, ours + theirs);
+  assert.equal((await shape('')).merged, true);
+  assert.equal((await shape('  // Sizes.\n')).merged, true, 'a plain comment');
+  for (const head of [
+    '  // @ts-ignore\n',
+    '  // @ts-expect-error\n',
+    '  // eslint-disable-next-line\n',
+    '  /** @deprecated */\n',
+  ])
+    assert.equal((await shape(head)).merged, false, head);
+  // At the end of one side's lines, it applies to the other side's first line when that side comes second.
+  assert.equal((await shape('', '  depth: number;\n  // @ts-ignore\n')).merged, false);
+  const go = await samePlace(
+    'main.go',
+    'package main\n\nimport (\n\t"fmt"\n\t// nolint\n',
+    ')\n\nfunc main() {\n\tfmt.Println(os.Args, strings.ToUpper(""))\n}\n',
+    '\t"os"\n',
+    '\t"strings"\n',
+    '\t"os"\n\t"strings"\n'
+  );
+  assert.equal(go.merged, false);
+  const rust = await samePlace(
+    'cart.rs',
+    'struct Cart;\nimpl Cart {\n    fn total(&self) -> u32 {\n        0\n    }\n    // rustfmt::skip\n',
+    '}\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n',
+    '    fn remove(&self) -> u32 {\n        3\n    }\n',
+    '    fn add(&self) -> u32 {\n        2\n    }\n    fn remove(&self) -> u32 {\n        3\n    }\n'
+  );
+  assert.equal(rust.merged, false);
 });
 
 void test('second review probe: splitting a long output with a lone newline between conflicts stays fast', () => {
