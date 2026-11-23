@@ -9,6 +9,7 @@ import {
   revisionConflicts,
   hasConflictMarkers,
   validateConflictRequest,
+  wholeFileFrom,
   type ConflictFile,
   type ConflictProposal,
   type ConflictSession,
@@ -80,7 +81,14 @@ import {
 import { inspectLocalClone } from '../lib/local-clone';
 import { verdictKey } from '../lib/conflict-verdict-key';
 import { hasUnion } from '../lib/conflict-flow';
-import { countOpened, countPushed, markChoice, type ConflictChoice, type ConflictStatsEvent } from '../lib/conflict-stats';
+import {
+  carryStatsBlocks,
+  countOpened,
+  countPushed,
+  markChoice,
+  type ConflictChoice,
+  type ConflictStatsEvent,
+} from '../lib/conflict-stats';
 import { withoutUnconfirmed } from './conflict-checks';
 import { UNDO_CLOSED, UNDO_MOVED, UNDO_OFF, UNDO_RESTACKED, UNDO_UNAVAILABLE, undoTarget, type PushedUpdate } from '../lib/conflict-undo';
 import type { SyntaxDefinition, SyntaxLanguage } from '../lib/syntax-scope';
@@ -190,7 +198,11 @@ interface Deps {
   /** Background drafts kept (BACKGROUND_DRAFTS). Tests change it. */
   backgroundDrafts?: number;
   /** Settings › Diagnostics › Conflict resolution stats (src/conflict-stats-store.ts). Counts only; it never throws. */
-  stats?: { record(events: readonly ConflictStatsEvent[]): void };
+  stats?: {
+    record(events: readonly ConflictStatsEvent[]): void;
+    /** The stats' epoch (lib/conflict-stats.ts `ConflictStats.epoch`). Throws while saved data is loading. */
+    epoch?(): number;
+  };
   /**
    * Repository settings' "Allow undoing a conflict update with a force push", for the PR's repository. Without it, or
    * false, Undo this update is refused (#445 item 25).
@@ -251,6 +263,8 @@ export function createConflictResolutionService(deps: Deps) {
     // Type check demotions that came, or were cleared, after the holder's last write are saved now (#445 item 24).
     const queued = pendingTypeErrors.get(key);
     if (queued) saveTypeErrors(key, queued);
+    // Choices made while the holder had the draft are counted now, with their flags, after its last write.
+    if (pendingChoices.has(key)) saveChoices(key);
     const waiting = waiters.get(key) ?? [];
     waiters.delete(key);
     for (const wake of waiting) wake();
@@ -398,11 +412,32 @@ export function createConflictResolutionService(deps: Deps) {
     const waiting = unchosenOf(file, request);
     if (waiting.length) throw new Error(waitingHint(file, request.contents, waiting.length));
   };
-  /** Undo and re-choice flags counted while a request held the draft (`countChoice`): saved with its next write. */
+  /**
+   * Undo and re-choice made while a request held the draft (`countChoice`). Each is counted and flagged on the draft
+   * only once the lock is free (`release`), after the holder's last write, so a flag is never lost to a write that
+   * didn't have it, and a choice that never got its flag never counted.
+   */
   const pendingChoices = new Map<string, Omit<ConflictChoice, 'id'>[]>();
-  function withChoices(key: string, session: ConflictSession) {
-    for (const choice of pendingChoices.get(key) ?? []) markChoice(session, choice);
+  const statsEpoch = () => deps.stats?.epoch?.() ?? 0;
+  /** Counts the choices and saves their flags on the draft, while nobody holds its lock. Never throws. */
+  /** `extra`: a choice made while nobody holds the lock, counted with any still waiting. */
+  function saveChoices(key: string, extra: readonly Omit<ConflictChoice, 'id'>[] = []) {
+    const choices = [...(pendingChoices.get(key) ?? []), ...extra];
     pendingChoices.delete(key);
+    uncounted(() => {
+      const ctx = deps.context();
+      const saved = ctx.account && key.startsWith(storageKey(ctx.account, ''))
+        ? (deps.storage.read(key) as ConflictSession | undefined)
+        : undefined;
+      if (!saved) return;
+      const epoch = statsEpoch();
+      const events = choices.flatMap((choice) => markChoice(saved, choice, epoch) ?? []);
+      if (!events.length) return;
+      write(key, saved);
+      deps.stats?.record(events);
+    });
+  }
+  function withTypeErrors(key: string, session: ConflictSession) {
     const typed = pendingTypeErrors.get(key);
     if (typed) applyTypeErrors(session, typed);
     pendingTypeErrors.delete(key);
@@ -650,7 +685,7 @@ export function createConflictResolutionService(deps: Deps) {
   }
   async function persist(session: ConflictSession) {
     const key = storageKey(session.account, session.id);
-    write(key, stamped(withChoices(key, session)));
+    write(key, stamped(withTypeErrors(key, session)));
     await deps.storage.flush();
   }
   function sessionFor(ctx: Context, id: string): ConflictSession {
@@ -1202,7 +1237,10 @@ export function createConflictResolutionService(deps: Deps) {
       const back = withoutUnconfirmed(file, verdict);
       if (back) {
         Object.assign(file, back);
-        verdict = verdict && file.proposals ? await deps.verify(file, disabled, signal) : undefined;
+        // Nothing proposed for the file any more: the move rule gets its turn, as after structural merge.
+        if (!file.proposals) await proposeMoves([file], signal);
+        verdict =
+          (verdict && file.proposals) || wholeFileFrom(file, 'moved') ? await deps.verify(file, disabled, signal) : undefined;
         signal.throwIfAborted();
       }
       if (verdict) file.verdict = { key: back ? verdictKey({ ...file }, disabled) : key, verdict };
@@ -1283,12 +1321,33 @@ export function createConflictResolutionService(deps: Deps) {
   ) {
     const queue = files.filter((file) => !file.unsupported && file.source !== 'rerere');
     if (!queue.length) return files;
+    // The move rule runs after structural merge, on what it leaves. A move proposal the file already has is set aside
+    // meanwhile, and comes back when structural merge proposes nothing: the file's three versions are the same, so the
+    // rule would find the same move again. Kept also when the rule couldn't run this time (a timeout, a crash).
+    const moves = new Map<ConflictFile, ConflictProposal>();
+    for (const file of queue) {
+      const moved = wholeFileFrom(file, 'moved');
+      if (moved) {
+        moves.set(file, moved);
+        delete file.wholeFile;
+      }
+    }
+    /**
+     * The move rule on one file structural merge is done with. A kept proposal comes back only while the rule would
+     * still run on the file: this build has it, and its language is on in Settings (`mayHaveMove`). Otherwise it goes.
+     */
+    async function afterStructural(file: ConflictFile) {
+      const kept = moves.get(file);
+      if (!kept) await proposeMoves([file], signal);
+      else if (deps.moved && !moveTaken(file) && mayHaveMove(file, deps.disabledLanguages?.() ?? []))
+        file.wholeFile = kept;
+    }
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
-    // The move rule runs again after structural merge, on what it leaves.
-    for (const file of queue) if (file.wholeFile?.source === 'moved') delete file.wholeFile;
     if (!(await exists(deps.mergiraf()))) {
-      for (const file of queue) file.structuralNote = 'Structural merge isn’t available in this build.';
-      await proposeMoves(queue, signal);
+      for (const file of queue) {
+        file.structuralNote = 'Structural merge isn’t available in this build.';
+        await afterStructural(file);
+      }
       return files;
     }
     // A note from an earlier try (no binary, out of time) gives way to this one.
@@ -1327,26 +1386,41 @@ export function createConflictResolutionService(deps: Deps) {
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
-    /** Four files at a time. A file that runs out of time goes on `late`. */
-    const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
+    /**
+     * Four files at a time. A file that runs out of time goes on `late`; each other one goes to `done`, which runs the
+     * move rule on it.
+     */
+    const pool = async (
+      files: ConflictFile[],
+      budget: () => number,
+      late: ConflictFile[],
+      done: (file: ConflictFile) => Promise<void>
+    ) => {
       const work = async () => {
         for (let file = files.shift(); file; file = files.shift())
           if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
+          else await done(file);
       };
       await Promise.all([work(), work(), work(), work()]);
     };
     const late: ConflictFile[] = [];
-    // The pool takes files off the list it is given.
-    await pool([...queue], () => first, late);
-    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
+    // The pool takes files off the list it is given. Each file has its own first budget: the move rule runs as each
+    // finishes.
+    await pool([...queue], () => first, late, afterStructural);
+    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening. The
+    // move rule waits until the pool is done, so its time never comes out of that shared limit.
     const deadline = Date.now() + cap;
     const failed: ConflictFile[] = [];
-    await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
+    const retried: ConflictFile[] = [];
+    await pool(late, () => Math.min(retry, deadline - Date.now()), failed, (file) => {
+      retried.push(file);
+      return Promise.resolve();
+    });
     for (const file of failed) {
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
     }
-    await proposeMoves(queue, signal);
+    for (const file of [...retried, ...failed]) await afterStructural(file);
     return files;
   }
   /**
@@ -1356,19 +1430,19 @@ export function createConflictResolutionService(deps: Deps) {
    * changed draft gets none, and nothing of the file is changed but `wholeFile`. Its note ("Structural merge timed
    * out.") stays, and so does "Try structural merge again".
    */
+  /** Something else already stands for the file: a proposal, or a draft that is not Git's conflict. */
+  const moveTaken = (file: ConflictFile) => !!file.wholeFile || !!file.proposals || file.result !== file.original;
   async function proposeMoves(files: ConflictFile[], signal: AbortSignal) {
     if (!deps.moved) return;
     const disabled = deps.disabledLanguages?.() ?? [];
-    /** Something else already stands for the file: a proposal, or a draft that is not Git's conflict. */
-    const taken = (file: ConflictFile) => !!file.wholeFile || !!file.proposals || file.result !== file.original;
     for (const file of files) {
       signal.throwIfAborted();
-      if (taken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
+      if (moveTaken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
       const proposal = await deps.moved(file, disabled, signal);
       signal.throwIfAborted();
       if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
       // The file may have changed while the worker read it.
-      if (!taken(file)) file.wholeFile = proposal;
+      if (!moveTaken(file)) file.wholeFile = proposal;
     }
   }
   async function preparation(
@@ -1483,6 +1557,14 @@ export function createConflictResolutionService(deps: Deps) {
         conflicts += file.unsupported ? 1 : Math.max(result.reused ? result.open : conflictCount(next.original), 1);
       }
     }
+    // The move rule ran on the fresh merge, before your draft came back: a draft you changed gets no move proposal it
+    // didn't have (proposeMoves), the same rule as at preparation.
+    for (const file of carried) {
+      const moved = wholeFileFrom(file, 'moved');
+      const had = byPath.get(file.path);
+      if (moved && file.result !== file.original && (!had || wholeFileFrom(had, 'moved')?.text !== moved.text))
+        delete file.wholeFile;
+    }
     return { files: carried, reopened, conflicts };
   }
   /**
@@ -1528,8 +1610,6 @@ export function createConflictResolutionService(deps: Deps) {
           file.structuralNote = old.structuralNote;
         }
         file.structuralRan = old.structuralRan;
-        // The same conflicts: they were counted as shown already (lib/conflict-stats.ts).
-        if (old.statsBlocks) file.statsBlocks = old.statsBlocks;
         if (old.proposals) {
           file.proposals = old.proposals;
           // Only the proposals the old draft held. One stored beside it (the reopen pass, or a reset after a
@@ -1549,6 +1629,9 @@ export function createConflictResolutionService(deps: Deps) {
         signal,
         report
       );
+      // Each conflict that is the same as before keeps its counted block, flags included (lib/conflict-stats.ts).
+      const epoch = uncounted(statsEpoch);
+      if (epoch !== undefined) for (const file of fresh) carryStatsBlocks(file, before.get(file.path), epoch);
       const carried = await carryFiles(await directory(ctx.account, session.id), previous, fresh, true, signal);
       session.baseSha = live.baseSha;
       session.tree = prepared.tree;
@@ -1569,7 +1652,12 @@ export function createConflictResolutionService(deps: Deps) {
     signal: AbortSignal,
     report: (text: string) => void,
     /** Prepared in the background (src/conflict-precompute.ts): hears the number of conflicted files once known. */
-    background?: (files: number) => void
+    background?: (files: number) => void,
+    /**
+     * Hears the saved draft the open read, before anything replaces it: not a copy, so only to read the files' stats
+     * blocks (`countOpened`).
+     */
+    read?: (saved: ConflictSession | undefined) => void
   ) {
     const state = await deps.read(url);
     signal.throwIfAborted();
@@ -1586,6 +1674,7 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
+    read?.(saved);
     // A pending undo (#445 item 25) is settled only when you open the PR, from the remote. Background work never
     // replaces or settles it.
     if (saved?.status === 'published' && saved.undoing) {
@@ -1686,7 +1775,7 @@ export function createConflictResolutionService(deps: Deps) {
           f.result === f.original &&
           !f.proposals &&
           // A move rule's proposal is not structural merge's: structural merge still gets its pass.
-          f.wholeFile?.source !== 'mergiraf'
+          !wholeFileFrom(f, 'mergiraf')
       );
       if (untried.length)
         await mergeStructurally(
@@ -2372,24 +2461,12 @@ export function createConflictResolutionService(deps: Deps) {
      */
     countChoice(choice: ConflictChoice) {
       if (!deps.stats) return;
-      uncounted(() => {
-        const ctx = deps.context();
-        if (!ctx.account) return;
-        const key = storageKey(ctx.account, choice.id);
-        const saved = deps.storage.read(key) as ConflictSession | undefined;
-        if (!saved) return;
-        const pending = pendingChoices.get(key) ?? [];
-        for (const earlier of pending) markChoice(saved, earlier);
-        const event = markChoice(saved, choice);
-        if (!event) return;
-        deps.stats?.record([event]);
-        // A request holds the draft and will write its own copy: the flag goes with that write.
-        if (busy.has(key)) pendingChoices.set(key, [...pending, choice]);
-        else {
-          pendingChoices.delete(key);
-          write(key, saved);
-        }
-      });
+      const account = deps.context().account;
+      if (!account) return;
+      const key = storageKey(account, choice.id);
+      // A request holds the draft and will write its own copy: the choice waits for the lock (`release`).
+      if (busy.has(key)) pendingChoices.set(key, [...(pendingChoices.get(key) ?? []), choice]);
+      else saveChoices(key, [choice]);
     },
     /** The PR's type check (#445 item 24), for the connected account. Undefined: off, or not run for this draft. */
     typeCheck(id: string): ConflictTypeCheck | undefined {
@@ -2595,22 +2672,39 @@ export function createConflictResolutionService(deps: Deps) {
         // Cleanup checks `busy` before each removal; a request that starts later waits for it to finish.
         await maintenance;
         if (request.kind === 'open') {
-          // The draft before a fresh merge replaces it: Load latest reuses its counted conflicts.
-          const before = deps.stats && request.restart ? (deps.storage.read(key) as ConflictSession | undefined) : undefined;
-          const session = await open(ctx, request.url, !!request.restart, !!request.keep, signal, report);
+          // The draft before a fresh merge replaces it, as the open read it: Load latest reuses its counted conflicts.
+          let before: ConflictSession | undefined;
+          const session = await open(
+            ctx,
+            request.url,
+            !!request.restart,
+            !!request.keep,
+            signal,
+            report,
+            undefined,
+            deps.stats && request.restart ? (saved) => (before = saved) : undefined
+          );
           // A draft prepared in the background becomes yours once you open it: it is no longer replaced or evicted.
           const stored = deps.storage.read(key) as ConflictSession | undefined;
           // The conflicts you see now count as shown, once per conflict (lib/conflict-stats.ts).
           const counted =
             deps.stats && stored?.id === session.id && stored.version === session.version && !session.stale
-              ? uncounted(() => countOpened(before, stored, { restart: !!request.restart, keep: !!request.keep }, deps.disabledLanguages?.() ?? []))
+              ? uncounted(() =>
+                  countOpened(
+                    before,
+                    stored,
+                    { restart: !!request.restart, keep: !!request.keep },
+                    deps.disabledLanguages?.() ?? [],
+                    statsEpoch()
+                  )
+                )
               : undefined;
           if (stored?.background) {
             delete stored.background;
             await persist(stored);
           } else if (stored && counted?.changed) {
             // Saved with the next write; the open never waits for it.
-            write(key, stamped(withChoices(key, stored)));
+            write(key, stamped(withTypeErrors(key, stored)));
           }
           if (stored && counted?.changed) session.files = stored.files;
           if (counted) deps.stats?.record(counted.events);
@@ -2857,7 +2951,7 @@ export function createConflictResolutionService(deps: Deps) {
               // Preparation already ran Mergiraf on these three versions and kept its whole-file result. Otherwise it
               // runs again on request, with the full budget, not the first try's. A move rule's proposal is not
               // Mergiraf's result: "Try structural merge again" runs Mergiraf.
-              let output = file.wholeFile?.source === 'mergiraf' ? file.wholeFile.text : undefined;
+              let output = wholeFileFrom(file, 'mergiraf')?.text;
               if (output === undefined) {
                 const budget = Math.max(...(deps.structuralTimeouts ?? [5000, 10_000, 30_000]).slice(1));
                 const started = Date.now();
@@ -2972,7 +3066,7 @@ export function createConflictResolutionService(deps: Deps) {
           );
           session.status = 'published';
           session.commitSha = sha;
-          if (deps.stats) deps.stats.record(uncounted(() => countPushed(session)) ?? []);
+          if (deps.stats) deps.stats.record(uncounted(() => countPushed(session, statsEpoch())) ?? []);
         }
         if (session.status !== 'published') {
           // Only the file a request changed: Suggest drops its proposals, and a save changes the draft the per-conflict

@@ -52,9 +52,31 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_SHOWN: readonly ShownScope[] = [];
 const NO_DEFINITIONS: readonly SyntaxDefinition[] = [];
 const NO_SHOWN_NOISE: ReadonlySet<string> = new Set();
-/** Quiet changes the reader opened, by file revision (and a topic's hunks): kept for the session, newest last. */
-const openedNoise = new Map<string, ReadonlySet<string>>();
-const OPENED_NOISE_FILES = 500;
+/**
+ * What the reader opened in a file's diff, by `revealKey` (its revision, and a topic's hunks): kept for the session,
+ * newest last, though the diff unmounts as it scrolls away or the Conflicts view switches Compare with (#486). Quiet
+ * changes opened, gaps revealed, signatures pinned, the show-scope plan and the scopes collapsed back. A mount starts
+ * from it once; after that each mount builds on its own state, and only writes here.
+ */
+interface KeptDiff {
+  noise?: ReadonlySet<string>;
+  reveals?: GapReveals;
+  pins?: readonly (readonly [number, number])[];
+  adopted?: readonly ShownScope[];
+  collapsed?: ReadonlySet<string>;
+}
+const kept = new Map<string, KeptDiff>();
+const KEPT_FILES = 500;
+/** Keeps `change` under `key` as the newest entry, dropping the oldest past KEPT_FILES. */
+function keep(key: string, change: KeptDiff) {
+  const value = { ...kept.get(key), ...change };
+  kept.delete(key);
+  kept.set(key, value);
+  for (const old of kept.keys()) {
+    if (kept.size <= KEPT_FILES) break;
+    kept.delete(old);
+  }
+}
 
 /**
  * The diff's quiet changes (#396), for ChangesDiff: each change block's kind, what the reader hides, and the blocks
@@ -195,9 +217,11 @@ export function useDiffFileModel({
   // The lines gaps reveal from: the after side once it agrees with the hunks (and, for a topic, once the old side has
   // shown which gaps hold other changes), else what the view already has.
   const lines = afterMatches && after && (!partial || before) ? after : known;
+  // What an earlier mount kept under this key, read once per key: this mount's own state is its base after that.
+  const seed = useMemo(() => kept.get(revealKey), [revealKey]);
   // A long definition's signature, shown above its hunk, is a hunk of unchanged lines inside a gap (#393).
   const [pinned, setPinned] = useState<{ key: string; value: readonly (readonly [number, number])[] }>();
-  const pins = pinned?.key === revealKey ? pinned.value : NO_PINS;
+  const pins = pinned?.key === revealKey ? pinned.value : (seed?.pins ?? NO_PINS);
   const hunks = useMemo(
     () => (baseHunks && after && afterMatches && pins.length ? withPins(baseHunks, pins, after) : baseHunks),
     [baseHunks, after, afterMatches, pins]
@@ -300,7 +324,7 @@ export function useDiffFileModel({
   const moves = useMemo((): DiffMoves | undefined => (fileMoves?.marks.length ? { marks: fileMoves.marks } : undefined), [fileMoves]);
   // What the reader opened stays open for the session, though the file's diff unmounts as it scrolls away.
   const [shownNoise, setShownNoise] = useState<{ key: string; value: ReadonlySet<string> }>();
-  const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : (openedNoise.get(revealKey) ?? NO_SHOWN_NOISE);
+  const noiseShown = shownNoise?.key === revealKey ? shownNoise.value : (seed?.noise ?? NO_SHOWN_NOISE);
   // Changed lines the reader hides and has not opened: the outline leaves them out.
   const quietLines = useMemo(() => {
     if (!noiseOn || !noise.blocks) return undefined;
@@ -322,12 +346,7 @@ export function useDiffFileModel({
       show: (keys, anchor = true) => {
         if (anchor && sectionRef.current) keepDiffLineInView(sectionRef.current);
         const value = new Set([...noiseShown, ...keys]);
-        openedNoise.delete(revealKey);
-        openedNoise.set(revealKey, value);
-        for (const key of openedNoise.keys()) {
-          if (openedNoise.size <= OPENED_NOISE_FILES) break;
-          openedNoise.delete(key);
-        }
+        keep(revealKey, { noise: value });
         setShownNoise({ key: revealKey, value });
       },
       file,
@@ -347,7 +366,11 @@ export function useDiffFileModel({
   );
   const [gapReveals, setGapReveals] = useState<{ key: string; value: GapReveals }>();
   // What the reader revealed: chevrons, Show all, Show whole function, crumbs.
-  const userReveals = gapReveals?.key === revealKey ? gapReveals.value : NO_REVEALS;
+  const userReveals = gapReveals?.key === revealKey ? gapReveals.value : (seed?.reveals ?? NO_REVEALS);
+  const setReveals = (value: GapReveals) => {
+    keep(revealKey, { reveals: value });
+    setGapReveals({ key: revealKey, value });
+  };
   // Show scope (lib/show-scope.ts): a short definition around a change shows whole. The plan is made once per file
   // revision from what the diff shows before any reveal, so revealing lines never changes it; it is kept apart from
   // the reader's reveals, so a hunk, or the setting, can collapse it back to plain context.
@@ -362,20 +385,27 @@ export function useDiffFileModel({
   );
   const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[] }>();
   const [collapsed, setCollapsed] = useState<{ key: string; value: ReadonlySet<string> }>();
+  // A plan adopted by an earlier mount shows from the first render: nothing moves as the file parses again.
+  const adoptedPlan = adopted?.key === revealKey ? adopted.value : seed?.adopted;
   // Once the file is parsed, its short definitions show whole, keeping the line at the top of the view in place.
   useEffect(() => {
-    if (!planned || adopted?.key === revealKey) return;
+    if (!planned || adoptedPlan) return;
     if (planned.length) {
       // A topic shows lines outside what it saved once both sides say they are unchanged.
       if (partial) readAfter();
       if (sectionRef.current) keepDiffLineInView(sectionRef.current);
     }
+    keep(revealKey, { adopted: planned });
     setAdopted({ key: revealKey, value: planned });
   }, [planned]);
-  const collapsedKeys = collapsed?.key === revealKey ? collapsed.value : NO_KEYS;
+  // Lines kept from an earlier mount show from the side they were read from, which this mount may not have yet.
+  useEffect(() => {
+    if (seed?.reveals || seed?.pins || seed?.adopted?.length) readAfter();
+  }, [revealKey]);
+  const collapsedKeys = collapsed?.key === revealKey ? collapsed.value : (seed?.collapsed ?? NO_KEYS);
   const shownScopesPlan = useMemo(
-    () => (scopeOn && adopted?.key === revealKey ? adopted.value.filter((scope) => !collapsedKeys.has(scope.key)) : NO_SHOWN),
-    [scopeOn, adopted, revealKey, collapsedKeys]
+    () => (scopeOn && adoptedPlan ? adoptedPlan.filter((scope) => !collapsedKeys.has(scope.key)) : NO_SHOWN),
+    [scopeOn, adoptedPlan, collapsedKeys]
   );
   const reveals = useMemo(() => {
     let next = userReveals;
@@ -414,7 +444,9 @@ export function useDiffFileModel({
   );
   const collapseScope = (key: string) => {
     if (sectionRef.current) keepDiffLineInView(sectionRef.current);
-    setCollapsed({ key: revealKey, value: new Set([...collapsedKeys, key]) });
+    const value = new Set([...collapsedKeys, key]);
+    keep(revealKey, { collapsed: value });
+    setCollapsed({ key: revealKey, value });
   };
   // Until the definitions arrive, each hunk's location is its patch header's text, as GitHub shows it, or the file.
   const structurePending =
@@ -476,12 +508,16 @@ export function useDiffFileModel({
     // A topic shows lines outside what it saved once both sides say they are unchanged.
     if (partial) readAfter();
     if (plan.kind === 'whole') {
-      setGapReveals({ key: revealKey, value: revealSpan(userReveals, gaps, plan.start, plan.end) });
+      setReveals(revealSpan(userReveals, gaps, plan.start, plan.end));
       return;
     }
     const next = pinLines(hunks, gaps, userReveals, plan.start, plan.end);
-    if (next.pin) setPinned({ key: revealKey, value: [...pins, next.pin] });
-    setGapReveals({ key: revealKey, value: next.reveals });
+    if (next.pin) {
+      const value = [...pins, next.pin];
+      keep(revealKey, { pins: value });
+      setPinned({ key: revealKey, value });
+    }
+    setReveals(next.reveals);
   };
   const lineCount = useMemo(
     () =>
@@ -553,12 +589,14 @@ export function useDiffFileModel({
   };
   const revealLines = (gap: DiffGap, direction: GapDirection) => {
     if (!hunks || !canReveal(gap)) return;
+    // Built on this mount's own reveals, so two reveals before a render both count.
     const key = revealKey,
       count = hunks.length;
-    setGapReveals((previous) => ({
-      key,
-      value: revealGap(previous?.key === key ? previous.value : NO_REVEALS, gap, count, direction),
-    }));
+    setGapReveals((previous) => {
+      const value = revealGap(previous?.key === key ? previous.value : (seed?.reveals ?? NO_REVEALS), gap, count, direction);
+      keep(key, { reveals: value });
+      return { key, value };
+    });
     if (!covered(gap)) readAfter();
   };
   return {

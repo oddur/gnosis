@@ -100,9 +100,13 @@ function mergeBody(base: readonly string[], moved: readonly string[], edited: re
   return out;
 }
 
-/** One way to read the file: `mover` moved `move`, and the other side edited it. Undefined when anything is in doubt. */
+/**
+ * One way to read the file: `mover` moved `move`, and the other side edited it. Undefined when anything is in doubt.
+ * `segments` is the file's `original`, parsed once for every move.
+ */
 function plan(
-  file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'original' | 'proposals'>,
+  file: Pick<ConflictFile, 'base' | 'ours' | 'theirs' | 'proposals'>,
+  segments: ReturnType<typeof parseConflicts>,
   mover: 'ours' | 'theirs',
   move: SymbolMove
 ) {
@@ -134,7 +138,6 @@ function plan(
   const merged = mergeBody(baseBody, movedBody, editedBody);
   if (!merged) return undefined;
   // The open conflicts hold exactly the other side's edits to the definition: nothing of its elsewhere is dropped.
-  const segments = parseConflicts(file.original);
   const open = segments.flatMap((s) => (s.kind === 'conflict' && !file.proposals?.[s.index] ? [s] : []));
   if (!open.length || open.some((s) => s.block.base === undefined || !s.block.base.trim())) return undefined;
   // Each open conflict is at the definition: its ancestor lines where the definition was, or its moving side's lines
@@ -216,7 +219,7 @@ export async function movedProposal(
       if (move.from.side !== 'before' || move.to.side !== 'after') continue;
       // The same body, its name aside, with the same comments: any other change is the moving side's edit.
       if (!move.exact || move.commentsChanged) continue;
-      const one = plan(file, mover, move);
+      const one = plan(file, segments, mover, move);
       if (one) found.push(one);
     }
   }

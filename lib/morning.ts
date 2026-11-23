@@ -8,7 +8,7 @@
  * 4. **Waiting on you** (`waitingOnYou`): people blocked on you, by person, oldest wait first; then PRs whose
  *    requester is not known ("unassigned") and team requests.
  * 5. **Waiting on others** (`waitingOnOthers`): your PRs by what blocks them: stacks as chains, each requested
- *    reviewer (with Nudge), teams, CI, and you (failing checks, conflicts, rebasing), each PR with its own reason.
+ *    reviewer (with Nudge), teams, CI, and you (failing checks, conflicts, needs to move), each PR with its own reason.
  *
  * Needs a decision is drawn last on the page, but it claims its PRs before the Waiting sections do.
  *
@@ -46,7 +46,7 @@
  *
  * **Next up** (`nextUp`), at most `NEXT_LIMIT` items, whenever there is any work in Waiting on you, Fix or Merge:
  * - Candidates: people blocked on you (replies, change requests, re-reviews, reviews of any size), merges that are
- *   approved and passing, and fixes on your PRs (failing checks, conflicts, rebasing). A merge nobody reviewed is never
+ *   approved and passing, and fixes on your PRs (failing checks, conflicts, needs to move). A merge nobody reviewed is never
  *   a row, whatever it costs: it is counted on the quiet line (`nextMoreLine`), "10 ready to merge without review",
  *   which opens the review queue grouped by Action at Merge.
  * - Order, by tier (`NEXT_TIER`): people blocked on you, then approved merges, then fixes. Within a tier, `effortRank`,
@@ -65,7 +65,7 @@
  * **Effort rank** (`effortRank`): an internal ordering weight, never shown. It counts roughly in minutes, rough on
  * purpose, and over 15 it rounds to 5. The page shows no time estimates.
  * - Merge a passing PR: 1. Reply to a thread: 3. Address requested changes: 15.
- * - Fix: failing checks 10, conflicts 15, rebasing 5, per PR.
+ * - Fix: failing checks 10, conflicts 15, needs to move 5, per PR.
  * - Re-review: 2, plus 1 for every 50 lines changed since your review up to 400, then 1 for every 80 (5 when the size
  *   is not known yet).
  * - Review: 3, plus 1 for every 40 lines up to 400, then 1 for every 60 lines; `UNKNOWN_REVIEW_LINES` when the size
@@ -523,7 +523,7 @@ export interface GroupLine {
   target: DeepLinkTarget;
   /** The PR's check state. */
   check: CheckView;
-  /** Under You: why the PR needs you, and in words: "Failing checks", "Needs rebasing after #35390 merged". */
+  /** Under You: why the PR needs you, and in words: "Failing checks", "Needs to move onto main after #35390 merged". */
   reason?: FixReason;
   reasonText?: string;
   /** In a stack's chain: where the PR stands. */
@@ -791,7 +791,7 @@ export function prNeed(model: Pick<OverviewModel, 'lanes'>, member: ReviewMember
  *   stack is `owed`; only an approved, passing merge PR merges (`mergeGate`).
  * - `row` and `target`: the PR's own row and where it opens, for Enter, a click and Open.
  * - `actionRow` and `actionTarget`: where the action goes when it is not the PR itself: the owed review.
- * - `fix`: its fix, leading or behind an answer, in Next up's words (`fixText`, "needs rebasing after #12 merged"
+ * - `fix`: its fix, leading or behind an answer, in Next up's words (`fixText`, "needs to move onto main after #12 merged"
  *   from the fix row's stack), and `conflicts` when any fix entry has conflicts, for the icon.
  * - `isNew`: any entry it names changed since the last visit: its own, its fix's, the owed review's.
  */
@@ -991,7 +991,7 @@ export function waitingOnOthers(input: Pick<MorningInput, 'model' | 'now' | 'log
       const count = (reason: FixReason) => group.lines.filter((line) => line.reason === reason).length;
       const words: [FixReason, string, string][] = [['failing', 'failing check', 'failing checks'], ['conflicts', 'conflict', 'conflicts'], ['restack', 'needs to move', 'need to move']];
       group.detail = words.filter(([reason]) => count(reason)).map(([reason, one, many]) => plural(count(reason), one, many)).join(', ');
-      // Failing first, then conflicts, then rebasing; oldest first within each.
+      // Failing first, then conflicts, then needs to move; oldest first within each.
       const rank = (line: GroupLine) => words.findIndex(([reason]) => reason === line.reason);
       group.lines.sort((a, b) => rank(a) - rank(b) || a.since - b.since);
     } else {
@@ -1169,7 +1169,7 @@ export interface Briefing {
  * - Who is blocked on you: replies and change requests on your PRs (at most two people named), then reviews and
  *   re-reviews, each saying how many sit in stacks: "7 updated PRs (6 in one stack) are waiting on your review."
  * - Your PRs: approved merges (Next up's rows, and the quiet line), merges without review (the quiet line), then fixes
- *   by their first reason, as the You group counts them: failing checks, conflicts, rebasing. A fix Needs a decision
+ *   by their first reason, as the You group counts them: failing checks, conflicts, needs to move. A fix Needs a decision
  *   lists is counted there instead.
  * - Decisions: "7 PRs need a decision."
  * - With none of these: "Nothing needs you right now.", and how many of your PRs wait on others.
