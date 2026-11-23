@@ -37,6 +37,31 @@ void app.whenReady().then(async () => {
       // The keep-open hint lives in New tab's tooltip, so the row stays free to move the window.
       await capture('first-tab');
       assert.match(await js<string>(`document.querySelector('[aria-label="New tab"]').title`), /click a PR to keep it open/);
+      // A tooltip open in a workspace that another tab hides closes with it; the Overview destination's tooltip used
+      // to stay painted in the window's top-left corner. The focus a closed tab hands back opens none either.
+      const tooltip = `document.querySelector('[data-slot=tooltip-content]')`;
+      const overview = `${root}.querySelector('.workbench-sidebar [aria-label="Overview"]')`;
+      const centre = (element: string) =>
+        js<{ x: number; y: number }>(
+          `(()=>{const r=${element}.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+        );
+      win.focus();
+      win.webContents.focus();
+      await wait('document.hasFocus()');
+      win.webContents.sendInputEvent({ type: 'mouseMove', ...(await centre(overview)) });
+      await wait(`${tooltip}?.textContent.includes('act on now')`);
+      await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'t',metaKey:true,bubbles:true}))`);
+      await wait('document.querySelectorAll(".workspace-tab").length===2');
+      await wait(`!${tooltip}`);
+      await js(
+        `window.tooltipsShown=0;new MutationObserver(()=>{if(${tooltip})window.tooltipsShown++}).observe(document.body,{childList:true,subtree:true});window.dispatchEvent(new KeyboardEvent('keydown',{key:'w',metaKey:true,bubbles:true}))`
+      );
+      await wait('document.querySelectorAll(".workspace-tab").length===1');
+      await wait(`document.activeElement===document.querySelector('.workspace-tab-select[aria-selected=true]')`);
+      await js(`${overview}.focus()`);
+      assert.equal(await js('window.tooltipsShown'), 0, 'Returning to a tab and moving focus in it opens no tooltip');
+      win.webContents.sendInputEvent({ type: 'mouseMove', ...(await centre(`${root}.querySelector('.queue-list')`)) });
+      await js('document.activeElement.blur()');
       // With 12 tabs in a 1100px window, at least 120px of the row still moves the window.
       // Size the page, not the frame: setSize includes the Windows border, which leaves innerWidth 1084.
       await js(

@@ -75,7 +75,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.sidebar-current').textContent"), 'Review queue');
     await click('[aria-label="Collapse sidebar"]');
     assert.equal(await js("document.querySelector('.workbench-sidebar').getBoundingClientRect().width"), 52);
-    await js(`document.querySelector('.workbench-sidebar [aria-label="Starred"]').focus()`);
+    // Tooltips open for keyboard focus, not for focus the app moves.
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.workbench-sidebar [aria-label="Starred"]').focus()`);
     await wait("Array.from(document.querySelectorAll('[role=tooltip]')).some(el=>el.textContent==='Starred')");
     await click('.workbench-sidebar [aria-label="Starred"]');
     await wait("document.querySelector('.queue-toolbar h1').textContent==='Starred'");
@@ -110,7 +111,10 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.sidebar-views-popup .saved-view-link')");
     await wait("document.activeElement?.classList.contains('saved-view-link')");
     assert.equal(await js("document.activeElement.getAttribute('aria-current')"), 'page');
-    await js("document.querySelector('.sidebar-views-popup .saved-view-link').focus()");
+    // Opening the picker focuses its entry without a tooltip; the keyboard moving back to it shows one.
+    await js(
+      "const links=document.querySelectorAll('.sidebar-views-popup .saved-view-link');links[1].focus();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));links[0].focus()"
+    );
     await wait(
       "Array.from(document.querySelectorAll('[role=tooltip]')).some(el=>el.textContent.includes('Release work needing my review'))"
     );
