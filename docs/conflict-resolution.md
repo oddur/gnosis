@@ -86,7 +86,7 @@ Without a linked clone, with dependencies missing, or for a fork, there is no ty
 | Cmd+Enter (Ctrl+Enter) | **Review and push…**: opens the confirmation, never pushes |
 | Esc | Close the Conflicts view |
 
-Opening a file focuses the first conflict that needs you, or the file's next action when none does. Shortcuts pause in text fields, in a conflict's editor and in the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
+Opening a file focuses the first conflict that needs you, or the file's next action when none does. While focus is on the view's own controls (the **Compare with** switch, **Review Merged-only files myself** or the next action), A and U act on the conflict you were on last. Anywhere else, A uses the first conflict that needs you and has a proposal, and U undoes only the last A. When Gnosis moves focus itself, for example after a check finishes, U still undoes the last A. Shortcuts pause in text fields, in a conflict's editor and in the confirmation. The keyboard button in the summary row lists them on hover or focus, as does the keyboard shortcut overlay (?).
 
 ## Confirm and push
 

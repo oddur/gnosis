@@ -1939,6 +1939,29 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
     assert.equal(await js(`${block(0)}.dataset.state`), 'open');
     await wait(`document.activeElement===${block(1)}`);
+    // With focus on the view itself, not on a card or the view's own controls, the card you were on last no longer
+    // counts (#508). A uses the first conflict that needs you with a proposal, not the card without one you left.
+    await js(`${block(0)}.focus()`);
+    await js("document.querySelector('.conflict-workspace').focus()");
+    await key('a');
+    await wait(`${block(1)}?.dataset.bucket==='decided'`);
+    assert.equal(await js(`${block(0)}.dataset.state`), 'open');
+    assert.doesNotMatch(await footerSays(), /no proposal/);
+    await wait(`document.activeElement===${block(0)}`);
+    // Focus that Gnosis moved to the next conflict still leaves U undoing that A.
+    await key('u');
+    await wait(`${block(1)}?.dataset.state==='open' && !!${block(1)}.querySelector('[data-choice=proposal]')`);
+    await wait(`document.activeElement===${block(1)}`);
+    // U off the cards undoes nothing, even with the card you left holding a choice.
+    await key('a');
+    await wait(`${block(1)}?.dataset.bucket==='decided' && document.activeElement===${block(0)}`);
+    await js(`${block(1)}.focus()`);
+    await js("document.querySelector('.conflict-workspace').focus()");
+    await key('u');
+    assert.equal(await js(`${block(1)}.dataset.bucket`), 'decided', 'U off the cards undoes no card');
+    await js(`${block(1)}.focus()`);
+    await key('u');
+    await wait(`${block(1)}?.dataset.state==='open' && document.activeElement===${block(1)}`);
     // J to conflict 2, then V: focus is on the switch, and A still accepts conflict 2, not the first that needs you.
     await key('j');
     await key('j');

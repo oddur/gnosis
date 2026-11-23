@@ -1457,7 +1457,7 @@ export function ConflictWorkspace({
 
   const primaryButton = (() => {
     if (!session || !file || session.stale) return null;
-    const common = { ref: primary, size: 'sm' as const, 'data-conflict-primary': action };
+    const common = { ref: primary, size: 'sm' as const, 'data-conflict-primary': action, 'data-conflict-control': '' };
     if (proposalOnly)
       return (
         <Button
@@ -1653,6 +1653,7 @@ export function ConflictWorkspace({
                 <label title="On: you mark every file reviewed. Off: a file whose conflicts are all Merged is marked reviewed for you. Saved for this repository.">
                   <input
                     ref={mergedToggle}
+                    data-conflict-control=""
                     type="checkbox"
                     aria-keyshortcuts="G"
                     checked={showMerged}

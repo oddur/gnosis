@@ -348,7 +348,7 @@ function CompareSwitch({
           both: 'Each conflict’s two sides, with the result under them',
         };
   return (
-    <div className="conflict-compare" role="group" aria-label="Compare result with">
+    <div className="conflict-compare" role="group" aria-label="Compare result with" data-conflict-control="">
       <span className="conflict-compare-label" aria-hidden="true">
         Compare with
       </span>
