@@ -65,9 +65,11 @@
   --leading-code: 1.25rem;
   /* A diff's file path: one step above the code it heads, so file › hunk › code read in that order. */
   --type-diff-file: .875rem;
-  /* Diff stacks: files stand apart on the canvas; inside a file nothing is more than a hairline apart. */
-  --diff-file-gap: 24px;
+  /* Diff stacks: files stand apart on the canvas, each one framed unit; inside a file, a hunk gets a little of the
+     code's own surface above its header, and the code rows stay compact. */
+  --diff-file-gap: 32px;
   --diff-stream-inset: 12px;
+  --diff-hunk-air: 8px;
   --leading-prose: 1.65;
   --weight-prose: 400;
   --tracking-prose: 0;

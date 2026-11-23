@@ -1970,7 +1970,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 }
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
-.diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
+.diff-gap[data-trailing] { min-height:var(--leading-code); padding:0 0 var(--diff-hunk-air); background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
 .diff-gap-trailing { display:flex; align-items:center; gap:1ch; min-width:0; padding-left:var(--diff-code-inset); font-size:var(--type-caption); }
 .diff-gap-trailing .diff-context-button { min-height:20px; padding-block:0; }
 /* The file's last line, not a bar: "36 more lines · Show" stays muted until it is pointed at. */
@@ -2093,7 +2093,18 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    the file header's bottom border, so it crosses the line that marks it pinned. Pinned, it casts a soft shadow onto the
    code scrolling under it. Lines and controls scrolled to land below both headers. */
 .changes-diff { --diff-sticky-offset:calc(var(--diff-file-header-height, 0px) + 40px); }
-.diff-hunk > .diff-gap[data-hunk-header] { position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px); z-index:1; }
+/* A hunk header is a step below its file's header: on a surface nearer the code's, 30px rather than 35px, its words
+   in the 12px caption size, with --diff-hunk-air of the code's surface above it. The air is its top border, so it
+   pins with the bar and slides under the file header: pinned, the bar sits where it always has (ChangesDiff's jumps
+   subtract the border). The gutter keeps the code's size, so the breadcrumb still starts at the code's column. */
+.diff-hunk > .diff-gap[data-hunk-header] {
+  --diff-header-bg:color-mix(in oklab, var(--diff-code-header, color-mix(in oklab, var(--diff-code-bg, #22272e) 88%, var(--diff-code-fg, #c5ccd6))) 60%, var(--diff-code-bg, #22272e));
+  --diff-header-height:calc(var(--leading-code) * 1.5);
+  position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px - var(--diff-hunk-air)); z-index:1;
+  min-height:calc(var(--diff-header-height) + var(--diff-hunk-air));
+  border-top:var(--diff-hunk-air) solid var(--diff-code-bg, #22272e);
+}
+.diff-hunk > .diff-gap[data-hunk-header] > :not(.diff-gap-gutter) { font-size:var(--type-caption); }
 /* Pinned, a header shows only where the reader is: expanding from it would move the lines under the reader. The
    controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
    inside the bar. */

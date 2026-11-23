@@ -1677,8 +1677,11 @@ export function ChangesDiff<A>({
       stopJump();
       clearHere();
       const id = ++jumpId;
-      // Every bar has the same height, pinned or not.
-      const barHeight = element.querySelector<HTMLElement>('[data-hunk-header]')?.offsetHeight ?? 0;
+      // Every bar has the same height, pinned or not. Its top border is the air above it (globals.css), which pins
+      // under the file header: only the rest shows there.
+      const bar = element.querySelector<HTMLElement>('[data-hunk-header]');
+      const air = bar ? parseFloat(getComputedStyle(bar).borderTopWidth) || 0 : 0;
+      const barHeight = bar ? bar.offsetHeight - air : 0;
       const parts = latestParts.current;
       const revealing = reveal && reveal[0] <= reveal[1] && hiddenBetween(parts, reveal[0], reveal[1]) ? parts : undefined;
       if (revealing && reveal) latestShow.current?.({ kind: 'whole', start: reveal[0], end: reveal[1] });
@@ -1700,7 +1703,7 @@ export function ChangesDiff<A>({
           const section = gapBar.matches('[data-hunk-header]') ? gapBar.parentElement : null;
           landed = gapBar;
           return section
-            ? { y: section.getBoundingClientRect().top, to: top, exact: true }
+            ? { y: section.getBoundingClientRect().top, to: top - air, exact: true }
             : { y: gapBar.getBoundingClientRect().top, to: under, exact: true };
         }
         const block = latestBlocks.current.find((b) => b.kind === 'hunk' && b.key === place.key);
