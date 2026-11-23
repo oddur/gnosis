@@ -92,8 +92,12 @@ export function createMemoryStorage(saved = new Map<string, string>()): StateSto
     flush: () => Promise.resolve(),
   };
 }
+/** What a request to saved data says once the store can't reach the disk: its worker died, or it was closed. */
+export const SAVED_WORK_UNAVAILABLE = 'Saved work isn’t available. Restart Gnosis.';
 export function createAppDataStore() {
   let worker: Worker | undefined;
+  /** Where `open` read from, for `reopen`. */
+  let opened: string | undefined;
   let sequence = 0;
   let failure: Error | undefined;
   let values: Record<string, unknown> | undefined;
@@ -108,7 +112,8 @@ export function createAppDataStore() {
   const taken = new Set<string>();
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   function call<T>(method: string, args?: unknown): Promise<T> {
-    if (!worker || failure) return Promise.reject(failure ?? new Error('Storage is not ready'));
+    if (failure) return Promise.reject(failure);
+    if (!worker) return Promise.reject(new Error(values ? SAVED_WORK_UNAVAILABLE : 'Saved work is still loading'));
     const active = worker;
     return new Promise((resolve, reject) => {
       const id = ++sequence;
@@ -189,6 +194,9 @@ export function createAppDataStore() {
       return;
     }
     if (!dirty()) return;
+    // Closed: writes since are counted as lost (`lose`), and a final save that failed stays queued for `reopen`. A
+    // flush never fails a caller for it: the quit already reported the failed save, and the app kept running.
+    if (!worker) return;
     const states = [...updates];
     const changed = [...patches];
     updates.clear();
@@ -237,9 +245,10 @@ export function createAppDataStore() {
     await writing;
     if (dirty()) await flush();
   }
-  return {
+  const store = {
     async open(directory: string) {
       if (worker) throw new Error('Storage already opened');
+      opened = directory;
       closed = false;
       // Forge builds the worker alongside main.js. tsx is only used by source-level tests.
       worker = __filename.endsWith('.ts')
@@ -249,8 +258,11 @@ export function createAppDataStore() {
         : new Worker(path.join(__dirname, 'app-data-worker.js'));
       const active = worker;
       const failed = (error: Error) => {
-        failure = error;
-        for (const request of pending.values()) request.reject(error);
+        // The cause goes to the log; callers get what to do.
+        console.error('Saved work stopped:', error);
+        const unavailable = new Error(SAVED_WORK_UNAVAILABLE);
+        failure = unavailable;
+        for (const request of pending.values()) request.reject(unavailable);
         pending.clear();
         active.unref();
       };
@@ -276,7 +288,18 @@ export function createAppDataStore() {
         else request?.resolve(result);
         if (!pending.size) active.unref();
       });
-      values = await call<Record<string, unknown>>('open', { directory });
+      const loaded = await call<Record<string, unknown>>('open', { directory });
+      // Reopened after a close: the copy in memory is newer than the disk, and the stores own what they took.
+      values ??= loaded;
+      if (dirty()) schedule();
+    },
+    /**
+     * Opens saved data again after `close`, when the app keeps running: a quit that could not save, and you kept
+     * Gnosis open. Saves queued when the close failed go to disk now.
+     */
+    async reopen() {
+      if (worker || !opened || failure) return;
+      await store.open(opened);
     },
     read(name: string): unknown {
       const started = performance.now();
@@ -387,4 +410,5 @@ export function createAppDataStore() {
       if (failure) throw failure;
     },
   };
+  return store;
 }

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
@@ -1575,7 +1576,7 @@ async function realStorage(t: TestContext, f: Awaited<ReturnType<typeof fixture>
     await store.open(dir);
     return store;
   };
-  return { store: () => store, service, run, reopen };
+  return { store: () => store, service, run, reopen, dir };
 }
 
 void test('discarding a draft in the real saved data removes it, and later saves still persist', async (t) => {
@@ -1610,6 +1611,35 @@ void test('dropping a background draft in the real saved data never blocks the n
   assert.ok(opened.files.length, 'Prepared again');
   const store = await real.reopen();
   assert.equal((store.read(key) as ConflictSession).version, opened.version);
+});
+
+void test('a quit that could not save never fails your next prepare with "Storage is not ready"', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  t.mock.method(console, 'error', () => {});
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const signal = new AbortController().signal;
+  assert.ok((await real.service.prepareInBackground(f.state.url, signal))?.background, 'A background draft');
+  // Quit (or Restart to update): the final save fails, and you keep Gnosis open.
+  const db = new DatabaseSync(path.join(real.dir, 'workbench.sqlite'));
+  db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+  real.store().write('workbench:tester', { account: 'tester', subjects: [], briefs: {}, overrides: [], day: '', used: 0 });
+  await assert.rejects(real.store().close(), /simulated disk failure/);
+  db.exec('DROP TRIGGER fail_write');
+  db.close();
+  // Background clean-up still runs, and drops the background draft. Before the fix its flush, and your prepare's,
+  // rejected with "Storage is not ready".
+  await real.service.trimBackground(0);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  assert.ok(opened.files.length, 'Prepared');
+  // Kept open: saved data opens again (src/main.ts `saveBeforeQuit`), and saving works again.
+  await real.store().reopen();
+  const saved = (
+    await real.run({ kind: 'save', id: opened.id, version: opened.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, saved.version, 'The save after reopening is on disk');
+  assert.ok(store.read('workbench:tester'), 'The save that failed at quit landed after reopening');
 });
 
 void test('the saved data refuses a draft that is not an object when it is written, and keeps saving others', async (t) => {

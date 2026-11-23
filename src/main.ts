@@ -1168,6 +1168,9 @@ function saveBeforeQuit(): Promise<boolean> {
       const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Keep open', 'Quit without saving'], defaultId: 0, cancelId: 0,
         message: 'Some changes could not be saved', detail: `${error instanceof Error ? error.message : String(error)}\nFree some disk space, then try quitting again.` });
       if (response === 1) cacheFlushed = true;
+      // Kept open: saved data opens again, so later saves (a conflict draft, a review) don't fail on a closed store.
+      // What the close couldn't save is still queued, and is saved now.
+      else await appData.reopen().catch((reopenError: unknown) => console.error('Could not reopen saved work:', reopenError));
       return response === 1;
     } finally {
       savingBeforeQuit = null;
