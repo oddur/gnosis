@@ -15,8 +15,8 @@
  * - **Starred**, first, above them all, only when something is starred: the PRs and stacks the user starred as their
  *   top work, most actionable first, each with its state and one action (lib/overview-starred.ts). A starred PR is
  *   listed there and nowhere else on the page. A stack lists its PRs under it in merge order, on the chain the stacks
- *   in Waiting on others use; merged and closed starred PRs stay at the end as quiet done rows until unstarred. Eight
- *   show, then "Show all N". Every row menu can star or unstar its PRs; an unstarred row leaves the section.
+ *   in Waiting on others use. Like every section, it lists only open PRs, drafts included: a starred PR that merged or
+ *   closed stays starred but leaves the page, and the section hides when nothing is left. Eight show, then "Show all N". Every row menu can star or unstar its PRs; an unstarred row leaves the section.
  *
  * Each PR is listed once on the page (`lib/morning.ts`, "Each PR once"), except in a stack's chain, which shows every PR
  * of the stack as a full line and links to the section that also lists one ("↑ Next up"). Every heading counts what it
@@ -205,7 +205,7 @@ interface RowRef {
 
 export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRepositories, onConnect, onModel } = props;
-  // Starred work: main's starred entries, merged and closed ones included while they stay starred.
+  // Starred work: main's starred entries. The section lists only their open PRs (lib/overview-starred.ts).
   const starredItems = useMemo(() => queue.starredItems ?? queue.items.filter((item) => item.starred), [queue.starredItems, queue.items]);
   const view = useOverview({ items: queue.items, starred: starredItems, login: authenticated ? login : null, scope: authenticated ? scope : null, live, visible, ready: !loading, teamRequests, excluded });
   useEffect(() => { onModel?.(view); }, [view, onModel]);
@@ -287,9 +287,9 @@ export function OverviewPage(props: OverviewPageProps) {
     };
     // Starred first: each entry, then a stack's PRs while it is expanded, as it is by default.
     for (const entry of starredShown(starred, opened)) {
-      push('starred', entry.id, { row: entry.lead.row, members: entry.lines.filter((line) => line.tier !== 'done').map((line) => line.member) });
+      push('starred', entry.id, { row: entry.lead.row, members: entry.lines.map((line) => line.member) });
       if (entry.kind === 'stack' && !opened.has(entry.id))
-        for (const line of entry.lines) push('starred', `${entry.id}|${line.id}`, { row: line.row, members: line.tier === 'done' ? [] : [line.member] });
+        for (const line of entry.lines) push('starred', `${entry.id}|${line.id}`, { row: line.row, members: [line.member] });
     }
     for (const item of morning.next.items) push('next', item.id, { row: item.row, members: item.row.entries.map((entry) => entry.member).filter((member) => item.urls.includes(member.url)) });
     // The quiet line under Next up is the section's last stop: j/k and Tab reach it like a row.
@@ -905,7 +905,7 @@ interface RowActions {
   keyDown: (event: ReactKeyboardEvent) => void;
   /** Scrolls to and focuses the rows that list `urls` in `place`: a chain line's "↑ Next up", a stack's next step. */
   reveal: (urls: readonly string[], place: AlsoPlace) => void;
-  /** Opens a PR that has no row in the lanes, such as a quiet or merged starred PR. */
+  /** Opens a PR that has no row in the lanes, such as a quiet starred PR. */
   openItem: (item: QueueItem, target: DeepLinkTarget) => void;
   /** Which PRs are starred, and the queue's star toggle. Absent where stars cannot change. */
   star?: { has: (members: readonly ReviewMember[]) => boolean; busy: boolean; change: (members: readonly ReviewMember[], starred: boolean) => void };
@@ -1725,7 +1725,6 @@ function StarredLineRow({ id, line, item, now, tabStop, actions, chain = false, 
   const unread = useContext(Unread);
   const { member } = line;
   const waited = age(line.since, now);
-  const done = line.tier === 'done';
   const opens = () => openStarred(line, item, actions);
   return (
     <RowShell
@@ -1733,7 +1732,7 @@ function StarredLineRow({ id, line, item, now, tabStop, actions, chain = false, 
       tabStop={tabStop}
       actions={actions}
       depth={chain ? 1 : 0}
-      className={[chain ? 'is-chain' : '', chain && lead ? 'is-next' : '', done ? 'is-done' : ''].filter(Boolean).join(' ')}
+      className={[chain ? 'is-chain' : '', chain && lead ? 'is-next' : ''].filter(Boolean).join(' ')}
       icon={
         chain ? (
           <span className="stack-chain-node" data-overview-icon="pr" aria-hidden="true">
@@ -1754,7 +1753,7 @@ function StarredLineRow({ id, line, item, now, tabStop, actions, chain = false, 
       comments={line.comments}
       waited={{ since: line.since, source: line.source, label: waited }}
       quick={<StarredQuick line={line} item={item} actions={actions} reveal={chain} />}
-      menu={prMenu(id, opens, actions, unread([member]), member, [member], undefined, { snooze: !done, ...(star ? { star } : {}) })}
+      menu={prMenu(id, opens, actions, unread([member]), member, [member], undefined, star ? { star } : {})}
       menuLabel={`PR #${member.number}`}
       isNew={!!line.isNew}
       unread={unread([member])}
@@ -1777,7 +1776,6 @@ const StarredRows = memo(
     const label = useRepoLabel();
     const unread = useContext(Unread);
     const { lead, item } = entry;
-    const done = entry.tier === 'done';
     const subject = item.subject.members;
     const star = { members: subject, starred: true };
     if (entry.kind === 'pr') return <StarredLineRow id={entry.id} line={lead} item={item} now={now} tabStop={tabStop === entry.id} actions={actions} star={star} />;
@@ -1787,7 +1785,7 @@ const StarredRows = memo(
     const waited = age(entry.since, now);
     const spoken = `Stack ${entry.title}, ${reposSpoken(repos, label)}, ${entry.why}`;
     return (
-      <li className={`morning-stack${expanded ? ' is-expanded' : ''}${done ? ' is-done' : ''}`} data-overview-stack={entry.id}>
+      <li className={`morning-stack${expanded ? ' is-expanded' : ''}`} data-overview-stack={entry.id}>
         <RowShell
           as="div"
           id={entry.id}
@@ -1804,7 +1802,7 @@ const StarredRows = memo(
           waited={{ since: entry.since, source: entry.source, label: waited }}
           quick={<StarredQuick line={lead} item={item} actions={actions} />}
           expanded={expanded}
-          menu={stackMenu(entry.id, members, actions, unread(members), () => openStarred(lead, item, actions), { snooze: !done, members: subject, starred: true })}
+          menu={stackMenu(entry.id, members, actions, unread(members), () => openStarred(lead, item, actions), { members: subject, starred: true })}
           menuLabel={`stack ${entry.title}`}
           unread={!expanded && unread(members)}
           description={`${spoken}${entry.check ? `, ${entry.check.spoken}` : ''}, waiting ${spokenWaiting(waited)}. ${expanded ? 'Expanded' : 'Collapsed'}`}
@@ -1838,12 +1836,12 @@ const menuFor = (row: OverviewRow) => (row.kind === 'stack' ? `stack ${row.title
  * The menu every PR row shares: open, snooze, mark read, copy, Open on GitHub. `members`: the PRs the row stands for,
  * which Snooze and Mark as read act on; one PR's row says "Snooze PR…", a row for several of a stack "Snooze stack…".
  */
-function prMenu(id: string, row: OverviewRow | (() => void), actions: RowActions, unread: boolean, member: ReviewMember, members: readonly ReviewMember[], target?: DeepLinkTarget, options: { snooze?: boolean; star?: { members: readonly ReviewMember[]; starred: boolean } } = {}): EntryActionGroups {
+function prMenu(id: string, row: OverviewRow | (() => void), actions: RowActions, unread: boolean, member: ReviewMember, members: readonly ReviewMember[], target?: DeepLinkTarget, options: { star?: { members: readonly ReviewMember[]; starred: boolean } } = {}): EntryActionGroups {
   const open = typeof row === 'function' ? row : () => actions.open(row, target);
   return [
     [{ label: 'Open', run: open }],
     [
-      ...(options.snooze === false ? [] : [{ label: members.length > 1 ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) }]),
+      { label: members.length > 1 ? 'Snooze stack…' : 'Snooze PR…', run: () => actions.snooze(id) },
       { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(members.map((entry) => entry.url)) },
       ...(options.star ? starItem(actions, options.star.members, options.star.starred) : starItem(actions, members)),
     ],
@@ -1865,11 +1863,11 @@ function starItem(actions: RowActions, members: readonly ReviewMember[], starred
   return [starAction({ members, starred: starred ?? star.has(members), busy: star.busy, onStarChange: star.change })];
 }
 /** A stack header's menu: the stack's part of `prMenu` (open its base, snooze the stack, mark it read, star it). */
-function stackMenu(id: string, listed: readonly ReviewMember[], actions: RowActions, unread: boolean, open: () => void, options: { snooze?: boolean; members?: readonly ReviewMember[]; starred?: boolean } = {}): EntryActionGroups {
+function stackMenu(id: string, listed: readonly ReviewMember[], actions: RowActions, unread: boolean, open: () => void, options: { members?: readonly ReviewMember[]; starred?: boolean } = {}): EntryActionGroups {
   return [
     [{ label: 'Open', run: open }],
     [
-      ...(options.snooze === false ? [] : [{ label: 'Snooze stack…', run: () => actions.snooze(id) }]),
+      { label: 'Snooze stack…', run: () => actions.snooze(id) },
       { label: 'Mark as read', disabled: !unread, run: () => actions.markRead(listed.map((member) => member.url)) },
       ...starItem(actions, options.members ?? listed, options.starred),
     ],

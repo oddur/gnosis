@@ -15,6 +15,8 @@ void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
     height: 900,
+    // Sizes are the page's, as innerWidth reads them: on Windows the window's frame would take 16px of the 1280.
+    useContentSize: true,
     show: true,
     webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
@@ -133,12 +135,12 @@ void app.whenReady().then(async () => {
     if (printed.some((prefix) => name.startsWith(prefix))) console.log(`CONFLICTSHOT ${name} ${png.toString('base64')}`);
   };
   const resize = async (width: number, height: number) => {
-    win.setSize(width, height);
+    win.setContentSize(width, height);
     await new Promise((r) => setTimeout(r, 300));
   };
   /** Light, dark and narrow captures of one state. The window returns to its size and theme. */
   const captureAll = async (name: string) => {
-    const [width, height] = win.getSize();
+    const [width, height] = win.getContentSize();
     const dark = await js<boolean>("document.documentElement.classList.contains('dark')");
     const focused = await js<boolean>('(window.__focus=document.activeElement, true)');
     await js("document.documentElement.classList.remove('dark')");
@@ -201,6 +203,9 @@ void app.whenReady().then(async () => {
     js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
   try {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
+    // Size the page itself and wait for it: a new window can open smaller than asked, and the checks below are at 1280.
+    win.setContentSize(1280, 900);
+    await wait('innerWidth===1280 && innerHeight===900');
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
@@ -337,6 +342,14 @@ void app.whenReady().then(async () => {
     );
     // The type check is off and the PR is TypeScript: the panel's last line, with a link to the setting.
     assert.match(await js<string>(`${guide}.querySelector('[data-conflict-guide-type-check]').textContent`), /type-check the merge.*It’s off\. Repository settings/);
+    // Each row is exactly one line high. Parts aligned on a shared baseline made rows taller by an amount that depends
+    // on the platform's font metrics: 115px here, over 120 on macOS and Windows.
+    assert.deepEqual(
+      await js<boolean[]>(`(()=>{const g=${guide};const line=parseFloat(getComputedStyle(g).lineHeight);
+        return [...g.querySelectorAll('dt, dd, .conflict-guide-more')].map(e=>Math.abs(e.getBoundingClientRect().height-line)<0.5)})()`),
+      [true, true, true, true, true, true, true, true],
+      'Every row of the panel is one line high'
+    );
     assert.ok((await js<number>(`${guide}.getBoundingClientRect().height`)) <= 120, 'The panel stays compact');
     assert.equal(await js("document.querySelectorAll('.conflict-notes > .conflict-note').length"), 0, 'No separate bands');
     assert.equal(await activeBlock(), '0', 'The help never takes focus');

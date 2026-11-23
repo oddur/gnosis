@@ -276,6 +276,11 @@ void app.whenReady().then(async () => {
 
   try {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&diff-gaps`);
+    // The slice heights below assume lines that fit the code column: a line wider than it adds a 10px scrollbar under
+    // its slice. Size the page itself and wait for it, since a new window can open smaller than asked (on a native
+    // Windows runner a slice measured 10px over, with a scrollbar, though the lines fit at 1280).
+    win.setContentSize(1280, 800);
+    await wait('innerWidth===1280 && innerHeight===800');
     await waitForWorkbenchQueue(win.webContents);
     await js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
       window.__longTasks=[];window.__events=[];
@@ -424,12 +429,13 @@ void app.whenReady().then(async () => {
       assertPerf('diff gaps: accessibility work in one scroll pass (#366)', most, SCROLL_ACCESSIBILITY_BUDGET);
     }
     // A slice's placeholder height is its laid-out height, so mounting it moves nothing.
-    const heights = await js<{ estimate: number; actual: number }[]>(`(()=>{
-      return [...${huge}.querySelectorAll('.changes-slice')].slice(0,3).map(e=>{const host=e.querySelector('diffs-container');
-        return {estimate:parseFloat(e.style.containIntrinsicBlockSize.replace('auto','')),actual:host?Math.round(host.getBoundingClientRect().height):-1}})})()`);
+    const heights = await js<{ estimate: number; actual: number; code: string }[]>(`(()=>{
+      return [...${huge}.querySelectorAll('.changes-slice')].slice(0,3).map(e=>{const host=e.querySelector('diffs-container');const c=host?.shadowRoot?.querySelector('[data-code]');
+        return {estimate:parseFloat(e.style.containIntrinsicBlockSize.replace('auto','')),actual:host?Math.round(host.getBoundingClientRect().height):-1,
+          code:c?'code '+c.scrollWidth+'px wide in '+c.clientWidth+'px, scrollbar '+(c.offsetHeight-c.clientHeight)+'px, window '+innerWidth+'x'+innerHeight:'no code'}})})()`);
     assert.ok(heights.length === 3, 'The large file renders in slices');
-    for (const { estimate, actual } of heights)
-      assert.ok(Math.abs(estimate - actual) <= 1, `Slice estimate ${estimate}px, laid out ${actual}px`);
+    for (const { estimate, actual, code } of heights)
+      assert.ok(Math.abs(estimate - actual) <= 1, `Slice estimate ${estimate}px, laid out ${actual}px (${code})`);
     assert.equal(await js<number>(`${huge}.querySelectorAll('.changes-slice').length`), 15);
 
     // ── #299: gaps reveal 20 lines, or all, from the after side only ──

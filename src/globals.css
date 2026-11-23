@@ -4340,13 +4340,18 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* First-run help (components/ConflictOnboarding.tsx): the bucket key and quiet one-line notes under the summary. */
 .conflict-notes:empty { display:none; }
 .conflict-guide { position:relative;display:flex;flex-direction:column;gap:2px;padding:6px 96px 7px 24px;border-bottom:1px solid var(--border);background:var(--secondary);font-size:var(--type-caption);line-height:1.4; }
-.conflict-guide dl { display:grid;grid-template-columns:max-content minmax(0,80ch);align-items:baseline;gap:1px 12px;margin:0; }
+/* Every row of the key is one line high on every platform. Its parts start at the top rather than share a baseline: the
+   baseline of a bucket's icon and the line's text depends on each OS's font metrics, and on macOS and Windows it made
+   every row a few pixels taller than the line. Same font, size and line height, so the words still line up. */
+.conflict-guide dl { display:grid;grid-template-columns:max-content minmax(0,80ch);align-items:start;gap:1px 12px;margin:0; }
 .conflict-guide dl > div { display:contents; }
 .conflict-guide dd { margin:0; }
 .conflict-guide-more,.conflict-guide-line { display:flex;align-items:center;gap:6px;color:var(--muted-foreground); }
 .conflict-guide-last { flex-wrap:wrap;gap:2px 20px; }
 .conflict-guide-last > span { display:block; }
-.conflict-guide-last svg { display:inline;vertical-align:-2px;margin-right:6px; }
+/* The icons and key caps in the last line sit inside its 16.8px line box, from the top, so they never make it taller
+   whatever the platform's font metrics. */
+.conflict-guide-last svg { display:inline;vertical-align:top;margin:2px 6px 0 0; }
 .conflict-guide-close { position:absolute;top:6px;right:24px; }
 .conflict-guide[data-conflict-guide=compact] { padding-right:24px; }
 .conflict-guide-more svg { flex:none; }
@@ -4355,6 +4360,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-guide:focus-visible { outline:none; }
 .conflict-guide .kbd { color:inherit;background:transparent;border-color:color-mix(in srgb,currentColor 40%,transparent); }
 .conflict-guide .kbd + .kbd { margin-left:2px; }
+.conflict-guide-last .kbd { padding-block:0;vertical-align:top;margin-top:1px; }
 .conflict-guide-link { color:var(--primary);text-decoration:underline;text-underline-offset:2px; }
 .conflict-guide-expand { color:var(--foreground);text-align:left; }
 .conflict-guide-expand:hover { text-decoration:underline;text-underline-offset:2px; }
@@ -5771,7 +5777,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .morning-status.is-conflicts { color:var(--color-danger); }
 /* Starred (lib/overview-starred.ts) uses the same rows. A merged or closed starred PR stays as a quiet done row at the
    end: its title muted, as a chain's PRs are; its state icon and "Merged" or "Closed" say what happened. */
-.morning-row.is-done .morning-title-text, .morning-stack.is-done > .morning-stack-head .morning-title-text { color:var(--muted-foreground); }
 /* Stacks: a header with the name, the repository once and the next step, then the chain in merge order on a thin
    connector, as on the stack page (StackDependencyChain). The step and the numbers never truncate; titles do, at
    their end. */
