@@ -19,7 +19,8 @@ import {
   type ConflictDiffBlock,
   type WrittenBudget,
 } from './conflict-diff';
-import { conflictFileStage, type ConflictFile, type ConflictProposal } from './conflict-resolution';
+import { conflictFileStage } from './conflict-markers';
+import type { ConflictFile, ConflictProposal } from './conflict-resolution';
 import { wholeEdited, type ConflictBucket } from './conflict-verify';
 
 /**
@@ -29,7 +30,10 @@ import { wholeEdited, type ConflictBucket } from './conflict-verify';
  * (conflictFileStage, which fileStatus reads as its stage). A reviewed file without markers is decided by you, whatever
  * its buckets say: it is never stuck.
  */
-export const needsYou = (file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved'>, draft = file.result) =>
+export const needsYou = (
+  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved' | 'path' | 'original' | 'base' | 'ours' | 'theirs'>,
+  draft = file.result
+) =>
   conflictFileStage(file, draft) !== 'reviewed';
 
 /**
@@ -164,6 +168,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     file: Pick<
       ConflictFile,
       | 'path'
+      | 'base'
       | 'ours'
       | 'theirs'
       | 'original'

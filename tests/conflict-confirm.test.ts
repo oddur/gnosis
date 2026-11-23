@@ -20,7 +20,8 @@ import {
   type Verdict,
 } from '../lib/conflict-verify';
 import type { BlockPicks } from '../lib/conflict-blocks';
-import { conflictFileStage, type ConflictFile, type ConflictProposal } from '../lib/conflict-resolution';
+import { conflictFileStage } from '../lib/conflict-markers';
+import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
 
 /** The push confirmation's groups (#445 item 12): You decided, Merged for you, Arriving from main. */
 const original =

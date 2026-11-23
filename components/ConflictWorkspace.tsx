@@ -73,13 +73,14 @@ import {
 } from '../lib/conflict-flow';
 import { workbenchStore } from '../lib/workbench-store';
 import type { ActivityTask } from '../lib/activity';
+import { conflictFileStage } from '../lib/conflict-markers';
+import { markersLeft } from '../lib/conflict-carry';
 import {
   SAVE_REFUSALS,
   STALE_DRAFT,
   refusedSave,
   UNDO_LATER,
   hasConflictMarkers,
-  conflictFileStage,
   type ConflictFile,
   type ConflictFileStage,
   type ConflictReply,
@@ -1025,7 +1026,7 @@ export function ConflictWorkspace({
     const ordered = [...states.slice(index + 1), ...states.slice(0, Math.max(0, index))];
     return ordered.find((s) => s.stage !== 'reviewed' && !s.file.unsupported)?.file;
   };
-  const markersRemain = hasConflictMarkers(contents);
+  const markersRemain = !!file && markersLeft(file, contents);
   const ready = selectedState?.status.kind === 'proposal';
   // The conflicts behind a whole-file proposal, once you ask for them, until the view changes.
   const [blocksShown, setBlocksShown] = useState('');
