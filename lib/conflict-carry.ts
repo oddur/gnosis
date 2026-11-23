@@ -154,6 +154,26 @@ export interface CarriedFile {
   texts?: (string | undefined)[];
 }
 
+/** The conflicts of a draft's Git merge, by their text. */
+const oldKeys = (file: ConflictFile) =>
+  new Set(parseConflicts(file.original).flatMap((s) => (s.kind === 'conflict' ? [blockKey(s)] : [])));
+
+/**
+ * The fresh merge's draft with every conflict the earlier draft also had back to Git's markers, for a file whose
+ * earlier draft couldn't be carried (#528): those were yours to decide, so no fresh proposal is put in for them. A new
+ * conflict keeps what preparation put in. Undefined when nothing changes.
+ */
+export function withoutEarlierConflicts(old: ConflictFile, next: ConflictFile): string | undefined {
+  const before = oldKeys(old);
+  const segments = parseConflicts(next.original);
+  const texts = blockResolutions(segments, next.result);
+  if (!texts) return undefined;
+  const restore = segments.flatMap((s) =>
+    s.kind === 'conflict' && before.has(blockKey(s)) && texts[s.index] !== undefined ? [s.index] : []
+  );
+  return restore.length ? restoreMarkers(segments, texts, next.result, restore) : undefined;
+}
+
 /** An earlier draft's resolved blocks by their conflict text, as carryFile reads them. Compute it once per draft. */
 export type CarrySource = Map<
   string,
@@ -216,6 +236,10 @@ export function carryFile(
   const edits: NonNullable<ConflictFile['edits']> = [];
   /** Conflicts whose earlier text was a model's proposal: open again, with Git's markers, to ask again. */
   const modelStale: number[] = [];
+  /** The fresh proposals `next`'s draft holds, read once and only when one may fill a block (#451). */
+  let shown: (ConflictProposal | null)[] | undefined | null = null;
+  /** The conflicts the earlier draft had too: one it left open stays open (#528). */
+  const before = oldKeys(old);
   const result = segments
     .map((segment) => {
       if (segment.kind === 'text') return segment.text;
@@ -230,9 +254,14 @@ export function carryFile(
       picks[segment.index] = carried?.pick ?? null;
       edits[segment.index] = carried?.edit ?? null;
       if (carried === undefined) {
-        // Not carried: the fresh merge's proposal for it, if any, as preparation left it. It still needs you.
+        // Not carried. It still needs you. A conflict the earlier draft had too was open there (or couldn't be read): it
+        // stays open, and its fresh proposal is offered on its card (#528). A new conflict takes its fresh proposal only
+        // when preparation put it in the draft; one stored beside the draft was never applied (#451).
         open++;
-        return next.proposals?.[segment.index]?.text ?? segment.block.raw;
+        const proposal = next.proposals?.[segment.index];
+        if (!proposal || before.has(blockKey(segment))) return segment.block.raw;
+        if (shown === null) shown = heldProposals(segments, next.result, next.proposals ?? []);
+        return shown?.[segment.index] ? proposal.text : segment.block.raw;
       }
       reused++;
       carriedBlocks.push(segment.index);
@@ -321,6 +350,19 @@ export function restoreMarkers(
       .map((s) => (s.kind === 'text' ? s.text : back.includes(s.index) ? s.block.raw : (texts[s.index] ?? s.block.raw)))
       .join('');
   return draft([]) === result ? draft(restore) : undefined;
+}
+
+/**
+ * The proposals the draft holds: each one whose conflict's text in `result` is its own text, else null. Undefined when
+ * the draft can't be split into its conflicts. `texts` is `blockResolutions(segments, result)`, when the caller has it.
+ */
+export function heldProposals(
+  segments: ConflictSegment[],
+  result: string,
+  proposals: readonly (ConflictProposal | null)[],
+  texts = blockResolutions(segments, result)
+): (ConflictProposal | null)[] | undefined {
+  return texts && proposals.map((proposal, index) => (proposal && texts[index] === proposal.text ? proposal : null));
 }
 
 /** Git's conflict with these proposals in place; other blocks keep their markers. */
