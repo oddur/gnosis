@@ -1184,6 +1184,24 @@ export function wholeEdited(
 }
 
 /**
+ * The conflicts whose markers a whole-file edit (#503) left in the draft: each conflict the draft still shows with the
+ * same two sides. A marker block that matches none (sides you edited, markers you typed) leaves every conflict open:
+ * when in doubt, the file's conflicts wait for you.
+ */
+function conflictsLeft(blocks: readonly Conflict[], contents: string) {
+  const open = new Set<number>();
+  for (const shown of parseConflicts(contents)) {
+    if (shown.kind !== 'conflict') continue;
+    const match = blocks.find(
+      (s) => !open.has(s.index) && s.block.ours === shown.block.ours && s.block.theirs === shown.block.theirs
+    );
+    if (!match) return new Set(blocks.map((s) => s.index));
+    open.add(match.index);
+  }
+  return open;
+}
+
+/**
  * The conflicts of a whole-file edit (#503) whose proposal still needs a choice and is still in the draft as it was:
  * its own text where the draft splits into its conflicts, else anywhere in the draft (an empty proposal always counts).
  * A conflict you chose or edited before the whole-file edit is yours already.
@@ -1230,8 +1248,8 @@ export function blockBuckets(
   // only text you changed, or a choice you made before the edit, is your decision.
   if (wholeEdited(file, contents)) {
     const unchanged = untouchedProposals(file, segments, contents, verdict);
-    let open = parseConflicts(contents).filter((s) => s.kind === 'conflict').length;
-    return blocks.map((s) => (unchanged.has(s.index) ? 'check' : open-- > 0 ? 'decide' : 'decided'));
+    const open = conflictsLeft(blocks, contents);
+    return blocks.map((s) => (unchanged.has(s.index) ? 'check' : open.has(s.index) ? 'decide' : 'decided'));
   }
   const picks = ownPicks(saved);
   // A whole-file proposal puts every conflict in Check, until you use it or start choosing conflicts yourself. One that

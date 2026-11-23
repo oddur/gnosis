@@ -3502,8 +3502,10 @@ void test('Edit whole file: the file becomes yours, Undo restores your choices, 
   session = (await f.run({ kind: 'save', id, version: session.version, path: 'sample.ts', contents: again, resolved: true })).session;
   assert.equal(session.files[0].resolved, true);
   assert.ok(session.files[0].wholeEdit);
-  // Undo: your Keep and the draft before the edit are back.
-  session = (await f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts' })).session;
+  // Undo: a later edit goes too, so the service takes it only once you chose Undo again (#532 review).
+  await assert.rejects(f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts' }), /Select Undo again/);
+  // Confirmed: your Keep and the draft before the edit are back.
+  session = (await f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts', confirmed: true })).session;
   saved = session.files[0];
   assert.equal(saved.result, kept.result);
   assert.deepEqual(saved.picks, ['ours']);

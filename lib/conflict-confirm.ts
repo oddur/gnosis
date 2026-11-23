@@ -102,7 +102,8 @@ export function confirmEdited(part: Pick<ConfirmFile, 'after' | 'edited'>, timeo
     const next = change.removed ? parts[i + 1] : undefined;
     const added = change.added ? change.count : next?.added ? next.count : 0;
     if (next?.added) i++;
-    if (!added) removed += change.count;
+    // Lines a change removed past the ones it replaced count as removed, so a deletion is never left out.
+    removed += Math.max(0, (change.removed ? change.count : 0) - added);
     for (let n = 0; n < added; n++) lines.push(++line);
   }
   return { lines, removed };

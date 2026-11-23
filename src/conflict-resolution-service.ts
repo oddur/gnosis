@@ -6,6 +6,7 @@ import {
   CONFLICT_FILE_LIMIT,
   SAVE_REFUSALS,
   STALE_DRAFT,
+  UNDO_LATER,
   revisionConflicts,
   hasConflictMarkers,
   restoreWholeEdit,
@@ -2796,6 +2797,8 @@ export function createConflictResolutionService(deps: Deps) {
           if (undo) {
             // Undo of Edit whole file: the file as it was before your first whole-file edit, Keeps and edits included.
             if (!file.wholeEdit) throw new Error('This file has no whole-file edit to undo.');
+            // A later edit goes too: only after you chose Undo again (UNDO_LATER).
+            if (request.kind === 'undo-edit-file' && file.wholeEdit.later && !request.confirmed) throw new Error(UNDO_LATER);
             restoreWholeEdit(file, file.wholeEdit);
             // Reviewed only while nothing in the restored draft waits for a choice, as Mark reviewed requires.
             if (file.resolved && unchosenOf(file, { contents: file.result }).length) file.resolved = false;

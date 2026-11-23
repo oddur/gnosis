@@ -330,6 +330,8 @@ void test('Edit whole file: the whole file is yours, its Merged proposal too, an
   assert.equal(editedNote({ lines: [], removed: 2 }), 'With Edit whole file you removed 2 lines.');
   assert.match(editedNote('unknown') ?? '', /Read the whole diff/);
   assert.deepEqual(confirmEdited({ after: 'a\nc\n', edited: 'a\nb\nc\n' }), { lines: [], removed: 1 });
+  // Three lines replaced by one: the line is changed and the other two are removed, never left out.
+  assert.deepEqual(confirmEdited({ after: 'a\nz\ne\n', edited: 'a\nb\nc\nd\ne\n' }), { lines: [2], removed: 2 });
   // Any other file has no such note.
   assert.equal(confirmEdited(groups.main[0]), undefined);
 });
@@ -350,7 +352,13 @@ void test('Edit whole file: a draft that splits into its conflicts again is told
   const marked = file(open, proposal, { wholeEdit, resolved: false });
   assert.deepEqual(blockBuckets(marked, open, merged), ['decide', 'decide']);
   const one = 'import { x } from "./x";\na = 11\nb = 2\nx = 5\n<<<<<<< pr\nc = 30\n=======\nc = 31\n>>>>>>> main\n';
-  assert.deepEqual(blockBuckets(file(one, proposal, { wholeEdit }), one, merged), ['decide', 'decided']);
+  // Decide goes to the conflict that still shows its markers, here the second one (#532 review).
+  assert.deepEqual(blockBuckets(file(one, proposal, { wholeEdit }), one, merged), ['decided', 'decide']);
+  const first = 'import { x } from "./x";\n<<<<<<< pr\na = 10\n=======\na = 11\n>>>>>>> main\nb = 2\nx = 5\nc = 3031\n';
+  assert.deepEqual(blockBuckets(file(first, proposal, { wholeEdit }), first, merged), ['decide', 'decided']);
+  // Markers whose sides match no conflict (edited, or typed): every conflict waits.
+  const typedMarkers = 'a = 11\nb = 3\n<<<<<<< mine\nx = 5\n=======\nx = 6\n>>>>>>> theirs\nc = 3031\n';
+  assert.deepEqual(blockBuckets(file(typedMarkers, proposal, { wholeEdit }), typedMarkers, merged), ['decide', 'decide']);
   assert.deepEqual(confirmGroups([entry(marked, merged)], []).pending, [{ path: 'src/a.ts', conflicts: 2 }]);
   // Without the service's mark, the same draft is only a draft edited around its conflicts: the unproven proposal waits.
   assert.deepEqual(blockBuckets(file(draft, proposal), draft, check), ['decided', 'check']);

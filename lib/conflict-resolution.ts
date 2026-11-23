@@ -285,7 +285,15 @@ export type ConflictRequest =
    */
   | { kind: 'edit-file'; id: string; version: number; path: string; contents: string; base?: string }
   /** Undo of Edit whole file: the file as it was before your first whole-file edit, your Keeps and edits included. */
-  | { kind: 'undo-edit-file'; id: string; version: number; path: string; base?: string }
+  | {
+      kind: 'undo-edit-file';
+      id: string;
+      version: number;
+      path: string;
+      base?: string;
+      /** You chose Undo again after it said it discards a later edit too (`WholeFileEdit.later`). */
+      confirmed?: boolean;
+    }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -360,6 +368,9 @@ export interface SavedBlockEdit {
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 /** A request made from an earlier version of the draft, refused. */
+/** Undo of a whole-file edit that changed again after the first edit, not confirmed yet: nothing is undone. */
+export const UNDO_LATER =
+  'Undo also discards what you changed after your first whole-file edit. Select Undo again to go on.';
 export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
 /**
  * Why the service refused a save made from an earlier version of the draft (`refusedSave`). The renderer matches the
@@ -475,7 +486,13 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
   // Edit whole file (#503) names the file's revision its editor started from (`base`), as a save does.
   const based = r.base === undefined || text('base', 64);
   if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT) && based) return;
-  if (r.kind === 'undo-edit-file' && text('path', 4096) && based) return;
+  if (
+    r.kind === 'undo-edit-file' &&
+    text('path', 4096) &&
+    based &&
+    (r.confirmed === undefined || typeof r.confirmed === 'boolean')
+  )
+    return;
   if (
     r.kind === 'resolve' &&
     ['agent', 'mergiraf', 'whole-file'].includes(String(r.engine)) &&
