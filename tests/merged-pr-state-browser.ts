@@ -48,6 +48,11 @@ void app.whenReady().then(async () => {
         return {...q,items:q.items.filter(open),revision:undefined};};
       const status=window.electronAPI.getPrStatus;
       window.electronAPI.getPrStatus=async(url,...rest)=>{const result=await status(url,...rest);return result&&window.lifecycle[url]?{...result,lifecycle:window.lifecycle[url]}:result;};
+      // The header's actions (#542) read GitHub's state for the PR; every write is a mock.
+      window.writes=[];window.opened=[];window.electronAPI.openExternal=async url=>{window.opened.push(url)};
+      window.electronAPI.getPrActionState=async url=>{const q=await queue();const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);const life=window.lifecycle[url];
+        return {...m,account:'oddur',id:'PR_'+m.number,checkedAt:Date.now(),state:life?(life.merged?'MERGED':'CLOSED'):'OPEN',headRepo:m.repo,repository:m.repo,headRepoCanWrite:true,headBranchExists:true,archived:false,canWrite:true,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',checkState:'SUCCESS',methods:['SQUASH'],defaultMethod:'SQUASH',autoMerge:null,canEnableAuto:false,canDisableAuto:false,canUpdateBranch:false,canChangeDraft:true,mergeQueue:false,inMergeQueue:false,stack:null};};
+      window.electronAPI.performPrAction=async r=>{window.writes.push(r);return {status:'completed',message:r.kind==='reopen'?'Reopened.':'Deleted fix-0.'}};
     })()`);
     await openRow('Fix reconnect');
     assert.equal(await state(), 'Open');
@@ -59,7 +64,19 @@ void app.whenReady().then(async () => {
     await js(`window.lifecycle[${JSON.stringify(url)}]={state:'closed',merged:true,updatedAt:new Date(Date.now()+60000).toISOString()};window.dropMerged=true`);
     await js("window.dispatchEvent(new CustomEvent('gnosis-pr-action-completed',{detail:[]}))");
     await wait("document.querySelector('.pr-state')?.textContent==='Merged'");
-    assert.equal(await js("[...document.querySelectorAll('button')].some(b=>b.textContent==='Merge PR…'&&!b.disabled)"), false, 'No merge action for a merged PR');
+    // A merged PR offers Delete branch and Revert in the header (#542), never Merge.
+    await wait("[...document.querySelectorAll('.pr-header-actions button')].some(b=>b.textContent==='Delete branch…'&&b.getAttribute('aria-disabled')!=='true')");
+    assert.equal(await js("!!document.querySelector('[data-merge-action]')"), false, 'No merge action for a merged PR');
+    assert.equal(await js("[...document.querySelectorAll('.pr-header-actions [role=switch]')].length"), 0, 'No draft or auto-merge toggles');
+    await click('Revert…');
+    await wait(`window.opened.includes(${JSON.stringify(url)})`);
+    // Deleting the branch asks first.
+    await click('Delete branch…');
+    await wait("[...document.querySelectorAll('.pr-action-dialog button')].some(b=>b.textContent==='Delete branch'&&!b.disabled)");
+    assert.equal(await js('window.writes.length'), 0, 'Nothing is deleted before the confirmation');
+    await js("[...document.querySelectorAll('.pr-action-dialog button')].find(b=>b.textContent==='Delete branch').click()");
+    await wait("window.writes.length===1&&!document.querySelector('.pr-action-dialog')");
+    assert.equal(await js('window.writes[0].kind'), 'delete-branch');
 
     // Back in the queue, the merged PR has left it.
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
@@ -71,6 +88,11 @@ void app.whenReady().then(async () => {
     await js("window.dispatchEvent(new CustomEvent('gnosis-pr-action-completed',{detail:[]}))");
     await openRow('Fix reconnect');
     await wait("document.querySelector('.pr-state')?.textContent==='Closed'");
+    // A closed PR offers Reopen, which acts at once.
+    assert.equal(await js("!!document.querySelector('[data-merge-action]')"), false);
+    await wait("[...document.querySelectorAll('.pr-header-actions button')].some(b=>b.textContent==='Reopen'&&b.getAttribute('aria-disabled')!=='true')");
+    await click('Reopen');
+    await wait("window.writes.at(-1)?.kind==='reopen'");
     console.log('Merged PR state browser checks passed');
     app.exit(0);
   } catch (error) {

@@ -71,3 +71,21 @@ Feedback is the sole response workspace for PRs and stacks. Stack review blocker
 ## Stack overview table — November 2026
 
 User feedback: the 12-PR overview was "all over the place, hard to read". Review, Checks and Branch values started at different x positions on every row, and defaults printed as loudly as problems. The list is now a table: fixed Review / Checks / Branch tracks named once in a column header, and status on the same line as each title. The body is bounded at 80rem. Defaults are quiet: a muted dash for no review decision or an up-to-date branch, passed counts without skipped tallies, and "N behind" for optional updates. Merged PRs recede, with no details disclosure. The spine replaces "into #parent" for adjacent parents. Viewed files show as a small bar. The heading summarises merged, attention and viewed counts. The header shows one "Merge status checked" note when both reads agree. Remedy links are no longer underlined at rest. Below 760px of list width, the strip moves under the title in shared tracks. Covered by the `--stack-overview` suite (column alignment, quiet defaults, attention states, narrow layout). Captures: `.impeccable/review/stack-overview`.
+
+## PR header — November 2026 (#542)
+
+Supersedes the action row of "PR summary layout": every PR action now lives in the header, the same on every tab, and Summary's readiness section is information only.
+
+Two rows. Row 1: the title on one line (it truncates last), star, snooze and ⋯; on the right the PR's facts (repo · #number · state · author · updated), the review chip and the readiness chip. The facts drop under the title below about 1100px of header width or when they do not fit. Row 2: the stack's Back and member picker at the far left, the tabs, then the actions right-aligned: Draft and Auto-merge toggles (Auto-merge has a method chevron), the Update menu, Drafts, the review action, and Merge as a split button. Resolve conflicts takes Merge's place. Merged PRs show Delete branch… and Revert… (GitHub's revert, on the PR page); closed PRs show Reopen. Review PR stays on a finished PR while threads are unresolved.
+
+One primary action: Merge when GitHub reports the PR ready and reviewed, Resolve conflicts when it conflicts, otherwise the review action ("Review PR", "Reply to feedback" when threads wait on you, "Request review…" on your own PR). Unavailable actions stay visible and say why in their tooltip (`aria-disabled`, so they keep focus).
+
+The readiness chip is Summary's verdict, from the same reads and with the same priority: the most urgent blocker, with every reason, the checks, "Checked just now" and the GitHub link in its popover.
+
+Toggles act at once on GitHub's current state, show the change optimistically, roll back on failure with Retry, and offer Undo in their toast. Merge's main part opens a short confirmation beside it (PR, method, target branch, optional commit message); nothing merges without a click or Enter on its focused Merge button. Multi-PR and native-stack merges keep the step card. Update and Delete branch keep their confirmation dialogs; Delete branch refuses while the branch has commits the PR does not.
+
+Short of room, the toggles move to ⋯ first, then Update and Drafts; Merge and the review action always stay, and wrap onto their own row at about 760px. ⋯ also holds Open on GitHub and Refresh, which reads the actions again. Shortcuts, shown in the tooltips and the cheatsheet: ⌘⇧M opens the merge confirmation, ⌘⇧U the Update menu, ⌘⇧V the review action (outside text fields, where it still pastes). ⌘⇧R stays Force Reload.
+
+The Overview's ready rows and stack merge details use the same split button, toggle and menu (components/PrActionControls.tsx). Changes hands its drafts to the header, so Drafts and Review PR never appear twice.
+
+Verification: `--pr-actions`, `--readiness`, `--merged-state`, `--optimistic-actions`, `--overview`, `--stack-merge-details`, `--workspace-tabs`, `--sync-health` and `--header-stability` cover it; before-and-after captures at 1440/1280/1024/760 in both themes were approved by the user.

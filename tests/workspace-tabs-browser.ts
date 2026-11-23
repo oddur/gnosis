@@ -174,8 +174,16 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.tabReads'), 0, 'Preparing a tab does not mark its PR read');
     await js(`document.querySelectorAll('.workspace-tab-select')[1].click()`);
     await wait(`${root}.querySelector('.pr-summary-page')!==null`);
+    // The PR's actions are in the header's tab row on every tab (#542): Review PR stays in the same place on Changes,
+    // which hands it its drafts instead of showing a second Review PR in its toolbar.
+    const reviewAction = `${root}.querySelector('.pr-header-actions .pr-review-action')`;
+    await wait(`!!${reviewAction}`);
+    const reviewAt = await js<number>(`${reviewAction}.getBoundingClientRect().right`);
     await click('Changes');
     await wait(`${root}.querySelector('.pr-changes')!==null`);
+    await wait(`${root}.querySelectorAll('.pr-header-actions .pr-review-action').length===1`);
+    assert.equal(await js(`Math.round(${reviewAction}.getBoundingClientRect().right)`), Math.round(reviewAt), 'Review PR keeps its place');
+    assert.equal(await js(`[...${root}.querySelectorAll('.pr-changes button')].some(b=>/^Review/.test(b.textContent.trim()))`), false, 'One Review PR');
     await wait(`document.querySelectorAll('.workspace-tab-select')[1].title.includes('Changes')`);
     await js(`${root}.dataset.marker='retained';window.beforeSwitch=window.tabRefreshes;`);
     await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);

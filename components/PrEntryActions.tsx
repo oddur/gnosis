@@ -199,6 +199,8 @@ export function PrEntryActions(
   props: Parameters<typeof prEntryActionGroups>[0] & {
     children?: ComponentProps<typeof EntryActions>['children'];
     onBeforeOpen?: () => void;
+    /** Actions placed first, such as the PR header's actions that do not fit its row (#542). */
+    extra?: EntryActionGroups;
   }
 ) {
   const tabs=useWorkspaceNavigation();
@@ -214,7 +216,7 @@ export function PrEntryActions(
     <EntryActions
       onBeforeOpen={props.onBeforeOpen}
       label={props.members.length > 1 ? 'Stack actions' : `Actions for PR #${props.members[0]?.number}`}
-      groups={groups}
+      groups={props.extra?.length ? [...props.extra, ...groups] : groups}
     >
       {props.children}
     </EntryActions>

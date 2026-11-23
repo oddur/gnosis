@@ -15,7 +15,8 @@ import { PrFileInspection, changeFileKey as viewKey, type ChangeFileEntry as Ent
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffWorkerPool, diffThemeName } from '../lib/diff-worker-pool';
 import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { PrHeaderReviewContext } from '../lib/pr-header-review';
 import { useSyntaxPrefetch } from '../lib/use-syntax-contents';
 import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import type { QuietToggles } from '../lib/review-diff';
@@ -610,6 +611,24 @@ export function PrChangesView({
     refresh: refreshThreads,
     replaceThread: discussion.replace,
   });
+  // In a PR's workspace, Drafts and Review PR are in the header (#542): hand them this diff's drafts while shown.
+  // Activity hides this view with its effects, so the header takes them back on every other tab.
+  const toHeader = useContext(PrHeaderReviewContext);
+  const headerReview = useRef(comments.header);
+  headerReview.current = comments.header;
+  const { draftCount, draftsDisabled, reviewBlocked } = comments.header;
+  const ownReview = !commit && !combined;
+  useEffect(() => {
+    if (!toHeader || !ownReview) return;
+    toHeader({
+      draftCount,
+      draftsDisabled,
+      reviewBlocked,
+      toggleDrafts: () => headerReview.current.toggleDrafts(),
+      openReview: () => headerReview.current.openReview(),
+    });
+    return () => toHeader(undefined);
+  }, [toHeader, ownReview, draftCount, draftsDisabled, reviewBlocked]);
   // Citations in the file conversation resolve to the files of its snapshot, within what their patches show.
   const chatJumpTo = useRef(jumpToLines);
   chatJumpTo.current = jumpToLines;
@@ -684,7 +703,7 @@ export function PrChangesView({
         )}
         <span className="changes-toolbar-spacer" />
         {commit?.tools}
-        {!commit && !combined && comments.controls}
+        {!commit && !combined && !toHeader && comments.controls}
         {!commit && !combined && entry && (
           <Button
             variant="ghost"

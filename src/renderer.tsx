@@ -6,6 +6,7 @@ import { workbenchStore } from '../lib/workbench-store';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { applyTheme } from '../lib/theme';
+import { blocksPackagedShortcut } from '../lib/packaged-keys';
 import './globals.css';
 
 window.electronAPI.perfMark?.('script-start');
@@ -33,10 +34,7 @@ document.addEventListener('drop', (e) => e.preventDefault());
 
 if (window.electronAPI.isPackaged) {
   window.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    if (e.key === 'r' || e.key === 'u' || e.key === 'p') {
-      e.preventDefault();
-    }
+    if (blocksPackagedShortcut(e)) e.preventDefault();
   });
 }
 

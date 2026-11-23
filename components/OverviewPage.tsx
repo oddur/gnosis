@@ -91,6 +91,7 @@ import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { starAction } from './PrEntryActions';
 import { PrPreviewTooltip } from './EntityBadge';
 import { PrActions } from './PrActions';
+import { MergeSplit } from './PrActionControls';
 import { PrStateIcon } from './PrStateIcon';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { LoadingIndicator, LoadingState } from './LoadingState';
@@ -1880,14 +1881,12 @@ function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions
   return (
     <PrActions
       member={member}
-      compact
       onChanged={actions.refresh}
       onResult={(message) => toast.add({ type: 'success', title: message })}
-      trigger={(open, busy) => (
-        <Button size="xs" variant="outline" {...SHORTCUT} title={`Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A`} disabled={busy} onClick={() => open('merge')}>
-          <MergeIcon size={13} aria-hidden="true" />
-          Merge
-        </Button>
+      trigger={(open, busy, _quick, methods) => (
+        // The same split button as the PR header's (#542): Merge opens its confirmation, the chevron picks the method.
+        <MergeSplit size="xs" label="Merge" primary={false} busy={busy} extra={{ ...SHORTCUT, title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A` }}
+          icon={<MergeIcon size={13} aria-hidden="true" />} methods={['SQUASH', 'MERGE', 'REBASE']} allowed={methods.allowed} onMethods={methods.load} onMerge={(method) => open('merge', method)} />
       )}
     />
   );

@@ -25,15 +25,15 @@ void app.whenReady().then(async () => {
     await viewport(1280,800);
     await wait("document.querySelectorAll('.queue-item').length===7", 1000);
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
-    await wait("document.querySelectorAll('.stack-overview-member').length===3 && document.querySelector('.pr-merge-status').textContent.includes('checked just now')");
+    await wait("document.querySelectorAll('.stack-overview-member').length===3 && !!document.querySelector('.pr-heading-meta .merge-readiness-chip')");
     await new Promise(r=>setTimeout(r,2000));
     await js(`(async()=>{window.realNow=Date.now;Date.now=()=>window.realNow()+6*60*1000;const {markFileViewed}=await import('/lib/file-view-progress.ts');await markFileViewed('fixture-status-clock',true);window.dispatchEvent(new Event('focus'));})()`);
     await new Promise(r=>setTimeout(r,100));
-    const status=await js<{header:boolean;members:boolean}>("({header:document.querySelector('.pr-merge-status').textContent.includes('Status needs refresh'),members:[...document.querySelectorAll('.stack-member-status')].some(e=>e.textContent.includes('Status needs refresh'))})");
+    const status=await js<{header:boolean;members:boolean}>("({header:document.querySelector('.pr-heading-meta').textContent.includes('Status needs refresh'),members:[...document.querySelectorAll('.stack-member-status')].some(e=>e.textContent.includes('Status needs refresh'))})");
     console.log('Freshness:',status);
     assert.equal(status.header,status.members,'Header and member freshness must use the same clock between polling updates');
     await js("window.dispatchEvent(new Event('fixture-pr-read-change'))");
-    await wait("document.querySelector('.pr-merge-status').textContent.includes('Status needs refresh') && [...document.querySelectorAll('.stack-member-status')].every(e=>e.textContent.includes('Status needs refresh'))");
+    await wait("document.querySelector('.pr-heading-meta').textContent.includes('Status needs refresh') && [...document.querySelectorAll('.stack-member-status')].every(e=>e.textContent.includes('Status needs refresh'))");
     await capture('expired-status');
     await js('Date.now=window.realNow;window.dispatchEvent(new Event("fixture-pr-read-change"));window.dispatchEvent(new Event("focus"));void 0');
     await capture('consistent-status');

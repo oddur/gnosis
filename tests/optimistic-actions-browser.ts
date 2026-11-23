@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { menuAction } from './entry-menu-helpers';
 
 /**
  * Optimistic writes. Every write here waits until the test answers it, as a slow GitHub would. The page must show
@@ -193,6 +194,35 @@ void app.whenReady().then(async () => {
       )
     );
 
+    // ── The header's Draft toggle (#542): it shows at once, rolls back on failure, and Undo writes the reverse ──
+    win.setSize(1600, 900);
+    await wait('innerWidth===1600');
+    await js(`window.electronAPI.getPrActionState=async url=>{const m=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.url===url);
+      return {...m,account:'oddur',id:'PR_1',checkedAt:Date.now(),state:'OPEN',headRepo:m.repo,repository:m.repo,archived:false,canWrite:true,mergeable:'MERGEABLE',mergeState:'CLEAN',methods:['SQUASH'],defaultMethod:'SQUASH',autoMerge:null,canEnableAuto:true,canDisableAuto:false,canUpdateBranch:false,canChangeDraft:true,mergeQueue:false,inMergeQueue:false,stack:null};};0`);
+    // ⋯ › Refresh reads the PR's actions again, now with the state above.
+    await menuAction(js, await js<string>("document.querySelector('.pr-overview-heading .entry-menu-trigger').getAttribute('aria-label')"), 'Refresh GitHub status');
+    const draft = "[...document.querySelectorAll('.pr-header-actions [role=switch]')].find(b=>b.textContent==='Draft')";
+    await wait(`${draft}?.getAttribute('aria-checked')==='false' && ${draft}.getAttribute('aria-disabled')!=='true'`);
+    await js(`${draft}.click()`);
+    await wait("window.optimisticFixture.held().includes('convert-draft')");
+    await instantly(`${draft}.getAttribute('aria-checked')==='true'`);
+    await instantly(`!!${row}?.querySelector('.queue-pr-icon.is-draft')`);
+    await settle('Resource not accessible by integration');
+    await instantly(`${draft}.getAttribute('aria-checked')==='false'`);
+    await wait("document.querySelector('.pr-header-notes .pr-action-error')?.textContent.includes('Resource not accessible')");
+    await js(`${draft}.click()`);
+    await wait("window.optimisticFixture.held().includes('convert-draft')");
+    await settle('ok');
+    await wait(`${draft}.getAttribute('aria-checked')==='true'`);
+    await js('window.optimisticFixture.refresh()');
+    await wait("[...document.querySelectorAll('[data-slot=toast] button')].some(b=>b.textContent==='Undo')");
+    await js("[...document.querySelectorAll('[data-slot=toast] button')].find(b=>b.textContent==='Undo').click()");
+    await wait("window.optimisticFixture.held().includes('mark-ready')");
+    await instantly(`${draft}.getAttribute('aria-checked')==='false'`);
+    await settle('ok');
+    await js('window.optimisticFixture.refresh()');
+    await wait(`${draft}.getAttribute('aria-checked')==='false' && !${row}?.querySelector('.queue-pr-icon.is-draft')`);
+
     assert.deepEqual(await held(), [], 'Every write was answered');
     assert.deepEqual(
       await js('window.optimisticFixture.patches()'),
@@ -201,7 +231,7 @@ void app.whenReady().then(async () => {
     );
     assert.deepEqual(errors, []);
     console.log(
-      'Optimistic action browser checks passed: queue counts and draft, reply, failed reply with retry, resolve.'
+      'Optimistic action browser checks passed: queue counts and draft, reply, failed reply with retry, resolve, header Draft toggle.'
     );
     app.exit(0);
   } catch (error) {

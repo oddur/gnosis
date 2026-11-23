@@ -699,3 +699,130 @@ void test('bulk draft changes stop before writing after an account switch or nav
   assert.deepEqual(navigated.completed, []);
   assert.equal(f.writes.length, 0);
 });
+/** The PR header's Reopen and Delete branch (#542), on a fixture PR changed by `change` before it is read. */
+interface BranchFacts { tip: string | null; defaultBranch: string; protectedBranch: boolean; ruleset: boolean; rules: readonly string[] | null; rulesError: boolean; basePrs: number; refuse: boolean }
+function finishedFixture(change: (pr: ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>) => void, facts: Partial<BranchFacts> = {}) {
+  const f = fixture();
+  const branch: BranchFacts = { tip: 'head-1', defaultBranch: 'main', protectedBranch: false, ruleset: false, rules: [], rulesError: false, basePrs: 0, refuse: false, ...facts };
+  const pr = f.prs[0] as ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>;
+  pr.state = 'MERGED';
+  pr.headRef = { id: 'REF_1' };
+  pr.headRepository = { nameWithOwner: 'o/r', viewerPermission: 'WRITE', defaultBranchRef: { name: branch.defaultBranch } } as typeof pr.headRepository;
+  change(pr);
+  const graphql = f.client.graphql.bind(f.client) as (query: string, params: Record<string, unknown>) => Promise<unknown>;
+  let reopened = 'OPEN';
+  const reads: Record<string, unknown>[] = [];
+  Object.assign(f.client, {
+    graphql: async (query: string, params: Record<string, unknown>) => {
+      if (query.includes('ref(qualifiedName')) {
+        reads.push(params);
+        if (branch.rulesError) throw new Error("Field 'rules' doesn't exist on type 'Ref'");
+        return {
+          repository: {
+            id: 'REPO_1',
+            defaultBranchRef: { name: branch.defaultBranch },
+            ref: branch.tip === null ? null : { target: { oid: branch.tip }, branchProtectionRule: branch.protectedBranch ? { id: 'BPR_1' } : null, refUpdateRule: branch.ruleset ? { pattern: '*' } : null, rules: branch.rules && { nodes: branch.rules.map((type) => ({ type })) } },
+            pullRequests: { totalCount: branch.basePrs },
+          },
+        };
+      }
+      if (query.includes('UpdateRefsInput')) {
+        f.writes.push({ query, params });
+        // GitHub refuses the update when the branch no longer points at `beforeOid`.
+        const update = (params.input as { refUpdates: { beforeOid: string }[] }).refUpdates[0];
+        if (branch.refuse || update.beforeOid !== branch.tip) throw new Error('Ref update rejected: expected head did not match.');
+        return { updateRefs: { clientMutationId: null } };
+      }
+      if (!query.includes('ReopenPullRequestInput')) return graphql(query, params);
+      f.writes.push({ query, params });
+      return { reopenPullRequest: { pullRequest: { state: reopened } } };
+    },
+  });
+  return { ...f, reads, refuseReopen: () => { reopened = 'CLOSED'; } };
+}
+void test('reopen: a closed PR with its branch, by its author or someone with triage, confirmed by GitHub', async () => {
+  const f = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  const result = await f.service.act(f.client, await f.request(1, 'reopen'));
+  assert.equal(result.message, 'Reopened #1.');
+  assert.match(f.writes[0].query, /reopenPullRequest/);
+  assert.deepEqual(f.writes[0].params.input, { pullRequestId: 'PR_1' });
+  for (const [change, reason] of [
+    [(pr: Record<string, unknown>) => { pr.state = 'OPEN'; }, /already open/],
+    [(pr: Record<string, unknown>) => { pr.state = 'MERGED'; }, /merged PR cannot be reopened/],
+    [(pr: Record<string, unknown>) => { pr.state = 'CLOSED'; pr.headRef = null; }, /branch is deleted/],
+  ] as const) {
+    const g = finishedFixture(change);
+    await assert.rejects(g.service.act(g.client, await g.request(1, 'reopen')), reason);
+    assert.equal(g.writes.length, 0);
+  }
+  const reader = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  reader.repo.viewerPermission = 'READ';
+  await assert.rejects(reader.service.act(reader.client, await reader.request(1, 'reopen')), /triage or write permission/);
+  assert.equal(reader.writes.length, 0);
+  const triager = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  triager.repo.viewerPermission = 'TRIAGE';
+  assert.equal((await triager.service.act(triager.client, await triager.request(1, 'reopen'))).message, 'Reopened #1.');
+  const unconfirmed = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  unconfirmed.refuseReopen();
+  await assert.rejects(unconfirmed.service.act(unconfirmed.client, await unconfirmed.request(1, 'reopen')), /did not confirm/);
+});
+void test('delete branch: one atomic ref update from the PR’s last commit, never a default, protected or base branch', async () => {
+  const f = finishedFixture(() => {});
+  assert.equal((await f.service.read(f.client, url(1))).headBranchExists, true);
+  const result = await f.service.act(f.client, await f.request(1, 'delete-branch'));
+  assert.equal(result.message, 'Deleted branch-1.');
+  assert.equal(f.writes.length, 1, 'One write, with no separate check before it');
+  assert.match(f.writes[0].query, /updateRefs/);
+  assert.deepEqual(f.writes[0].params.input, {
+    repositoryId: 'REPO_1',
+    refUpdates: [{ name: 'refs/heads/branch-1', beforeOid: 'head-1', afterOid: '0'.repeat(40) }],
+  });
+  assert.deepEqual(f.reads[0], { owner: 'o', repo: 'r', ref: 'refs/heads/branch-1', branch: 'branch-1' });
+  // The base branch moving on does not refuse it: only the head counts.
+  const moving = finishedFixture(() => {});
+  const request = await moving.request(1, 'delete-branch');
+  moving.prs[0].baseRef = { target: { oid: 'main-moved-on' } };
+  assert.equal((await moving.service.act(moving.client, request)).message, 'Deleted branch-1.');
+  // GitHub refuses the update when commits were pushed after the PR closed: nothing is deleted.
+  const pushed = finishedFixture(() => {}, { tip: 'pushed-later' });
+  await assert.rejects(pushed.service.act(pushed.client, await pushed.request(1, 'delete-branch')), /GitHub refused to delete branch-1; nothing was deleted/);
+  for (const [facts, reason, change] of [
+    [{ defaultBranch: 'branch-1' }, /default branch/, undefined],
+    [{ protectedBranch: true }, /protected or covered by a ruleset/, undefined],
+    [{ ruleset: true }, /protected or covered by a ruleset/, undefined],
+    // A ruleset that restricts deletions, which admins could bypass, and rules GitHub would not show: both refuse.
+    [{ rules: ['DELETION'] }, /protected or covered by a ruleset/, undefined],
+    [{ rules: null }, /protected or covered by a ruleset/, undefined],
+    [{ rulesError: true }, /rules/, undefined],
+    [{ basePrs: 2 }, /base of another open PR/, undefined],
+    [{ tip: null }, /already deleted/, undefined],
+    [{}, /Merge or close this PR/, (pr: Record<string, unknown>) => { pr.state = 'OPEN'; }],
+    [{}, /already deleted/, (pr: Record<string, unknown>) => { pr.headRef = null; }],
+    [{}, /write permission to the branch/, (pr: Record<string, unknown>) => { pr.headRepository = { nameWithOwner: 'o/r', viewerPermission: 'READ' }; }],
+    [{}, /no longer exists/, (pr: Record<string, unknown>) => { pr.headRepository = null; }],
+  ] as const) {
+    const g = finishedFixture(change ?? (() => {}), facts);
+    await assert.rejects(g.service.act(g.client, await g.request(1, 'delete-branch')), reason);
+    assert.equal(g.writes.length, 0, String(reason));
+  }
+  // The default branch is refused before the confirmation, too.
+  const main = finishedFixture(() => {}, { defaultBranch: 'branch-1' });
+  assert.equal((await main.service.read(main.client, url(1))).headIsDefaultBranch, true);
+});
+void test('a packaged build blocks reload, view source and print, but not Cmd+Shift+U for Update (#542)', async () => {
+  const { blocksPackagedShortcut } = await import('../lib/packaged-keys');
+  const key = (k: string, extra: Partial<Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey'>> = {}) =>
+    blocksPackagedShortcut({ key: k, ctrlKey: false, metaKey: true, shiftKey: false, ...extra });
+  assert.equal(key('r'), true);
+  assert.equal(key('u'), true);
+  assert.equal(key('p'), true);
+  // macOS reports Cmd+Shift+U as "u"; elsewhere it is "U". Either way it reaches the header.
+  assert.equal(key('u', { shiftKey: true }), false);
+  assert.equal(key('U', { shiftKey: true }), false);
+  assert.equal(key('u', { metaKey: false, ctrlKey: true, shiftKey: true }), false);
+  assert.equal(key('u', { metaKey: false }), false, 'Without Cmd or Ctrl nothing is blocked');
+});
+void test('delete branch: a ruleset rule of another kind does not refuse it', async () => {
+  const f = finishedFixture(() => {}, { rules: ['PULL_REQUEST', 'REQUIRED_STATUS_CHECKS'] });
+  assert.equal((await f.service.act(f.client, await f.request(1, 'delete-branch'))).message, 'Deleted branch-1.');
+});

@@ -55,7 +55,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
     await click('Open PR overview');
-    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Update required to merge')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Update required to merge')");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
       /Rebase onto main, or merge main/
@@ -64,13 +64,13 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.pr-merge-detail a').getAttribute('href')"),
       'https://github.com/klang/engine/pull/150'
     );
-    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
+    assert.equal(await js("document.querySelector('.pr-heading-meta .pr-review-status').textContent"), 'Approved');
     await capture('desktop-update-required');
     for (const tab of ['Changes', 'Commits', 'Explanation', 'Summary']) {
       await click(tab);
-      assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
+      assert.equal(await js("document.querySelector('.pr-heading-meta .pr-review-status').textContent"), 'Approved');
       assert.match(
-        await js<string>("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status')).textContent"),
+        await js<string>("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta')).textContent"),
         /Update required to merge/
       );
     }
@@ -83,15 +83,15 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark');window.mode='conflicts'");
     await click('Refresh status');
     await wait(
-      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Merge conflicts')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Merge conflicts')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /resolve the conflicts/);
-    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
+    assert.equal(await js("document.querySelector('.pr-heading-meta .pr-review-status').textContent"), 'Approved');
     await capture('conflicts');
     await js("window.mode='clean'");
     await click('Refresh status');
     await wait(
-      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Ready to merge')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Ready to merge')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /updating is optional/);
     await capture('optional-update');
@@ -120,20 +120,22 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').className`), 'merge-readiness-badge is-warning');
     assert.equal(await js(`!!${detail}.querySelector('a.pr-merge-requirements[href="https://github.com/klang/engine/pull/150"]')`), true, 'Keeps the GitHub link');
     assert.equal(await js(`!!${detail}.querySelector('.github-scope-prompt')`), false, 'A sign-in with every scope is not asked again');
-    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved by plucked');
+    assert.equal(await js("document.querySelector('.pr-heading-meta .pr-review-status').textContent"), 'Approved by plucked');
     assert.equal(await js("document.body.textContent.includes('No review decision')"), false);
     // The Merge button stays available; GitHub's refusal reaches the dialog once and nothing merges.
-    await js("document.querySelector('.pr-summary-content[data-state=active] [aria-label=\"Refresh PR actions\"]').click()");
-    await wait("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]')?.title===''");
-    await wait("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]')?.disabled===false");
-    await js("document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]').click()");
-    await wait("!!document.querySelector('.pr-action-dialog [data-github-blocked]')");
+    // The header's chip says the same as Summary (#542).
+    assert.equal(await js("document.querySelector('.pr-heading-meta .merge-readiness-chip').textContent"), 'GitHub reports this as blocked');
+    await click('Refresh status');
+    const mergeButton = "document.querySelector('.pr-header-actions [data-merge-action]')";
+    await wait(`!!${mergeButton} && ${mergeButton}.getAttribute('aria-disabled')!=='true'`);
+    await js(`${mergeButton}.click()`);
+    await wait("!!document.querySelector('.pr-merge-confirm [data-github-blocked]')");
     await click('Merge pull request');
-    await wait("document.querySelector('.pr-action-dialog .pr-action-error')?.textContent.includes('Repository rule violations found')");
+    await wait("document.querySelector('.pr-merge-confirm .pr-action-error')?.textContent.includes('Repository rule violations found')");
     assert.equal(await js('window.mergeWrites.length'), 1);
     await capture('github-blocked-refused');
     await click('Cancel');
-    await wait("!document.querySelector('.pr-action-dialog')");
+    await wait("!document.querySelector('.pr-merge-confirm')");
     // An older sign-in with repo and read:org, but not workflow: GitHub's BLOCKED is the workflow files.
     await js("window.setFixtureGitHubScopes(['repo','read:org'])");
     await wait(`${detail}.querySelector('.merge-readiness-badge')?.textContent==='Needs the workflow permission'`);
@@ -145,8 +147,7 @@ void app.whenReady().then(async () => {
       'Gnosis now asks for two more GitHub permissions: reading your organization membership, so team review requests match GitHub, and updating workflow files, so it can merge PRs that change GitHub Actions workflows.'
     );
     // GitHub would refuse the merge, so Merge is disabled with the reason. So is a rebase, which rewrites those files.
-    const mergeButton = "document.querySelector('.pr-summary-content[data-state=active] [data-merge-action]')";
-    await wait(`${mergeButton}?.disabled===true`);
+    await wait(`${mergeButton}?.getAttribute('aria-disabled')==='true'`);
     assert.equal(await js(`${mergeButton}.title`), 'Needs the workflow permission. Sign in again, or merge on GitHub.');
     await capture('github-blocked-workflow');
     // GitHub's raw answer and Gnosis's access, in About these results.
@@ -179,7 +180,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.github-auth-dialog')");
     await wait(`!${detail}.querySelector('.github-scope-prompt')`);
     assert.equal(await js(`${detail}.querySelector('.merge-readiness-badge').textContent`), 'GitHub reports this as blocked');
-    await wait(`${mergeButton}?.disabled===false`);
+    await wait(`!!${mergeButton} && ${mergeButton}.getAttribute('aria-disabled')!=='true'`);
     // A fine-grained token reports no scopes: a quiet line names its Workflows permission, with no prompt.
     await js("window.setFixtureGitHubScopes(null,'fine-grained')");
     await wait(`${detail}.textContent.includes('If you signed in with a fine-grained token, it may need the Workflows permission (read and write) for this repository.')`);
@@ -196,16 +197,16 @@ void app.whenReady().then(async () => {
     await js('window.failStatus=true;const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;void 0');
     await click('Refresh status');
     await wait(
-      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Readiness out of date')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Readiness out of date')"
     );
-    assert.equal(await js("!!document.querySelector('.pr-merge-status .is-success')"), false);
-    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved · Out of date');
-    assert.match(await js<string>("document.querySelector('.pr-merge-status .pr-review-status').title"), /Last checked/);
+    assert.equal(await js("!!document.querySelector('.pr-heading-meta .is-success')"), false);
+    assert.equal(await js("document.querySelector('.pr-heading-meta .pr-review-status').textContent"), 'Approved · Out of date');
+    assert.match(await js<string>("document.querySelector('.pr-heading-meta .pr-review-status').title"), /Last checked/);
     await capture('stale');
     await js("window.failStatus=false;window.mode='behind'");
     await click('Refresh status');
     await wait(
-      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Update required to merge')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Update required to merge')"
     );
     assert.ok((await js<number>('window.forceReads')) >= 4);
     await click('Review queue');
@@ -215,7 +216,7 @@ void app.whenReady().then(async () => {
     await capture('queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open stack overview');
-    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Not ready to merge')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('Not ready to merge')");
     await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"] .stack-member-title > button:not(.entity-badge)').click()");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
@@ -225,7 +226,7 @@ void app.whenReady().then(async () => {
     await click('Back to stack');
     await js("window.mode='clean'");
     await click('Refresh status');
-    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('All open PRs meet merge requirements')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-heading-meta'))?.textContent.includes('All open PRs meet merge requirements')");
     await capture('stack-next');
     await js(`window.reviewDecisions={
       'https://github.com/klang/engine/pull/120':'CHANGES_REQUESTED',

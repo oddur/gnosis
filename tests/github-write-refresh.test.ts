@@ -293,6 +293,7 @@ void test('every GitHub write in the app is in the inventory', () => {
     "src/pr-actions-service.ts: 'PUT /repos",
     // Close PR (#390): the optional comment, then the closePullRequest mutation.
     'src/pr-actions-service.ts: .issues.createComment(',
+    // Includes Reopen and Delete branch (#542), which deletes with one updateRefs mutation.
     'src/pr-actions-service.ts: mutation',
     'src/pr-checks-service.ts: .actions.reRunWorkflow(',
     'src/pr-checks-service.ts: .actions.reRunWorkflowFailedJobs(',

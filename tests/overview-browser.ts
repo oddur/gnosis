@@ -1067,6 +1067,26 @@ void app.whenReady().then(async () => {
     assert.equal(await focusedRow(), review321, 'focus stays while rows arrive');
     await js('document.activeElement?.blur()');
     await capture('real-filled-1280-light');
+    // Merge is the PR header's split button (#542): a short confirmation opens beside it; the chevron picks a method.
+    const mergeButton = `[...document.querySelectorAll('${section('next')} [data-quick-action]')].find(b=>b.textContent==='Merge')`;
+    assert.ok(await js(`!!${mergeButton}.closest('.pr-merge-split')?.querySelector('[aria-label="Merge method"]')`), 'Merge has its method chevron');
+    const writesBefore = (await writes()).length;
+    await js(`${mergeButton}.click()`);
+    await wait(`!!document.querySelector('.pr-merge-confirm [aria-label="Merge method"]')`);
+    await capture('merge-confirm-1280-light');
+    await js("[...document.querySelectorAll('.pr-merge-confirm button')].find(b=>b.textContent==='Cancel').click()");
+    await wait("!document.querySelector('.pr-merge-confirm')");
+    assert.equal((await writes()).length, writesBefore, 'Opening the confirmation writes nothing');
+    // The chevron lists the repository's own methods: one it does not allow stays disabled, never swapped for another.
+    await js(`${mergeButton}.closest('.pr-merge-split').querySelector('[aria-label="Merge method"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))`);
+    const methodItem = (label: string) => `[...document.querySelectorAll('.pr-method-menu [role=menuitemradio]')].find(e=>e.textContent.startsWith(${JSON.stringify(label)}))`;
+    await wait(`!!${methodItem('Squash and merge')} && !${methodItem('Squash and merge')}.hasAttribute('data-disabled')`);
+    assert.ok(await js(`${methodItem('Rebase and merge')}.hasAttribute('data-disabled') && ${methodItem('Rebase and merge')}.textContent.includes('Not allowed')`), 'Rebase is not allowed in this repository');
+    await js(`${methodItem('Create a merge commit')}.click()`);
+    await wait(`document.querySelector('.pr-merge-confirm [name=merge-method]:checked')?.value==='MERGE'`);
+    await js("[...document.querySelectorAll('.pr-merge-confirm button')].find(b=>b.textContent==='Cancel').click()");
+    await wait("!document.querySelector('.pr-merge-confirm')");
+    assert.equal((await writes()).length, writesBefore, 'Choosing a method writes nothing');
 
     step = 'freshness';
     const statusLine = `document.querySelector('${P} [data-overview-status-line]')`;

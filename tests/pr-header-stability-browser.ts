@@ -19,7 +19,7 @@ interface Frame {
   titleFont: string;
   menu: Rect | null;
   metadata: Rect | null;
-  github: Rect | null;
+  readiness: Rect | null;
   status: Rect | null;
   reviewActions: Rect[];
   scope: Rect | null;
@@ -100,7 +100,7 @@ void app.whenReady().then(async () => {
       const tabRect=e=>{const b=rect(e);b[0]=round(b[0]+list.scrollLeft);return b};
       const active=tabs.find(t=>t.dataset.state==='active');
       const panel=[...page.children].find(e=>e.getAttribute('role')==='tabpanel'&&e.dataset.state==='active');
-      const actions=q('.pr-summary-review-actions');
+      const actions=q('.pr-header-actions');
       let indicator=null;
       if(active){const b=active.getBoundingClientRect(),s=getComputedStyle(active);const w=parseFloat(s.borderBottomWidth);indicator={tab:active.textContent.trim(),rect:[b.x+list.scrollLeft,b.bottom-w,b.width,w].map(round),width:s.borderBottomWidth,color:s.borderBottomColor}}
       return {
@@ -110,10 +110,10 @@ void app.whenReady().then(async () => {
         title:rect(q('.pr-overview-heading h1')),
         titleFont:getComputedStyle(q('.pr-overview-heading h1')).fontSize,
         menu:rect(q('.pr-overview-heading .entry-menu-trigger')),
-        metadata:q('.pr-summary-context')?.checkVisibility()?rect(q('.pr-summary-context')):null,
-        github:q('.pr-github-link')?.checkVisibility()?rect(q('.pr-github-link')):null,
-        status:rect(q('.pr-merge-status')),
-        reviewActions:[...document.querySelectorAll('.pr-summary-review-actions button')].map(rect),
+        metadata:q('.pr-heading-meta')?.checkVisibility()?rect(q('.pr-heading-meta')):null,
+        readiness:q('.pr-heading-meta .merge-readiness-chip')?.checkVisibility()?rect(q('.pr-heading-meta .merge-readiness-chip')):null,
+        status:rect(q('.pr-header-actions')),
+        reviewActions:[...document.querySelectorAll('.pr-header-actions [data-slot=button]')].filter(b=>b.getBoundingClientRect().width>0).map(rect),
         scope:rect(q('.stack-scope-bar')),
         navigation:rect(q('.pr-workspace-navigation')),
         tabs:tabs.map(tabRect),
@@ -137,7 +137,7 @@ void app.whenReady().then(async () => {
       'title',
       'menu',
       'metadata',
-      'github',
+      'readiness',
       'status',
       'scope',
       'navigation',
@@ -178,14 +178,8 @@ void app.whenReady().then(async () => {
       if (reference.indicator.color !== current.indicator.color) failures.push(`${where}: indicator colour changed`);
     }
     if (current.focusRing) failures.push(`${where}: pointer click left a focus ring on the active tab`);
-    // A PR's Drafts and Review PR stay in the header; Changes keeps their space and shows its own.
-    if (reference.reviewActions.length) {
-      const expected = !where.includes(' Changes');
-      if (current.reviewActionsVisible !== expected)
-        failures.push(
-          `${where}: review actions ${current.reviewActionsVisible ? 'shown' : 'hidden'}, expected ${expected ? 'shown' : 'hidden'}`
-        );
-    }
+    // A PR's actions, Drafts and Review PR included, stay in the header's tab row on every section (#542).
+    if (reference.reviewActions.length && !current.reviewActionsVisible) failures.push(`${where}: header actions hidden`);
   };
   const report: Record<string, Record<string, Frame>> = {};
 
@@ -267,7 +261,7 @@ void app.whenReady().then(async () => {
     await pause(200);
     const checksFrame = await frame();
     await js(
-      "[...document.querySelectorAll('.pr-summary-review-actions button')].find(b=>b.textContent.startsWith('Drafts')).click()"
+      "[...document.querySelectorAll('.pr-header-actions button')].find(b=>b.textContent.startsWith('Drafts')).click()"
     );
     if (!(await wait("!!document.querySelector('.pr-header-review-panel .changes-drafts')", 60)))
       failures.push('Drafts from the header did not open on Checks');

@@ -4500,7 +4500,7 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   const token = getResolvedToken();
   if (!token) throw new Error('Connect GitHub before changing a PR.');
   const login = cachedLogin ?? await resolveGitHubLogin(token);
-  const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : request.kind === 'mark-ready' ? 'Marking PR ready for review' : request.kind === 'convert-draft' ? 'Converting PR to draft' : request.kind === 'close' ? 'Closing PR' : 'Updating auto-merge';
+  const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : request.kind === 'mark-ready' ? 'Marking PR ready for review' : request.kind === 'convert-draft' ? 'Converting PR to draft' : request.kind === 'close' ? 'Closing PR' : request.kind === 'reopen' ? 'Reopening PR' : request.kind === 'delete-branch' ? 'Deleting PR branch' : 'Updating auto-merge';
   const id = `pr-action:${crypto.randomUUID()}`;
   activities.start({ id, kind: 'pr-action', account: login, title, detail: 'Checking the confirmed revisions and GitHub permissions.' }, {});
   // IPC payloads are runtime inputs even when the preload types are narrow.
@@ -4510,7 +4510,7 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   const write = (result?: PrActionResult): GitHubWriteAction =>
     request.kind === 'merge' ? (result?.operation ? 'merge-submitted' : result?.status === 'enqueued' ? 'merge-queue' : 'merge')
       : request.kind === 'enable-auto' ? 'enable-auto-merge' : request.kind === 'disable-auto' ? 'disable-auto-merge'
-        : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : request.kind === 'close' ? 'close-pr' : 'update-branch';
+        : request.kind === 'mark-ready' ? 'mark-ready' : request.kind === 'convert-draft' ? 'convert-draft' : request.kind === 'close' ? 'close-pr' : request.kind === 'reopen' ? 'reopen-pr' : request.kind === 'delete-branch' ? 'delete-branch' : 'update-branch';
   try {
     let result: PrActionResult;
     // Draft state and auto-merge show at once. Merges and branch updates wait for GitHub.

@@ -6,7 +6,7 @@ import path from 'node:path';
 app.disableHardwareAcceleration();
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 850, show: true, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code).catch((error: unknown) => { throw new Error(`${code.slice(0, 300)}\n${String(error)}`); }) as Promise<T>;
   const wait = async (code: string) => {
     for (let i = 0; i < 300; i++) { if (await js(code)) return; await new Promise(r => setTimeout(r, 40)); }
     throw Error(`Timed out: ${code}`);
@@ -50,12 +50,17 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.actionReads'), 0, 'Rendering rows must not load permissions');
     assert.equal(await js("document.querySelectorAll('.stack-merge-details').length"), 0, 'No duplicate status rail');
     assert.deepEqual(await js("[...document.querySelectorAll('.stack-overview-member')].map(row=>Number(row.dataset.prUrl.split('/').pop()))"), [122,121,120]);
-    assert.match(await js<string>("document.querySelector('.pr-merge-status').textContent"), /Not ready to merge/);
+    assert.match(await js<string>("document.querySelector('.pr-heading-meta').textContent"), /Not ready to merge/);
     assert.equal(await js("document.querySelectorAll('.stack-member-disclosure[open]').length"), 0);
     assert.ok(await js("document.querySelector('[aria-label=\"Merge steps\"]').textContent.includes('Mark drafts ready for review')"));
     assert.ok(await js("document.querySelector('[aria-label=\"Merge steps\"]').textContent.includes('Resolve merge conflicts')"));
     // Requirements and check results read together share one freshness note; its tooltip keeps both times.
+    // The freshness note is in the readiness chip's popover (#542).
+    await js("document.querySelector('.pr-heading-meta .merge-readiness-chip').click()");
+    await wait("!!document.querySelector('.readiness-popover .stack-checks-freshness')");
     assert.ok(await js("(e=>/^Merge status checked/.test(e.textContent) && e.title.includes('Check results checked') && e.title.includes('Merge requirements checked') || e.textContent.includes('Check results checked'))(document.querySelector('.stack-checks-freshness'))"));
+    await js("document.querySelector('.pr-heading-meta .merge-readiness-chip').click()");
+    await wait("!document.querySelector('.readiness-popover')");
     assert.ok(await js(`${row(122)}.querySelector('[data-blocker-key="draft"] button').checkVisibility()`), 'Draft action is visible without expanding details');
     assert.ok(await js(`${row(120)}.querySelector('[data-blocker-key="conflicts"] button').checkVisibility()`), 'Conflict action is visible without expanding details');
     assert.ok(await js(`${row(120)}.querySelector('.stack-required-check-names').checkVisibility()`), 'Required failing checks are named in the row');
@@ -74,11 +79,17 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>(`${row(122)}.querySelector('[aria-label="Merge blockers for PR #122"]').textContent`), /draft/);
     assert.doesNotMatch(await js<string>(`${row(122)}.querySelector('[aria-label="Merge blockers for PR #122"]').textContent`), /cancelled|behind/);
     assert.match(await js<string>(`${row(122)}.textContent`), /Optional · Does not block merging/);
-    // Direct draft action reuses the existing confirmation and revision checks.
-    await js(`[...${row(122)}.querySelectorAll('button')].find(b=>b.textContent==='Mark ready for review…').click()`);
-    await wait("document.querySelector('[role=dialog]')?.textContent.includes('Mark ready for review') && window.actionReads===1");
-    assert.equal(await js('window.actionRequest'), undefined, 'Opening a confirmation never changes the PR');
-    await js("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Cancel').click()");
+    // Draft is the header's toggle (#542): it reads GitHub's current state, then acts at once with its revision.
+    const draft = `${row(122)}.querySelector('[data-blocker-key="draft"] [role=switch]')`;
+    await wait(`${draft}?.getAttribute('aria-checked')==='true'`);
+    await js(`${draft}.click()`);
+    // One read of GitHub's current state before the write; the refresh after it may add a second.
+    await wait("window.actionRequest?.kind==='mark-ready' && window.actionReads>=1 && window.actionReads<=2");
+    assert.equal(await js("window.actionRequest.revisions[0].url.endsWith('/122')"), true);
+    await wait("[...document.querySelectorAll('[data-slot=toast] button')].some(b=>b.textContent==='Undo')");
+    await js("window.actionRequest=undefined");
+    const rerunCancelled = `[...${row(122)}.querySelectorAll('button')].find(b=>b.textContent==='Re-run cancelled workflow…')`;
+    await wait(`!!${rerunCancelled}`);
     // Cancelled workflows use the explicit all-jobs action, failed jobs use failed-only.
     await js(`[...${row(122)}.querySelectorAll('button')].find(b=>b.textContent==='Re-run cancelled workflow…').click()`);
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Workflow run 9')");

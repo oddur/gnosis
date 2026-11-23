@@ -84,6 +84,7 @@ export function PrReadiness({
     : (status ?? member).mergeable;
   // The final ready-state detail restates the verdict. Keep optional-update facts.
   const summaryDetails = readiness.ready ? readiness.details.slice(0, -1) : readiness.details;
+  // Summary's readiness is information only: the PR's actions are in the header on every tab (#542).
   if (compact)
     return (
       <section className="pr-readiness pr-readiness-compact" aria-label={`Review readiness for PR #${member.number}`}>
@@ -107,13 +108,6 @@ export function PrReadiness({
               </a>
             )}
           </div>
-          <PrActions
-            key={member.url}
-            member={member}
-            onChanged={onRetry}
-            compact
-            hasConflicts={readiness.label === 'Merge conflicts'}
-          />
         </div>
         {error && (
           <div className="pr-status-error" role="status">
