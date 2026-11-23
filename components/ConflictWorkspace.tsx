@@ -2,7 +2,7 @@ import { LoadingIndicator } from './LoadingState';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { DropdownMenu, Popover } from 'radix-ui';
 import type { DiffLineAnnotation } from '@pierre/diffs';
-import { ConflictDiff, ConflictFileDiff, ConflictResult, lineRuns } from './ConflictDiff';
+import { ConflictDiff, ConflictFileDiff, ConflictResult } from './ConflictDiff';
 import type { Preferences } from '../lib/types';
 import {
   ArrowRight,
@@ -17,6 +17,7 @@ import {
   Copy,
   ExternalLink,
   Keyboard,
+  Pencil,
   RotateCcw,
   TriangleAlert,
 } from 'lucide-react';
@@ -34,22 +35,27 @@ import { ConflictUndo } from './ConflictUndo';
 import { undoAllowed, undoTarget, unsettledUndoCopy } from '../lib/conflict-undo';
 import { toast } from './ui/toast';
 import { WrittenLegend, proposalWhat } from './ConflictCard';
+import { FileEditNote, FileEditor } from './ConflictFileEdit';
+import { diffThemeName } from '../lib/diff-worker-pool';
 import { useCodeOptions } from '../lib/use-code-options';
 import type { ConflictViewHandle } from './useConflictChoices';
 import { ConflictSuggestMenu, useSuggestionModel, type SuggestEngine } from './ConflictSuggestMenu';
 import {
   conflictCount,
   conflictLabels,
+  savedBlockEdits,
   type BlockEdits,
   type BlockPicks,
   type ConflictLabels,
 } from '../lib/conflict-blocks';
-import { cardAnchors, fileWriter, proposalWriter, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
+import { cardAnchors, fileWriter, lineRuns, proposalWriter, resolverBaseline, writtenLabel } from '../lib/conflict-diff';
 import {
   WRITTEN_BUDGET_MS,
   confirmCount,
   confirmGroups,
+  confirmEdited,
   confirmWritten,
+  editedNote,
   needsYou,
   patchNote,
   wholeNote,
@@ -73,13 +79,13 @@ import {
   SAVE_REFUSALS,
   STALE_DRAFT,
   refusedSave,
+  UNDO_LATER,
   hasConflictMarkers,
   type ConflictFile,
   type ConflictFileStage,
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
-  type SavedBlockEdit,
   type ConflictTypeCheck,
 } from '../lib/conflict-resolution';
 import { adopt, editsJson, heldReason, loadedOf, picksJson, reconcile, type HeldReason, type LoadedFile } from '../lib/conflict-loaded';
@@ -109,6 +115,7 @@ import {
   type Verdict,
   typeCheckFor,
   typeErrorOf,
+  wholeEdited,
   withTypeError,
 } from '../lib/conflict-verify';
 import { verdictKey, verdictRuns } from '../lib/conflict-verdict-key';
@@ -179,6 +186,20 @@ function FilePath({ path }: { path: string }) {
       {cut > 0 && <span className="conflict-path-dir">{path.slice(0, cut)}</span>}
       <span className="conflict-path-name">{path.slice(cut)}</span>
     </span>
+  );
+}
+
+/**
+ * The open file's code (#503): the whole-file editor in place of the diff while it is open, else the diff with the note
+ * of a whole-file edit over it.
+ */
+function FileBody({ editor, note, children }: { editor: React.ReactNode; note: React.ReactNode; children: React.ReactNode }) {
+  if (editor) return editor;
+  return (
+    <>
+      {note}
+      {children}
+    </>
   );
 }
 
@@ -533,6 +554,11 @@ interface HeldEdit {
   edits?: BlockEdits;
   reason: HeldReason;
   at: number;
+  /**
+   * Edit whole file (#503): `edit`, your text in its editor, kept as a whole-file edit; `undo`, its Undo. Keep my edit
+   * sends it again from the newer saved file.
+   */
+  whole?: 'edit' | 'undo';
 }
 const heldEdits = new Map<string, HeldEdit>();
 const HELD_TEXT = 8_000_000;
@@ -599,19 +625,6 @@ function ErrorPanel({
   );
 }
 
-/** In-place edits as the draft saves them (ConflictFile.edits): null for none, every field present. */
-function savedEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
-  return Array.from(edits ?? [], (edit) =>
-    edit
-      ? {
-          text: edit.text,
-          before: edit.before ?? null,
-          pick: edit.pick ?? null,
-          ...(edit.written?.length ? { written: [...edit.written] } : {}),
-        }
-      : null
-  );
-}
 /** A file's saved Keep choices, the same array for the same saved file, so memoized buckets stay valid. */
 const savedPickCache = new WeakMap<ConflictFile, BlockPicks>();
 function savedPicks(f: ConflictFile): BlockPicks | undefined {
@@ -718,7 +731,7 @@ export function ConflictWorkspace({
   };
   /** The in-place edits to save for a file, when they differ from the saved ones. */
   const editsToSave = (f: ConflictFile) => {
-    const own = savedEdits(editsRef.current(f));
+    const own = savedBlockEdits(editsRef.current(f));
     return JSON.stringify(own.some(Boolean) ? own : []) === JSON.stringify(f.edits ?? []) ? undefined : own;
   };
   /**
@@ -756,7 +769,21 @@ export function ConflictWorkspace({
    * Keeps your edit of a file another view changed, with your choices for it, and pauses its saves until you choose.
    * `was`: what your edit came from.
    */
-  const hold = ({ session, path, was, text, reason }: { session: ConflictSession; path: string; was: LoadedFile; text: string; reason: HeldReason }) => {
+  const hold = ({
+    session,
+    path,
+    was,
+    text,
+    reason,
+    whole = fileEdit.current?.path === path ? 'edit' : undefined,
+  }: {
+    session: ConflictSession;
+    path: string;
+    was: LoadedFile;
+    text: string;
+    reason: HeldReason;
+    whole?: HeldEdit['whole'];
+  }) => {
     const ownPicks = picksState.current[path];
     const ownEdits = editsState.current[path];
     const edit: HeldEdit = {
@@ -770,6 +797,7 @@ export function ConflictWorkspace({
       edits: ownEdits?.original === was.original ? ownEdits.edits : undefined,
       reason,
       at: Date.now(),
+      ...(whole ? { whole } : {}),
     };
     heldEdits.delete(edit.key);
     heldEdits.set(edit.key, edit);
@@ -783,6 +811,8 @@ export function ConflictWorkspace({
   /** Your text, choices or edits for the file differ from what it was loaded from. */
   const changedHere = (path: string, was: LoadedFile) => {
     if (path === selectedRef.current && contentsRef.current !== was.result) return true;
+    // Edit whole file is open on it: your edit is held, never reloaded under the editor.
+    if (fileEdit.current?.path === path) return true;
     const ownPicks = picksState.current[path];
     const ownEdits = editsState.current[path];
     return (
@@ -801,7 +831,12 @@ export function ConflictWorkspace({
         ...changed,
         // The same version as before: no other view saved it, the type check did.
         reason: before ? heldReason(changed.reason, before.version, value.version) : changed.reason,
-        text: changed.path === selectedRef.current ? contentsRef.current : changed.was.result,
+        text:
+          fileEdit.current?.path === changed.path
+            ? fileEdit.current.text
+            : changed.path === selectedRef.current
+              ? contentsRef.current
+              : changed.was.result,
       });
   };
   /** Your picks and edits for a save request, where they changed. */
@@ -829,6 +864,12 @@ export function ConflictWorkspace({
   const mergedToggle = useRef<HTMLInputElement>(null);
   // The in-place editor is open with text you haven't saved: the confirmation waits for it (confirm).
   const editorDirty = useRef(false);
+  // Edit whole file (#503): the file whose draft is open in the editor, instead of its diff. While it is open, every
+  // step that would leave or review the draft waits (editorDirty).
+  const [fileEditor, setFileEditor] = useState('');
+  // The open whole-file editor: its file, the revision it started from and your text in it, so a newer saved draft
+  // holds your edit instead of reloading under it (changedHere).
+  const fileEdit = useRef<{ path: string; base?: string; text: string } | null>(null);
   // G in the confirmation: each press opens Merged for you and focuses it.
   const [openMerged, setOpenMerged] = useState(0);
   const focusIntent = useRef(true);
@@ -1016,6 +1057,8 @@ export function ConflictWorkspace({
     selectedRef.current = next?.path ?? '';
     setSelectedState(next?.path ?? '');
     setContents(next?.result ?? '');
+    fileEdit.current = null;
+    setFileEditor('');
     setEpoch((n) => n + 1);
     focusIntent.current = true;
   }
@@ -1111,7 +1154,8 @@ export function ConflictWorkspace({
     busy,
     root,
     apply: (path, index) => {
-      if (pending.current) return Promise.reject(new ModelProposalWaits());
+      // Edit whole file is open: the proposal waits, so the editor's text never goes stale under it (#503).
+      if (pending.current || fileEdit.current) return Promise.reject(new ModelProposalWaits());
       const task = persist().then(async (saved) => {
         if (pending.current) throw new ModelProposalWaits();
         const before = saved.files.find((f) => f.path === path)?.result;
@@ -1129,7 +1173,9 @@ export function ConflictWorkspace({
   });
   async function run(
     build: (value: ConflictSession) => ConflictRequest,
-    after: (reply: ConflictReply, request: ConflictRequest) => void
+    after: (reply: ConflictReply, request: ConflictRequest) => void,
+    /** Handles a refusal itself (true), such as by holding the edit: no error then. */
+    refused?: (error: unknown, request: ConflictRequest) => boolean
   ) {
     if (!sessionRef.current || pending.current) return false;
     pending.current = true;
@@ -1138,9 +1184,11 @@ export function ConflictWorkspace({
     setFailedKind(undefined);
     setHint('');
     let kind: ConflictRequest['kind'] | undefined;
+    let lastRequest: ConflictRequest | undefined;
     try {
       const saved = await persist();
       let request = build(saved);
+      lastRequest = request;
       kind = request.kind;
       const typed = contentsRef.current;
       let reply: ConflictReply;
@@ -1156,17 +1204,25 @@ export function ConflictWorkspace({
         apply(latest, selectedRef.current);
         if (heldRef.current) throw e;
         request = build(latest.session);
+        lastRequest = request;
         reply = await window.electronAPI.conflictResolution(request);
       }
       // What this request wrote for you is the view's; any other file the reply changed is read afresh or held (after).
       adopt(
         loaded.current,
         reply.session,
-        request.kind === 'save' || request.kind === 'resolve' || request.kind === 'model' ? [request.path] : 'all'
+        request.kind === 'save' ||
+          request.kind === 'resolve' ||
+          request.kind === 'model' ||
+          request.kind === 'edit-file' ||
+          request.kind === 'undo-edit-file'
+          ? [request.path]
+          : 'all'
       );
       after(reply, request);
       return true;
     } catch (e) {
+      if (lastRequest && refused?.(e, lastRequest)) return false;
       setError(e instanceof Error ? e.message : String(e));
       setFailedKind(kind);
       setRefusedAccess(kind === 'publish' && githubWriteError(e).workflowPermission ? accessNow.current : undefined);
@@ -1231,7 +1287,33 @@ export function ConflictWorkspace({
       if (still && file) loaded.current.set(file.path, { ...loadedOf(file), revision: still.revision });
       setHeld(still);
       apply(reply, file ? file.path : selectedRef.current);
-      if (file && (mine ? !still : still?.reason === 'changed' || still?.reason === 'checked')) {
+      if (mine?.whole && file && !still) {
+        // Keep my edit of Edit whole file (#503): sent again as a whole-file edit, or its Undo, from the newer saved file.
+        const next =
+          mine.whole === 'undo'
+            ? file.wholeEdit && {
+                kind: 'undo-edit-file' as const,
+                id: reply.session.id,
+                version: reply.session.version,
+                path: file.path,
+                confirmed: true,
+                ...baseOf(file.revision),
+              }
+            : mine.text !== file.result && {
+                kind: 'edit-file' as const,
+                id: reply.session.id,
+                version: reply.session.version,
+                path: file.path,
+                contents: mine.text,
+                ...baseOf(file.revision),
+              };
+        if (next) {
+          const saved = await window.electronAPI.conflictResolution(next);
+          adopt(loaded.current, saved.session, [file.path]);
+          forgetOwn([file.path]);
+          apply(saved, file.path);
+        }
+      } else if (file && (mine ? !still : still?.reason === 'changed' || still?.reason === 'checked')) {
         // Your text on screen; with Keep my edit, your own choices for it too, never older ones.
         setContents(waiting.text);
         if (mine) {
@@ -1387,9 +1469,98 @@ export function ConflictWorkspace({
       return f ? { ...previous, [path]: { original: f.original, edits: [] } } : previous;
     });
   };
+  /**
+   * Edit whole file (#503): the draft on screen in the editor, in place of the diff. Your unsaved choices are saved
+   * first, so the editor starts from the saved file, and its save names that file's revision (`base`).
+   */
+  function editFile() {
+    if (!file || file.unsupported || !canEdit || editHeld() || pending.current) return;
+    const path = file.path;
+    setHint('');
+    void persist()
+      .then(() => {
+        if (selectedRef.current !== path || heldRef.current) return;
+        fileEdit.current = { path, base: loaded.current.get(path)?.revision, text: contentsRef.current };
+        setFileEditor(path);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }
+  /** Closes the whole-file editor and changes nothing. */
+  function closeFileEditor() {
+    fileEdit.current = null;
+    setFileEditor('');
+    focusIntent.current = true;
+    setEpoch((n) => n + 1);
+  }
+  /** The revision a whole-file request starts from, when the view knows it. */
+  const baseOf = (base: string | undefined) => (base ? { base } : {});
+  /**
+   * A whole-file request another view's change refused (#503): held like any refused edit, with your text, so Keep my
+   * edit sends it again from the newer file and Use the saved draft drops it.
+   */
+  const holdWhole = (path: string, text: string, whole: 'edit' | 'undo') => (error: unknown) => {
+    const reason = refusedSave(error);
+    const value = sessionRef.current;
+    const current = value?.files.find((f) => f.path === path);
+    if (!reason || !value || !current) return false;
+    hold({ session: value, path, was: loaded.current.get(path) ?? loadedOf(current), text, reason, whole });
+    return true;
+  };
+  /** Saves your whole-file edit: what you changed is your decision. */
+  function saveFile(text: string) {
+    const path = selected;
+    const base = fileEdit.current?.path === path ? fileEdit.current.base : loaded.current.get(path)?.revision;
+    void run(
+      (s) => ({ kind: 'edit-file', id: s.id, version: s.version, path, contents: text, ...baseOf(base) }),
+      (reply) => {
+        forgetOwn([path]);
+        apply(reply, path);
+        setOutcome(
+          reply.session.files.find((f) => f.path === path)?.wholeEdit
+            ? 'The whole file is your edit now. Review it before you mark it reviewed.'
+            : 'Your edit returned the file to how it was before, so it is undone.'
+        );
+      },
+      holdWhole(path, text, 'edit')
+    );
+  }
+  // Undo of a whole-file edit that changed again after the first one asks once: it discards those changes too. The
+  // service says so (UNDO_LATER) from the saved file, and takes the second Undo only with `confirmed`.
+  const undoArmed = useRef('');
+  /** Undo of Edit whole file: the file as it was before your first whole-file edit. */
+  function undoFileEdit() {
+    if (!file?.wholeEdit || editHeld()) return;
+    const path = file.path;
+    const confirmed = undoArmed.current === path;
+    undoArmed.current = '';
+    void run(
+      (s) => ({
+        kind: 'undo-edit-file',
+        id: s.id,
+        version: s.version,
+        path,
+        ...(confirmed ? { confirmed } : {}),
+        ...baseOf(loaded.current.get(path)?.revision),
+      }),
+      (reply) => {
+        forgetOwn([path]);
+        apply(reply, path);
+        setOutcome('Your whole-file edit is undone. Your choices per conflict are back.');
+      },
+      (error) => {
+        if (error instanceof Error && error.message.includes(UNDO_LATER)) {
+          undoArmed.current = path;
+          setHint(UNDO_LATER);
+          return true;
+        }
+        return holdWhole(path, contentsRef.current, 'undo')(error);
+      }
+    );
+  }
   const editsFor = (f: ConflictFile, next: BlockEdits) =>
     setEdits((previous) => ({ ...previous, [f.path]: { original: f.original, edits: next } }));
   function resetTo(text: string) {
+    if (editHeld()) return;
     if (file) dropPicks(file.path);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
     setOutcome('');
@@ -1412,6 +1583,7 @@ export function ConflictWorkspace({
   }
   /** One file's result: the whole-file proposal (`whole-file`), structural merge's, or the model's, with your instructions. */
   function suggest(engine: SuggestEngine | 'whole-file', instructions?: string) {
+    if (editHeld()) return;
     const path = selected;
     void run(
       (s) => ({
@@ -1452,9 +1624,12 @@ export function ConflictWorkspace({
     // Back on the file after showing another, the screen shows the saved file: your held text is still the edit.
     const shown = selectedRef.current === edit.path ? sessionRef.current?.files.find((f) => f.path === edit.path) : undefined;
     const typed = shown && contentsRef.current !== shown.result;
-    const mine = typed
-      ? { ...edit, text: contentsRef.current, picks: picksRef.current(shown), edits: editsRef.current(shown) }
-      : edit;
+    const mine =
+      fileEdit.current?.path === edit.path
+        ? { ...edit, whole: 'edit' as const, text: fileEdit.current.text }
+        : typed
+          ? { ...edit, text: contentsRef.current, picks: picksRef.current(shown), edits: editsRef.current(shown) }
+          : edit;
     heldEdits.delete(edit.key);
     void load(keep && (edit.reason === 'changed' || edit.reason === 'checked') ? { mine } : {});
   }
@@ -1842,7 +2017,9 @@ export function ConflictWorkspace({
       label: 'Start over with latest code…',
       separated: true,
       movesFocus: true,
-      onSelect: () => setResetPrompt(true),
+      onSelect: () => {
+        if (!editHeld()) setResetPrompt(true);
+      },
     });
   const footerStatus = busy
     ? activity?.detail || 'Working…'
@@ -1906,6 +2083,21 @@ export function ConflictWorkspace({
                 // Nothing goes to the model until you ask (#445 item 7). The cards show both sides meanwhile.
                 all={models.waiting > 0 ? { count: models.waiting, onAsk: models.askAll } : undefined}
               />
+            )}
+            {/* Edit whole file (#503) sits with the file's other ways to change its draft: no band of its own. */}
+            {editing && file && !file.unsupported && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!canEdit || fileEditor === file.path}
+                data-conflict-edit-file=""
+                aria-label="Edit whole file"
+                title="Edit lines outside the conflicts too. Saving makes the whole file your decision."
+                onClick={editFile}
+              >
+                <Pencil aria-hidden="true" />
+                <span className="conflict-tool-label">Edit whole file</span>
+              </Button>
             )}
             {editing && <ResetMenu disabled={busy} items={resetItems} />}
             {summaryShown && (
@@ -2148,7 +2340,7 @@ export function ConflictWorkspace({
                       </Button>
                     </>
                   ) : (
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setResetPrompt(true)}>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => !editHeld() && setResetPrompt(true)}>
                       Start over with latest code…
                     </Button>
                   )
@@ -2367,6 +2559,36 @@ export function ConflictWorkspace({
                         <LocalMerge session={session} reason={file.unsupported} />
                       ) : (
                         <>
+                          <FileBody
+                            editor={
+                              fileEditor === file.path && (
+                                <FileEditor
+                                  key={`${selected}:${epoch}`}
+                                  name={selected}
+                                  initial={contents}
+                                  theme={diffThemeName(preferences?.codeTheme)}
+                                  disabled={!canEdit}
+                                  onHeld={(held) => (editorDirty.current = held)}
+                                  onType={(text) => {
+                                    if (fileEdit.current) fileEdit.current.text = text;
+                                  }}
+                                  onSave={saveFile}
+                                  onCancel={closeFileEditor}
+                                />
+                              )
+                            }
+                            note={
+                              wholeEdited(file, contents) && (
+                                <FileEditNote
+                                  conflicts={conflictCount(file.original)}
+                                  markers={markersRemain}
+                                  disabled={!canEdit}
+                                  onEdit={editFile}
+                                  onUndo={undoFileEdit}
+                                />
+                              )
+                            }
+                          >
                           {file.source !== 'manual' && !file.proposals && contents === file.result && (
                             <details className="conflict-proposal" open={!!file.explanation}>
                               <summary>
@@ -2437,6 +2659,7 @@ export function ConflictWorkspace({
                                 picks={picksOf(file)}
                               />
                           )}
+                          </FileBody>
                         </>
                       )}
                     </div>
@@ -2532,14 +2755,18 @@ function ConfirmFileDiff({
 }) {
   // The marked lines, computed as this file's diff mounts: opening the confirmation does no line diff (#445 item 10).
   const marked = useMemo(() => confirmWritten(part, markBudget()), [part]);
-  // Each conflict's lines, and every marked line, stay in view: a mark never sits in a hidden gap.
+  // The lines you changed with Edit whole file (#503), listed in its note: also computed as the diff mounts.
+  const edited = useMemo(() => confirmEdited(part), [part]);
+  // Each conflict's lines, every marked line and every line you changed with Edit whole file stay in view.
   const pins = useMemo(
     () => [
       ...part.blocks.filter((b) => b.end >= b.start).map((b) => [b.start, b.end] as const),
       ...lineRuns(new Set(marked)),
+      ...(edited && edited !== 'unknown' ? lineRuns(new Set(edited.lines)) : []),
     ],
-    [part.blocks, marked]
+    [part.blocks, marked, edited]
   );
+  const editedText = editedNote(edited);
   const annotate = useCallback(
     (hunks: readonly GapHunk[]) => {
       const byPlace = new Map<string, DiffLineAnnotation<{ indexes: number[] }>>();
@@ -2594,6 +2821,12 @@ function ConfirmFileDiff({
         <p className="conflict-confirm-note" data-confirm-how={part.whole}>
           <Check size={13} aria-hidden="true" />
           <span>{wholeNote(part.whole, part.conflicts, session.baseBranch)}</span>
+        </p>
+      )}
+      {editedText && (
+        <p className="conflict-confirm-note" data-confirm-edited="">
+          <Pencil size={13} aria-hidden="true" />
+          <span>{editedText}</span>
         </p>
       )}
       {part.whole && marked.length > 0 && <WrittenLegend count={marked.length} by={saved && fileWriter(saved)} />}

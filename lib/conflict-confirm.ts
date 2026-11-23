@@ -1,14 +1,17 @@
+import { diffArrays } from 'diff';
 import {
   applyChoices,
   inferChoices,
   parseConflicts,
   pickText,
+  textLines,
   withPicks,
   type BlockChoice,
   type BlockPicks,
   type ConflictSegment,
 } from './conflict-blocks';
 import {
+  lineRuns,
   resolverBaseline,
   segmentsText,
   writtenFileLines,
@@ -18,7 +21,7 @@ import {
 } from './conflict-diff';
 import { conflictFileStage } from './conflict-markers';
 import type { ConflictFile, ConflictProposal } from './conflict-resolution';
-import type { ConflictBucket } from './conflict-verify';
+import { wholeEdited, type ConflictBucket } from './conflict-verify';
 
 /**
  * The one rule for "this file still needs you" (#445 item 12): it needs a local merge tool, has a conflict marker
@@ -70,6 +73,59 @@ export interface ConfirmFile {
   written: number[];
   /** A file a resolver wrote whole: what its marks are computed from (confirmWritten), only once its diff mounts. */
   marks?: { ours: string; theirs: string; resolver: string };
+  /**
+   * Your whole-file edit (#503): the file as it was before you first edited it whole, so the lines you changed there can
+   * be listed (confirmEdited) once the file's diff mounts.
+   */
+  edited?: string;
+}
+
+/** The lines you changed with Edit whole file: `after`'s line numbers, and lines removed outright. */
+export type EditedLines = { lines: number[]; removed: number } | 'unknown';
+/** How long one file's list of the lines you changed may take. Past it, the note says to read the whole diff. */
+export const EDITED_MS = 150;
+/**
+ * The lines you changed with Edit whole file (#503), for the file's note in the confirmation: a line diff of the file
+ * before your first whole-file edit against the draft. Every changed line is listed, those outside the conflicts
+ * included, so none of them needs telling apart from a conflict's. Undefined for any other file; 'unknown' when the
+ * diff ran out of time.
+ */
+export function confirmEdited(part: Pick<ConfirmFile, 'after' | 'edited'>, timeout = EDITED_MS): EditedLines | undefined {
+  if (part.edited === undefined) return undefined;
+  const parts = diffArrays(textLines(part.edited), textLines(part.after), { timeout });
+  if (!parts) return 'unknown';
+  const lines: number[] = [];
+  let removed = 0;
+  let line = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const change = parts[i];
+    if (!change.added && !change.removed) {
+      line += change.count;
+      continue;
+    }
+    const next = change.removed ? parts[i + 1] : undefined;
+    const added = change.added ? change.count : next?.added ? next.count : 0;
+    if (next?.added) i++;
+    // Lines a change removed past the ones it replaced count as removed, so a deletion is never left out.
+    removed += Math.max(0, (change.removed ? change.count : 0) - added);
+    for (let n = 0; n < added; n++) lines.push(++line);
+  }
+  return { lines, removed };
+}
+/** "line 3", "lines 3 and 7", "lines 3–5, 9 and 12". */
+function lineList(lines: readonly number[]) {
+  const runs = lineRuns(new Set(lines)).map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`));
+  const list = runs.length > 1 ? `${runs.slice(0, -1).join(', ')} and ${runs.at(-1)}` : runs[0];
+  return `${lines.length === 1 ? 'line' : 'lines'} ${list}`;
+}
+/** A whole-file edit's second note in the confirmation: the lines you changed in it. Undefined for any other file. */
+export function editedNote(change: EditedLines | undefined) {
+  if (!change) return undefined;
+  if (change === 'unknown')
+    return 'Gnosis couldn’t list the lines you changed in time. Read the whole diff: it has every line you changed.';
+  const removed = change.removed ? `removed ${change.removed} ${change.removed === 1 ? 'line' : 'lines'}` : '';
+  if (!change.lines.length) return removed ? `With Edit whole file you ${removed}.` : undefined;
+  return `With Edit whole file you changed ${lineList(change.lines)}${removed ? ` and ${removed}` : ''}.`;
 }
 
 /**
@@ -123,6 +179,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
       | 'wholeFile'
       | 'unsupported'
       | 'resolverText'
+      | 'wholeEdit'
     >;
     /** blockBuckets of the saved draft. */
     buckets: readonly ConflictBucket[];
@@ -151,7 +208,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     const previousPath = renamed.get(file.path);
     // main's rename shows in Arriving from main only: the parts after it are already at the new path.
     const named = previousPath ? { previousPath } : {};
-    const whole = (how: ConfirmWhole, before: string) =>
+    const whole = (how: ConfirmWhole, before: string, edited?: string) =>
       groups.decided.push({
         path: file.path,
         before,
@@ -166,13 +223,8 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
         ...((resolver) => (resolver === undefined ? {} : { marks: { ours: file.ours, theirs: file.theirs, resolver } }))(
           resolverBaseline(file, file.result)
         ),
+        ...(edited !== undefined ? { edited } : {}),
       });
-    // A whole-file proposal also changes lines outside the conflicts: main's lines can't be told apart from it.
-    if (file.wholeFile && file.result === file.wholeFile.text) {
-      whole(file.wholeFile.source === 'moved' ? 'whole-moved' : 'whole-file', file.ours);
-      if (previousPath) groups.main.push(mainPart(file.path, named, file.ours, file.ours));
-      continue;
-    }
     // The PR's side of a conflict at the end of a PR file without a final line feed: Git's markers add one, the file
     // has none.
     const last = segments.at(-1);
@@ -185,6 +237,20 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
         : s.block.ours;
     // main's lines: Git's merge, with every conflict as the PR's side.
     const withMain = segmentsText(segments, oursText, () => false).after;
+    // Your whole-file edit (#503): the whole file is yours, Merged proposals in it included, and its note lists every
+    // line you changed in it, the ones outside the conflicts too.
+    // Checked before the whole-file proposal, as the header's buckets are (blockBuckets).
+    if (file.wholeEdit && wholeEdited(file, file.result)) {
+      whole('manual', withMain, file.wholeEdit.result);
+      if (withMain !== file.ours || previousPath) groups.main.push(mainPart(file.path, named, file.ours, withMain));
+      continue;
+    }
+    // A whole-file proposal also changes lines outside the conflicts: main's lines can't be told apart from it.
+    if (file.wholeFile && file.result === file.wholeFile.text) {
+      whole(file.wholeFile.source === 'moved' ? 'whole-moved' : 'whole-file', file.ours);
+      if (previousPath) groups.main.push(mainPart(file.path, named, file.ours, file.ours));
+      continue;
+    }
     if (withMain !== file.ours || previousPath) groups.main.push(mainPart(file.path, named, file.ours, withMain));
     const inferred = inferChoices(segments, file.result, file.proposals);
     const choices = inferred && withPicks(segments, inferred, file.proposals, picks);

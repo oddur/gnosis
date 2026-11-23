@@ -1,4 +1,4 @@
-import { hasConflictMarkers } from './conflict-resolution';
+import { hasConflictMarkers, writtenInEdit, type SavedBlockEdit } from './conflict-resolution';
 
 /**
  * Conflict blocks in Gnosis's own words. Git writes `<<<<<<<`, `|||||||`, `=======` and `>>>>>>>`
@@ -43,6 +43,22 @@ export interface BlockEdit {
  * (`ConflictFile.edits`), as your picks are.
  */
 export type BlockEdits = readonly (BlockEdit | null | undefined)[];
+/**
+ * In-place edits as the draft saves them (ConflictFile.edits): null for none, every field present, and only the marked
+ * lines inside each edit's own text (#509), which is all the service accepts.
+ */
+export function savedBlockEdits(edits: BlockEdits | undefined): (SavedBlockEdit | null)[] {
+  return Array.from(edits ?? [], (edit) => {
+    if (!edit) return null;
+    const written = writtenInEdit(edit.text, edit.written);
+    return {
+      text: edit.text,
+      before: edit.before ?? null,
+      pick: edit.pick ?? null,
+      ...(written.length ? { written } : {}),
+    };
+  });
+}
 /** Only the texts of your edits: what the choices read and the draft holds. */
 export type EditTexts = readonly ({ text: string } | null | undefined)[];
 /** A block's state in the view: a pick, or your edit of it. */

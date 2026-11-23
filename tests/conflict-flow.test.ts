@@ -199,4 +199,9 @@ void test('a saved draft is readable with fields from a newer build, and names t
   // Fail-closed: a `resolved` that isn't a boolean never reads as reviewed.
   assert.equal(draftProblem({ ...draft, files: [{ ...file, resolved: 'yes' }] }, 'oddur', id), 'files[0].resolved');
   assert.equal(draftProblem({ ...draft, files: [{ ...file, result: null }] }, 'oddur', id), 'files[0].result');
+  // Undo of a whole-file edit (#503) puts its draft back: one that can't be read makes the draft unreadable.
+  const wholeEdit = { result: 'x\n', resolved: false, source: 'manual' };
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, wholeEdit }] }, 'oddur', id), undefined);
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, wholeEdit: { ...wholeEdit, result: 1 } }] }, 'oddur', id), 'files[0].wholeEdit');
+  assert.equal(draftProblem({ ...draft, files: [{ ...file, wholeEdit: 'x' }] }, 'oddur', id), 'files[0].wholeEdit');
 });

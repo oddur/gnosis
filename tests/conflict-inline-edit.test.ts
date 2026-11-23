@@ -15,7 +15,7 @@ import { blockBuckets } from '../lib/conflict-verify';
 import { CONFLICT_FILE_LIMIT, hasConflictMarkers, validateConflictRequest } from '../lib/conflict-resolution';
 import { modelTargets, openConflicts, spliceModelProposal } from '../lib/conflict-model';
 import { carryFile } from '../lib/conflict-carry';
-import type { BlockEdits } from '../lib/conflict-blocks';
+import { savedBlockEdits, type BlockEdits } from '../lib/conflict-blocks';
 
 /** Edits as the draft saves them (ConflictFile.edits). */
 const savedEdits = (edits: BlockEdits) =>
@@ -267,4 +267,24 @@ void test('inline edit: saved edits are validated, carried to an unchanged confl
   const changed = original.replace('return Math.max(100, attempt * 200);', 'return Math.max(50, attempt * 200);');
   const fresh = carryFile(old, { ...old, original: changed, result: changed, edits: undefined }, false);
   assert.equal(fresh.file.edits, undefined);
+});
+
+void test('inline edit: a marked line past the edit’s own lines is never marked, saved or shown (#509)', () => {
+  const id = 'a'.repeat(64);
+  const save = { kind: 'save', id, version: 1, path: 'a', contents: '', resolved: false };
+  // One line: index 0 is its own, index 1 would be the line after the conflict.
+  validateConflictRequest({ ...save, edits: [{ text: 'x\n', before: null, pick: null, written: [0] }] });
+  assert.throws(() => validateConflictRequest({ ...save, edits: [{ text: 'x\n', before: null, pick: null, written: [1] }] }));
+  assert.throws(() => validateConflictRequest({ ...save, edits: [{ text: '', before: null, pick: null, written: [0] }] }));
+  // The renderer saves only the edit's own lines, so an older draft with a stray index saves again.
+  assert.deepEqual(savedBlockEdits([{ text: 'x\ny\n', before: undefined, pick: undefined, written: [1, 2, 7] }]), [
+    { text: 'x\ny\n', before: null, pick: null, written: [1] },
+  ]);
+  // And the view marks only the edit's own lines, whatever the saved draft says.
+  const contents = applyChoices(segments, [undefined, 'theirs']);
+  const result = editConflict(conflictModel(original, contents), contents, 0, typed);
+  assert.ok(result);
+  const stray: BlockEdits = [{ ...(result.edits[0] ?? { text: typed, before: null, pick: null }), written: [0, 1, 5] }];
+  const model = conflictModel(original, result.contents, undefined, undefined, stray);
+  assert.deepEqual(conflictWritten(model).get(0), [0]);
 });

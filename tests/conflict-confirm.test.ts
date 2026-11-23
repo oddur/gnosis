@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { confirmCount, confirmGroups, confirmWritten, needsYou, patchNote, wholeNote } from '../lib/conflict-confirm';
-import { blockBuckets, fileStatus, type Verdict } from '../lib/conflict-verify';
+import {
+  confirmCount,
+  confirmEdited,
+  confirmGroups,
+  confirmWritten,
+  editedNote,
+  needsYou,
+  patchNote,
+  wholeNote,
+} from '../lib/conflict-confirm';
+import {
+  blockBuckets,
+  fileStatus,
+  unchosenConflicts,
+  waitingHint,
+  wholeEdited,
+  withTypeError,
+  type Verdict,
+} from '../lib/conflict-verify';
 import type { BlockPicks } from '../lib/conflict-blocks';
 import { conflictFileStage } from '../lib/conflict-markers';
 import type { ConflictFile, ConflictProposal } from '../lib/conflict-resolution';
@@ -282,4 +299,88 @@ void test('confirmCount', () => {
   assert.equal(confirmCount(3, 2), '3 conflicts in 2 files');
   assert.equal(confirmCount(0, 1), '1 file');
   assert.equal(confirmCount(0, 0), 'none');
+});
+
+void test('Edit whole file: the whole file is yours, its Merged proposal too, and every line you changed is listed (#503)', () => {
+  // Before the edit: a Keep and a Merged proposal. The edit adds an import above them and changes a line between them.
+  const before = 'a = 11\nb = 2\nx = 5\nc = 3031\n';
+  const kept = file(before, proposal, { resolved: false, picks: ['theirs', null] });
+  assert.deepEqual(blockBuckets(kept, kept.result, merged, ['theirs']), ['decided', 'merged']);
+  const draft = 'import { x } from "./x";\na = 11\nb = 3\nx = 5\nc = 3031\n';
+  const edited = file(draft, proposal, {
+    wholeEdit: { result: before, resolved: false, source: 'manual', picks: ['theirs', null] },
+  });
+  assert.equal(wholeEdited(edited, draft), true);
+  assert.deepEqual(blockBuckets(edited, draft, merged), ['decided', 'decided'], 'Every conflict is yours');
+  assert.deepEqual(unchosenConflicts(edited, draft, merged), [], 'Nothing waits for a choice');
+  assert.deepEqual(unchosenConflicts(edited, draft, check), [1], 'An unproven proposal left as it was still waits');
+  const groups = confirmGroups([entry(edited, merged)], []);
+  assert.deepEqual(groups.counts, { decided: 2, merged: 0, mainFiles: 1 });
+  assert.deepEqual(groups.merged, [], 'Nothing in a file you edited is Merged for you');
+  const [part] = groups.decided;
+  assert.equal(part.whole, 'manual');
+  assert.equal(part.before, groups.main[0].after, 'The diffs still chain: main’s lines, then your file');
+  assert.equal(part.after, draft);
+  assert.equal(part.edited, before);
+  assert.match(wholeNote('manual', part.conflicts, 'main'), /You edited this file, so its 2 conflicts are yours/);
+  // The lines you changed, outside the conflicts too, by their line in the draft.
+  const lines = confirmEdited(part);
+  assert.deepEqual(lines, { lines: [1, 3], removed: 0 });
+  assert.equal(editedNote(lines), 'With Edit whole file you changed lines 1 and 3.');
+  assert.equal(editedNote({ lines: [2, 3, 4, 9], removed: 1 }), 'With Edit whole file you changed lines 2–4 and 9 and removed 1 line.');
+  assert.equal(editedNote({ lines: [], removed: 2 }), 'With Edit whole file you removed 2 lines.');
+  assert.match(editedNote('unknown') ?? '', /Read the whole diff/);
+  assert.deepEqual(confirmEdited({ after: 'a\nc\n', edited: 'a\nb\nc\n' }), { lines: [], removed: 1 });
+  // Three lines replaced by one: the line is changed and the other two are removed, never left out.
+  assert.deepEqual(confirmEdited({ after: 'a\nz\ne\n', edited: 'a\nb\nc\nd\ne\n' }), { lines: [2], removed: 2 });
+  // Any other file has no such note.
+  assert.equal(confirmEdited(groups.main[0]), undefined);
+});
+
+void test('Edit whole file: a draft that splits into its conflicts again is told apart again; a marker keeps a conflict open', () => {
+  const before = 'a = 11\nb = 2\nx = 5\nc = 3031\n';
+  const wholeEdit = { result: before, resolved: false, source: 'manual' as const };
+  // A line between the conflicts changed: this draft can't be split into them.
+  const draft = 'a = 11\nb = 3\nx = 5\nc = 3031\n';
+  const edited = file(draft, proposal, { wholeEdit });
+  // Reset file: back to the conflicts, which split. The per-conflict rules apply, nothing is yours by default.
+  assert.equal(wholeEdited(edited, original), false);
+  assert.deepEqual(blockBuckets(edited, original, check), ['decide', 'check']);
+  // An unsaved change that still can't split stays your whole-file edit.
+  assert.equal(wholeEdited(edited, draft.replace('x = 5', 'x = 6')), true);
+  // A marker left in your edit: that conflict is still to decide, and the file is conflicted.
+  const open = `import { x } from "./x";\n${original}`;
+  const marked = file(open, proposal, { wholeEdit, resolved: false });
+  assert.deepEqual(blockBuckets(marked, open, merged), ['decide', 'decide']);
+  const one = 'import { x } from "./x";\na = 11\nb = 2\nx = 5\n<<<<<<< pr\nc = 30\n=======\nc = 31\n>>>>>>> main\n';
+  // Decide goes to the conflict that still shows its markers, here the second one (#532 review).
+  assert.deepEqual(blockBuckets(file(one, proposal, { wholeEdit }), one, merged), ['decided', 'decide']);
+  const first = 'import { x } from "./x";\n<<<<<<< pr\na = 10\n=======\na = 11\n>>>>>>> main\nb = 2\nx = 5\nc = 3031\n';
+  assert.deepEqual(blockBuckets(file(first, proposal, { wholeEdit }), first, merged), ['decide', 'decided']);
+  // Markers whose sides match no conflict (edited, or typed): every conflict waits.
+  const typedMarkers = 'a = 11\nb = 3\n<<<<<<< mine\nx = 5\n=======\nx = 6\n>>>>>>> theirs\nc = 3031\n';
+  assert.deepEqual(blockBuckets(file(typedMarkers, proposal, { wholeEdit }), typedMarkers, merged), ['decide', 'decide']);
+  assert.deepEqual(confirmGroups([entry(marked, merged)], []).pending, [{ path: 'src/a.ts', conflicts: 2 }]);
+  // Without the service's mark, the same draft is only a draft edited around its conflicts: the unproven proposal waits.
+  assert.deepEqual(blockBuckets(file(draft, proposal), draft, check), ['decided', 'check']);
+});
+
+void test('Edit whole file: a proposal the edit left as it was stays in Check; only what you changed is yours (#503)', () => {
+  // The type check demoted the Merged proposal; you add only the import it asked for.
+  const before = 'a = 11\nb = 2\nx = 5\nc = 3031\n';
+  const demoted = withTypeError(merged, { note: 'The type check found a new error in src/a.ts:1 (TS2304).' });
+  const draft = 'a = 11\nb = 2\nimport { x } from "./x";\nx = 5\nc = 3031\n';
+  const wholeEdit = { result: before, resolved: false, source: 'manual' as const, picks: ['theirs' as const, null] };
+  const edited = file(draft, proposal, { wholeEdit, resolved: false });
+  assert.deepEqual(blockBuckets(edited, draft, demoted), ['decided', 'check'], 'Your Keep is yours; the proposal is not');
+  assert.deepEqual(unchosenConflicts(edited, draft, demoted), [1], 'Mark reviewed waits');
+  assert.match(waitingHint(edited, draft, 1), /Your edit left the proposal for a conflict in Check as it was/);
+  // Without the demotion the proposal is Merged, and the whole file is yours.
+  assert.deepEqual(blockBuckets(edited, draft, merged), ['decided', 'decided']);
+  // A proposal you used before the edit is yours already.
+  const used = file(draft, proposal, { wholeEdit: { ...wholeEdit, picks: ['theirs', 'proposal'] } });
+  assert.deepEqual(blockBuckets(used, draft, demoted), ['decided', 'decided']);
+  // Lines of the conflict you changed are yours.
+  const changed = draft.replace('c = 3031', 'c = 30 + 31');
+  assert.deepEqual(blockBuckets(file(changed, proposal, { wholeEdit }), changed, demoted), ['decided', 'decided']);
 });

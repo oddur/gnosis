@@ -4428,7 +4428,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   if (!cachedLogin) cachedLogin = await resolveGitHubLogin(token);
   const controller = new AbortController();
   const id = `pr-action:conflicts:${crypto.randomUUID()}`;
-  const tracked = !['save', 'discard', 'restack-save', 'model'].includes(request.kind);
+  const tracked = !['save', 'discard', 'restack-save', 'model', 'edit-file', 'undo-edit-file'].includes(request.kind);
   if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : request.kind === 'undo-publish' ? 'Undoing the conflict update' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish', 'undo-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
     // A background preparation of this PR finishes first, so opening reuses it.

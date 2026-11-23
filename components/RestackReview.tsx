@@ -5,7 +5,7 @@ import { CodeView } from '@pierre/diffs/react';
 import { ArrowRight, CheckCheck, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
 import { ConflictDiff } from './ConflictDiff';
-import { conflictLabels, type BlockEdits, type BlockPick } from '../lib/conflict-blocks';
+import { conflictLabels, savedBlockEdits, type BlockEdits, type BlockPick } from '../lib/conflict-blocks';
 import { fileWriter, resolverBaseline } from '../lib/conflict-diff';
 import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
@@ -18,18 +18,17 @@ import { useDisabledLanguages } from '../lib/use-syntax-contents';
 import { restackSteps } from '../lib/action-steps';
 
 const prNumber = (url: string) => Number(url.split('/').pop());
-/** In-place edits as the draft saves them (ConflictFile.edits). */
-const savedEdits = (edits: BlockEdits | undefined): (SavedBlockEdit | null)[] =>
-  Array.from(edits ?? [], (edit) =>
-    edit
-      ? {
-          text: edit.text,
-          before: edit.before ?? null,
-          pick: edit.pick ?? null,
-          ...(edit.written?.length ? { written: [...edit.written] } : {}),
-        }
-      : null
-  );
+/** A paused draft and your in-place edits made with it (#509). */
+interface DraftEdits {
+  text: string;
+  edits: BlockEdits;
+}
+/** Your new edits of a paused file; the drafts they go with are added as the draft changes (update). */
+const editsEntry = (
+  entry: { original: string; drafts: DraftEdits[] } | undefined,
+  original: string,
+  edits: BlockEdits
+) => ({ original, edits, drafts: entry?.original === original ? entry.drafts : [] });
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 /** Why no update needs a tick: each replayed cleanly, or the checks merged every conflict in it, or some of each. */
 function noReviewSummary(branches: { merged?: number }[]) {
@@ -88,8 +87,12 @@ export function RestackReview({
   // Your Keep choices per paused file, so one whose text equals the proposal reads as yours, not Merged.
   const [picks, setPicks] = useState<Partial<Record<string, (BlockPick | undefined)[]>>>({});
   // Your in-place edits per paused file (#445 item 11), kept across saves while the file's conflict is the same, so an
-  // edited conflict keeps its card and its Undo.
-  const [edits, setEdits] = useState<Partial<Record<string, { original: string; edits: BlockEdits }>>>({});
+  // edited conflict keeps its card and its Undo. Edits belong to the draft they were made with (#509): the last few
+  // drafts are kept with theirs, so a save of another file, which drops unsaved text, shows the saved draft with its own
+  // edits. A draft none of them was made with shows the edits saved with it.
+  const [edits, setEdits] = useState<
+    Partial<Record<string, { original: string; edits: BlockEdits; drafts: DraftEdits[] }>>
+  >({});
   const [wholeShown, setWholeShown] = useState<Partial<Record<string, boolean>>>({});
   useEffect(() => {
     setDrafts({});
@@ -244,13 +247,23 @@ export function RestackReview({
               const next = { ...drafts, [file.path]: text };
               setDrafts(next);
               onDrafts(next);
+              // Your edits go with this draft (#509).
+              setEdits((previous) => {
+                const entry = previous[file.path];
+                if (!entry) return previous;
+                const drafts = [{ text, edits: entry.edits }, ...entry.drafts.filter((d) => d.text !== text)].slice(0, 4);
+                return { ...previous, [file.path]: { ...entry, drafts } };
+              });
             };
             const filePicks = picks[file.path] ?? file.picks?.map((pick) => pick ?? undefined);
             const whole = file.wholeFile;
             const savedPicks = filePicks && Array.from(filePicks, (pick) => pick ?? null);
             const entry = edits[file.path];
-            // Your edits as you make them, else the ones saved with the paused draft.
-            const fileEdits = entry?.original === file.original ? entry.edits : file.edits;
+            // Your edits as you make them, while the draft on screen is the one they were made with; else the ones saved
+            // with the paused draft (#509).
+            const fileEdits =
+              (entry?.original === file.original ? entry.drafts.find((d) => d.text === value)?.edits : undefined) ??
+              file.edits;
             // Reset file returns to what the replay proposed, as in the main workspace: after Use this result too.
             // Only the proposals nobody has to choose (the checks' Merged ones) are in place; the rest wait on their cards.
             const resetTarget = preparedDraft(file, file.verdict?.verdict);
@@ -263,7 +276,7 @@ export function RestackReview({
             const unchosen = unchosenConflicts(file, value, current, filePicks, fileEdits);
             const reset = () => {
               setPicks((previous) => ({ ...previous, [file.path]: [] }));
-              setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: [] } }));
+              setEdits((previous) => ({ ...previous, [file.path]: editsEntry(previous[file.path], file.original, []) }));
               setWholeShown((previous) => ({ ...previous, [file.path]: false }));
               update(resetTarget);
             };
@@ -316,7 +329,10 @@ export function RestackReview({
                       }}
                       edits={fileEdits}
                       onEdits={(next) =>
-                        setEdits((previous) => ({ ...previous, [file.path]: { original: file.original, edits: next } }))
+                        setEdits((previous) => ({
+                          ...previous,
+                          [file.path]: editsEntry(previous[file.path], file.original, next),
+                        }))
                       }
                       resolverText={resolverBaseline(file, value)}
                       writer={fileWriter(file)}
@@ -343,7 +359,7 @@ export function RestackReview({
                         size="sm"
                         variant="outline"
                         disabled={busy || markers || unchosen.length > 0 || (file.resolved && !dirty)}
-                        onClick={() => onSave(file.path, value, true, savedPicks, savedEdits(fileEdits))}
+                        onClick={() => onSave(file.path, value, true, savedPicks, savedBlockEdits(fileEdits))}
                       >
                         Mark reviewed
                       </Button>

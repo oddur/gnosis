@@ -70,6 +70,53 @@ export interface ConflictFile {
    * inside a conflict. It stays until a finished run says otherwise, or the check is turned off (`typeErrorOf`).
    */
   typeError?: TypeErrorMark;
+  /**
+   * You edited the whole file (#503): its draft is your decision, every conflict in it included, while the draft is the
+   * text you saved (wholeEdited). Holds the file as it was before your first whole-file edit, which Undo restores. Only
+   * the service writes it, from its own copy of the draft; the renderer never sends it.
+   */
+  wholeEdit?: WholeFileEdit;
+}
+/** A file before your first whole-file edit (ConflictFile.wholeEdit): what Undo puts back. */
+export interface WholeFileEdit {
+  result: string;
+  resolved: boolean;
+  source: ConflictFile['source'];
+  explanation?: string;
+  resolverText?: string;
+  picks?: ConflictFile['picks'];
+  edits?: ConflictFile['edits'];
+  /** The file changed again after the first whole-file edit: Undo discards that too, so the view asks first. */
+  later?: boolean;
+}
+/** The file as it is now, for Undo of a whole-file edit (ConflictFile.wholeEdit). */
+export function wholeEditSnapshot(file: ConflictFile): WholeFileEdit {
+  return {
+    result: file.result,
+    resolved: file.resolved,
+    source: file.source,
+    ...(file.explanation !== undefined ? { explanation: file.explanation } : {}),
+    ...(file.resolverText !== undefined ? { resolverText: file.resolverText } : {}),
+    ...(file.picks ? { picks: file.picks } : {}),
+    ...(file.edits ? { edits: file.edits } : {}),
+  };
+}
+/** Undo of a whole-file edit: puts `before` back into `file`, and ends the edit. */
+export function restoreWholeEdit(file: ConflictFile, before: WholeFileEdit) {
+  delete file.wholeEdit;
+  delete file.explanation;
+  delete file.resolverText;
+  delete file.picks;
+  delete file.edits;
+  const { explanation, resolverText, picks, edits } = before;
+  Object.assign(
+    file,
+    { result: before.result, resolved: before.resolved && !hasConflictMarkers(before.result), source: before.source },
+    explanation !== undefined ? { explanation } : {},
+    resolverText !== undefined ? { resolverText } : {},
+    picks ? { picks } : {},
+    edits ? { edits } : {}
+  );
 }
 /**
  * One conflict block resolved during preparation: by your earlier resolution, by structural merge, or where structural
@@ -232,6 +279,21 @@ export type ConflictRequest =
    * checks it. Only the conflict's own span changes, and only while it is still open.
    */
   | { kind: 'model'; id: string; version: number; path: string; index: number }
+  /**
+   * Edit whole file (#503): `contents` becomes the draft and the whole file your decision, every conflict in it too. The
+   * service keeps the file as it was before your first whole-file edit, for `undo-edit-file`.
+   */
+  | { kind: 'edit-file'; id: string; version: number; path: string; contents: string; base?: string }
+  /** Undo of Edit whole file: the file as it was before your first whole-file edit, your Keeps and edits included. */
+  | {
+      kind: 'undo-edit-file';
+      id: string;
+      version: number;
+      path: string;
+      base?: string;
+      /** You chose Undo again after it said it discards a later edit too (`WholeFileEdit.later`). */
+      confirmed?: boolean;
+    }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
   | { kind: 'discard'; id: string; version: number }
@@ -306,6 +368,9 @@ export interface SavedBlockEdit {
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 /** A request made from an earlier version of the draft, refused. */
+/** Undo of a whole-file edit that changed again after the first edit, not confirmed yet: nothing is undone. */
+export const UNDO_LATER =
+  'Undo also discards what you changed after your first whole-file edit. Select Undo again to go on.';
 export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
 /** A saved draft the service can't use (`draftProblem`). Start over prepares the merge again. */
 export const UNREADABLE_DRAFT = 'This saved draft couldn’t be read.';
@@ -328,6 +393,12 @@ export function draftProblem(value: unknown, account: string, id: string): strin
     for (const field of ['path', 'original', 'result', 'base', 'ours', 'theirs'])
       if (typeof file[field] !== 'string') return `files[${index}].${field}`;
     if (typeof file.resolved !== 'boolean') return `files[${index}].resolved`;
+    // Undo of a whole-file edit (#503) restores it: it needs the draft and review flag it puts back.
+    if (
+      file.wholeEdit !== undefined &&
+      !(record(file.wholeEdit) && typeof file.wholeEdit.result === 'string' && typeof file.wholeEdit.resolved === 'boolean')
+    )
+      return `files[${index}].wholeEdit`;
   }
   return undefined;
 }
@@ -382,6 +453,14 @@ export function wholeFileFrom<S extends ConflictProposal['source']>(
 }
 
 export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
+/**
+ * The marked lines of an in-place edit that are its own (#509): whole indexes into the edit's lines. One past them
+ * would mark a line after the conflict.
+ */
+export function writtenInEdit(text: string, written: readonly unknown[] | undefined): number[] {
+  const lines = text.split(/(?<=\n)/).filter(Boolean).length;
+  return (written ?? []).filter((line): line is number => Number.isSafeInteger(line) && Number(line) >= 0 && Number(line) < lines);
+}
 const isPick = (pick: unknown) =>
   pick === null || pick === 'ours' || pick === 'theirs' || pick === 'both' || pick === 'proposal';
 /** Saved in-place edits from the renderer: bounded, with nothing but their four fields. */
@@ -402,7 +481,7 @@ function validEdits(value: unknown): boolean {
       (e.written === undefined ||
         (Array.isArray(e.written) &&
           e.written.length <= 100_000 &&
-          (e.written as unknown[]).every((line) => Number.isSafeInteger(line) && Number(line) >= 0)))
+          writtenInEdit(e.text, e.written as unknown[]).length === e.written.length))
     );
   });
 }
@@ -438,6 +517,16 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
       (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
     (r.edits === undefined || validEdits(r.edits)) &&
     (r.base === undefined || (r.kind === 'save' && text('base', 64)))
+  )
+    return;
+  // Edit whole file (#503) names the file's revision its editor started from (`base`), as a save does.
+  const based = r.base === undefined || text('base', 64);
+  if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT) && based) return;
+  if (
+    r.kind === 'undo-edit-file' &&
+    text('path', 4096) &&
+    based &&
+    (r.confirmed === undefined || typeof r.confirmed === 'boolean')
   )
     return;
   if (

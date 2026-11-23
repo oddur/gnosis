@@ -21,6 +21,7 @@ import {
   conflictWritten,
   draftWritten,
   isCompareWith,
+  lineRuns,
   resolverBaseline,
   shownWritten,
   fileWriter,
@@ -831,16 +832,6 @@ export function ConflictDiff({
   );
 }
 
-/** Line numbers as runs of consecutive lines, for pins: a marked line is never hidden in a gap. */
-export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number])[] {
-  const runs: [number, number][] = [];
-  for (const line of [...lines].sort((a, b) => a - b)) {
-    const last = runs.at(-1);
-    if (last && line === last[1] + 1) last[1] = line;
-    else runs.push([line, line]);
-  }
-  return runs;
-}
 /**
  * One mode's diff of the draft (#445 items 8 and 9), with each conflict's card under its lines: against the PR's version
  * (`against` 'ours') or main's ('theirs').
