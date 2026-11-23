@@ -75,7 +75,7 @@ export interface ConflictFile {
  * never Merged either.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved' | 'model';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'layout' | 'moved' | 'model';
   text: string;
   /**
    * A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." A 'model'
@@ -84,6 +84,11 @@ export interface ConflictProposal {
   note?: string;
   /** A 'model' proposal (lib/conflict-model.ts): the provider that wrote it, such as "Claude". */
   by?: string;
+  /**
+   * A 'layout' proposal that took the place of structural merge's (lib/conflict-union.ts withUnions): that proposal's
+   * text, offered again when the checks don't Merge this one (src/conflict-checks.ts withoutUnconfirmed).
+   */
+  instead?: string;
   /** A 'model' proposal: what the model says each side meant. The model's words, never checked. */
   intents?: { pr: string; main: string };
 }
