@@ -291,8 +291,12 @@ export interface SavedBlockEdit {
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 /** A line Git writes around a conflict. A lone `=======` counts in every text; a draft goes through markersLeft. */
-const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
-const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
+const markerLines = (marks: string) => new RegExp(`^(?:${marks})(?:\\s|$)`, 'm');
+/** The marks Git opens and closes a conflict with, and puts before the common ancestor: never a heading underline. */
+const OPEN_CLOSE_MARKS = '<{7,}|>{7,}|\\|{7,}';
+const MARKER_LINES = markerLines(`${OPEN_CLOSE_MARKS}|={7,}`);
+/** A `<<<<<<<`, `|||||||` or `>>>>>>>` line: every marker but the separator (lib/conflict-carry.ts `markersLeft`). */
+export const OPEN_CLOSE_LINES = markerLines(OPEN_CLOSE_MARKS);
 /** Any conflict marker line left in a text, such as a proposal's. A file's draft goes through markersLeft. */
 export function hasConflictMarkers(text: string) {
   return MARKER_LINES.test(text);

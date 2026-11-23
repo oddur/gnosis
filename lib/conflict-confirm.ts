@@ -28,7 +28,7 @@ import type { ConflictBucket } from './conflict-verify';
  * its buckets say: it is never stuck.
  */
 export const needsYou = (
-  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved' | 'path' | 'original'>,
+  file: Pick<ConflictFile, 'unsupported' | 'result' | 'resolved' | 'path' | 'original' | 'base' | 'ours' | 'theirs'>,
   draft = file.result
 ) =>
   conflictFileStage(file, draft) !== 'reviewed';
@@ -111,6 +111,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     file: Pick<
       ConflictFile,
       | 'path'
+      | 'base'
       | 'ours'
       | 'theirs'
       | 'original'

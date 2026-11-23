@@ -11,7 +11,7 @@ import type { Preferences } from '../lib/types';
 import { StepCard } from './StepCard';
 import { BranchBadge, PrBadge } from './EntityBadge';
 import type { ConflictRequest, ConflictSession, SavedBlockEdit } from '../lib/conflict-resolution';
-import { markersLeft } from '../lib/conflict-markers';
+import { markersLeft } from '../lib/conflict-carry';
 import { preparedDraft, unchosenConflicts, waitingHint } from '../lib/conflict-verify';
 import { disabledLanguages, verdictKey } from '../lib/conflict-verdict-key';
 import { currentCodeIntelligence } from '../lib/use-syntax-contents';

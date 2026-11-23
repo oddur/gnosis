@@ -175,7 +175,7 @@ void test('carry keeps Use the proposal as your choice on a block it reuses (#44
 });
 
 void test('a lone ======= in Markdown is a heading only when it is outside every conflict, all of them decided (#457)', () => {
-  const md = (original: string) => ({ path: 'docs/usage.md', original });
+  const md = (original: string) => ({ path: 'docs/usage.md', original, base: '', ours: '', theirs: '' });
   // The heading sits in Git's merged text; the conflict below it is decided.
   const below = `Usage\n=======\n\n${block('one\n', 'zero\n', 'two\n')}`;
   assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n'), false);
@@ -196,4 +196,20 @@ void test('a lone ======= in Markdown is a heading only when it is outside every
   // The other markers count everywhere.
   assert.equal(markersLeft(md(below), 'Usage\n=======\n\none\n>>>>>>> main\n'), true);
   assert.equal(markersLeft(md(''), 'text\n'), false);
+});
+
+// #529 review: sides that hold their own marker lines make Git's blocks pair wrongly, so nothing is exempt.
+void test('a Markdown side with its own <<<<<<< or >>>>>>> line gets no heading exception', () => {
+  // `git merge-file -p ours base theirs` on these sides: Git's separator sits between two misread blocks.
+  const sides = {
+    base: 'start\nold\nend\n',
+    ours: 'start\nT\n=======\n>>>>>>> q\nend\n',
+    theirs: 'start\n<<<<<<< p\n=======\nU\nend\n',
+  };
+  const original = 'start\n<<<<<<< ours\nT\n=======\n>>>>>>> q\n=======\n<<<<<<< p\n=======\nU\n>>>>>>> theirs\nend\n';
+  const file = { path: 'docs/usage.md', original, ...sides };
+  // Both on the first block, main's on the second: the draft holds Git's separator, and it splits cleanly.
+  const draft = 'start\nT\n=======\nU\nend\n';
+  assert.ok(blockResolutions(parseConflicts(original), draft)?.every((text) => text !== undefined));
+  assert.equal(markersLeft(file, draft), true);
 });

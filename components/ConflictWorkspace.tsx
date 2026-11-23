@@ -67,7 +67,8 @@ import {
 } from '../lib/conflict-flow';
 import { workbenchStore } from '../lib/workbench-store';
 import type { ActivityTask } from '../lib/activity';
-import { conflictFileStage, markersLeft } from '../lib/conflict-markers';
+import { conflictFileStage } from '../lib/conflict-markers';
+import { markersLeft } from '../lib/conflict-carry';
 import {
   hasConflictMarkers,
   type ConflictFile,

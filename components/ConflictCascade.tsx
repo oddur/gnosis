@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { cascadePrLine, cascadeReviewLine, cascadeSentence, type CascadeState } from '../lib/conflict-cascade';
-import { markersLeft } from '../lib/conflict-markers';
+import { markersLeft } from '../lib/conflict-carry';
 import type { ConflictSession } from '../lib/conflict-resolution';
 import { Button } from './ui/button';
 
