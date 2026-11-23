@@ -5413,16 +5413,22 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-reading-toolbar .selection-trigger { max-width:360px;min-width:0; }
 .explanation-file-progress { margin-left:auto;white-space:nowrap;color:var(--muted-foreground);font-size:var(--type-caption);font-variant-numeric:tabular-nums; }
 .explanation-document { flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scroll-padding-block:20px; }
-.explanation-document > section { padding:28px 24px; }
+.explanation-document > section { padding:28px 24px 0; }
+/* The space and the divider between sections belong to the section below, never to the one above. Browser scroll
+   anchoring picks the box at the top of the view: in a section's own bottom padding that was the whole section, whose
+   top stays put while content inside it grows, so the topic below was pushed away (the reader's top edge falls there
+   depending on the window's height; --resize "after a topic jump"). A section's top padding moves with what is above. */
+.explanation-document > section ~ section { padding-top:57px;background:linear-gradient(var(--border),var(--border)) 0 28px / 100% 1px no-repeat; }
+.explanation-document > section:last-child { padding-bottom:28px; }
+.explanation-document > .explanation-section:last-child { border-bottom:1px solid var(--border); }
 .explanation-document > section:focus { outline:none; }
 .explanation-document > section:focus-visible { outline:2px solid var(--ring);outline-offset:-3px; }
-.explanation-introduction { border-bottom:1px solid var(--border); }
 .explanation-introduction > * { max-width:72ch; }
 .explanation-introduction h2,.explanation-ending h2 { font-size:var(--type-panel-title);line-height:1.4;font-weight:650;margin-bottom:12px; }
 .explanation-context { margin-top:16px;font-size:var(--type-control); }
 .explanation-context summary { cursor:pointer;color:var(--muted-foreground); }
 .explanation-context .reading-prose { margin-top:12px; }
-.explanation-section { display:grid;grid-template-columns:minmax(0, 2fr) minmax(0, 3fr);gap:32px;border-bottom:1px solid var(--border);align-items:start; }
+.explanation-section { display:grid;grid-template-columns:minmax(0, 2fr) minmax(0, 3fr);gap:32px;align-items:start; }
 /* lib/explanation-column-layout.ts marks a column shorter than its row's tallest as sticky, and gives it an inline
    top when it is taller than the viewport. The tallest column stays in normal flow: browser scroll anchoring skips
    sticky boxes, so a section needs one column to anchor in, or content that grows inside it pushes the page (#288). */
@@ -5461,7 +5467,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
   .explanation-section { grid-template-columns:minmax(0,1fr);gap:24px; }
   .explanation-column[data-sticky] { position:static; }
   .explanation-section-text { max-width:72ch; }
-  .explanation-document > section { padding:24px 20px; }
+  .explanation-document > section { padding:24px 20px 0; }
+  .explanation-document > section ~ section { padding-top:49px;background-position:0 24px; }
+  .explanation-document > section:last-child { padding-bottom:24px; }
 }
 @media(max-width:620px) {
   .explanation-reading-toolbar { flex-wrap:wrap;padding:8px 12px; }
