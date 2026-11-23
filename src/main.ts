@@ -4408,6 +4408,8 @@ ipcMain.handle('conflict-header', (_event, url: unknown, headSha: unknown) => {
 });
 // The opt-in type check of a prepared merge (#445 item 24): its status, and Stop.
 // The same reading as the PR header's (src/conflict-precompute.ts): null off, undefined on but not run.
+// The saved draft, re-read when the type check changed it without a request (#517): no network, nothing written.
+ipcMain.handle('conflict-draft', (_event, id: unknown) => (typeof id === 'string' ? conflicts.savedDraft(id) ?? null : null));
 ipcMain.handle('conflict-type-check', (_event, id: unknown) => (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id) ? conflicts.typeCheckStatus(id) : null));
 ipcMain.handle('conflict-type-check-cancel', (_event, id: unknown) => {
   if (typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)) conflicts.cancelTypeCheck(id);

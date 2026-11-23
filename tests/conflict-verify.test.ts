@@ -4,6 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
+import { keepsLayout } from '../lib/conflict-union';
 import { blockProposals, blockResolutions, carryFile, withProposals } from '../lib/conflict-carry';
 import { conflictModel, inferChoices, parseConflicts } from '../lib/conflict-blocks';
 import { assertPerf, perfBudget } from './perf-budget';
@@ -19,7 +20,6 @@ import {
   fileStatus,
   fileStatusLine,
   fileStatusParts,
-  keepsLayout,
   allMerged,
   waitsForReview,
   proposalKey,
