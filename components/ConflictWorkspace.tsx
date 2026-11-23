@@ -26,7 +26,7 @@ import { RestackReview } from './RestackReview';
 import { ConflictGuideButton, ConflictNotes, ConflictUndoTip, PreparingElapsed, useConflictTips } from './ConflictOnboarding';
 import { ConflictCascadeLine, useConflictCascade } from './ConflictCascade';
 import { StepCard } from './StepCard';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, focusWithTooltip } from './ui/tooltip';
 import { conflictShortcuts, hasGlyph, isReviewAndPushKey, mac, spokenKey } from '../lib/conflict-shortcuts';
 import { conflictSteps } from '../lib/action-steps';
 import { BranchBadge, CommitBadge, PrBadge } from './EntityBadge';
@@ -2167,7 +2167,7 @@ export function ConflictWorkspace({
             localPath={file?.unsupported ? undefined : session.files.find((f) => f.unsupported)?.path}
             onShowLocal={chooseFile}
             onSettings={openRepoSettings}
-            onAllKeys={() => root.current?.querySelector<HTMLElement>('[data-conflict-keys]')?.focus()}
+            onAllKeys={() => focusWithTooltip(root.current?.querySelector<HTMLElement>('[data-conflict-keys]'))}
           />
         )}
         {!session ? (

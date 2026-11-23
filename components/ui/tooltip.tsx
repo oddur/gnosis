@@ -164,4 +164,10 @@ function TooltipContent({
   );
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
+/** Moves focus to a tooltip's trigger and shows the tooltip, for an action that asks to show it, such as "All keys". */
+function focusWithTooltip(element: HTMLElement | null | undefined) {
+  keyboardNavigation = true;
+  element?.focus();
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, focusWithTooltip };

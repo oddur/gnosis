@@ -450,7 +450,7 @@ void app.whenReady().then(async () => {
     await wait("document.activeElement?.closest('.conflict-block')");
     await captureAll('conflicts');
     // The keys are listed on hover or focus of the keyboard button, as in the shortcut overlay.
-    await js("document.querySelector('[data-conflict-keys]').focus()");
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('[data-conflict-keys]').focus()");
     await wait("document.querySelector('.conflict-keys')?.textContent.includes('Next / previous conflict')");
     await capture('keyboard-help');
     await js(`${block(0)}.focus()`);
@@ -1772,7 +1772,7 @@ void app.whenReady().then(async () => {
       await js("[...document.querySelectorAll('.conflict-files button small')].map(s=>s.textContent)"),
       ['1 to decide1 to check', '1 to check', '1 to check']
     );
-    await js("document.querySelector('.conflict-type-check-detail').focus()");
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.conflict-type-check-detail').focus()");
     await wait("document.querySelector('.conflict-type-check-errors')?.textContent.includes('src/use.ts:1 TS2322')");
     assert.match(
       await js<string>("document.querySelector('.conflict-type-check-errors').textContent"),
@@ -2058,7 +2058,7 @@ void app.whenReady().then(async () => {
     await wait(`${block(1)}?.dataset.bucket==='check'`);
     const footerSays = () => js<string>("document.querySelector('.conflict-footer-status')?.textContent ?? ''");
     // The legend lists every key.
-    await js("document.querySelector('[data-conflict-keys]').focus()");
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('[data-conflict-keys]').focus()");
     await wait("document.querySelector('.conflict-keys')?.textContent.includes('Review and push')");
     assert.deepEqual(
       await js("[...document.querySelector('.conflict-keys dl').querySelectorAll('dt')].map(d=>[...d.querySelectorAll('kbd')].map(k=>(k.querySelector('[aria-hidden]')??k).textContent).join(' '))"),
