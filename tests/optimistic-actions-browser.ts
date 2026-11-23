@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, setViewport, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -195,8 +195,7 @@ void app.whenReady().then(async () => {
     );
 
     // ── The header's Draft toggle (#542): it shows at once, rolls back on failure, and Undo writes the reverse ──
-    win.setSize(1600, 900);
-    await wait('innerWidth===1600');
+    await setViewport(win, 1600, 900);
     await js(`window.electronAPI.getPrActionState=async url=>{const m=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.url===url);
       return {...m,account:'oddur',id:'PR_1',checkedAt:Date.now(),state:'OPEN',headRepo:m.repo,repository:m.repo,archived:false,canWrite:true,mergeable:'MERGEABLE',mergeState:'CLEAN',methods:['SQUASH'],defaultMethod:'SQUASH',autoMerge:null,canEnableAuto:true,canDisableAuto:false,canUpdateBranch:false,canChangeDraft:true,mergeQueue:false,inMergeQueue:false,stack:null};};0`);
     // ⋯ › Refresh reads the PR's actions again, now with the state above.

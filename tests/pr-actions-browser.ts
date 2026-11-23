@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, setViewport, waitForWorkbenchQueue } from './workbench-ready';
 import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -74,8 +74,7 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     // Wide enough for every header action (#542); narrower windows are checked below.
-    win.setSize(1600, 900);
-    await wait('innerWidth===1600');
+    await setViewport(win, 1600, 900);
     const A = '.pr-header-actions';
     const merge = `document.querySelector('${A} [data-merge-action]')`;
     const toggle = (label: string) => `[...document.querySelectorAll('${A} [role=switch]')].find(b=>b.textContent.startsWith(${JSON.stringify(label)}))`;
@@ -366,10 +365,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.location.href.includes("pr-summary")'), true, 'No reload');
 
     // Short of room, the toggles go to ⋯ first, then Update and Drafts. Merge and Review PR always stay.
-    win.setSize(1100, 900);
-    await wait(`innerWidth===1100 && document.querySelector('${A}')?.dataset.collapse!=='0'`);
-    win.setSize(760, 900);
-    await wait(`innerWidth===760 && document.querySelector('${A}')?.dataset.collapse==='2'`);
+    await setViewport(win, 1100, 900);
+    await wait(`document.querySelector('${A}')?.dataset.collapse!=='0'`);
+    await setViewport(win, 760, 900);
+    await wait(`document.querySelector('${A}')?.dataset.collapse==='2'`);
     assert.deepEqual(
       await js(`[...document.querySelectorAll('${A} [data-slot=button]')].filter(b=>b.getBoundingClientRect().width>0).map(b=>b.textContent.trim()||b.getAttribute('aria-label'))`),
       ['Review PR #150', 'Merge', 'Merge method']
@@ -384,8 +383,8 @@ void app.whenReady().then(async () => {
     // Update is in ⋯ here: Cmd+Shift+U opens nothing, and leaves nothing to open later.
     await chord('U');
     assert.equal(await js("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith('Update with'))"), false);
-    win.setSize(1600, 900);
-    await wait(`innerWidth===1600 && document.querySelector('${A}')?.dataset.collapse==='0'`);
+    await setViewport(win, 1600, 900);
+    await wait(`document.querySelector('${A}')?.dataset.collapse==='0'`);
     assert.equal(await js("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith('Update with'))"), false, 'No Update menu opens when Update comes back');
 
     // A confirmation never outlives its workspace: switching tabs with Cmd+2 closes it, and nothing merges.
@@ -416,8 +415,7 @@ void app.whenReady().then(async () => {
     await refreshActions();
     await wait(`${unavailable(merge)} && ${merge}.title==='You need write permission to merge this PR.'`);
     await js('window.denyWrite=false');
-    win.setSize(1280, 800);
-    await wait('innerWidth===1280');
+    await setViewport(win, 1280, 800);
     await click('Review queue');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
@@ -504,8 +502,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.step-list [aria-current=step]')?.dataset.step==='merge'");
     await js("document.documentElement.classList.add('dark')");
     await capture('create-stack-dark-1280');
-    win.setSize(640, 800);
-    await new Promise((r) => setTimeout(r, 150));
+    await setViewport(win, 640, 800);
     await capture('create-stack-dark-640');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     await click('Create GitHub stack and merge');
@@ -523,7 +520,7 @@ void app.whenReady().then(async () => {
       "window.actionTasks[0].status='completed';window.actionTasks[0].detail='Added to GitHub’s merge queue. The PRs have not merged yet.';window.actionTasks[0].updatedAt=new Date().toISOString()"
     );
     await wait("[...document.querySelectorAll('[data-slot=toast]')].some(e=>e.textContent.includes('merge queue'))");
-    win.setSize(1280, 800);
+    await setViewport(win, 1280, 800);
     await js('window.nativeStack=true');
     await click('Merge whole stack…');
     await wait("document.querySelector('.pr-action-members')?.children.length===3");
