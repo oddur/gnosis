@@ -66,7 +66,7 @@ void app.whenReady().then(async () => {
     await capture('checking-light');
     await state('paused');
     await wait("document.querySelector('.github-sync-status')?.textContent.includes('Updates paused')");
-    await js("document.documentElement.classList.add('dark');document.querySelector('.github-sync-status').focus()");
+    await js("document.documentElement.classList.add('dark');window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('.github-sync-status').focus()");
     await wait("!!document.querySelector('[role=tooltip]')");
     assert.match(await js<string>("document.querySelector('[role=tooltip]').textContent"), /Updates resume after/);
     await capture('paused-dark');

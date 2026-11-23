@@ -36,6 +36,77 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, url + '?pr-summary&workspace-tabs&keep-progress');
     await waitForWorkbenchQueue(win.webContents);
     assert.equal(await js('document.querySelectorAll(".workspace-tab").length'), 1);
+    // Tooltips open on hover and keyboard focus only, and close with the control they describe. Reported: the
+    // Overview destination's tooltip stayed in the window's top-left corner, over the macOS window buttons,
+    // after a PR opened and hid the queue behind it.
+    const overview = `${root}.querySelector('.workbench-sidebar [aria-label="Overview"]')`;
+    const tooltips = `[...document.querySelectorAll('[data-slot=tooltip-content]')].map(t=>t.textContent).join('|')`;
+    const pointAt = async (element: string) => {
+      const { x, y } = await js<{ x: number; y: number }>(
+        `(()=>{const r=${element}.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+      );
+      // Two moves, as a real pointer makes: Radix keeps a tooltip open across the move that leaves its trigger.
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: x - 1, y });
+      await wait(`${element}.matches(':hover')`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+    };
+    const away = `${root}.querySelector('.queue-list')`;
+    win.focus();
+    win.webContents.focus();
+    await wait('document.hasFocus()');
+    await js(
+      `window.tooltipSeen=[];new MutationObserver(()=>{for(const t of document.querySelectorAll('[data-slot=tooltip-content]'))window.tooltipSeen.push(t.textContent)}).observe(document.body,{childList:true,subtree:true});true`
+    );
+    // Focus moved by the app, as when a dialog or menu returns it, opens nothing.
+    await js(`${overview}.focus()`);
+    assert.equal(await js(`document.activeElement===${overview}`), true);
+    assert.equal(await js(tooltips), '', 'Programmatic focus opens no tooltip');
+    // A screen reader moves focus without keys, so the closed tooltip's text stays in the trigger's description.
+    assert.match(
+      await js<string>(`${overview}.getAttribute('aria-description') ?? ''`),
+      /act on now/
+    );
+    // The keyboard does open one, and leaving the window closes it.
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+    await wait(
+      `document.activeElement!==${overview} && !!document.activeElement.getAttribute('aria-label') && (${tooltips}).includes(document.activeElement.getAttribute('aria-label'))`
+    );
+    assert.equal(
+      await js(`window.tooltipSeen.some(t=>t.includes('act on now'))`),
+      false,
+      'The focused Overview destination never showed its tooltip'
+    );
+    await js(`window.dispatchEvent(new Event('blur'))`);
+    await wait(`!document.querySelector('[data-slot=tooltip-content]') /* window blur closes it */`);
+    // Coming back to the window restores focus without a tooltip.
+    await js(`document.activeElement.blur();window.dispatchEvent(new Event('focus'));${overview}.focus();true`);
+    assert.equal(await js(tooltips), '', 'Window activation opens no tooltip');
+    await js(`document.activeElement.blur()`);
+    // Hover on a title bar control opens its tooltip below the row, clear of the window buttons.
+    const toggle = `[...document.querySelectorAll('.app-titlebar .sidebar-toggle')].find(b=>b.checkVisibility())`;
+    await pointAt(toggle);
+    await wait(`(${tooltips}).includes('sidebar')`);
+    await wait(
+      `document.querySelector('[data-slot=tooltip-content]').getAnimations({subtree:true}).every(a=>a.playState==='finished')`
+    );
+    const placement = await js<{ top: number; row: number; left: number }>(
+      `(()=>{const t=document.querySelector('[data-slot=tooltip-content]').getBoundingClientRect();return {top:t.top,left:t.left,row:document.querySelector('.app-titlebar').getBoundingClientRect().bottom}})()`
+    );
+    assert.ok(placement.top >= placement.row, `Title bar tooltip sits below the row: ${JSON.stringify(placement)}`);
+    assert.ok(placement.left >= 8, `Title bar tooltip keeps clear of the window edge: ${JSON.stringify(placement)}`);
+    await pointAt(away);
+    await wait(`!document.querySelector('[data-slot=tooltip-content]') /* pointer away closes it */`);
+    // A tooltip whose control is hidden, here by opening a PR in its place, closes instead of staying behind.
+    await pointAt(overview);
+    await wait(`(${tooltips}).includes('act on now')`);
+    await js(`${root}.querySelector('.queue-row-content').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`);
+    await wait(`!${root}.querySelector('.queue-list')?.checkVisibility()`);
+    await wait(`!document.querySelector('[data-slot=tooltip-content]') /* hidden control closes it */`);
+    await key('[', { metaKey: true });
+    await wait(`!!${root}.querySelector('.queue-list')?.checkVisibility()`);
+    await pointAt(away);
+    await js(`document.activeElement?.blur()`);
     // A menu action must dismiss its portal before the source workspace is hidden.
     for (const mode of ['context', 'overflow']) {
       await js(`(()=>{const row=${root}.querySelector('.queue-row');

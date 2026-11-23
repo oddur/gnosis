@@ -171,7 +171,9 @@ void app.whenReady().then(async () => {
     assert.equal(oneChanged.rows, 1, 'Only the changed row renders: ' + JSON.stringify(oneChanged));
     assert.ok(oneChanged.snapshots <= 1 && oneChanged.reviews === 0, 'One changed entry reads one snapshot: ' + JSON.stringify(oneChanged));
     // Opening a PR and returning reveals the same queue: same row node, same scroll, no reload.
-    await js(`window.keptRow=document.querySelector('[data-queue-id="synthetic-525"] .queue-row-main');window.keptScroll=document.querySelector('.queue-list').scrollTop;window.resetCounts();`);
+    // Rows on screen, by id, with their offset in the list's viewport.
+    const onScreen = `(()=>{const list=document.querySelector('.queue-list').getBoundingClientRect();return Object.fromEntries([...document.querySelectorAll('[data-queue-id]')].map(r=>[r.dataset.queueId,r.getBoundingClientRect()]).filter(([,b])=>b.bottom>list.top&&b.top<list.bottom).map(([id,b])=>[id,Math.round(b.top-list.top)]))})()`;
+    await js(`window.keptRow=document.querySelector('[data-queue-id="synthetic-525"] .queue-row-main');window.keptRows=${onScreen};window.resetCounts();`);
     const secondOpen = await openOverview();
     console.log('Open PR overview to PR page (ms):', JSON.stringify({ cold: coldOpen, second: secondOpen }));
     await js("document.querySelector('.pr-summary-page button').click()");
@@ -179,7 +181,12 @@ void app.whenReady().then(async () => {
     await settle();
 
     assert.equal(await js('window.keptRow.isConnected&&document.querySelector(\'[data-queue-id="synthetic-525"] .queue-row-main\')===window.keptRow'), true, 'Returning keeps the same row element');
-    assert.ok(Math.abs(await js<number>("document.querySelector('.queue-list').scrollTop-window.keptScroll")) < 2, 'Returning keeps the queue scroll position');
+    // The rows on screen stay where they were. The scroll offset itself may move: the opened PR's page can publish
+    // its saved status before Back, which makes its row (selected, far above the viewport) taller.
+    const kept = await js<Record<string, number>>('window.keptRows');
+    const shown = await js<Record<string, number>>(onScreen);
+    assert.ok(Object.keys(kept).length > 0, 'Rows were on screen before opening the PR');
+    assert.deepEqual(shown, kept, 'Returning keeps the queue scroll position: the same rows, in the same places');
     const returned = await counts();
     assert.ok(returned.snapshots <= 1 && returned.reviews === 0, 'Returning does not reload the queue: ' + JSON.stringify(returned));
     console.log('Sync push counts (snapshots, saved-review reads, row renders):', JSON.stringify({ withRevisions, withoutRevisions, oneChanged, returned }));

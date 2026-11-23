@@ -395,7 +395,7 @@ void app.whenReady().then(async () => {
     step = 'preview';
     // A PR title previews the PR with the PR badge's tooltip: on keyboard focus after the badge's delay, and on hover.
     const first = row(`next|review|${url('klang/engine', 321)}`);
-    await js(`document.querySelector('${first}').focus()`);
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelector('${first}').focus()`);
     await new Promise((r) => setTimeout(r, 120));
     assert.equal(await js(`!!${tooltip}`), false, 'focus waits before the preview opens');
     await wait(`${tooltip}?.textContent.includes('klang/engine #321') && !!${tooltip}.querySelector('.pr-badge-preview')`);
