@@ -129,6 +129,8 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 250));
     win.focus();
     win.webContents.focus();
+    // A window without focus drops the keyboard state that lets focus open a tooltip.
+    await wait('document.hasFocus()');
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab'}));document.querySelectorAll('.queue-meta .github-author')[1].focus({preventScroll:true})");
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Profile details unavailable')");
     await capture('zoom');

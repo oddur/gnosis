@@ -1,7 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { Tooltip as TooltipPrimitive } from 'radix-ui';
+
+import { focusFromKeyboard } from './keyboard-focus';
 
 import { cn } from '@/lib/utils';
 
@@ -9,7 +12,15 @@ function TooltipProvider({ delayDuration = 0, ...props }: React.ComponentProps<t
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />;
 }
 
-const TooltipHidden = React.createContext(false);
+interface TooltipScope {
+  open: boolean;
+  hidden: boolean;
+  /** The id of the closed tooltip's description, which keeps its text for screen readers. */
+  descriptionId: string;
+  /** The rendered trigger and content, kept when Activity detaches refs from a hidden scope. */
+  nodes: { trigger?: HTMLElement; content?: HTMLElement };
+}
+const TooltipScope = React.createContext<TooltipScope | null>(null);
 
 /**
  * A tooltip closes when the window loses focus and when its trigger is hidden. Workspaces and the queue behind an
@@ -30,49 +41,65 @@ function Tooltip({
   // Radix waits for an exit animation before removing the content, and that wait is an effect Activity has destroyed,
   // so a hidden scope renders no content at all.
   const [hidden, setHidden] = React.useState(false);
-  // What the last change asked for: tells a close apart from Activity hiding an open tooltip.
-  const requested = React.useRef(open);
+  // The open state this render asks for. A watcher removed while it is still true was not closed: its scope was
+  // hidden, or the tooltip unmounted.
+  const wanted = React.useRef(open);
+  wanted.current = open;
+  const descriptionId = `${React.useId()}-description`;
+  const [nodes] = React.useState<TooltipScope['nodes']>(() => ({}));
+  const scope = React.useMemo(() => ({ open, hidden, descriptionId, nodes }), [open, hidden, descriptionId, nodes]);
   const change = React.useCallback(
     (next: boolean) => {
-      requested.current = next;
       if (openProp === undefined) setUncontrolled(next);
       onOpenChange?.(next);
     },
     [openProp, onOpenChange]
   );
   return (
-    <TooltipHidden.Provider value={hidden}>
+    <TooltipScope.Provider value={scope}>
       <TooltipPrimitive.Root data-slot="tooltip" open={open} onOpenChange={change} {...props}>
         {children}
       </TooltipPrimitive.Root>
-      {open && <WhileOpen change={change} requested={requested} setHidden={setHidden} />}
-    </TooltipHidden.Provider>
+      {open && <WhileOpen change={change} wanted={wanted} nodes={nodes} setHidden={setHidden} />}
+    </TooltipScope.Provider>
   );
 }
 
 function WhileOpen({
   change,
-  requested,
+  wanted,
+  nodes,
   setHidden,
 }: {
   change: (open: boolean) => void;
-  requested: React.RefObject<boolean>;
+  wanted: React.RefObject<boolean>;
+  nodes: TooltipScope['nodes'];
   setHidden: (hidden: boolean) => void;
 }) {
   const latest = React.useRef(change);
+  const watching = React.useRef(false);
   React.useLayoutEffect(() => {
     latest.current = change;
   });
   React.useLayoutEffect(() => {
-    requested.current = true;
+    watching.current = true;
+    // Shown again with the tooltip still open, as a controlled one can be.
+    if (nodes.content) nodes.content.style.display = '';
     setHidden(false);
     return () => {
-      // A close already went through `change`; anything else that removes this watcher while open is a hidden scope.
-      if (!requested.current) return;
-      setHidden(true);
-      latest.current(false);
+      watching.current = false;
+      // The tooltip was closed: let it animate out.
+      if (!wanted.current) return;
+      // Hidden or unmounted while open. Hide the content in this commit, so it never paints without its trigger.
+      if (nodes.content) nodes.content.style.display = 'none';
+      queueMicrotask(() => {
+        // StrictMode runs the effect again at once; an unmounted trigger has left the document.
+        if (watching.current || !nodes.trigger?.isConnected) return;
+        setHidden(true);
+        latest.current(false);
+      });
     };
-  }, [requested, setHidden]);
+  }, [wanted, nodes, setHidden]);
   React.useEffect(() => {
     const close = () => latest.current(false);
     window.addEventListener('blur', close);
@@ -90,35 +117,6 @@ function WhileOpen({
  */
 const stationaryMoves = new WeakSet<Event>();
 let lastPointer: { x: number; y: number } | undefined;
-/**
- * Radix also opens a tooltip on any focus, including focus the app moves: a dialog or menu returning it, a closed tab
- * handing it on, or the window getting it back on activation. Only focus the keyboard moved opens one, that is focus
- * after Tab, Shift+Tab or an arrow-style key. A shortcut (Cmd+W, Cmd+1), Escape, Enter, a press or leaving the window
- * resets it.
- */
-const navigationKeys = new Set([
-  'Tab',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Home',
-  'End',
-  'PageUp',
-  'PageDown',
-]);
-let keyboardNavigation = false;
-if (typeof window !== 'undefined') {
-  window.addEventListener(
-    'keydown',
-    (event) => {
-      keyboardNavigation = navigationKeys.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey;
-    },
-    { capture: true, passive: true }
-  );
-  window.addEventListener('pointerdown', () => (keyboardNavigation = false), { capture: true, passive: true });
-  window.addEventListener('blur', () => (keyboardNavigation = false));
-}
 if (typeof window !== 'undefined') {
   const record = (event: PointerEvent) => {
     if (
@@ -135,13 +133,24 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', record, { capture: true, passive: true });
 }
 
-function TooltipTrigger({ onPointerMove, onFocus, ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
+function TooltipTrigger({
+  onPointerMove,
+  onFocus,
+  ref,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  const scope = React.useContext(TooltipScope);
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
+      ref={(node: HTMLButtonElement | null) => {
+        if (node && scope) scope.nodes.trigger = node;
+        if (typeof ref === 'function') return ref(node);
+        if (ref) ref.current = node;
+      }}
       onFocus={(event) => {
         // Radix skips its own handler when the event is default-prevented.
-        if (!keyboardNavigation) event.preventDefault();
+        if (!focusFromKeyboard()) event.preventDefault();
         onFocus?.(event);
       }}
       onPointerMove={(event) => {
@@ -160,17 +169,51 @@ function TooltipTrigger({ onPointerMove, onFocus, ...props }: React.ComponentPro
   );
 }
 
+/**
+ * Focus the app moves opens no tooltip, and a screen reader moves focus without keys, so a closed tooltip keeps its
+ * text in a hidden description the trigger points to. A trigger with its own description keeps that instead.
+ */
+function ClosedDescription({ scope, children }: { scope: TooltipScope; children: React.ReactNode }) {
+  const { descriptionId, nodes } = scope;
+  return createPortal(
+    <span
+      id={descriptionId}
+      hidden
+      ref={(node) => {
+        const trigger = nodes.trigger;
+        if (!node || !trigger || trigger.hasAttribute('aria-describedby')) return;
+        trigger.setAttribute('aria-describedby', descriptionId);
+        return () => {
+          if (trigger.getAttribute('aria-describedby') === descriptionId) trigger.removeAttribute('aria-describedby');
+        };
+      }}
+    >
+      {children}
+    </span>,
+    document.body
+  );
+}
+
 function TooltipContent({
   className,
   sideOffset = 0,
   children,
+  ref,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
-  if (React.useContext(TooltipHidden)) return null;
+  const scope = React.useContext(TooltipScope);
+  if (scope?.hidden) return null;
+  if (scope && !scope.open)
+    return children == null ? null : <ClosedDescription scope={scope}>{children}</ClosedDescription>;
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
+        ref={(node: HTMLDivElement | null) => {
+          if (node && scope) scope.nodes.content = node;
+          if (typeof ref === 'function') return ref(node);
+          if (ref) ref.current = node;
+        }}
         sideOffset={sideOffset}
         className={cn(
           'bg-foreground text-background animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance',
@@ -185,10 +228,4 @@ function TooltipContent({
   );
 }
 
-/** Moves focus to a tooltip's trigger and shows the tooltip, for an action that asks to show it, such as "All keys". */
-function focusWithTooltip(element: HTMLElement | null | undefined) {
-  keyboardNavigation = true;
-  element?.focus();
-}
-
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, focusWithTooltip };
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
