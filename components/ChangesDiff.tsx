@@ -1574,6 +1574,7 @@ export function ChangesDiff<A>({
     const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
     if (!element || !header || !scroller) return;
     let height: number | undefined;
+    let air = 0;
     let written = headerHeight;
     // While a header is pinned, its breadcrumb and lines name where the reader is: the line at the top of the view,
     // found by one hit test a frame at most, and only while scrolling with a header pinned (followReader).
@@ -1612,6 +1613,9 @@ export function ChangesDiff<A>({
       const next = Math.round(entries[entries.length - 1].borderBoxSize[0].blockSize);
       if (next === height) return;
       height = lastFileHeaderHeight = next;
+      // A hunk bar pins `--diff-hunk-air` higher than the file header's bottom: its top border, the air above it, slides
+      // under the file header (globals.css). It counts as pinned only once it is there.
+      air = parseFloat(getComputedStyle(element).getPropertyValue('--diff-hunk-air')) || 0;
       if (next !== written) element.style.setProperty('--diff-file-header-height', `${(written = next)}px`);
       stuck.current?.disconnect();
       stuck.current = new IntersectionObserver(
@@ -1624,7 +1628,7 @@ export function ChangesDiff<A>({
         },
         // A threshold every 5%: a header is partly in view both while it enters at the bottom and while it is pinned,
         // so a jump straight from one to the other, such as to a line of a file never shown, crosses one of them.
-        { root: scroller, rootMargin: `-${next}px 0px 0px 0px`, threshold: STUCK_THRESHOLDS }
+        { root: scroller, rootMargin: `${Math.round(air - next)}px 0px 0px 0px`, threshold: STUCK_THRESHOLDS }
       );
       observeHeaders();
     });
@@ -1651,7 +1655,7 @@ export function ChangesDiff<A>({
       const view = scroller.getBoundingClientRect();
       const box = element.getBoundingClientRect();
       if (box.bottom <= view.top || box.top >= view.bottom) return;
-      const line = view.top + height;
+      const line = view.top + height - air;
       for (const bar of element.querySelectorAll('[data-hunk-header]')) {
         const r = bar.getBoundingClientRect();
         const stuckNow = r.bottom > line && r.top < view.bottom && r.top < line;
@@ -1677,8 +1681,11 @@ export function ChangesDiff<A>({
       stopJump();
       clearHere();
       const id = ++jumpId;
-      // Every bar has the same height, pinned or not.
-      const barHeight = element.querySelector<HTMLElement>('[data-hunk-header]')?.offsetHeight ?? 0;
+      // Every bar has the same height, pinned or not. Its top border is the air above it (globals.css), which pins
+      // under the file header: only the rest shows there.
+      const bar = element.querySelector<HTMLElement>('[data-hunk-header]');
+      const air = bar ? parseFloat(getComputedStyle(bar).borderTopWidth) || 0 : 0;
+      const barHeight = bar ? bar.offsetHeight - air : 0;
       const parts = latestParts.current;
       const revealing = reveal && reveal[0] <= reveal[1] && hiddenBetween(parts, reveal[0], reveal[1]) ? parts : undefined;
       if (revealing && reveal) latestShow.current?.({ kind: 'whole', start: reveal[0], end: reveal[1] });
@@ -1700,7 +1707,7 @@ export function ChangesDiff<A>({
           const section = gapBar.matches('[data-hunk-header]') ? gapBar.parentElement : null;
           landed = gapBar;
           return section
-            ? { y: section.getBoundingClientRect().top, to: top, exact: true }
+            ? { y: section.getBoundingClientRect().top, to: top - air, exact: true }
             : { y: gapBar.getBoundingClientRect().top, to: under, exact: true };
         }
         const block = latestBlocks.current.find((b) => b.kind === 'hunk' && b.key === place.key);

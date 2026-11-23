@@ -167,10 +167,12 @@ const headerText = (header: string) => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$
 
 /** The code-tier file header (DiffFileHeader) and the topic file's frame. */
 export const FILE_HEADER = 46;
-/** A hunk header or gap bar: 1.75 code lines and its rule (globals.css .diff-gap). */
-export const HUNK_BAR = 1.75 * CODE_LINE_HEIGHT + 1;
-/** The bar below the last hunk: one code line and its rule. */
-export const TRAILING_BAR = CODE_LINE_HEIGHT + 1;
+/** The code's surface above each hunk header and under the trailing bar (`--diff-hunk-air` in src/tokens.css). */
+export const HUNK_AIR = 8;
+/** A hunk header: 1.5 code lines, its rule, and the air above it (globals.css `.diff-hunk > .diff-gap[data-hunk-header]`). */
+export const HUNK_BAR = 1.5 * CODE_LINE_HEIGHT + 1 + HUNK_AIR;
+/** The bar below the last hunk: one code line, its rule, and the air under it. */
+export const TRAILING_BAR = CODE_LINE_HEIGHT + 1 + HUNK_AIR;
 
 /**
  * Placeholder height for a topic's file while content-visibility skips it: what ChangesDiff renders for the topic's
@@ -197,7 +199,7 @@ export function estimateFileBlockHeight(
   }
   // Added and deleted files are one hunk with no bars, as in Changes.
   if (topic.hunks.length && status !== 'added' && status !== 'deleted')
-    height += topic.hunks.length * (lineHeight * 1.75 + 1) + lineHeight + 1;
+    height += topic.hunks.length * (lineHeight * 1.5 + 1 + HUNK_AIR) + lineHeight + 1 + HUNK_AIR;
   for (const hunk of topic.unreadable) height += hunk.content.split('\n').length * lineHeight + SLICE_CHROME;
   return Math.round(height);
 }

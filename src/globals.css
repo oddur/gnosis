@@ -1890,6 +1890,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .diff-gap-crumb { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--diff-header-fg); font:inherit; }
 .diff-gap-crumb code { font:inherit; }
 .diff-gap-crumb[data-innermost] { font-weight:600; }
+/* The scope reads from the inside out: the definition the hunk is in at full strength, its parents muted. */
+.diff-gap-crumb-group:not([data-last]) > .diff-gap-crumb { color:var(--diff-header-muted); }
 .diff-gap-kind { color:var(--diff-keyword, inherit); }
 button.diff-gap-crumb { position:relative; padding:0; border:0; border-radius:3px; background:none; cursor:pointer; overflow:visible; }
 button.diff-gap-crumb::after { content:''; position:absolute; inset:-2px 0; }
@@ -1968,10 +1970,12 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 }
 /* The lines after a file's last hunk: one code line, on the code's background under a hairline, the action at the
    code's text column. */
-.diff-gap[data-trailing] { min-height:var(--leading-code); padding:0; background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
+.diff-gap[data-trailing] { min-height:var(--leading-code); padding:0 0 var(--diff-hunk-air); background:var(--diff-code-bg, #22272e); border-top:1px solid color-mix(in oklab, var(--diff-header-fg) 16%, var(--diff-code-bg, #22272e)); border-bottom:0; container-type:normal; }
 .diff-gap-trailing { display:flex; align-items:center; gap:1ch; min-width:0; padding-left:var(--diff-code-inset); font-size:var(--type-caption); }
 .diff-gap-trailing .diff-context-button { min-height:20px; padding-block:0; }
-.diff-gap-trailing .diff-gap-text { padding-inline:4px; color:var(--diff-header-fg); text-decoration:underline; text-decoration-color:var(--diff-header-muted); text-underline-offset:3px; }
+/* The file's last line, not a bar: "36 more lines · Show" stays muted until it is pointed at. */
+.diff-gap-trailing .diff-gap-text { padding-inline:4px; color:var(--diff-header-muted); text-decoration:underline; text-decoration-color:color-mix(in oklab, var(--diff-header-muted) 55%, transparent); text-underline-offset:3px; }
+.diff-gap-trailing .diff-gap-text:hover { color:var(--diff-header-fg); text-decoration-color:var(--diff-header-muted); }
 .diff-gap-trailing .diff-context-button { position:relative; }
 .diff-gap-trailing .diff-context-button::after { content:''; position:absolute; inset:-2px 0; }
 /* Quiet changes (#396): a hunk, or a whole file, whose every change is formatting or comments the reader hides. One
@@ -2030,9 +2034,11 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
   background:var(--outline-bg); color:var(--outline-muted); border-bottom:1px solid var(--outline-line);
   font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code);
 }
-.diff-outline-bar { display:flex; align-items:center; gap:0 16px; min-width:0; height:calc(var(--leading-code) * 1.75); padding:0 12px 0 6px; }
-.diff-outline-toggle { display:inline-flex; flex:none; align-items:center; gap:6px; min-height:24px; padding:0 8px 0 4px; border-radius:4px; color:var(--outline-fg); font:inherit; white-space:nowrap; }
-.diff-outline-toggle:hover { background:var(--outline-hover); }
+/* A line of metadata under the file header, shorter than a hunk header and in muted ink, so it reads as part of the
+   file's heading rather than as another bar. The symbols stay at full strength: they are what it offers. */
+.diff-outline-bar { display:flex; align-items:center; gap:0 16px; min-width:0; height:calc(var(--leading-code) * 1.4); padding:0 12px 0 6px; }
+.diff-outline-toggle { display:inline-flex; flex:none; align-items:center; gap:6px; min-height:22px; padding:0 8px 0 4px; border-radius:4px; color:var(--outline-muted); font:inherit; white-space:nowrap; }
+.diff-outline-toggle:hover { color:var(--outline-fg); background:var(--outline-hover); }
 .diff-outline-chevron { flex:none; color:var(--outline-muted); transition:rotate 180ms cubic-bezier(0.16, 1, 0.3, 1); }
 .diff-outline[data-expanded] .diff-outline-chevron { rotate:90deg; }
 .diff-outline-summary { white-space:nowrap; }
@@ -2054,7 +2060,7 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-outline-more:hover { color:var(--outline-fg); }
 .diff-outline-more::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }
 .diff-outline-end { display:flex; flex:none; align-items:center; gap:10px; margin-left:auto; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.diff-outline-mark { min-height:24px; padding:0 8px; border:1px solid var(--outline-line); border-radius:4px; color:var(--outline-fg); font:inherit; }
+.diff-outline-mark { min-height:22px; padding:0 8px; border:1px solid var(--outline-line); border-radius:4px; color:var(--outline-fg); font:inherit; }
 .diff-outline-mark:hover { background:var(--outline-hover); }
 .diff-outline :is(button, input):focus-visible { outline:2px solid var(--code-ring); outline-offset:1px; }
 .diff-outline-list { display:flex; flex-direction:column; margin:0; padding:0 12px 6px 6px; list-style:none; }
@@ -2087,7 +2093,18 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
    the file header's bottom border, so it crosses the line that marks it pinned. Pinned, it casts a soft shadow onto the
    code scrolling under it. Lines and controls scrolled to land below both headers. */
 .changes-diff { --diff-sticky-offset:calc(var(--diff-file-header-height, 0px) + 40px); }
-.diff-hunk > .diff-gap[data-hunk-header] { position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px); z-index:1; }
+/* A hunk header is a step below its file's header: on a surface nearer the code's, 30px rather than 35px, its words
+   in the 12px caption size, with --diff-hunk-air of the code's surface above it. The air is its top border, so it
+   pins with the bar and slides under the file header: pinned, the bar sits where it always has (ChangesDiff's jumps
+   subtract the border). The gutter keeps the code's size, so the breadcrumb still starts at the code's column. */
+.diff-hunk > .diff-gap[data-hunk-header] {
+  --diff-header-bg:color-mix(in oklab, var(--diff-code-header, color-mix(in oklab, var(--diff-code-bg, #22272e) 88%, var(--diff-code-fg, #c5ccd6))) 60%, var(--diff-code-bg, #22272e));
+  --diff-header-height:calc(var(--leading-code) * 1.5);
+  position:sticky; top:calc(var(--diff-file-header-height, 0px) - 1px - var(--diff-hunk-air)); z-index:1;
+  min-height:calc(var(--diff-header-height) + var(--diff-hunk-air));
+  border-top:var(--diff-hunk-air) solid var(--diff-code-bg, #22272e);
+}
+.diff-hunk > .diff-gap[data-hunk-header] > :not(.diff-gap-gutter) { font-size:var(--type-caption); }
 /* Pinned, a header shows only where the reader is: expanding from it would move the lines under the reader. The
    controls keep their space, so pinning changes nothing's size, stay in the tab order, and come back while focus is
    inside the bar. */
@@ -2726,7 +2743,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-file-title { display:flex; align-items:baseline; gap:12px; flex:1 1 0; min-width:min(100%, 260px); }
 /* The file's type icon leads the path, centred on its line; the path keeps its own gap to the counts. */
 .changes-file-title > .file-type-icon { align-self:center; margin-right:-4px; }
-.changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); font-weight:400; }
+.changes-file-header h2 { display:flex; align-items:baseline; min-width:0; overflow:hidden; white-space:nowrap; font-family:var(--font-mono); font-size:var(--type-diff-file); line-height:var(--leading-code); font-weight:400; }
 /* The path's parts are the heading's own flex items, so they give way in order: the old folders, the new folders,
    the old name, and the new name last. */
 .changes-file-path { display:contents; }
@@ -2734,7 +2751,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-file-dir { min-width:0; flex:0 100 auto; overflow:hidden; text-overflow:ellipsis; direction:rtl; color:var(--file-muted); }
 .changes-file-path[data-old] > .changes-file-dir { flex-shrink:1000; }
 .changes-file-dir > span { direction:ltr; unicode-bidi:isolate; }
-.changes-file-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+/* The name is the stack's strongest mark: a size above the code, the heaviest weight in the diff, full contrast. */
+.changes-file-name { flex:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; font-weight:650; color:var(--file-fg); }
 .changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:calc(100% - 13ch); }
 .changes-file-path[data-old] > .changes-file-name { flex:0 10 auto; min-width:10ch; font-weight:400; color:var(--file-muted); }
 .changes-file-arrow { flex:none; white-space:pre; color:var(--file-muted); }
@@ -3291,8 +3309,16 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-source-links button { color:var(--primary);text-decoration:underline;text-underline-offset:3px; }
 .commit-diff-stream { position:relative;overflow-anchor:none; }
 .commit-stream-content { position:relative;width:100%; }
-/* Files are the stream's strongest break: 20px between them, wider than anything between hunks. */
-.commit-stream-file { min-width:0;border-bottom:20px solid var(--muted);background:var(--background); }
+/* Files are the stream's strongest break: each file is one framed unit, and the canvas between files is wider than
+   anything inside a file, where parts meet at a hairline. The stream's rows carry the space, so a file shown on its own
+   (Conflicts, Feedback) keeps only its frame. */
+.commit-stream-file { min-width:0;border:1px solid var(--border);border-radius:6px;overflow:clip;overflow-clip-margin:8px;background:var(--background); }
+/* The clip margin lets a pinned hunk bar's folded crumbs open past a short file's end, so the frame's corners are
+   drawn by the parts that meet them: the file header on top, the trailing bar below. */
+.commit-stream-file > .changes-file-header { border-radius:5px 5px 0 0; }
+.commit-stream-file .diff-gap[data-trailing]:last-child { border-radius:0 0 5px 5px; }
+.commit-stream-row { padding:0 var(--diff-stream-inset) var(--diff-file-gap); }
+.commit-stream-row[data-index="0"] { padding-top:var(--diff-stream-inset); }
 .commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2; }
 .commit-stream-file-body > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
 .commit-diff-stream:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
@@ -4282,8 +4308,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Its background is WRITTEN_SWATCH (lib/diff-here.ts), set inline: the same colours as the marked rows. */
 .conflict-written-swatch { flex:none;width:14px;height:12px;border-radius:2px; }
 .conflict-result-diff > .conflict-diff-file,.conflict-diff-view > .conflict-diff-file { border-radius:var(--radius-md);overflow:clip; }
-/* Inside the result's frame the file ends at the frame: no gap strip under it, as between Changes' files. */
-.conflict-result-diff > .conflict-diff-file { border-bottom:0; }
+/* Inside the result's frame the file is framed once: by the result, not by a frame of its own. */
+.conflict-result-diff > .conflict-diff-file { border:0; }
 /* Compare with: PR · main · both (#445 item 9), in the file header: a pill switch like Markdown's Source · Preview. */
 .conflict-compare { display:inline-flex;align-items:center;gap:8px; }
 .conflict-compare-label { color:var(--file-muted);white-space:nowrap; }

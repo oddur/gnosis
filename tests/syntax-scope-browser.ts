@@ -93,8 +93,10 @@ void app.whenReady().then(async () => {
       window.headerLabel=h=>h.querySelector('.diff-gap-symbol')?[...h.querySelectorAll('.diff-gap-symbol .diff-gap-crumb')].map(c=>c.textContent.trim()).join(' › '):h.querySelector('.diff-gap-range > [aria-hidden]')?.textContent.trim();
       window.headers=p=>{const row=window.stickyRow(p);const file=row.querySelector('.changes-file-header').getBoundingClientRect();
         return [...row.querySelectorAll('.diff-hunk')].map(section=>{const h=section.querySelector(':scope > [data-hunk-header]');if(!h)return null;const r=h.getBoundingClientRect();
-          const hit=document.elementFromPoint(r.left+12,r.top+r.height/2);
-          return {offset:Math.round(r.top-file.bottom),fileTop:Math.round(file.top-window.stream().getBoundingClientRect().top),height:Math.round(r.height),stuck:h.hasAttribute('data-stuck'),label:window.headerLabel(h),
+          // The bar itself, under its air: the top border that slides under the file header when it pins.
+          const air=parseFloat(getComputedStyle(h).borderTopWidth)||0;
+          const hit=document.elementFromPoint(r.left+12,r.top+air+(r.height-air)/2);
+          return {offset:Math.round(r.top+air-file.bottom),fileTop:Math.round(file.top-window.stream().getBoundingClientRect().top),height:Math.round(r.height-air),stuck:h.hasAttribute('data-stuck'),label:window.headerLabel(h),
             onTop:!!hit&&h.contains(hit),controls:[...h.querySelectorAll(':is(.diff-gap-gutter,.diff-gap-act,.diff-gap-controls) > button')].map(b=>getComputedStyle(b).opacity)}})};
       window.toMiddle=(p,i)=>{const s=window.stream();const section=window.stickyRow(p).querySelectorAll('.diff-hunk')[i];const r=section.getBoundingClientRect();
         s.scrollTop+=r.top-s.getBoundingClientRect().top+r.height/2};
@@ -773,11 +775,24 @@ void app.whenReady().then(async () => {
       const line=window.deepAll('[data-line]',section).find(e=>e.getBoundingClientRect().width>0);
       return {crumb:section.querySelector('[data-hunk-header] .diff-gap-symbol').getBoundingClientRect().left,code:line.getBoundingClientRect().left+parseFloat(getComputedStyle(line).paddingLeft)}})()`);
     assert.ok(Math.abs(columns.crumb - columns.code) <= 1, `The breadcrumb lines up with the code: ${JSON.stringify(columns)}`);
-    // Hand-off: the second header pushes the first one away as it arrives, and is never under it.
-    // The second hunk starts 12 px below the file header.
+    // Its air slides under the file header before the bar pins: 4 px into it, the bar is still in the flow, so it is
+    // not marked pinned and its controls still take a click.
     await js(`(()=>{const s=window.stream();const second=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1];
       const file=window.stickyRow('src/sticky.ts').querySelector('.changes-file-header').getBoundingClientRect();
-      s.scrollTop+=second.getBoundingClientRect().top-file.bottom-12})()`);
+      s.scrollTop+=second.getBoundingClientRect().top-file.bottom+4})()`);
+    await settle();
+    {
+      const state = await js<{ stuck: boolean; hit: boolean; events: string }>(`(()=>{const h=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1].querySelector(':scope > [data-hunk-header]');
+        const b=h.querySelector(':is(.diff-gap-gutter,.diff-gap-act,.diff-gap-controls) > button');if(!b)throw Error('No control on the bar');const r=b.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {stuck:h.hasAttribute('data-stuck'),hit:!!hit&&b.contains(hit),events:getComputedStyle(b).pointerEvents}})()`);
+      assert.ok(!state.stuck && state.hit && state.events !== 'none', `A bar whose air is under the file header is not pinned yet: ${JSON.stringify(state)}`);
+    }
+    // Hand-off: the second header pushes the first one away as it arrives, and is never under it.
+    // The second hunk's bar, under its air, starts 12 px below the file header.
+    await js(`(()=>{const s=window.stream();const second=window.stickyRow('src/sticky.ts').querySelectorAll('.diff-hunk')[1];
+      const file=window.stickyRow('src/sticky.ts').querySelector('.changes-file-header').getBoundingClientRect();
+      const air=parseFloat(getComputedStyle(second.querySelector(':scope > [data-hunk-header]')).borderTopWidth)||0;
+      s.scrollTop+=second.getBoundingClientRect().top+air-file.bottom-12})()`);
     await settle();
     {
       const [first, second] = (await headers('src/sticky.ts')) as Header[];
@@ -965,8 +980,9 @@ void app.whenReady().then(async () => {
       { folded: [], more: false, innermost: 'fn handler_3', fits: true },
       `Nothing folds while the chain fits: ${JSON.stringify(roomy)}`
     );
-    const narrow = await folds('520px');
-    console.log('Breadcrumb at 520px:', JSON.stringify(narrow));
+    // Hunk headers set their words at the 12px caption size, so the chain needs a narrower bar to fold.
+    const narrow = await folds('400px');
+    console.log('Breadcrumb at 400px:', JSON.stringify(narrow));
     assert.equal(narrow.folded[0], 'mod api', 'The outermost crumb folds first');
     assert.ok(narrow.more && narrow.fits && narrow.innermost === 'fn handler_3', `It folds into "…" and the innermost stays whole: ${JSON.stringify(narrow)}`);
     assert.deepEqual((await folds(WIDE)).folded, [], 'Widened again, the whole chain comes back');
