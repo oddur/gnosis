@@ -6228,7 +6228,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .readiness-popover-checks li > span:first-child { color:var(--foreground); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .readiness-popover-checks [data-slot=button] { justify-self:start; height:auto; padding:0; }
 .readiness-popover-freshness { display:flex; flex-wrap:wrap; gap:4px 12px; color:var(--muted-foreground); font-size:var(--type-caption); }
-.readiness-popover-freshness .pr-freshness { min-width:0; }
+.readiness-popover-freshness .pr-freshness, .pr-heading-meta .pr-freshness { min-width:0; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .readiness-popover-link { color:var(--ring); font-size:var(--type-caption); text-decoration:underline; text-underline-offset:3px; justify-self:start; }
 
 .pr-workspace-navigation { flex-wrap:wrap; column-gap:20px; padding-right:var(--pr-frame-inset); }
@@ -6278,3 +6278,10 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-action-group { display:inline-flex; align-items:center; gap:8px; }
 /* A stack member's picker shares the row with the tabs, which scroll before they wrap under it. */
 .pr-workspace-navigation:has(.stack-scope-bar) .pr-overview-tabs { flex:1 1 0; min-width:240px; }
+.pr-merge-methods { display:grid; gap:2px; margin:0; padding:0; border:0; min-width:0; }
+.pr-merge-methods legend { margin-bottom:6px; padding:0; font-size:var(--type-control); color:var(--muted-foreground); }
+.pr-merge-methods label { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:4px; font-size:var(--type-control); cursor:pointer; }
+.pr-merge-methods label:hover { background:var(--accent); }
+.pr-merge-methods label:has(:checked) { font-weight:600; }
+.pr-merge-methods input { accent-color:var(--primary); margin:0; }
+.pr-merge-methods input:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }

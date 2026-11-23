@@ -58,7 +58,9 @@ import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { conflictStateFrom } from '../lib/merge-conflicts';
 import { stackMergeStatus } from '../lib/stack-merge-status';
-import { subjectReadiness } from '../lib/merge-readiness';
+import { mergeReadiness, subjectReadiness } from '../lib/merge-readiness';
+import { useGitHubAccess } from '../lib/use-github-access';
+import { useWorkflowFiles } from '../lib/use-workflow-files';
 import { ReadinessChip, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
@@ -564,6 +566,7 @@ function PrSummaryContent({
   );
   // The header's actions (#542): GitHub's actions, then Drafts and the review action, in one place on every tab.
   const [overflow, setOverflow] = useState<EntryActionGroups>([]);
+  const [actionsRefresh, setActionsRefresh] = useState(0);
   const [notes, setNotes] = useState<HTMLDivElement | null>(null);
   const [changesReview, setChangesReview] = useState<HeaderReview>();
   const headerReview: HeaderReview = tab === 'changes' && changesReview ? changesReview : summaryReview.header;
@@ -585,9 +588,10 @@ function PrSummaryContent({
   useEffect(() => {
     if (!shortcutsEnabled || stacked) return;
     const keydown = (event: KeyboardEvent) => {
-      if (!isShortcut(event, 'r') || event.defaultPrevented) return;
-      if (event.target instanceof Element && event.target.closest('[role=dialog], [role=menu]')) return;
-      // Ahead of the default menu's Force Reload, which would drop unsaved work.
+      if (!isShortcut(event, 'v') || event.defaultPrevented) return;
+      // In a text field, Cmd+Shift+V pastes as it always does.
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.isContentEditable || target?.closest('input, textarea, select, [role=dialog], [role=menu]')) return;
       event.preventDefault();
       const action = reviewShortcut.current;
       if (action && !action.blocked) action.run();
@@ -599,13 +603,13 @@ function PrSummaryContent({
   const draftsLabel = `Drafts${headerReview.draftCount ? ` (${headerReview.draftCount})` : ''}`;
   const headerActions = !stacked && (
     <PrActions key={first.url} member={first} onChanged={onRetryStatus} mergeReady={headerReadiness.ready} hasConflicts={headerReadiness.label === 'Merge conflicts'}
-      collapse={collapse} onOverflow={setOverflow} notes={notes} shortcuts={shortcutsEnabled}
+      refreshKey={actionsRefresh} collapse={collapse} onOverflow={setOverflow} notes={notes} shortcuts={shortcutsEnabled}
       review={(primary) => <>
         {openPr && collapse < 2 && <Button data-collapse-at="2" variant="outline" size="sm" disabled={headerReview.draftsDisabled} onClick={headerReview.toggleDrafts}>{draftsLabel}</Button>}
         {reviewAction && (
           <Button size="sm" variant={primary ? 'default' : 'outline'} className="pr-review-action" aria-disabled={reviewAction.blocked ? true : undefined} data-unavailable={reviewAction.blocked ? '' : undefined}
-            title={reviewAction.blocked ?? `${reviewAction.label} (${shortcutLabel('R')})`} onClick={() => { if (!reviewAction.blocked) reviewAction.run(); }}>
-            {reviewAction.icon}{reviewAction.label}{reviewAction.count ? ` (${reviewAction.count})` : ''}
+            title={reviewAction.blocked ?? `${reviewAction.label} (${shortcutLabel('V')})`} onClick={() => { if (!reviewAction.blocked) reviewAction.run(); }}>
+            {reviewAction.icon}<span>{reviewAction.label}{reviewAction.label === 'Review PR' && <span className="toolbar-label-extra-narrow"> #{first.number}</span>}{reviewAction.count ? ` (${reviewAction.count})` : ''}</span>
           </Button>
         )}
       </>} />
@@ -683,7 +687,7 @@ function PrSummaryContent({
         <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
           busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute} extra={menuExtra}
           conflictState={conflictStateFrom([...signals, ...item.subject.members.map((m) => statuses[m.url]?.signals)])}
-          onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
+          onRefresh={() => { onRetryStatus(); setActionsRefresh((n) => n + 1); }}>{actions => <header className="pr-overview-heading">
           <div className="pr-heading-row">
             <div className="pr-title-with-star">
               <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
@@ -712,7 +716,7 @@ function PrSummaryContent({
                 )}
               </span>
               {revalidating && <PrFreshness className="pr-freshness" refreshing />}
-              <PrStatusLine subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
+              <PrStatusLine subject={item.subject} signals={signals} statusSignals={statuses[first.url]?.signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
                 updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])}
                 freshness={<PrFreshness className="pr-freshness" checkedAt={checkedAt} />} onChecks={() => onTabChange('checks')} />
             </div>
@@ -900,9 +904,11 @@ function PrTabLabel({ children }: { children: string }) {
 }
 
 /** Review status and merge readiness in the page header, on every tab. It re-renders on each status clock tick. */
-function PrStatusLine({ subject, signals, checking, checks, checkErrors, updating, freshness, onChecks }: {
+function PrStatusLine({ subject, signals, statusSignals, checking, checks, checkErrors, updating, freshness, onChecks }: {
   subject: ReviewSubject;
   signals: QueueSignals[];
+  /** The PR's signals from its status read, which Summary's readiness also reads. */
+  statusSignals?: QueueSignals;
   checking: boolean;
   checks: Partial<Record<string, PrChecks>>;
   checkErrors: Partial<Record<string, string>>;
@@ -916,25 +922,17 @@ function PrStatusLine({ subject, signals, checking, checks, checkErrors, updatin
   const stacked = subject.kind === 'stack';
   const stackStatus = stacked ? stackMergeStatus(subject, signals, checks, now) : undefined;
   const mergePlan = stacked ? stackMergePlan(subject, signals, checks, now) : undefined;
-  const readiness = stackStatus?.summary ?? subjectReadiness(subject, signals, now);
+  const member = subject.members[0];
+  // A PR's chip is Summary's readiness verdict, from the same reads: the most urgent blocker, the rest in its popover.
+  const access = useGitHubAccess();
+  const workflowFiles = useWorkflowFiles(member);
+  const queueSignal = signals.find((value) => value.url === member.url);
+  const signal = queueSignal && (!statusSignals || queueSignal.checkedAt >= statusSignals.checkedAt) ? queueSignal : statusSignals;
+  const readiness = stackStatus?.summary ?? mergeReadiness(member, signal, now, access, workflowFiles);
   const delayed = Object.values(checkErrors).some(Boolean);
   const iso = (time: number) => new Date(time).toISOString();
-  const member = subject.members[0];
-  const signal = stacked ? undefined : signals.find((value) => value.url === member.url && value.headSha === member.headSha);
-  const rollup = signal?.checks;
-  // The review chip says "Approval required" and the like. The readiness chip then says what else stands in the way.
-  const behind = signal?.readiness?.behindBy ?? 0;
-  const chip = stacked
-    ? (stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness)
-    : !['Changes requested', 'Approval required'].includes(readiness.label)
-      ? readiness
-      : rollup?.state === 'pending'
-        ? { ...readiness, label: 'Checks running', tone: 'warning' as const }
-        : rollup?.state === 'failure'
-          ? { ...readiness, label: 'Checks failing', tone: 'danger' as const }
-          : behind > 0
-            ? { ...readiness, label: `Behind by ${behind}`, tone: 'muted' as const }
-            : readiness;
+  const rollup = !stacked && signal?.headSha === member.headSha ? signal.checks : undefined;
+  const chip = stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness;
   const unfinished = (checks[member.url]?.checks ?? []).filter((check) => ['attention', 'running'].includes(checkGroup(check)));
   // When merge requirements and check results were read at the same time, one freshness note says so.
   const together =
@@ -945,7 +943,7 @@ function PrStatusLine({ subject, signals, checking, checks, checkErrors, updatin
       : undefined;
   return <>
     {!stacked && <SubjectReviewStatus subject={subject} signals={signals} checking={checking} now={now} />}
-    <ReadinessChip readiness={chip} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined}>
+    {(stacked || !['Merged', 'Closed'].includes(chip.label)) && <ReadinessChip readiness={chip} reviewStatusShown={stacked} staleLabel={stacked ? 'Status needs refresh' : undefined}>
       {rollup && rollup.total > 0 && (
         <div className="readiness-popover-checks">
           <p>
@@ -975,7 +973,7 @@ function PrStatusLine({ subject, signals, checking, checks, checkErrors, updatin
         </>}
       </p>
       {!stacked && <a className="readiness-popover-link" href={member.url} target="_blank" rel="noopener noreferrer">Merge requirements on GitHub</a>}
-    </ReadinessChip>
+    </ReadinessChip>}
   </>;
 }
 

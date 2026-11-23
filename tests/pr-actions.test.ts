@@ -699,3 +699,72 @@ void test('bulk draft changes stop before writing after an account switch or nav
   assert.deepEqual(navigated.completed, []);
   assert.equal(f.writes.length, 0);
 });
+/** The PR header's Reopen and Delete branch (#542), on a fixture PR changed by `change` before it is read. */
+function finishedFixture(change: (pr: ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>) => void, branchTip = 'head-1') {
+  const f = fixture();
+  const pr = f.prs[0] as ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>;
+  pr.state = 'MERGED';
+  pr.headRef = { id: 'REF_1' };
+  pr.headRepository = { nameWithOwner: 'o/r', viewerPermission: 'WRITE' } as typeof pr.headRepository;
+  change(pr);
+  const graphql = f.client.graphql.bind(f.client) as (query: string, params: Record<string, unknown>) => Promise<unknown>;
+  const request = f.client.request.bind(f.client) as (query: string, params: Record<string, unknown>) => Promise<unknown>;
+  let reopened = 'OPEN';
+  Object.assign(f.client, {
+    graphql: async (query: string, params: Record<string, unknown>) => {
+      if (!query.includes('ReopenPullRequestInput')) return graphql(query, params);
+      f.writes.push({ query, params });
+      return { reopenPullRequest: { pullRequest: { state: reopened } } };
+    },
+    request: async (query: string, params: Record<string, unknown>) => {
+      if (query.startsWith('GET /repos/{owner}/{repo}/git/ref/')) return { data: { object: { sha: branchTip } } };
+      return request(query, params);
+    },
+  });
+  return { ...f, refuseReopen: () => { reopened = 'CLOSED'; } };
+}
+void test('reopen: a closed PR, by its author or a writer, confirmed by GitHub', async () => {
+  const f = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  const result = await f.service.act(f.client, await f.request(1, 'reopen'));
+  assert.equal(result.message, 'Reopened #1.');
+  assert.match(f.writes[0].query, /reopenPullRequest/);
+  assert.deepEqual(f.writes[0].params.input, { pullRequestId: 'PR_1' });
+  for (const [change, reason] of [
+    [(pr: Record<string, unknown>) => { pr.state = 'OPEN'; }, /already open/],
+    [(pr: Record<string, unknown>) => { pr.state = 'MERGED'; }, /merged PR cannot be reopened/],
+  ] as const) {
+    const g = finishedFixture(change);
+    await assert.rejects(g.service.act(g.client, await g.request(1, 'reopen')), reason);
+    assert.equal(g.writes.length, 0);
+  }
+  const reader = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  reader.repo.viewerPermission = 'READ';
+  await assert.rejects(reader.service.act(reader.client, await reader.request(1, 'reopen')), /author or someone with write permission/);
+  assert.equal(reader.writes.length, 0);
+  const unconfirmed = finishedFixture((pr) => { pr.state = 'CLOSED'; });
+  unconfirmed.refuseReopen();
+  await assert.rejects(unconfirmed.service.act(unconfirmed.client, await unconfirmed.request(1, 'reopen')), /did not confirm/);
+});
+void test('delete branch: a finished PR’s branch, only while it ends at the PR’s last commit', async () => {
+  const f = finishedFixture(() => {});
+  assert.equal((await f.service.read(f.client, url(1))).headBranchExists, true);
+  const result = await f.service.act(f.client, await f.request(1, 'delete-branch'));
+  assert.equal(result.message, 'Deleted branch-1.');
+  const deletes = f.writes.filter((w) => w.query.startsWith('DELETE'));
+  assert.equal(deletes.length, 1);
+  assert.deepEqual(deletes[0].params, { owner: 'o', repo: 'r', ref: 'heads/branch-1' });
+  // Commits pushed after the merge would go with the branch: nothing is deleted.
+  const moved = finishedFixture(() => {}, 'pushed-later');
+  await assert.rejects(moved.service.act(moved.client, await moved.request(1, 'delete-branch')), /has commits this PR does not/);
+  assert.equal(moved.writes.filter((w) => w.query.startsWith('DELETE')).length, 0);
+  for (const [change, reason] of [
+    [(pr: Record<string, unknown>) => { pr.state = 'OPEN'; }, /Merge or close this PR/],
+    [(pr: Record<string, unknown>) => { pr.headRef = null; }, /already deleted/],
+    [(pr: Record<string, unknown>) => { pr.headRepository = { nameWithOwner: 'o/r', viewerPermission: 'READ' }; }, /write permission to the branch/],
+    [(pr: Record<string, unknown>) => { pr.headRepository = null; }, /no longer exists/],
+  ] as const) {
+    const g = finishedFixture(change);
+    await assert.rejects(g.service.act(g.client, await g.request(1, 'delete-branch')), reason);
+    assert.equal(g.writes.filter((w) => w.query.startsWith('DELETE')).length, 0);
+  }
+});

@@ -126,6 +126,7 @@ export function PrActions({
   onOverflow,
   notes,
   shortcuts = false,
+  refreshKey = 0,
 }: {
   member: ReviewMember;
   stackMembers?: ReviewMember[];
@@ -147,8 +148,10 @@ export function PrActions({
   onOverflow?: (groups: EntryActionGroups) => void;
   /** Where the header's notes go: conflicts, a pushed update, failures. */
   notes?: HTMLElement | null;
-  /** Cmd+Shift+M opens the merge confirmation, Cmd+Shift+U the Update menu. */
+  /** Cmd+Shift+M opens the merge confirmation, Cmd+Shift+U the Update menu. The page's Cmd+Shift+V is the review action. */
   shortcuts?: boolean;
+  /** A new value reads GitHub's permissions and merge options again, as ⋯ › Refresh does. */
+  refreshKey?: number;
 }) {
   const header = !trigger && !stackMembers;
   const [loaded, setState] = useState<PrActionState>();
@@ -210,6 +213,9 @@ export function PrActions({
       version.current++;
     };
   }, [identity]);
+  useEffect(() => {
+    if (refreshKey && header && !pending.current) void refresh();
+  }, [refreshKey]);
   async function open(kind: PrActionKind, preferred?: MergeMethod) {
     if (pending.current) return;
     const n = ++version.current;
@@ -445,7 +451,19 @@ export function PrActions({
   ) : null;
   const methodFields = plan ? (
     <>
-      {showMethod && (
+      {showMethod && popover && (
+        // Beside Merge, the repository's two or three methods are one choice away.
+        <fieldset className="pr-merge-methods" aria-label="Merge method" disabled={busy}>
+          <legend>Merge method</legend>
+          {plan.methods.map((value) => (
+            <label key={value}>
+              <input type="radio" name="merge-method" value={value} checked={method === value} onChange={() => setMethod(value)} />
+              {mergeMethodLabels[value]}
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {showMethod && !popover && (
         <label className="pr-action-field">
           Merge method
           <SearchableSelect
@@ -672,7 +690,11 @@ export function PrActions({
         <Popover.Content className="pr-merge-confirm" align="end" sideOffset={6} collisionPadding={12} aria-label={heading} tabIndex={-1}
           onOpenAutoFocus={(event) => { event.preventDefault(); (event.currentTarget as HTMLElement).focus(); }}
           onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
-          onPointerDownOutside={(event) => { if (busy) event.preventDefault(); }}>
+          onInteractOutside={(event) => {
+            // The method list and other pickers open in their own layer; using them keeps the confirmation open.
+            const target = event.target instanceof Element ? event.target : null;
+            if (busy || target?.closest('.selection-positioner, [data-slot="combobox-content"], [role=menu]')) event.preventDefault();
+          }}>
           <h2>{heading}</h2>
           <p className="pr-merge-confirm-description">{description}</p>
           {confirmation}

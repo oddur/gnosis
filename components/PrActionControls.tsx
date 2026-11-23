@@ -67,7 +67,8 @@ export function MethodMenu({ label, methods, current, reason, onPick, size = 'sm
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="pr-update-menu pr-method-menu" align="end" sideOffset={5}>
+        {/* Picking a method opens Merge's confirmation, which takes focus: focus must not return to the chevron and close it. */}
+        <DropdownMenu.Content className="pr-update-menu pr-method-menu" align="end" sideOffset={5} onCloseAutoFocus={(event) => event.preventDefault()}>
           <DropdownMenu.Label className="pr-method-menu-label">{label}</DropdownMenu.Label>
           <DropdownMenu.RadioGroup value={current} onValueChange={(value) => onPick(value as MergeMethod)}>
             {methods.map((method) => (

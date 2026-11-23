@@ -85,7 +85,7 @@ void app.whenReady().then(async () => {
     // The description is never cut off (#418).
     assert.equal(await js("!!document.querySelector('.feedback-description-toggle')"), false);
     assert.equal(
-      await js("document.querySelector('.pr-merge-status').getBoundingClientRect().bottom < 350"),
+      await js("document.querySelector('.pr-heading-meta').getBoundingClientRect().bottom < 350"),
       true,
       'Readiness belongs in the first viewport'
     );

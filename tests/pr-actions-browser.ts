@@ -1,4 +1,5 @@
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code).catch((error: unknown) => { throw new Error(`${code.slice(0, 300)}\n${String(error)}`); }) as Promise<T>;
   const wait = async (code: string) => {
     for (let i = 0; i < 200; i++) {
       if (await js(code)) return;
@@ -29,6 +30,14 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode });
     if (keyCode === 'Enter') win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+    await new Promise((r) => setTimeout(r, 120));
+  };
+  /** Cmd+Shift+<key>: the fixture reports macOS (tests/fixtures/workbench.tsx). */
+  const chord = async (keyCode: string) => {
+    win.focus();
+    const modifiers: ('meta' | 'shift')[] = ['meta', 'shift'];
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
     await new Promise((r) => setTimeout(r, 120));
   };
   const currentStep = () => js<string>("document.querySelector('.step-list [aria-current=step]')?.dataset.step ?? ''");
@@ -64,19 +73,40 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
     await click('Open PR overview');
-    await wait("document.querySelector('.pr-action-controls button')?.disabled===false");
-    assert.ok(
-      await js(
-        `[...document.querySelectorAll('.pr-action-controls button')].filter(b=>b.getBoundingClientRect().width>0).length>=6`
-      ),
-      'PR actions are directly visible without opening a menu'
+    // Wide enough for every header action (#542); narrower windows are checked below.
+    win.setSize(1600, 900);
+    await wait('innerWidth===1600');
+    const A = '.pr-header-actions';
+    const merge = `document.querySelector('${A} [data-merge-action]')`;
+    const toggle = (label: string) => `[...document.querySelectorAll('${A} [role=switch]')].find(b=>b.textContent.startsWith(${JSON.stringify(label)}))`;
+    /** Clicks a toggle once its last change has finished sending. */
+    const flip = async (label: string) => {
+      await wait(`!!${toggle(label)} && ${toggle(label)}.getAttribute('aria-busy')!=='true'`);
+      await js(`${toggle(label)}.click()`);
+    };
+    const unavailable = (code: string) => `${code}?.getAttribute('aria-disabled')==='true'`;
+    const available = (code: string) => `${code}?.getAttribute('aria-disabled')!=='true'`;
+    const refreshActions = () => menuAction(js, 'Actions for PR #150', 'Refresh GitHub status');
+    const toastUndo = async () => {
+      await wait("[...document.querySelectorAll('[data-slot=toast] button')].some(b=>b.textContent==='Undo')");
+      await js("[...document.querySelectorAll('[data-slot=toast] button')].find(b=>b.textContent==='Undo').click()");
+    };
+    await wait(`!!${merge} && ${available(merge)}`);
+    // Every action is in the tab row, on the right, without opening a menu.
+    assert.deepEqual(
+      await js(`[...document.querySelectorAll('${A} [data-slot=button]')].filter(b=>b.getBoundingClientRect().width>0).map(b=>b.textContent.trim()||b.getAttribute('aria-label'))`),
+      ['Draft', 'Auto-merge', 'Auto-merge method', 'Update', 'Drafts', 'Review PR #150', 'Merge', 'Merge method']
     );
-    await capture('summary-light-1280');
-    await click('Merge PR…');
-    await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
-    assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /1 PR → main/);
-    assert.equal(await js("!!document.querySelector('.step-card')"), false, 'A single PR merge keeps one confirmation');
-    await capture('merge-light-1280');
+    assert.ok(await js(`(()=>{const tabs=document.querySelector('.pr-overview-tabs').getBoundingClientRect();const row=document.querySelector('${A}').getBoundingClientRect();return row.left>=tabs.left&&Math.abs((row.top+row.bottom)/2-(tabs.top+tabs.bottom)/2)<8})()`), 'Actions share the tab row');
+    assert.equal(await js(`document.querySelectorAll('${A} [data-slot=button][data-variant=default]:not(.pr-action-chevron)').length`), 1, 'One primary action');
+    await capture('summary-light-1600');
+    // Merge's confirmation opens beside it: the PR, the method, the target branch.
+    await click('Merge');
+    await wait("!!document.querySelector('.pr-merge-confirm [aria-label=\"Merge method\"]')");
+    assert.match(await js<string>("document.querySelector('.pr-merge-confirm').textContent"), /1 PR → main/);
+    assert.equal(await js("!!document.querySelector('.step-card, .pr-action-dialog')"), false, 'A single PR merge keeps one short confirmation');
+    await wait("document.activeElement?.textContent==='Merge pull request'");
+    await capture('merge-light-1600');
     await js('window.badgeLinks=[];void(window.electronAPI.openExternal=async url=>{window.badgeLinks.push(url)})');
     for (const kind of ['branch', 'commit']) {
       await js(
@@ -85,59 +115,59 @@ void app.whenReady().then(async () => {
       await wait("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent==='Open on GitHub')");
       await js("[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent==='Open on GitHub').click()");
       await wait(`window.badgeLinks.length===${kind === 'branch' ? 1 : 2}`);
-      assert.equal(
-        await js("!!document.querySelector('.pr-action-dialog')"),
-        true,
-        'Badge navigation does not submit or close confirmation'
-      );
+      assert.equal(await js("!!document.querySelector('.pr-merge-confirm')"), true, 'Badge navigation does not submit or close confirmation');
     }
     assert.match(await js<string>('window.badgeLinks[0]'), /^https:\/\/github.com\/klang\/engine\/tree\//);
     assert.match(await js<string>('window.badgeLinks[1]'), /^https:\/\/github.com\/klang\/engine\/commit\//);
-
     await click('Cancel');
+    await wait("!document.querySelector('.pr-merge-confirm')");
     assert.equal(await js('window.writes.length'), 0);
-    await click('Convert to draft…');
-    await wait("document.querySelector('.pr-action-members')?.children.length===1");
-    assert.equal(await js('!!document.querySelector(\'[aria-label="Merge method"]\')'), false);
-    await capture('convert-draft-light-1280');
-    await click('Convert to draft');
-    await wait("!document.querySelector('.pr-action-dialog')");
-    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent==='Mark ready for review…')");
-    assert.equal(await js('window.writes.at(-1).kind'), 'convert-draft');
-    assert.equal(await js("document.querySelector('.pr-action-controls button').disabled"), true);
+
+    // Draft is a toggle: it acts at once, shows at once, and its toast offers Undo.
+    await flip('Draft');
+    await wait(`${toggle('Draft')}?.getAttribute('aria-checked')==='true'`);
+    await wait("window.writes.at(-1)?.kind==='convert-draft'");
+    await wait(unavailable(merge));
     await wait("document.querySelector('.pr-readiness')?.textContent.includes('Draft PR')");
-    await capture('draft-summary-light-1280');
-    await click('Mark ready for review…');
-    await wait("document.querySelector('.pr-action-members')?.children.length===1");
-    await capture('mark-ready-light-1280');
-    await js("document.documentElement.classList.add('dark')");
-    win.setSize(640, 800);
-    await capture('mark-ready-dark-640');
-    await click('Mark ready for review');
-    await wait("!document.querySelector('.pr-action-dialog')");
-    await wait("document.querySelector('.pr-action-controls button')?.disabled===false");
-    assert.equal(await js('window.writes.at(-1).kind'), 'mark-ready');
-    win.setSize(1280, 800);
-    await js("document.documentElement.classList.remove('dark')");
+    assert.match(await js<string>("document.querySelector('.merge-readiness-chip').textContent"), /Draft PR/, 'The chip agrees with Summary');
+    await capture('draft-light-1600');
+    await toastUndo();
+    await wait("window.writes.at(-1)?.kind==='mark-ready'");
+    await wait(`${toggle('Draft')}?.getAttribute('aria-checked')==='false' && ${available(merge)}`);
+    // A refused change rolls back and keeps a retry.
+    await js('window.failAction=true');
+    await flip('Draft');
+    await wait("!!document.querySelector('.pr-header-notes .pr-action-error')");
+    await wait(`${toggle('Draft')}?.getAttribute('aria-checked')==='false'`);
+    await js('window.failAction=false');
+    await capture('draft-failed-light-1600');
+    await js("[...document.querySelectorAll('.pr-header-notes .pr-action-error button')].find(b=>/Retry|Try again/.test(b.textContent))?.click()");
+    await wait("window.writes.at(-1)?.kind==='convert-draft' && !document.querySelector('.pr-header-notes .pr-action-error')");
+    await flip('Draft');
+    await wait("window.writes.at(-1)?.kind==='mark-ready'");
+    await wait(`${toggle('Draft')}?.getAttribute('aria-checked')==='false'`);
+
+    // Conflicts: Resolve conflicts takes Merge's place, and Update says why it is unavailable.
     await js('window.conflicts=true');
-    await click('Refresh PR actions');
-    await wait("[...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");
-    assert.match(await js<string>("document.querySelector('.pr-actions').textContent"), /Resolve conflicts/);
-    await capture('conflicts-light-1280');
+    await refreshActions();
+    await wait(`[...document.querySelectorAll('${A} button')].some(b=>b.textContent==='Resolve conflicts…')`);
+    assert.equal(await js(`!!${merge}`), false, 'Merge gives its place to Resolve conflicts');
+    assert.match(await js<string>(`document.querySelector('${A} .pr-update-trigger').title`), /Resolve merge conflicts/);
+    assert.equal(await js(unavailable(`document.querySelector('${A} .pr-update-trigger')`)), true);
+    await capture('conflicts-light-1600');
     // The conflict line from background preparation (#445): checking, the summary, Review and push…, no permission.
     const header = async (state: unknown) => {
       await wait('!!window.headerChanged&&!!window.headerUrl');
       await js(`window.headerState=${JSON.stringify(state)};window.headerChanged(window.headerUrl)`);
     };
     const line = "document.querySelector('.pr-conflict-line')?.textContent";
-    const resolveButton = (label: string) =>
-      `[...document.querySelectorAll('.pr-action-controls button')].find(b=>b.textContent===${JSON.stringify(label)})`;
+    const resolveButton = (label: string) => `[...document.querySelectorAll('${A} button')].find(b=>b.textContent===${JSON.stringify(label)})`;
     await header({ state: 'checking', files: 3 });
     await wait(`${line}==='Checking 3 files…'`);
     const sentence = '3 files have conflicts. 7 of 9 conflicts are merged and checked. 2 need you: 1 to check, 1 to decide.';
     await header({ state: 'ready', sentence, merged: false });
     await wait(`${line}===${JSON.stringify(sentence)}&&!!${resolveButton('Resolve conflicts…')}`);
-    await capture('conflict-header-light-1280');
+    await capture('conflict-header-light-1600');
     await header({ state: 'ready', sentence: '2 files have conflicts. 4 of 4 conflicts are merged and checked. Nothing needs you.', merged: true });
     await wait(`!!${resolveButton('Review and push…')}`);
     await header({ state: 'no-permission' });
@@ -152,7 +182,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.conflictPushed=async(url,head)=>head==='d'.repeat(40)?{id:'a'.repeat(64),version:1,url,headRepo:s.headRepo,baseRepo:s.repository,headBranch:s.headBranch,baseBranch:s.baseBranch,headSha:'e'.repeat(40),commitSha:'d'.repeat(40)}:null;
       window.pushedHead='d'.repeat(40);
     })()`);
-    await click('Refresh PR actions');
+    await refreshActions();
     const pushedLine = "document.querySelector('[data-conflict-pushed]')";
     await wait(`${pushedLine}?.textContent.startsWith('Merged main into this PR')`);
     assert.equal(await js(`!!${pushedLine}.querySelector('[data-conflict-undo]')`), false, 'Off by default');
@@ -164,56 +194,60 @@ void app.whenReady().then(async () => {
     await js(`${pushedLine}.querySelector('[data-conflict-undo]').click()`);
     await wait("!!document.querySelector('[data-conflict-undo-dialog]')");
     assert.match(await js<string>("document.querySelector('[data-conflict-undo-dialog]').innerText"), /rewrites its history/);
-    await capture('conflict-undo-header-light-1280');
+    await capture('conflict-undo-header-light-1600');
     await js("document.querySelector('[data-conflict-undo-dialog] button[data-variant=outline]').click()");
     await wait("!document.querySelector('[data-conflict-undo-dialog]')");
     await allowUndo(false);
     await js('delete window.pushedHead');
-    await click('Refresh PR actions');
+    await refreshActions();
     await wait(`!${pushedLine}`);
     await js('window.conflicts=false');
-    await click('Refresh PR actions');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");
+    await refreshActions();
+    await wait(`!!${merge} && ${available(`document.querySelector('${A} .pr-update-trigger')`)}`);
+    // GitHub's state moved on since the header read it: the confirmation reads it again and refuses.
     await js('window.conflicts=true');
-    await js(
-      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with rebase…').click()"
-    );
+    const updateItem = async (label: string) => {
+      await click('Update');
+      await wait(`[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith(${JSON.stringify(label)}))`);
+      await js(`[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.startsWith(${JSON.stringify(label)})).click()`);
+    };
+    await updateItem('Update with rebase…');
     await wait("document.querySelector('.pr-action-dialog')?.textContent.includes('Resolve merge conflicts')");
-    assert.equal(
-      await js(
-        "[...document.querySelectorAll('.pr-action-dialog button')].find(b=>b.textContent==='Update branch with rebase').disabled"
-      ),
-      true
-    );
-    await capture('conflicts-confirmation-light-1280');
+    assert.equal(await js("[...document.querySelectorAll('.pr-action-dialog button')].find(b=>b.textContent==='Update branch with rebase').disabled"), true);
+    await capture('conflicts-confirmation-light-1600');
     await click('Cancel');
     await js('window.conflicts=false');
-    await click('Refresh PR actions');
-    await click('Enable auto-merge…');
-    await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
-    await click('Enable auto-merge');
-    await wait("!document.querySelector('.pr-action-dialog')");
-    await wait("document.querySelector('.pr-action-note')?.textContent.includes('Auto-merge is on')");
-    assert.equal(await js('window.writes.at(-1).kind'), 'enable-auto');
-    await click('Disable auto-merge…');
-    await wait("document.querySelector('.pr-action-members')?.textContent.includes('#150')");
-    await click('Disable auto-merge');
-    await wait("!document.querySelector('.pr-action-dialog')");
-    assert.equal(await js('window.writes.at(-1).kind'), 'disable-auto');
-    await capture('update-menu-light-1280');
-    await js(
-      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with rebase…').click()"
-    );
+    await refreshActions();
+    await wait(`!!${merge}`);
+
+    // Auto-merge is a toggle with the repository's default method; its chevron picks another.
+    await flip('Auto-merge');
+    await wait("window.writes.at(-1)?.kind==='enable-auto'");
+    assert.equal(await js('window.writes.at(-1).method'), 'SQUASH');
+    await wait(`${toggle('Auto-merge')}?.getAttribute('aria-checked')==='true' && ${toggle('Auto-merge')}.textContent.includes('Squash')`);
+    await capture('auto-merge-light-1600');
+    await toastUndo();
+    await wait("window.writes.at(-1)?.kind==='disable-auto'");
+    await wait(`${toggle('Auto-merge')}?.getAttribute('aria-checked')==='false'`);
+    await wait(`${toggle('Auto-merge')}?.getAttribute('aria-busy')!=='true'`);
+    await click('Auto-merge method');
+    await wait("[...document.querySelectorAll('[role=menuitemradio]')].some(e=>e.textContent.startsWith('Rebase and merge'))");
+    await js("[...document.querySelectorAll('[role=menuitemradio]')].find(e=>e.textContent.startsWith('Rebase and merge')).click()");
+    await wait("window.writes.at(-1)?.kind==='enable-auto' && window.writes.at(-1).method==='REBASE'");
+    await wait(`${toggle('Auto-merge')}?.textContent.includes('Rebase')`);
+    await flip('Auto-merge');
+    await wait("window.writes.at(-1)?.kind==='disable-auto'");
+
+    // Update is one menu; each way keeps its confirmation.
+    await updateItem('Update with rebase…');
     await wait("!!document.querySelector('.pr-action-members')");
     assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /main → fix-0/);
-    await capture('rebase-light-1280');
+    await capture('rebase-light-1600');
     await click('Update branch with rebase');
     await wait("!document.querySelector('.pr-action-dialog')");
     assert.equal(await js('window.writes.at(-1).kind'), 'update-rebase');
     assert.equal(await js('window.writes.at(-1).revisions[0].headSha'), 'head-0');
-    await js(
-      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with merge commit…').click()"
-    );
+    await updateItem('Update with merge commit…');
     await wait("!!document.querySelector('.pr-action-members')");
     await click('Update branch with merge commit');
     await wait("!document.querySelector('.pr-action-dialog')");
@@ -223,10 +257,8 @@ void app.whenReady().then(async () => {
     const workflowRefusal =
       "Error invoking remote method 'perform-pr-action': Error: Request failed due to following response errors:\n - refusing to allow an OAuth App to create or update workflow `.github/workflows/build.yml` without `workflow` scope";
     await js(`window.failAction=${JSON.stringify(workflowRefusal)};window.setFixtureGitHubScopes(['repo','read:org'])`);
-    const updateMerge =
-      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with merge commit…')";
-    await wait(`${updateMerge}?.disabled===false`);
-    await js(`${updateMerge}.click()`);
+    await wait(available(`document.querySelector('${A} .pr-update-trigger')`));
+    await updateItem('Update with merge commit…');
     await wait("!!document.querySelector('.pr-action-members')");
     await click('Update branch with merge commit');
     await wait("!!document.querySelector('.pr-action-dialog [data-workflow-permission] .github-scope-prompt')");
@@ -246,32 +278,72 @@ void app.whenReady().then(async () => {
     await click('Sign in again');
     await wait("!document.querySelector('.pr-action-dialog') && window.signInStarts===1");
     await wait("!document.querySelector('.github-auth-dialog')");
-    await js("window.failAction=false");
-    await click('Merge PR…');
-    await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
-    await js("window.selectOption('[aria-label=\"Merge method\"]','REBASE')");
+
+    // The merge confirmation: the chevron picks the method first; a stale revision refuses and nothing merges.
+    await js('window.failAction=false');
+    await click('Merge method');
+    await wait("[...document.querySelectorAll('[role=menuitemradio]')].some(e=>e.textContent.startsWith('Rebase and merge'))");
+    await js("[...document.querySelectorAll('[role=menuitemradio]')].find(e=>e.textContent.startsWith('Rebase and merge')).click()");
+    await wait("!!document.querySelector('.pr-merge-confirm [aria-label=\"Merge method\"]')");
+    assert.equal(await js("document.querySelector('.pr-merge-confirm [name=merge-method]:checked').value"), 'REBASE', 'The chevron picks the method');
     assert.equal(await js("!!document.querySelector('.pr-action-message')"), false);
-    await js("window.selectOption('[aria-label=\"Merge method\"]','SQUASH');window.failAction=true");
+    await js("document.querySelector('.pr-merge-confirm [name=merge-method][value=SQUASH]').click()");
+    await wait("!!document.querySelector('.pr-action-message') && document.querySelector('.pr-merge-confirm [name=merge-method]:checked').value==='SQUASH'");
+    await js('window.failAction=true');
     await click('Merge pull request');
-    await wait("document.querySelector('[role=alert]')?.textContent.includes('changed since confirmation')");
-    assert.equal(
-      await js(
-        "[...document.querySelectorAll('.pr-action-dialog button')].find(b=>b.textContent==='Merge pull request').disabled"
-      ),
-      true
-    );
-    await capture('stale-confirmation-1280');
+    await wait("document.querySelector('.pr-merge-confirm [role=alert]')?.textContent.includes('changed since confirmation')");
+    assert.equal(await js("[...document.querySelectorAll('.pr-merge-confirm button')].find(b=>b.textContent==='Merge pull request').disabled"), true);
+    await capture('stale-confirmation-1600');
     await click('Cancel');
-    await js('window.failAction=false;window.denyWrite=true');
-    await click('Refresh PR actions');
-    await wait("document.querySelector('.pr-action-controls button').disabled");
     assert.equal(await js("window.writes.filter(w=>w.kind==='merge').length"), 1);
+    // Cmd+Shift+M opens the confirmation; Enter on its focused Merge button merges. Nothing merges before that.
+    await js('window.failAction=false');
+    await chord('M');
+    await wait("document.activeElement?.textContent==='Merge pull request'");
+    assert.equal(await js("window.writes.filter(w=>w.kind==='merge').length"), 1, 'The shortcut only opens the confirmation');
+    await press('Enter');
+    await wait("window.writes.filter(w=>w.kind==='merge').length===2 && !document.querySelector('.pr-merge-confirm')");
+    // Cmd+Shift+U opens the Update menu; Cmd+Shift+V the review.
+    await chord('U');
+    await wait("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith('Update with rebase…'))");
+    await press('Escape');
+    await wait("![...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith('Update with rebase…'))");
+    await chord('V');
+    await wait("[...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Review PR #150'))");
+    await click('Close');
+    await wait("![...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Review PR #150'))");
+    assert.equal(await js('window.location.href.includes("pr-summary")'), true, 'No reload');
+
+    // Short of room, the toggles go to ⋯ first, then Update and Drafts. Merge and Review PR always stay.
+    win.setSize(1100, 900);
+    await wait(`innerWidth===1100 && document.querySelector('${A}')?.dataset.collapse!=='0'`);
+    win.setSize(760, 900);
+    await wait(`innerWidth===760 && document.querySelector('${A}')?.dataset.collapse==='2'`);
+    assert.deepEqual(
+      await js(`[...document.querySelectorAll('${A} [data-slot=button]')].filter(b=>b.getBoundingClientRect().width>0).map(b=>b.textContent.trim()||b.getAttribute('aria-label'))`),
+      ['Review PR #150', 'Merge', 'Merge method']
+    );
+    await js("(b=>{b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))})(document.querySelector('[aria-label=\"Actions for PR #150\"]'))");
+    for (const label of ['Drafts', 'Convert to draft', 'Turn on auto-merge', 'Update with merge commit…', 'Update with rebase…'])
+      await wait(`[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith(${JSON.stringify(label)}))`);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('collapsed-dark-760');
+    await press('Escape');
+    await js("document.documentElement.classList.remove('dark')");
+    win.setSize(1600, 900);
+    await wait('innerWidth===1600');
+
+    await js('window.denyWrite=true');
+    await refreshActions();
+    await wait(`${unavailable(merge)} && ${merge}.title==='You need write permission to merge this PR.'`);
+    await js('window.denyWrite=false');
+    win.setSize(1280, 800);
+    await wait('innerWidth===1280');
     await click('Review queue');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open stack overview');
-    await js('window.denyWrite=false');
     await click('Merge whole stack…');
     await wait("document.querySelector('.pr-action-members')?.children.length===3");
     // The plan is visible before anything runs: three steps, the first current, nothing written.

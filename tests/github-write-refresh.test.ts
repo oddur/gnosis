@@ -289,6 +289,8 @@ void test('every GitHub write in the app is in the inventory', () => {
   assert.deepEqual([...found].sort(), [
     "src/conflict-resolution-service.ts: 'push',",
     "src/conflict-restack.ts: 'push',",
+    // Delete branch on a merged or closed PR (#542).
+    "src/pr-actions-service.ts: 'DELETE /repos",
     "src/pr-actions-service.ts: 'POST /repos",
     "src/pr-actions-service.ts: 'PUT /repos",
     // Close PR (#390): the optional comment, then the closePullRequest mutation.

@@ -75,7 +75,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-row-main').click()");
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-context')");
-    const url = await js<string>("document.querySelector('.pr-github-link').href");
+    const url = await js<string>("(async()=>{const title=document.querySelector('.pr-overview-heading h1').title;return (await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.title===title).url})()");
     await wait('window.fixtureFocusRefreshes.length===1');
     assert.deepEqual(await js('window.fixtureFocusRefreshes'), [[url]]);
 
@@ -102,26 +102,22 @@ void app.whenReady().then(async () => {
     await wait('window.fixtureFocusRefreshes.length===2');
     assert.deepEqual(await js('window.fixtureFocusRefreshes.at(-1)'), [url]);
 
-    // ── The header label: in the metadata row, ages on the status clock, renews with new signals. ──
+    // ── The header label (#542): in the readiness chip's popover, ages on the status clock, renews with new signals. ──
+    await js("document.querySelector('.merge-readiness-chip').click()");
     await wait(
-      "/^Checked (just now|\\d+m ago)$/.test(document.querySelector('.pr-summary-context .pr-freshness')?.textContent ?? '')"
+      "/^Checked (just now|\\d+m ago)$/.test(document.querySelector('.readiness-popover .pr-freshness')?.textContent ?? '')"
     );
-    const link = await rect('.pr-github-link');
-    const row = await rect('.pr-summary-context');
     assert.equal(
       await js("getComputedStyle(document.querySelector('.pr-freshness')).fontVariantNumeric"),
       'tabular-nums'
     );
     await advance(5 * 60_000);
     await wait("document.querySelector('.pr-freshness')?.textContent==='Checked 5m ago'");
-    assert.deepEqual(await rect('.pr-github-link'), link, 'The GitHub link does not move as the label ages');
-    assert.deepEqual(await rect('.pr-summary-context'), row, 'The metadata row keeps its size');
     await capture('pr-header-aged');
     await js(
       `(()=>{const m=(window.syncFixture.subscriptions);for(const [,i] of m) if(i.kind==='signals'){const t=i.targets.find(t=>t.url===${JSON.stringify(url)});if(t){window.syncFixture.emit({kind:'signals',url:t.url,value:{url:t.url,headSha:t.headSha,checkedAt:Date.now(),comments:4,checks:{state:'success',passed:129,skipped:1,total:130}}});return}}throw Error('No signals subscription')})()`
     );
     await wait("document.querySelector('.pr-freshness')?.textContent==='Checked just now'");
-    assert.deepEqual(await rect('.pr-github-link'), link);
     await capture('pr-header-fresh');
 
     // ── Sync health: a seeded drift appears in Settings › Diagnostics. ──

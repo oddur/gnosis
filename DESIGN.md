@@ -195,6 +195,7 @@ Default buttons are 36px high; small buttons are 32px with 13px (`--type-control
 Primary and secondary fills soften on hover. Outline and ghost actions use accent hover surfaces.
 Dark outline buttons use translucent input surfaces; destructive buttons also adjust their fill in Dark.
 Keep the visible focus outline and library focus ring. Disabled buttons use half opacity.
+PR actions use three shared shapes (components/PrActionControls.tsx): a toggle (an outline button with a 24×14 switch, primary when on) for settings that act at once, a split button (main action plus a chevron menu of methods) for Merge, and a menu button for Update. An action that cannot run stays visible at half opacity with `aria-disabled` and its reason as the tooltip.
 
 ### Chips and fields
 

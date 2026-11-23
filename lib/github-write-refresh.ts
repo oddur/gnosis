@@ -19,6 +19,8 @@ export type GitHubWriteAction =
   | 'mark-ready'
   | 'convert-draft'
   | 'close-pr'
+  | 'reopen-pr'
+  | 'delete-branch'
   | 'submit-review'
   | 'review-comment'
   | 'thread-reply'
@@ -218,6 +220,15 @@ export const GITHUB_WRITE_EFFECTS: Record<GitHubWriteAction, WriteEffect> = {
     seen: ({ metadata }) => metadata?.state === 'closed',
     queue: true,
   },
+  // A reopened PR comes back to the queue once GitHub reports it open (#542).
+  'reopen-pr': {
+    kinds: ALL,
+    probes: ['metadata'],
+    seen: ({ metadata }) => metadata?.state === 'open',
+    queue: true,
+  },
+  // Deleting a finished PR's branch changes nothing the PR copies show; one read confirms the PR is unchanged.
+  'delete-branch': { kinds: ['metadata'], probes: ['metadata'] },
   // The review decision, the latest review and the reviewer's queue section.
   'submit-review': {
     kinds: ALL,

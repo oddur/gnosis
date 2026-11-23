@@ -40,6 +40,15 @@ const groups: ShortcutGroup[] = [
       { keys: QUIET_CHANGES_KEY, label: 'Show or hide quiet changes (whitespace, formatting, comments)' },
     ],
   },
+  {
+    // The PR header's actions (#542). Each opens its confirmation or menu; nothing merges or updates without a click or Enter.
+    heading: 'PR actions',
+    shortcuts: [
+      { keys: window.electronAPI.platform === 'darwin' ? '⌘ ⇧ M' : 'Ctrl Shift M', label: 'Open the merge confirmation' },
+      { keys: window.electronAPI.platform === 'darwin' ? '⌘ ⇧ U' : 'Ctrl Shift U', label: 'Open the Update menu' },
+      { keys: window.electronAPI.platform === 'darwin' ? '⌘ ⇧ V' : 'Ctrl Shift V', label: 'Review PR, reply to feedback, or request review' },
+    ],
+  },
   { heading: 'Resolving conflicts', shortcuts: CONFLICT_SHORTCUTS },
   {
     heading: 'Review controls',

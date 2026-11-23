@@ -42,7 +42,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.reviewSubmissions.length'), 0, 'Opening a menu action never submits');
     await click('Close');
     await wait("!document.querySelector('[role=dialog]')");
-    await wait("!![...document.querySelectorAll('.pr-summary-review-actions button')].find(b=>b.textContent==='Review PR #152'&&!b.disabled)");
+    await wait("!![...document.querySelectorAll('.pr-header-actions button')].find(b=>b.textContent==='Review PR #152'&&!b.disabled)");
     await capture('summary-light');
     await click('Review PR #152');
     assert.equal(await js("document.querySelector('input[value=COMMENT]').checked"), true);
@@ -84,7 +84,7 @@ void app.whenReady().then(async () => {
     await click('Close');
     await wait("document.querySelector('[aria-label=\"Review scope\"]')?.value.endsWith('/121')");
     assert.match(await js<string>("document.querySelector('[aria-label=\"Review scope\"]').textContent"), /#121/);
-    assert.equal(await js("document.querySelector('.pr-summary-review-actions').textContent.includes('Review PR #121')"), true);
+    assert.equal(await js("document.querySelector('.pr-header-actions').textContent.includes('Review PR #121')"), true);
     await capture('stack-summary');
     await click('Back to stack');
     await menuAction(js, 'Stack actions', 'Review PR #120…');
@@ -138,7 +138,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.reviewSubmissions[1].comments[0].path'), 'src/worker.ts');
     assert.equal(await js('window.reviewSubmissions[1].prUrl'), 'https://github.com/klang/engine/pull/120');
     await click('Done');
-    await wait("document.querySelector('.pr-summary-review-actions')?.textContent==='DraftsReview PR #120'");
+    // No drafts left: Drafts and Review PR show no count.
+    await wait("document.querySelector('.pr-header-actions .pr-review-action')?.textContent==='Review PR #120'");
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-tree')");
     await js(`window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];void 0`);
@@ -155,13 +156,14 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Stack actions', 'Review PR #121…');
     await wait("document.querySelector('.changes-drafts')?.textContent.includes('Keep this earlier note.')");
     assert.equal(await js("!!document.querySelector('[role=dialog]')"), false);
-    assert.equal(await js("[...document.querySelectorAll('.pr-summary-review-actions button')].find(b=>b.textContent.includes('Review PR')).disabled"), true);
+    assert.equal(await js("[...document.querySelectorAll('.pr-header-actions button')].find(b=>b.textContent.includes('Review PR')).getAttribute('aria-disabled')"), 'true');
     assert.equal(await js('window.reviewSubmissions.length'), 2);
     await capture('stale-drafts');
     await click('Open Changes to reposition');
     await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'");
-    await wait("document.querySelector('.changes-toolbar')?.textContent.includes('Review PR #121')");
-    assert.equal(await js("[...document.querySelectorAll('.changes-toolbar button')].find(b=>b.textContent.includes('Review PR')).disabled"), true);
+    // Changes hands its drafts to the header's Review PR (#542), which the stale draft blocks.
+    await wait("document.querySelector('.pr-header-actions .pr-review-action')?.textContent.includes('Review PR #121')");
+    assert.equal(await js("[...document.querySelectorAll('.pr-header-actions button')].find(b=>b.textContent.includes('Review PR')).getAttribute('aria-disabled')"), 'true');
     await capture('stale-draft-destination');
     console.log('Review entry points passed: summary, queue/stack/header menus, explicit targets, shared drafts, approvals, change requests, stale-draft recovery and narrow/dark layout.');
   } catch (error) {
