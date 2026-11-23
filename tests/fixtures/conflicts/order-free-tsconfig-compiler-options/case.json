@@ -1,0 +1,8 @@
+{
+  "description": "#481: both sides add a different compiler option. TypeScript reads compilerOptions by name, so either order is the same configuration.",
+  "language": "json",
+  "category": "structure/both-add",
+  "expected": {
+    "tsconfig.json": "merged"
+  }
+}

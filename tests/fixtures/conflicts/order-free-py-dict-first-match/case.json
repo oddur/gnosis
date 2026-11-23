@@ -1,0 +1,8 @@
+{
+  "description": "#481: the PR adds \"/api/v2/\", main adds \"/api/\", to a dict that route() walks in order, first match wins. Python dicts keep insertion order, so with \"/api/\" first, \"/api/v2/\" never matches: the order is the program.",
+  "language": "python",
+  "category": "semantic/order",
+  "expected": {
+    "app/routes.py": "any-but-merged"
+  }
+}

@@ -2,7 +2,7 @@
  * The resolver audit (#445 item 19). Runs each resolver and rule over the conflict lab's cases (tests/fixtures/conflicts
  * and a sample of the generated matrix), as the conflict service does, then mutates every result the checks pass:
  * a dropped or duplicated definition, a broken parse, a line dropped from either side, two lines swapped inside a
- * function, a changed string or number, and text outside the conflict touched. Every mutation must fail the checks:
+ * function, a one-line unit repeated or two of one side's swapped (#481), a changed string or number, and text outside the conflict touched. Every mutation must fail the checks:
  * it must never end Merged (lib/conflict-verify.ts). Pure library code; scripts/conflict-resolver-audit.ts prints it,
  * and tests/conflict-resolver-audit.test.ts runs it with `npm test`.
  */
@@ -36,6 +36,9 @@ export type MutationKind =
   | 'interleave-sides'
   | 'cross-anchor'
   | 'definition-into-definition'
+  | 'duplicate-unit'
+  | 'swap-units'
+  | 'change-context'
   | 'change-number'
   | 'change-string'
   | 'touch-outside';
@@ -49,13 +52,16 @@ export const MUTATIONS: MutationKind[] = [
   'interleave-sides',
   'cross-anchor',
   'definition-into-definition',
+  'duplicate-unit',
+  'swap-units',
+  'change-context',
   'change-number',
   'change-string',
   'touch-outside',
 ];
 /**
  * Mutations a remembered resolution may make on purpose: it is your own earlier resolution of the same conflict (Git's
- * rerere matches the conflict's exact text), and you may have dropped a side, reordered or edited it. The checks hold it
+ * rerere matches the conflict's exact text), and you may have dropped a side, reordered, repeated or edited it. The checks hold it
  * only to parsing, no duplicated definition and no text outside the conflict.
  */
 export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
@@ -63,6 +69,8 @@ export const REMEMBERED_OWN: ReadonlySet<MutationKind> = new Set([
   'drop-pr-line',
   'drop-main-line',
   'swap-order',
+  'swap-units',
+  'duplicate-unit',
   'interleave-sides',
   'cross-anchor',
   'change-number',
@@ -481,6 +489,27 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
       }
       return { skip: 'the result has no lines only one side added beside the other side’s' };
     }
+    case 'duplicate-unit': {
+      // The order-free kinds (#481) are one line each: an interface member, an import, a JSON key. One such line a
+      // side added, repeated after itself: a merge neither side wrote.
+      const own = addedBy(target);
+      const i = lines.findIndex((line) => own(line) && /[,;]\s*$/.test(line));
+      return i < 0 ? { skip: 'no one-line unit a side added' } : { text: replaceLines(lines, i + 1, 0, [lines[i]]) };
+    }
+    case 'swap-units': {
+      // Two lines one side added together, in the other order: the two sides may change places, one side's own may not.
+      const own = addedBy(target);
+      for (let i = 0; i + 1 < lines.length; i++) {
+        const side = own(lines[i]);
+        if (!side || own(lines[i + 1]) !== side || norm(lines[i]) === norm(lines[i + 1])) continue;
+        return {
+          text: replaceLines(lines, i, 2, [withEnding(lines[i + 1], lines[i]), withEnding(lines[i], lines[i + 1])]),
+        };
+      }
+      return { skip: 'no two lines one side added together' };
+    }
+    case 'change-context':
+      return { skip: 'handled on all three sides' };
     case 'change-number':
     case 'change-string': {
       const pattern = kind === 'change-number' ? /(?<![\w.$#])\d+(?![\w.])/ : /(["'])([^"'\\\n]*)\1/;
@@ -501,6 +530,15 @@ export async function mutate(kind: MutationKind, target: Target): Promise<Mutant
     case 'touch-outside':
       return { skip: 'handled on the whole output' };
   }
+}
+/** The side that alone added a line of the result, or undefined. */
+function addedBy(target: Target) {
+  const [base, ours, theirs] = [target.sides.base, target.sides.ours, target.sides.theirs].map(sideLines);
+  return (line: string) => {
+    const key = norm(line);
+    if (!hasWord(line) || base.has(key) || ours.has(key) === theirs.has(key)) return undefined;
+    return ours.has(key) ? ('ours' as const) : ('theirs' as const);
+  };
 }
 const KEYWORDS = new Set(
   'abstract as async await break case catch class const continue def default defer delete do elif else enum except export extends final finally fn for from func function go if impl implements import in interface is lambda let match mod module namespace new not or package pass private protected pub public raise readonly return select self static struct super switch this throw throws trait try type typeof use using val var void where while with yield'.split(
@@ -738,6 +776,11 @@ async function auditFile(
         await touchOutside(m, file, s.index, resolver, output, record);
         continue;
       }
+      if (mutation === 'change-context') {
+        if (resolver === 'mergiraf' && ORDER_FREE_NOTE.test(note))
+          await changeContext(m, file, s.index, output, record);
+        continue;
+      }
       const mutant = await mutate(mutation, target);
       if ('skip' in mutant || mutant.text === proposal.text) continue;
       const next = proposals.map((p, i) => (i === s.index && p ? { ...p, text: mutant.text } : p));
@@ -763,6 +806,69 @@ async function auditFile(
  * The resolver's whole output with one line next to the conflict changed, mapped onto Git's conflicts again as the
  * service maps it. Lines just before and just after the conflict, where a mapping could take them for the conflict's.
  */
+/** The note of a structural merge Merged because both sides' insertions are order-free (lib/conflict-verify.ts). */
+const ORDER_FREE_NOTE = /and their order doesn’t matter/;
+/** A change to the file around an order-free insertion, made on all three sides, that its proof must not survive. */
+interface ContextChange {
+  name: string;
+  language: RegExp;
+  /** The changed path and text, or undefined when the change doesn't apply. */
+  apply: (path: string, text: string) => { path: string; text: string } | undefined;
+}
+/** Every match of `from` replaced by `to`. */
+const everywhere = (from: RegExp, to: string) => (path: string, text: string) =>
+  from.test(text) ? { path, text: text.replace(new RegExp(from.source, `${from.flags}g`), to) } : undefined;
+const CONTEXT_CHANGES: ContextChange[] = [
+  { name: 'value imports', language: /\.tsx?$/, apply: everywhere(/^import type /m, 'import ') },
+  {
+    name: 'unknown JSON file',
+    language: /(?:package|tsconfig[\w.-]*|jsconfig)\.json$/,
+    apply: (path, text) => ({ path: path.replace(/[^/\\]+\.json$/, 'settings.json'), text }),
+  },
+];
+/**
+ * The order-free proofs (#481) read the file around the insertion: the kind of import, and the file name. Each change of CONTEXT_CHANGES is made on all three sides, the conflict and the structural merge's output alike,
+ * and the conflict must then not be Merged.
+ */
+async function changeContext(
+  m: Merge,
+  file: AuditFile,
+  index: number,
+  output: string,
+  record: (r: Omit<MutationResult, 'case' | 'path'>) => void
+) {
+  for (const change of CONTEXT_CHANGES) {
+    if (!change.language.test(file.path)) continue;
+    const texts = [file.base, file.ours, file.theirs, file.original, output].map((t) => change.apply(file.path, t));
+    if (texts.some((t) => !t) || (texts[0]?.text === file.base && texts[0].path === file.path)) continue;
+    const [base, ours, theirs, original, merged] = texts as { path: string; text: string }[];
+    // A change that reaches into a conflict changes it on one side only: not this mutation.
+    if (
+      parseConflicts(original.text).filter((x) => x.kind === 'conflict').length !==
+      parseConflicts(file.original).filter((x) => x.kind === 'conflict').length
+    )
+      continue;
+    const plain = {
+      path: base.path,
+      base: base.text,
+      ours: ours.text,
+      theirs: theirs.text,
+      original: original.text,
+      resolved: false,
+    };
+    const next = fromOutput(plain, merged.text, 'mergiraf');
+    if (!next) continue;
+    const result = await judge(next, m.disabled, index, 'mergiraf', 'change-context');
+    record({
+      block: index,
+      resolver: 'mergiraf',
+      mutation: 'change-context',
+      ...result,
+      note: `${change.name}: ${result.note}`,
+      text: result.outcome === 'escaped' ? original.text : undefined,
+    });
+  }
+}
 async function touchOutside(
   m: Merge,
   file: AuditFile,
