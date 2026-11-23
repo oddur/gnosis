@@ -63,6 +63,11 @@
   --type-chat: .875rem;
   --type-code: .8125rem;
   --leading-code: 1.25rem;
+  /* A diff's file path: one step above the code it heads, so file › hunk › code read in that order. */
+  --type-diff-file: .875rem;
+  /* Diff stacks: files stand apart on the canvas; inside a file nothing is more than a hairline apart. */
+  --diff-file-gap: 24px;
+  --diff-stream-inset: 12px;
   --leading-prose: 1.65;
   --weight-prose: 400;
   --tracking-prose: 0;
