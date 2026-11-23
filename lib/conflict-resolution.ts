@@ -372,6 +372,13 @@ export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 export const UNDO_LATER =
   'Undo also discards what you changed after your first whole-file edit. Select Undo again to go on.';
 export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
+/**
+ * Saved data can't reach the disk (src/app-data-store.ts): its worker stopped, or it is still closed after a quit that
+ * couldn't save. What you just changed was not saved, and only a restart opens saved data again.
+ */
+export const SAVED_WORK_UNAVAILABLE = 'Saved work isn’t available. Restart Gnosis.';
+/** Saved data could not open again after a quit that couldn't save (src/app-data-store.ts `reopen`). */
+export const SAVED_WORK_NO_DISK = 'Saved work isn’t available. Free some disk space, then restart Gnosis.';
 /** A saved draft the service can't use (`draftProblem`). Start over prepares the merge again. */
 export const UNREADABLE_DRAFT = 'This saved draft couldn’t be read.';
 /**

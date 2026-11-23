@@ -587,7 +587,8 @@ export function createConflictResolutionService(deps: Deps) {
     if (saved && (!match || match(saved)) && applyTypeErrors(saved, result)) {
       // A demotion can reopen a reviewed file: its revision moves, so a save from before it is refused.
       write(key, stamped(saved));
-      void deps.storage.flush();
+      // Nothing waits for it; a save that fails is logged, and stays queued for the next one.
+      deps.storage.flush().catch((error: unknown) => console.warn('[conflicts] Could not save type check results.', error));
     }
   }
   /** Each PR's type check (#445 item 24), by draft key: its status, and what it checked. Kept while the app runs. */

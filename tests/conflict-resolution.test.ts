@@ -6,11 +6,12 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
-import { assertSavedState, createAppDataStore } from '../src/app-data-store';
+import { assertSavedState, createAppDataStore, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { conflictFileStage } from '../lib/conflict-markers';
 import {
@@ -1575,7 +1576,7 @@ async function realStorage(t: TestContext, f: Awaited<ReturnType<typeof fixture>
     await store.open(dir);
     return store;
   };
-  return { store: () => store, service, run, reopen };
+  return { store: () => store, service, run, reopen, dir };
 }
 
 void test('discarding a draft in the real saved data removes it, and later saves still persist', async (t) => {
@@ -1610,6 +1611,40 @@ void test('dropping a background draft in the real saved data never blocks the n
   assert.ok(opened.files.length, 'Prepared again');
   const store = await real.reopen();
   assert.equal((store.read(key) as ConflictSession).version, opened.version);
+});
+
+void test('after a quit that could not save, a prepare says to restart, and Keep open saves again', async (t) => {
+  const f = await fixture(t);
+  const real = await realStorage(t, f);
+  t.mock.method(console, 'error', () => {});
+  const key = `conflict-draft:tester:${f.session.id}`;
+  const signal = new AbortController().signal;
+  assert.ok((await real.service.prepareInBackground(f.state.url, signal))?.background, 'A background draft');
+  // Quit (or Restart to update): the final save fails, and you keep Gnosis open.
+  const db = new DatabaseSync(path.join(real.dir, 'workbench.sqlite'));
+  db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+  real.store().write('workbench:tester', { account: 'tester', subjects: [], briefs: {}, overrides: [], day: '', used: 0 });
+  await assert.rejects(real.store().close(), /simulated disk failure/);
+  db.exec('DROP TRIGGER fail_write');
+  db.close();
+  // A background drop whose save fails keeps the draft's cache: its removal waits for the save.
+  const cache = await conflictSessionDirectory(f.deps.directory(), 'tester', f.session.id);
+  await assert.rejects(real.service.trimBackground(0), { message: SAVED_WORK_UNAVAILABLE });
+  assert.ok(await fs.stat(cache).catch(() => undefined), 'The cache is still there');
+  // Before the fix your prepare rejected with "Storage is not ready". While the store is closed it says the work wasn't
+  // saved, and what to do; it never reads as saved.
+  await assert.rejects(real.run({ kind: 'open', url: f.state.url }), { message: SAVED_WORK_UNAVAILABLE });
+  // Kept open: saved data opens again (src/main.ts `saveBeforeQuit`). Background clean-up and your prepare go through.
+  await real.store().reopen();
+  await real.service.trimBackground(0);
+  const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
+  assert.ok(opened.files.length, 'Prepared');
+  const saved = (
+    await real.run({ kind: 'save', id: opened.id, version: opened.version, path: 'sample.ts', contents: 'x\n', resolved: false })
+  ).session;
+  const store = await real.reopen();
+  assert.equal((store.read(key) as ConflictSession).version, saved.version, 'The save after reopening is on disk');
+  assert.ok(store.read('workbench:tester'), 'The save that failed at quit landed after reopening');
 });
 
 void test('the saved data refuses a draft that is not an object when it is written, and keeps saving others', async (t) => {
