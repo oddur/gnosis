@@ -33,6 +33,7 @@ import { canRetryStructural } from '../lib/conflict-flow';
 import { cascadeSentence } from '../lib/conflict-cascade';
 import * as undoCopy from '../lib/conflict-undo';
 import { normalizeRepositorySettings } from '../lib/repository-settings';
+import { assertPerf, perfBudget } from './perf-budget';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 const exec = promisify(execFile);
@@ -2268,6 +2269,113 @@ void test('a result that arrives after the budget is Mergiraf’s fallback, not 
   assert.deepEqual(JSON.parse(file.proposals?.[0]?.text ?? ''), { left: 1, right: 2 });
 });
 
+// #450: reopening an old draft never waits long for structural merge, and never waits twice for the same file.
+void test('the reopen pass has a short time budget, and a file that timed out is left for Suggest', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const names = Array.from({ length: 8 }, (_, i) => `slow-${i}.json`);
+  const f = await fixture(
+    t,
+    false,
+    { ...jsonSample, name: names[0] },
+    names.slice(1).map((name) => ({ ...jsonSample, name }))
+  );
+  // A draft from before structural merge ran on reopen (#448): nothing recorded for any file.
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralNote;
+    delete file.structuralRan;
+    delete file.proposals;
+    delete file.verdict;
+    file.result = file.original;
+    file.source = 'manual';
+  }
+  f.deps.storage.write(key, old);
+  // Every file takes its whole budget, as a slow structural merge does, then prints Git's line merge.
+  const stub = await stubMergiraf(t, `sleep "$(awk "BEGIN { print $budget / 1000 }")"\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  const reopen = async () => {
+    const started = performance.now();
+    const { session } = await f.run({ kind: 'open', url: f.state.url });
+    return { session, ms: performance.now() - started };
+  };
+  const first = await reopen();
+  assertPerf('conflict reopen: 8 slow files never given structural merge', first.ms, perfBudget(3000));
+  // Four files at a time within the budget: those four time out and are noted, the others wait untouched.
+  const timedOut = first.session.files.filter((file) => file.structuralNote === 'Structural merge timed out.');
+  assert.equal(timedOut.length, 4);
+  for (const file of timedOut) assert.equal(file.structuralRan, true);
+  for (const file of first.session.files.filter((x) => !timedOut.includes(x))) {
+    assert.equal(file.structuralNote, undefined);
+    assert.equal(file.structuralRan, undefined);
+  }
+  for (const file of first.session.files) assert.equal(file.result, file.original, 'The pass never writes a draft');
+  // Each within what is left of the pass, and none with the Suggest budget: no retry.
+  assert.ok((await stub.budgets()).every((budget) => Number(budget) >= 250 && Number(budget) <= 2000));
+  // The next reopen takes the other four; then nothing is left to wait for.
+  const second = await reopen();
+  assertPerf('conflict reopen: the 4 slow files left', second.ms, perfBudget(3000));
+  assert.ok(second.session.files.every((file) => file.structuralRan));
+  const runs = (await stub.budgets()).length;
+  const third = await reopen();
+  assert.equal((await stub.budgets()).length, runs, 'A file that timed out is not tried on reopen again');
+  assertPerf('conflict reopen: every file tried', third.ms, perfBudget(500));
+  // "Try structural merge again" is still offered for it.
+  assert.ok(third.session.files.every((file) => canRetryStructural(file, file.result === file.original)));
+});
+
+// #530 review: only a file that had the pass's whole time counts as run, and one the pass never reaches keeps its note.
+void test('the reopen pass marks only files it gave its whole time; one it never reaches keeps its note', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
+    return;
+  }
+  const names = Array.from({ length: 12 }, (_, i) => `slow-${String(i).padStart(2, '0')}.json`);
+  const f = await fixture(
+    t,
+    false,
+    { ...jsonSample, name: names[0] },
+    names.slice(1).map((name) => ({ ...jsonSample, name }))
+  );
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const old = structuredClone(f.session);
+  // As a build without Mergiraf left it: every file noted, none run.
+  for (const file of old.files) {
+    delete file.wholeFile;
+    delete file.structuralRan;
+    delete file.proposals;
+    delete file.verdict;
+    file.structuralNote = 'Structural merge isn’t available in this build.';
+    file.result = file.original;
+    file.source = 'manual';
+  }
+  f.deps.storage.write(key, old);
+  const stub = await stubMergiraf(t, `sleep "$(awk "BEGIN { print $budget / 1000 }")"\nprintf 'not the merge\\n'\n`);
+  f.deps.mergiraf = () => stub.binary;
+  // 500 ms a file, 800 ms for the pass: four files get 500 ms, the next four what is left, about 300 ms.
+  Object.assign(f.deps, { structuralTimeouts: [500, 10_000, 30_000], reopenStructuralBudget: 800 });
+  const { session } = await f.run({ kind: 'open', url: f.state.url });
+  const budgets = (await stub.budgets()).map(Number);
+  const whole = budgets.filter((budget) => budget === 500).length;
+  const short = budgets.filter((budget) => budget < 500).length;
+  assert.equal(whole, 4);
+  const timedOut = session.files.filter((file) => file.structuralRan);
+  assert.equal(timedOut.length, whole, 'Only the files with the whole time count as run');
+  for (const file of timedOut) assert.equal(file.structuralNote, 'Structural merge timed out.');
+  // Cut short: tried, so the old note is gone, but no new one, and the next reopen tries it again.
+  const cut = session.files.filter((file) => !file.structuralRan && file.structuralNote === undefined);
+  assert.equal(cut.length, short);
+  // Never reached: the old note stays.
+  const unreached = session.files.filter((file) => file.structuralNote === 'Structural merge isn’t available in this build.');
+  assert.equal(unreached.length, names.length - whole - short);
+  assert.ok(unreached.length > 0);
+  assert.ok(unreached.every((file) => file.structuralRan === undefined));
+});
+
 void test('trying structural merge again keeps the draft when it runs out of time again', async (t) => {
   if (process.platform === 'win32') {
     t.skip('Needs a POSIX shell for the stand-in Mergiraf.');
@@ -2342,7 +2450,7 @@ void test('a file structural merge proposed nothing for says why, and a base mov
   assert.notEqual(runs, 0, 'Structural merge ran again on the new versions');
 });
 
-void test('a file structural merge gave no result stays eligible, and the next reopen with Mergiraf replaces the note', async (t) => {
+void test('a build without Mergiraf leaves a file eligible; one that timed out is left for Try structural merge again', async (t) => {
   if (process.platform === 'win32' || !(await fs.stat(nativeMergiraf).catch(() => undefined))) {
     t.skip('Needs a POSIX shell and npm run prepare:mergiraf.');
     return;
@@ -2354,20 +2462,30 @@ void test('a file structural merge gave no result stays eligible, and the next r
   let file = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session.files[0];
   assert.equal(file.structuralNote, 'Structural merge isn’t available in this build.');
   assert.equal(file.structuralRan, undefined);
-  // Out of time with no retry budget left: also no result.
+  // Out of time with no retry budget left: no result, but it ran, so a reopen doesn't wait for it again (#450).
   const stub = await stubMergiraf(t, 'exec sleep 30\n');
   f.deps.mergiraf = () => stub.binary;
   Object.assign(f.deps, { structuralTimeouts: [100, 10_000, 0] });
   file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.deepEqual(await stub.budgets(), ['100']);
   assert.equal(file.structuralNote, 'Structural merge timed out.');
-  assert.equal(file.structuralRan, undefined);
-  // Mergiraf is back: the pass runs, its proposal waits beside the draft, and the old note is gone.
-  f.deps.mergiraf = () => nativeMergiraf;
-  file = (await f.run({ kind: 'open', url: f.state.url })).session.files[0];
   assert.equal(file.structuralRan, true);
+  let structural = 0;
+  f.deps.mergiraf = () => {
+    structural++;
+    return nativeMergiraf;
+  };
+  const session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(structural, 0, 'The reopen pass leaves it alone');
+  file = session.files[0];
+  assert.equal(file.structuralNote, 'Structural merge timed out.');
+  assert.ok(canRetryStructural(file, true), 'Try structural merge again is offered');
+  // Asked for, it runs with the Suggest budget.
+  file = (
+    await f.run({ kind: 'resolve', id: session.id, version: session.version, engine: 'mergiraf', path: file.path })
+  ).session.files[0];
+  assert.ok(structural > 0);
   assert.equal(file.structuralNote, undefined);
-  assert.equal(file.result, file.original);
   assert.ok(file.proposals?.[0]);
 });
 
