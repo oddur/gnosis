@@ -203,7 +203,8 @@ export function createAppDataStore() {
     if (!dirty()) return;
     // Closed with a final save that failed: it stays queued for `reopen`. Until then a caller waiting for its save is
     // told it wasn't saved; it never reads as saved. (Writes after a clean close are counted as lost, as before.)
-    if (!worker) throw new Error(SAVED_WORK_UNAVAILABLE);
+    // Never sent once closed: the worker no longer answers, so a request would wait forever.
+    if (closed || !worker) throw new Error(SAVED_WORK_UNAVAILABLE);
     const states = [...updates];
     const changed = [...patches];
     updates.clear();
@@ -383,10 +384,12 @@ export function createAppDataStore() {
     // Review state goes straight to the worker, so a save sent before close is ordered ahead of it.
     saveReviewState: async (value: ReviewStateWrite) => {
       if (late()) return lose('review state');
+      if (closed) throw new Error(SAVED_WORK_UNAVAILABLE);
       await call('review-save', value);
     },
     saveFileProgress: async (value: FileProgressPatch) => {
       if (late()) return lose('file progress');
+      if (closed) throw new Error(SAVED_WORK_UNAVAILABLE);
       await call('progress-save', value);
     },
     /** Writes that arrived after close, for tests and diagnostics. */
@@ -433,6 +436,10 @@ export function createAppDataStore() {
       } finally {
         worker = undefined;
         await active.terminate();
+        // Nothing waits on a stopped worker: a request still pending fails, and a failed write is queued again.
+        const stopped = new Error(SAVED_WORK_UNAVAILABLE);
+        for (const request of pending.values()) request.reject(stopped);
+        pending.clear();
       }
       if (failed) throw failed;
     },

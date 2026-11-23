@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { Worker } from 'node:worker_threads';
 import { createAppDataStore, SAVED_WORK_NO_DISK, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
 import { httpDocuments } from '../src/command-search-service';
 import { maintainDatabase } from '../src/sqlite-maintain';
@@ -432,6 +433,52 @@ void test('after a close that could not save, a flush says the work is unsaved, 
   } finally {
     console.error = error;
     await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+// A hang fails the test (`timeout`) instead of stalling the suite.
+void test('a write while a failed close is shutting the worker down never hangs, and lands after reopen', { timeout: 30_000 }, async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const error = console.error;
+  console.error = () => {};
+  // Runs right after the store sends `close` to the worker.
+  const post = Worker.prototype.postMessage;
+  Worker.prototype.postMessage = function (this: Worker, message: unknown, ...rest: unknown[]) {
+    post.call(this, message, ...(rest as []));
+    if ((message as { method?: string } | null)?.method === 'close')
+      queueMicrotask(() => {
+        store.write('workbench:bob', queue('bob'));
+        void store.saveReviewState({ key: 'late', value: { top: 1, left: 0 } }).catch(() => {});
+      });
+  };
+  const bounded = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 5_000).unref()),
+    ]);
+  try {
+    await store.open(dir);
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    store.write('workbench:alice', queue());
+    await assert.rejects(bounded(store.close()), /simulated disk failure/);
+    Worker.prototype.postMessage = post;
+    db.exec('DROP TRIGGER fail_write');
+    db.close();
+    // Keep open: the write that came during the close request was queued, never sent to the stopping worker.
+    await bounded(store.reopen());
+    await bounded(store.flush());
+    await bounded(store.close());
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.equal((store.read('workbench:alice') as { account: string }).account, 'alice');
+    assert.equal((store.read('workbench:bob') as { account: string }).account, 'bob', 'The write during the close request landed');
+    assert.equal(store.lostWrites(), 0);
+  } finally {
+    Worker.prototype.postMessage = post;
+    console.error = error;
+    await bounded(store.close()).catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
