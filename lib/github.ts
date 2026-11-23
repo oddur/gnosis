@@ -76,6 +76,9 @@ export async function getPrMetadata(
     // GitHub can return null after a fork is deleted, despite the generated type.
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     headRepo: data.head.repo?.full_name ?? data.base.repo.full_name,
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub can return null, as above
+    ...(data.head.repo ? {} : { headRepoUnknown: true as const }),
+    ...(data.merged_at ? { mergedAt: data.merged_at } : {}),
     headBranch: data.head.ref,
     baseSha: data.base.sha,
     headSha: data.head.sha,

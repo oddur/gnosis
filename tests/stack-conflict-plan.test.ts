@@ -69,18 +69,35 @@ void test('a merged long-lived branch that is still there is not a stack parent;
   const release = mine(100, { merged: true, state: 'closed', headBranch: 'develop' });
   const feature = mine(102, { baseBranch: 'develop' });
   assert.equal(mergedParent(stack([release, feature]), feature), undefined);
-  for (const branch of ['release/2026.11', 'releases/2026.11', 'release-1.2', 'support/1.x', 'next', 'stable', 'canary', 'beta', 'prod', 'qa', 'uat']) {
+  for (const branch of ['main', 'master', 'develop', 'dev', 'trunk', 'next', 'stable', 'staging', 'production', 'release']) {
     const pr = { ...feature, baseBranch: branch };
     assert.equal(mergedParent(stack([{ ...release, headBranch: branch }, pr]), pr), undefined, branch);
-    // Deleted after the merge: a stack parent whatever its name.
-    assert.ok(mergedParent(stack([{ ...release, headBranch: branch, headRefDeleted: true }, pr]), pr), branch);
+    // Deleted after the merge: a stack parent whatever its name (main into main is no stack at all).
+    if (branch !== 'main') assert.ok(mergedParent(stack([{ ...release, headBranch: branch, headRefDeleted: true }, pr]), pr), branch);
   }
-  // Time no longer decides: a PR opened after its parent merged, while the branch is still there, has to move too,
-  // and a comment on the merged parent changes nothing.
-  const old = mine(101, { merged: true, state: 'closed', updatedAt: '2026-10-01T00:00:00Z' });
-  const later = mine(103, { baseBranch: 'feature-101', createdAt: '2026-11-01T00:00:00Z' });
-  assert.ok(mergedParent(stack([old, later]), later));
-  assert.ok(mergedParent(stack([{ ...old, updatedAt: '2026-12-01T00:00:00Z' }, later]), later));
+  // Short-lived names that only look like release branches are stack parents.
+  for (const branch of ['hotfix/login', 'release-notes-fix', 'release/2026.11']) {
+    const pr = { ...feature, baseBranch: branch };
+    assert.ok(mergedParent(stack([{ ...release, headBranch: branch }, pr]), pr), branch);
+  }
+});
+
+void test('a parent is ignored when nothing proves the PR still has to move (#527 review)', () => {
+  const parent = mine(101, { merged: true, state: 'closed' });
+  const child = mine(102, { baseBranch: 'feature-101', createdAt: '2026-11-01T00:00:00Z' });
+  // A deleted fork's merged PR: its head repository is unknown.
+  assert.equal(mergedParent(stack([{ ...parent, headRepoUnknown: true }, child]), child), undefined);
+  // Merged into the PR's own base, or from a branch into itself.
+  const onMain = { ...child, baseBranch: 'main' };
+  assert.equal(mergedParent(stack([{ ...parent, headBranch: 'main' }, onMain]), onMain), undefined);
+  assert.equal(mergedParent(stack([{ ...parent, headBranch: 'feature-101', baseBranch: 'feature-101' }, child]), child), undefined);
+  // The branch lives on: only a parent that merged after the PR was opened counts, and an unknown time doesn't.
+  const lives = { ...parent, headRefDeleted: false };
+  assert.equal(mergedParent(stack([{ ...lives, mergedAt: '2026-10-01T00:00:00Z' }, child]), child), undefined);
+  assert.equal(mergedParent(stack([lives, child]), child), undefined);
+  assert.ok(mergedParent(stack([{ ...lives, mergedAt: '2026-11-02T00:00:00Z' }, child]), child));
+  // A comment on the merged parent changes nothing: the time is when it merged.
+  assert.ok(mergedParent(stack([{ ...lives, mergedAt: '2026-11-02T00:00:00Z', updatedAt: '2026-12-01T00:00:00Z' }, child]), child));
 });
 
 void test('"parent merged" is derived as an attention row on your PR, with one wording', () => {

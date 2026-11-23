@@ -637,6 +637,10 @@ export interface PrMetadata {
    * absent when unknown. A merged PR whose branch is gone is a stack parent whatever the branch's name.
    */
   headRefDeleted?: boolean;
+  /** GitHub returned no head repository, such as for a deleted fork. Absent when it did. */
+  headRepoUnknown?: true;
+  /** When the PR merged. Absent when it hasn't, or in copies from before this was read. */
+  mergedAt?: string;
   state: 'open' | 'closed';
   createdAt: string;
   updatedAt: string;

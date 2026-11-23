@@ -16,7 +16,7 @@ import type { PrMetadata } from './types';
  * - A bot's GraphQL login has no `[bot]` suffix; REST's does. Copilot's apps are `Copilot` in REST.
  * - `mergeStateStatus` and `autoMergeRequest.mergeMethod` are uppercase; REST's values are lowercase.
  */
-export const PR_METADATA_FIELDS = `number title url body createdAt updatedAt state merged isDraft mergeable mergeStateStatus
+export const PR_METADATA_FIELDS = `number title url body createdAt updatedAt mergedAt state merged isDraft mergeable mergeStateStatus
       additions deletions changedFiles
       author { __typename login }
       assignees(first:100) { totalCount nodes { login } }
@@ -41,6 +41,8 @@ export interface GraphPrMetadata {
   body: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Absent in answers to older queries. */
+  mergedAt?: string | null;
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   merged: boolean;
   isDraft: boolean;
@@ -122,7 +124,10 @@ export function prMetadataFromGraph(pr: GraphPrMetadata): PrMetadata | undefined
     baseSha: pr.baseRefOid,
     headSha: pr.headRefOid,
     merged: pr.merged,
-    ...(pr.headRef === undefined ? {} : { headRefDeleted: pr.headRef === null }),
+    // Without a head repository nothing says whether the branch is gone.
+    ...(pr.headRef === undefined || !pr.headRepository ? {} : { headRefDeleted: pr.headRef === null }),
+    ...(pr.headRepository ? {} : { headRepoUnknown: true as const }),
+    ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
     state: pr.state === 'OPEN' ? 'open' : 'closed',
     createdAt: pr.createdAt,
     updatedAt: pr.updatedAt,

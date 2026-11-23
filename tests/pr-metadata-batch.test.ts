@@ -325,4 +325,7 @@ void test('a deleted head branch reads as headRefDeleted from GraphQL; unknown s
   assert.equal(prMetadataFromGraph({ ...merged, headRef: null })?.headRefDeleted, true);
   assert.equal(prMetadataFromGraph({ ...merged, headRef: { id: 'ref' } })?.headRefDeleted, false);
   assert.equal(prMetadataFromGraph(merged)?.headRefDeleted, undefined);
+  // Without a head repository nothing says whether the branch is gone; when it merged is read too.
+  const gone = prMetadataFromGraph({ ...merged, headRef: null, headRepository: null, mergedAt: '2026-11-02T00:00:00Z' });
+  assert.deepEqual([gone?.headRefDeleted, gone?.headRepoUnknown, gone?.mergedAt], [undefined, true, '2026-11-02T00:00:00Z']);
 });

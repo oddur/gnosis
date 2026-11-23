@@ -12,11 +12,10 @@ import type { ReviewMember, ReviewSubject } from './workbench';
 const current = (member: ReviewMember, signals: QueueSignals | undefined) =>
   signals?.headSha === member.headSha ? signals : undefined;
 /**
- * Branch names that outlive any PR. A merged PR from one of them, such as a release PR, is not a stack parent while the
- * branch is still there. A parent whose head branch was deleted is one, whatever its name.
+ * Branch names that outlive any PR, exactly. A merged PR from one of them, such as a release PR, is not a stack parent
+ * while the branch is still there. A parent whose head branch was deleted is one, whatever its name.
  */
-const LONG_LIVED =
-  /^(main|master|develop|dev|trunk|next|stable|canary|beta|alpha|staging|production|prod|qa|uat|(release|releases|support|hotfix)\/.+|release-.+)$/;
+const LONG_LIVED = /^(main|master|develop|dev|trunk|next|stable|staging|production|release)$/;
 
 export interface MergedParent {
   parent: ReviewMember;
@@ -26,9 +25,12 @@ export interface MergedParent {
 
 /**
  * The merged parent of an open PR that still targets the parent's head branch, so it has to move onto the branch the
- * parent merged into. Once the base changes the row clears. Ignored: a parent from a long-lived branch that is still
- * there (`LONG_LIVED`). The base is the PR's own (`member.baseBranch`), never a status read's, so the stack plan, the
- * Overview, Next up and the menu bar always agree.
+ * parent merged into. Once the base changes the row clears. The base is the PR's own (`member.baseBranch`), never a
+ * status read's, so the stack plan, the Overview, Next up and the menu bar always agree. Fail quiet, ignored:
+ * - a parent whose head repository is unknown, such as a deleted fork's;
+ * - a parent that merged into the PR's own base, or from a branch into itself;
+ * - a parent from a long-lived branch that is still there (`LONG_LIVED`);
+ * - a parent whose branch lives on and that merged before the PR was opened, or when it merged is unknown.
  *
  * Not detected yet: a PR GitHub moved onto main after its parent was squash-merged. It still carries the parent's
  * commits, but telling that needs an ancestry read that no queue read makes yet.
@@ -42,7 +44,10 @@ export function mergedParent(
     .filter((edge) => edge.child === member.url)
     .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
     .find((candidate) => candidate?.merged);
-  if (!parent || (!parent.headRefDeleted && LONG_LIVED.test(parent.headBranch))) return undefined;
+  if (!parent || parent.headRepoUnknown) return undefined;
+  if (parent.baseBranch === member.baseBranch || parent.headBranch === parent.baseBranch) return undefined;
+  if (!parent.headRefDeleted && LONG_LIVED.test(parent.headBranch)) return undefined;
+  if (parent.headRefDeleted === false && !(Date.parse(parent.mergedAt ?? '') >= Date.parse(member.createdAt))) return undefined;
   const targetsParent =
     member.baseBranch === parent.headBranch && (!parent.headRepo || !member.baseRepo || parent.headRepo === member.baseRepo);
   return targetsParent ? { parent, onto: parent.baseBranch } : undefined;
@@ -74,9 +79,9 @@ export function stackConflictPlan(
   subject: ReviewSubject,
   signals: (member: ReviewMember) => QueueSignals | undefined
 ): { step: StackPlanStep; conflicting: ReviewMember[] } | undefined {
-  const order = stackDependencyOrder(subject).members.filter(isOpenPr).map((member) => ({ member, fresh: current(member, signals(member)) }));
-  const conflicting = order.filter(({ fresh }) => mergeConflictState(fresh) === 'conflicts').map(({ member }) => member);
-  for (const { member } of order) {
+  const order = stackDependencyOrder(subject).members.filter(isOpenPr);
+  const conflicting = order.filter((member) => mergeConflictState(current(member, signals(member))) === 'conflicts');
+  for (const member of order) {
     const merged = mergedParent(subject, member);
     if (merged) return { conflicting, step: { kind: 'move', member, merged, text: mergedParentText(member, merged) } };
     if (conflicting.includes(member)) {

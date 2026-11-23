@@ -14,7 +14,7 @@ import type { QueueItem, ReviewMember } from './workbench';
 import { mergeReadiness } from './merge-readiness';
 import { mergeConflictState } from './merge-conflicts';
 import { prRef, prTarget, type DeepLinkTarget, type PrTab } from './deep-link';
-import { mergedParent, mergedParentText, type MergedParent } from './stack-conflict-plan';
+import { mergedParent, mergedParentText } from './stack-conflict-plan';
 
 export type AttentionKind =
   | 'review-requested'
@@ -178,18 +178,21 @@ export function memberKinds(
   member: ReviewMember,
   fresh: QueueSignals | undefined,
   login: string,
-  /** `merged`: the PR's `mergedParent` when the caller already has it (for your PR only), null for none. Undefined: found here. */
-  options: { teamRequests?: boolean; merged?: MergedParent | null } = {}
+  options: { teamRequests?: boolean } = {}
 ): Set<AttentionKind> {
   const kinds = new Set(Object.keys(memberAttention(member, fresh, login, options)) as AttentionKind[]);
   if (updatedSinceYourReview(item, member.url) && !isOwnPr(member, login)) kinds.add('updated-since-review');
   if ((item.responses?.[member.url]?.awaitingReply ?? 0) > 0) kinds.add('replies');
-  // Only your own PRs: a caller that passes `merged` found it for your PR only.
-  const merged = options.merged === undefined ? isOwnPr(member, login) && mergedParent(item.subject, member) : options.merged;
-  if (merged) kinds.add('restack');
+  if (isOwnPr(member, login) && mergedParent(item.subject, member)) kinds.add('restack');
   // A finished, current, unread explanation. It folds into a review request on the same row.
   if (explanationFor(item, member.url)?.unread) kinds.add('explanation-ready');
   return kinds;
+}
+
+/** A `restack` row's detail: "Parent #101 merged". */
+function restackDetail(item: QueueItem, member: ReviewMember, kinds: ReadonlySet<AttentionKind>) {
+  const merged = kinds.has('restack') ? mergedParent(item.subject, member) : undefined;
+  return merged ? { detail: mergedParentText(member, merged, 'short') } : {};
 }
 
 /** The current set, one row per PR, ordered by group and rank. Queue filters do not apply. */
@@ -212,8 +215,7 @@ export function attentionItems(input: {
       if (!isOpen(member) || item.snoozedUrls?.includes(member.url)) continue;
       const signals = input.signals(member);
       const fresh = freshSignals(signals, input.now);
-      const merged = (isOwnPr(member, input.login) && mergedParent(item.subject, member)) || null;
-      const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests, merged });
+      const kinds = memberKinds(item, member, fresh, input.login, { teamRequests: input.teamRequests });
       const explanation = explanationFor(item, member.url);
       for (const kind of kinds) if (!input.enabled(kind, member.repo)) kinds.delete(kind);
       // A fix comes before merging.
@@ -236,7 +238,7 @@ export function attentionItems(input: {
         author: member.author,
         ...(member.isDraft ? { isDraft: true } : {}),
         ...(item.subject.kind === 'stack' ? { stackSize: item.subject.members.length, stackId: item.subject.id } : {}),
-        ...(merged && kinds.has('restack') ? { detail: mergedParentText(member, merged, 'short') } : {}),
+        ...restackDetail(item, member, kinds),
         isNew,
         ...(fresh && ranked.some((kind) => STATUS_KINDS.includes(kind)) ? { checkedAt: fresh.checkedAt } : {}),
         target,
