@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from './ui/toast';
 import { SearchableSelect } from './SearchableSelect';
 import { StepCard } from './StepCard';
-import { ActionToggle, HeaderAction, MergeSplit, MethodMenu, UpdateMenu } from './PrActionControls';
+import { ActionToggle, CloseWhenHidden, HeaderAction, MergeSplit, MethodMenu, UpdateMenu } from './PrActionControls';
 import type { EntryActionGroups } from './EntryActions';
 import { stackMergeSteps, type StackMergePage } from '../lib/action-steps';
 import {
@@ -138,7 +138,13 @@ export function PrActions({
    * A contextual action loads permissions only when invoked. `quick` runs a toggle at once; `open` opens a
    * confirmation, merge with an optional method.
    */
-  trigger?: (open: (kind: PrActionKind, method?: MergeMethod) => void, busy: boolean, quick: (kind: PrActionKind) => void) => ReactNode;
+  trigger?: (
+    open: (kind: PrActionKind, method?: MergeMethod) => void,
+    busy: boolean,
+    quick: (kind: PrActionKind) => void,
+    /** The repository's merge methods, read on demand (`load`) for a method menu. */
+    methods: { allowed?: MergeMethod[]; load: () => void }
+  ) => ReactNode;
   /** Receives GitHub's answer instead of a toast, for a trigger inside a compact row (the Overview). */
   onResult?: (message: string) => void;
   /** The header's review actions, placed before Merge. `primary`: Merge is not the primary action. */
@@ -156,8 +162,16 @@ export function PrActions({
   const header = !trigger && !stackMembers;
   const [loaded, setState] = useState<PrActionState>();
   // A draft or auto-merge change shows at once, while GitHub applies it. Main shows it everywhere else.
-  const [sending, setSending] = useState<OptimisticChange>();
-  const state = loaded && sending ? applyToActionState(loaded, sending) : loaded;
+  // One slot per setting, so Draft and Auto-merge each show their own pending change over GitHub's state.
+  const [sendingBySetting, setSendingBySetting] = useState<Partial<Record<'draft' | 'auto', OptimisticChange>>>({});
+  const settingOf = (change: OptimisticChange): 'draft' | 'auto' => (change.action === 'mark-ready' || change.action === 'convert-draft' ? 'draft' : 'auto');
+  const setSending = (setting: 'draft' | 'auto', change: OptimisticChange | undefined) =>
+    setSendingBySetting((all) => ({ ...all, [setting]: change }));
+  const sendingChanges = [sendingBySetting.draft, sendingBySetting.auto].filter((change): change is OptimisticChange => change !== undefined);
+  const sending = sendingChanges.at(0);
+  const sendingRef = useRef(sendingChanges.length);
+  sendingRef.current = sendingChanges.length;
+  const state = loaded && sendingChanges.reduce((value, change) => applyToActionState(value, change), loaded);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState<{ kind: PrActionKind; plan?: PrMergePlan }>();
@@ -172,7 +186,7 @@ export function PrActions({
   const [errorStep, setErrorStep] = useState<'load' | 'submit'>('load');
   const version = useRef(0),
     pending = useRef(false);
-  const confirmButton = useRef<HTMLButtonElement>(null);
+  const confirmContent = useRef<HTMLDivElement>(null);
   // A PR read again as merged or closed loads its actions again: they change with it.
   const identity = JSON.stringify([member.url, member.headSha, member.merged, member.state, stackMembers?.map((m) => [m.url, m.headSha])]);
   const current = useRef(identity);
@@ -234,8 +248,10 @@ export function PrActions({
       if (version.current !== n) return;
       setState(plan.target);
       setDialog({ kind, plan });
+      // A method picked from the chevron stays picked: if the repository does not allow it, the confirmation says so
+      // and cannot merge, rather than quietly using another method.
       const wanted = chosenMethod.current ?? plan.target.defaultMethod;
-      setMethod(plan.methods.includes(wanted) ? wanted : (plan.methods[0] ?? 'SQUASH'));
+      setMethod(chosenMethod.current || plan.methods.includes(wanted) ? wanted : (plan.methods[0] ?? 'SQUASH'));
     } catch (e) {
       if (version.current === n) setError(messageOf(e));
     } finally {
@@ -257,11 +273,12 @@ export function PrActions({
   /** Sends a change GitHub shows at once. A failure rolls it back and keeps a retry (`WriteFailureNotice`). */
   function sendOptimistic(change: OptimisticChange, request: PrActionRequest, done?: string, undo?: () => void) {
     const started = current.current;
+    const setting = settingOf(change);
     void optimisticWrite({
       key: `pr-action:${request.url}:${change.action}`,
       action: change.action,
       write: async () => {
-        setSending(change);
+        setSending(setting, change);
         try {
           const response = await window.electronAPI.performPrAction(request);
           onChanged?.();
@@ -271,14 +288,20 @@ export function PrActions({
             await refresh();
           }
         } finally {
-          setSending(undefined);
+          setSending(setting, undefined);
         }
       },
     });
   }
-  /** A toggle, or Reopen: acts at once on GitHub's current state, with no confirmation. */
-  async function quick(kind: PrActionKind, preferred?: MergeMethod) {
-    if (pending.current) return;
+  /**
+   * A toggle, or Reopen: acts at once on GitHub's current state, with no confirmation. `undoing` is the state the
+   * user's change set: Undo applies only while GitHub still shows it.
+   */
+  async function quick(kind: PrActionKind, preferred?: MergeMethod, undoing?: (state: PrActionState) => boolean) {
+    if (pending.current || sendingRef.current) {
+      if (undoing) toast.add({ type: 'info', title: 'Nothing undone', description: 'Another change to this PR is still being sent. Try Undo again once it finishes.' });
+      return;
+    }
     pending.current = true;
     setBusy(true);
     const started = current.current;
@@ -289,9 +312,14 @@ export function PrActions({
       if (current.current !== started) return;
       setState(fresh);
       previous = fresh.autoMerge;
+      if (undoing && !undoing(fresh)) {
+        toast.add({ type: 'info', title: 'Changed on GitHub since; nothing undone' });
+        return;
+      }
       const reason = actionBlockedReason(kind, fresh, (action) => workflowReason(fresh, action));
       if (reason) throw new Error(reason);
-      const chosen = preferred && fresh.methods.includes(preferred) ? preferred : fresh.defaultMethod;
+      if (preferred && !fresh.methods.includes(preferred)) throw new Error(`${mergeMethodLabels[preferred]} is not allowed in ${fresh.repository}.`);
+      const chosen = preferred ?? fresh.defaultMethod;
       request = { account: fresh.account, kind, url: fresh.url, revisions: [revision(fresh)], ...(kind === 'enable-auto' ? { method: chosen } : {}) };
     } catch (e) {
       if (current.current === started) toast.add({ type: 'error', title: 'Nothing changed', description: githubWriteError(e).message });
@@ -304,7 +332,11 @@ export function PrActions({
     const back = inverse[kind];
     const undoMethod = previous ?? undefined;
     if (change) {
-      sendOptimistic(change, request, toggleDone[kind], back && (() => void quick(back, undoMethod)));
+      // What the change set, as GitHub must still show it for Undo to apply.
+      const method = request.method;
+      const set = (now: PrActionState) =>
+        kind === 'convert-draft' ? now.isDraft : kind === 'mark-ready' ? !now.isDraft : kind === 'enable-auto' ? now.autoMerge === method : now.autoMerge === null;
+      sendOptimistic(change, request, toggleDone[kind], back && (() => void quick(back, undoMethod, set)));
       return;
     }
     pending.current = true;
@@ -368,29 +400,29 @@ export function PrActions({
         : kind === 'update-rebase'
           ? 'Update branch with rebase'
           : 'Update branch with merge commit';
-  const actionBlock = plan && kind ? actionBlockedReason(kind, plan.target, (action) => workflowReason(plan.target, action), plan) : undefined;
   const showMethod = kind === 'merge' && !plan?.mergeQueue;
+  const actionBlock = plan && kind
+    ? (actionBlockedReason(kind, plan.target, (action) => workflowReason(plan.target, action), plan) ??
+      (showMethod && !plan.methods.includes(method) ? `${mergeMethodLabels[method]} is not allowed in ${plan.target.repository}. Choose another method.` : undefined))
+    : undefined;
   // Several consequential steps get a step card; a single PR keeps one short confirmation beside Merge.
   const stepFlow =
     kind === 'merge' && (plan ? plan.members.length > 1 : !!stackMembers || (!!state?.stack && (nativeCount ?? 0) > 0));
   const popover = kind === 'merge' && !stepFlow;
-  // Enter confirms once GitHub's current state is loaded and allows the merge.
-  useEffect(() => {
-    if (popover && plan && !actionBlock) confirmButton.current?.focus();
-  }, [popover, plan, actionBlock]);
   // Draft and Auto-merge on GitHub's state, as shown.
   const isDraft = !!state?.isDraft || (!state && member.isDraft);
   const draftReason = state ? draftActionBlockedReason(state, isDraft ? 'mark-ready' : 'convert-draft') : CHECKING;
   const autoMerge = state?.autoMerge ?? null;
   const autoReason = state ? actionBlockedReason(autoMerge ? 'disable-auto' : 'enable-auto', state, (action) => workflowReason(state, action)) : CHECKING;
-  const sendingDraft = sending?.action === 'mark-ready' || sending?.action === 'convert-draft';
-  const sendingAuto = sending?.action === 'enable-auto-merge' || sending?.action === 'disable-auto-merge';
+  // While either setting is being sent, both wait: each reads GitHub's state before it acts.
+  const anySending = sendingChanges.length > 0;
   const mergePrimary = mergeReady && !blocked && !conflicted && active;
   // The header's shortcuts read the latest state through a ref, so the listener stays put.
   const shortcut = useRef<(key: 'm' | 'u') => void>(() => {});
   shortcut.current = (key) => {
     if (key === 'u') {
-      if (!updateBlocked && !busy) setUpdateOpen(true);
+      // Collapsed into ⋯, Update has no menu of its own to open here.
+      if (!updateBlocked && !busy && collapse < 2) setUpdateOpen(true);
     } else if (conflicted) openConflictWorkspace(member.url);
     else if (!blocked && !busy && !loading) void open('merge');
   };
@@ -399,7 +431,8 @@ export function PrActions({
     const keydown = (event: KeyboardEvent) => {
       const key = isShortcut(event, 'm') ? 'm' : isShortcut(event, 'u') ? 'u' : undefined;
       if (!key || event.defaultPrevented) return;
-      if (event.target instanceof Element && event.target.closest('[role=dialog], [role=menu]')) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.isContentEditable || target?.closest('input, textarea, select, [role=dialog], [role=menu]')) return;
       event.preventDefault();
       shortcut.current(key);
     };
@@ -410,8 +443,8 @@ export function PrActions({
   const overflow: EntryActionGroups =
     header && collapse && active
       ? [[
-          { label: isDraft ? 'Mark ready for review' : 'Convert to draft', disabled: !!draftReason || busy, detail: draftReason, run: () => void quick(isDraft ? 'mark-ready' : 'convert-draft') },
-          { label: autoMerge ? 'Turn off auto-merge' : 'Turn on auto-merge', disabled: !!autoReason || busy, detail: autoReason, run: () => void quick(autoMerge ? 'disable-auto' : 'enable-auto') },
+          { label: isDraft ? 'Mark ready for review' : 'Convert to draft', disabled: !!draftReason || busy || anySending, detail: draftReason, run: () => void quick(isDraft ? 'mark-ready' : 'convert-draft') },
+          { label: autoMerge ? 'Turn off auto-merge' : 'Turn on auto-merge', disabled: !!autoReason || busy || anySending, detail: autoReason, run: () => void quick(autoMerge ? 'disable-auto' : 'enable-auto') },
           ...(collapse > 1 ? [
             { label: 'Update with merge commit…', disabled: !!updateBlocked || busy, detail: updateBlocked, run: () => void open('update-merge') },
             { label: 'Update with rebase…', disabled: !!rebaseBlocked || busy, detail: rebaseBlocked, run: () => void open('update-rebase') },
@@ -649,7 +682,6 @@ export function PrActions({
         Cancel
       </Button>
       <Button
-        ref={confirmButton}
         size={popover ? 'sm' : 'default'}
         variant={kind === 'delete-branch' ? 'destructive' : 'default'}
         onClick={() => void submit()}
@@ -670,10 +702,20 @@ export function PrActions({
   const mergeMethods = state && !state.mergeQueue ? state.methods : undefined;
   const mergeControl = (
     <Popover.Root open={popover} onOpenChange={(value) => { if (!value && !busy) cancel(); }}>
+      {popover && <CloseWhenHidden onClose={() => { if (!pending.current) cancel(); }} content={confirmContent} />}
       <Popover.Anchor asChild>
         <span className="pr-merge-anchor">
           {trigger ? (
-            trigger((next, preferred) => void open(next, preferred), busy, (next) => void quick(next))
+            trigger((next, preferred) => void open(next, preferred), busy, (next) => void quick(next), {
+              allowed: state?.methods,
+              load: () => {
+                if (state) return;
+                const n = version.current;
+                void window.electronAPI.getPrActionState(member.url).then((next) => {
+                  if (version.current === n) setState(next);
+                }, () => undefined);
+              },
+            })
           ) : conflicted ? (
             <Button size="sm" title={conflictLine ? conflictHeaderLine(conflictLine) : mergeShortcut && `Resolve conflicts (${mergeShortcut})`} onClick={() => openConflictWorkspace(member.url)}>
               <ConflictIcon size={14} aria-hidden="true" />
@@ -687,7 +729,7 @@ export function PrActions({
         </span>
       </Popover.Anchor>
       <Popover.Portal>
-        <Popover.Content className="pr-merge-confirm" align="end" sideOffset={6} collisionPadding={12} aria-label={heading} tabIndex={-1}
+        <Popover.Content ref={confirmContent} className="pr-merge-confirm" align="end" sideOffset={6} collisionPadding={12} aria-label={heading} tabIndex={-1}
           onOpenAutoFocus={(event) => { event.preventDefault(); (event.currentTarget as HTMLElement).focus(); }}
           onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
           onInteractOutside={(event) => {
@@ -769,10 +811,10 @@ export function PrActions({
         <>
           {active && !collapse && (
             <span className="pr-action-group" data-collapse-at="1">
-              <ActionToggle label="Draft" checked={isDraft} reason={draftReason} busy={sendingDraft || busy} onToggle={() => void quick(isDraft ? 'mark-ready' : 'convert-draft')} />
-              <ActionToggle label="Auto-merge" checked={!!autoMerge} detail={autoMerge ? methodShort[autoMerge] : undefined} reason={autoReason} busy={sendingAuto || busy}
+              <ActionToggle label="Draft" checked={isDraft} reason={draftReason} busy={anySending || busy} onToggle={() => void quick(isDraft ? 'mark-ready' : 'convert-draft')} />
+              <ActionToggle label="Auto-merge" checked={!!autoMerge} detail={autoMerge ? methodShort[autoMerge] : undefined} reason={autoReason} busy={anySending || busy}
                 onToggle={() => void quick(autoMerge ? 'disable-auto' : 'enable-auto')}>
-                <MethodMenu label="Auto-merge method" methods={state?.methods ?? []} current={autoMerge ?? state?.defaultMethod}
+                <MethodMenu label="Auto-merge method" methods={state?.methods ?? []} allowed={state?.methods} current={autoMerge ?? state?.defaultMethod}
                   reason={autoMerge ? 'Turn auto-merge off to change its method.' : (autoReason ?? (busy ? CHECKING : undefined))} onPick={(picked) => void quick('enable-auto', picked)} />
               </ActionToggle>
             </span>

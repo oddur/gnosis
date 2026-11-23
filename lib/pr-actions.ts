@@ -35,6 +35,10 @@ export interface PrActionState extends PrActionMember {
   headRepoCanWrite?: boolean;
   /** Whether the head branch still exists. Undefined in states read before it was requested. */
   headBranchExists?: boolean;
+  /** Whether the head branch is its repository's default branch. */
+  headIsDefaultBranch?: boolean;
+  /** Triage, write, maintain or admin on the repository: enough to reopen a PR. */
+  canTriage?: boolean;
   /** Whether the author lets maintainers push to a fork's head branch. Undefined in states read before it was requested. */
   maintainerCanModify?: boolean;
   repository: string;
@@ -197,7 +201,8 @@ export function closeBlockedReason(state: PrActionState): string | undefined {
 export function reopenBlockedReason(state: PrActionState): string | undefined {
   if (state.archived) return 'This repository is archived.';
   if (state.state !== 'CLOSED') return state.state === 'MERGED' ? 'A merged PR cannot be reopened.' : 'This PR is already open.';
-  if (!state.canChangeDraft) return 'Only the PR author or someone with write permission can reopen this PR.';
+  if (state.headBranchExists === false) return 'Its branch is deleted. Restore the branch on GitHub first.';
+  if (!state.canChangeDraft && !state.canTriage) return 'Only the PR author or someone with triage or write permission can reopen this PR.';
 }
 
 /** Delete branch: the PR is merged or closed, and its head branch is still there for you to delete. */
@@ -207,5 +212,6 @@ export function deleteBranchBlockedReason(state: PrActionState): string | undefi
   if (!state.headRepo) return 'The branch’s repository no longer exists.';
   if (state.headBranchExists === false) return 'The branch is already deleted.';
   if (state.headBranchExists === undefined) return 'Refresh this PR to check its branch.';
+  if (state.headIsDefaultBranch) return 'This is its repository’s default branch.';
   if (!state.headRepoCanWrite) return 'You need write permission to the branch’s repository.';
 }

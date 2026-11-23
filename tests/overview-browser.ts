@@ -1077,6 +1077,16 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.pr-merge-confirm button')].find(b=>b.textContent==='Cancel').click()");
     await wait("!document.querySelector('.pr-merge-confirm')");
     assert.equal((await writes()).length, writesBefore, 'Opening the confirmation writes nothing');
+    // The chevron lists the repository's own methods: one it does not allow stays disabled, never swapped for another.
+    await js(`${mergeButton}.closest('.pr-merge-split').querySelector('[aria-label="Merge method"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))`);
+    const methodItem = (label: string) => `[...document.querySelectorAll('.pr-method-menu [role=menuitemradio]')].find(e=>e.textContent.startsWith(${JSON.stringify(label)}))`;
+    await wait(`!!${methodItem('Squash and merge')} && !${methodItem('Squash and merge')}.hasAttribute('data-disabled')`);
+    assert.ok(await js(`${methodItem('Rebase and merge')}.hasAttribute('data-disabled') && ${methodItem('Rebase and merge')}.textContent.includes('Not allowed')`), 'Rebase is not allowed in this repository');
+    await js(`${methodItem('Create a merge commit')}.click()`);
+    await wait(`document.querySelector('.pr-merge-confirm [name=merge-method]:checked')?.value==='MERGE'`);
+    await js("[...document.querySelectorAll('.pr-merge-confirm button')].find(b=>b.textContent==='Cancel').click()");
+    await wait("!document.querySelector('.pr-merge-confirm')");
+    assert.equal((await writes()).length, writesBefore, 'Choosing a method writes nothing');
 
     step = 'freshness';
     const statusLine = `document.querySelector('${P} [data-overview-status-line]')`;

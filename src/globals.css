@@ -6285,3 +6285,6 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-merge-methods label:has(:checked) { font-weight:600; }
 .pr-merge-methods input { accent-color:var(--primary); margin:0; }
 .pr-merge-methods input:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.pr-method-menu [role=menuitemradio][data-disabled] { color:var(--muted-foreground); }
+.pr-method-unavailable { margin-left:auto; padding-left:12px; color:var(--muted-foreground); font-size:var(--type-caption); font-weight:400; }
+.pr-method-menu [role=menuitemradio][data-state=checked]:has(.pr-method-unavailable)::after { content:none; }

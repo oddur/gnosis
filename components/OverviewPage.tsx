@@ -1883,10 +1883,10 @@ function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions
       member={member}
       onChanged={actions.refresh}
       onResult={(message) => toast.add({ type: 'success', title: message })}
-      trigger={(open, busy) => (
+      trigger={(open, busy, _quick, methods) => (
         // The same split button as the PR header's (#542): Merge opens its confirmation, the chevron picks the method.
         <MergeSplit size="xs" label="Merge" primary={false} busy={busy} extra={{ ...SHORTCUT, title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A` }}
-          icon={<MergeIcon size={13} aria-hidden="true" />} methods={['SQUASH', 'MERGE', 'REBASE']} onMerge={(method) => open('merge', method)} />
+          icon={<MergeIcon size={13} aria-hidden="true" />} methods={['SQUASH', 'MERGE', 'REBASE']} allowed={methods.allowed} onMethods={methods.load} onMerge={(method) => open('merge', method)} />
       )}
     />
   );

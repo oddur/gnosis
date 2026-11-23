@@ -58,7 +58,7 @@ import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { conflictStateFrom } from '../lib/merge-conflicts';
 import { stackMergeStatus } from '../lib/stack-merge-status';
-import { mergeReadiness, subjectReadiness } from '../lib/merge-readiness';
+import { mergeReadiness } from '../lib/merge-readiness';
 import { useGitHubAccess } from '../lib/use-github-access';
 import { useWorkflowFiles } from '../lib/use-workflow-files';
 import { ReadinessChip, ReadinessCheckedAt } from './MergeReadiness';
@@ -600,10 +600,9 @@ function PrSummaryContent({
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [shortcutsEnabled, stacked]);
-  const headerReadiness = subjectReadiness(item.subject, signals);
   const draftsLabel = `Drafts${headerReview.draftCount ? ` (${headerReview.draftCount})` : ''}`;
   const headerActions = !stacked && (
-    <PrActions key={first.url} member={first} onChanged={onRetryStatus} mergeReady={headerReadiness.ready} hasConflicts={headerReadiness.label === 'Merge conflicts'}
+    <HeaderPrActions key={first.url} member={first} signals={signals} statusSignals={statuses[first.url]?.signals} onChanged={onRetryStatus}
       refreshKey={actionsRefresh} collapse={collapse} onOverflow={setOverflow} notes={notes} shortcuts={shortcutsEnabled}
       review={(primary) => <>
         {openPr && collapse < 2 && <Button data-collapse-at="2" variant="outline" size="sm" disabled={headerReview.draftsDisabled} onClick={headerReview.toggleDrafts}>{draftsLabel}</Button>}
@@ -925,11 +924,8 @@ function PrStatusLine({ subject, signals, statusSignals, checking, checks, check
   const mergePlan = stacked ? stackMergePlan(subject, signals, checks, now) : undefined;
   const member = subject.members[0];
   // A PR's chip is Summary's readiness verdict, from the same reads: the most urgent blocker, the rest in its popover.
-  const access = useGitHubAccess();
-  const workflowFiles = useWorkflowFiles(member);
-  const queueSignal = signals.find((value) => value.url === member.url);
-  const signal = queueSignal && (!statusSignals || queueSignal.checkedAt >= statusSignals.checkedAt) ? queueSignal : statusSignals;
-  const readiness = stackStatus?.summary ?? mergeReadiness(member, signal, now, access, workflowFiles);
+  const { readiness: prReadiness, signal } = usePrReadiness(member, signals, statusSignals, now);
+  const readiness = stackStatus?.summary ?? prReadiness;
   const delayed = Object.values(checkErrors).some(Boolean);
   const iso = (time: number) => new Date(time).toISOString();
   const rollup = !stacked && signal?.headSha === member.headSha ? signal.checks : undefined;
@@ -999,7 +995,11 @@ function useCollapsedActions(row: RefObject<HTMLDivElement | null>, key: string)
       const actionGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
       const room = (level: '1' | '2') =>
         [...actions.querySelectorAll<HTMLElement>(`[data-collapse-at="${level}"]`)].reduce((total, part) => total + part.offsetWidth + actionGap, 0);
-      if (actions.dataset.collapse === '0') widths.current = { full: actions.scrollWidth, 1: room('1'), 2: room('2') };
+      // With every action showing, read each group's width. Collapsed, the visible part is measured again and the
+      // groups in ⋯ keep their last width, so a label that changes while collapsed still counts.
+      const level = Number(actions.dataset.collapse ?? 0);
+      if (level === 0) widths.current = { full: actions.scrollWidth, 1: room('1'), 2: room('2') };
+      else widths.current.full = actions.scrollWidth + widths.current[1] + (level > 1 ? widths.current[2] : 0);
       const { full, 1: first } = widths.current;
       const gap = parseFloat(getComputedStyle(tabs).columnGap) || 0;
       const tabsWidth = [...tabs.children].reduce((total, tab) => total + (tab as HTMLElement).offsetWidth + gap, 0);
@@ -1014,6 +1014,24 @@ function useCollapsedActions(row: RefObject<HTMLDivElement | null>, key: string)
     return () => observer.disconnect();
   }, [key]);
   return collapse;
+}
+
+/**
+ * A PR's merge readiness as Summary shows it: its newest signals for this head, GitHub access and workflow files. The
+ * header's chip and its actions (Merge primary, Resolve conflicts) read this one verdict.
+ */
+function usePrReadiness(member: ReviewMember, signals: QueueSignals[], statusSignals: QueueSignals | undefined, now: number) {
+  const access = useGitHubAccess();
+  const workflowFiles = useWorkflowFiles(member);
+  const queueSignal = signals.find((value) => value.url === member.url);
+  const signal = queueSignal && (!statusSignals || queueSignal.checkedAt >= statusSignals.checkedAt) ? queueSignal : statusSignals;
+  return { readiness: mergeReadiness(member, signal, now, access, workflowFiles), signal };
+}
+
+/** The PR header's actions, with Merge primary and Resolve conflicts from the readiness the chip shows. */
+function HeaderPrActions({ signals, statusSignals, ...props }: ComponentProps<typeof PrActions> & { signals: QueueSignals[]; statusSignals?: QueueSignals }) {
+  const { readiness } = usePrReadiness(props.member, signals, statusSignals, useStatusNow());
+  return <PrActions {...props} mergeReady={readiness.ready} hasConflicts={readiness.label === 'Merge conflicts'} />;
 }
 
 /** Merge actions for a whole stack. Whether it can merge depends on the status clock. */

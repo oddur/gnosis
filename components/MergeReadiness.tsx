@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { CloseWhenHidden } from './PrActionControls';
 import { Popover } from 'radix-ui';
 import { AlertCircle, CheckCircle2, ChevronDown, CircleHelp, Clock3 } from 'lucide-react';
 import { conflictIcon } from '../lib/interface-icons';
@@ -51,8 +52,15 @@ export function ReadinessChip({ readiness, staleLabel = 'Out of date', reviewSta
   if (reviewStatusShown && REVIEW_LABELS.includes(readiness.label)) return null;
   const Icon = readinessIcon(readiness);
   const label = readinessLabel(readiness, staleLabel);
+  return <ReadinessChipPopover readiness={readiness} label={label} Icon={Icon}>{children}</ReadinessChipPopover>;
+}
+
+function ReadinessChipPopover({ readiness, label, Icon, children }: { readiness: MergeReadiness; label: string; Icon: ReturnType<typeof readinessIcon>; children?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const content = useRef<HTMLDivElement>(null);
   return (
-    <Popover.Root>
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      {open && <CloseWhenHidden onClose={() => setOpen(false)} content={content} />}
       <Popover.Trigger asChild>
         <button type="button" className={`merge-readiness-badge merge-readiness-chip is-${readiness.tone}`} aria-label={`${label}. Merge readiness details`}>
           <Icon size={14} aria-hidden="true" />
@@ -62,7 +70,7 @@ export function ReadinessChip({ readiness, staleLabel = 'Out of date', reviewSta
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content className="readiness-popover" align="end" sideOffset={6} collisionPadding={12} tabIndex={-1}
+        <Popover.Content ref={content} className="readiness-popover" align="end" sideOffset={6} collisionPadding={12} tabIndex={-1}
           onOpenAutoFocus={(event) => { event.preventDefault(); (event.currentTarget as HTMLElement).focus(); }}>
           <p className={`merge-readiness-badge is-${readiness.tone}`}>
             <Icon size={14} aria-hidden="true" />

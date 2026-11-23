@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ChevronDown, GitBranch, Loader2 } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { Button } from './ui/button';
@@ -16,6 +16,51 @@ const unavailable = (reason: string | undefined, busy?: boolean) => ({
 const guard = (blocked: unknown, run: () => void) => () => {
   if (!blocked) run();
 };
+
+/**
+ * Rendered while a popover or menu is open: it closes when its scope is hidden and when the window loses focus.
+ * Workspaces stay mounted inside React <Activity>, which hides the control but not its portaled popup, and removes the
+ * effects that would close it. Hiding destroys this layout effect: the popup is hidden in the same commit, so it never
+ * paints without its control, then closed (as `components/ui/tooltip.tsx` does for tooltips).
+ */
+export function CloseWhenHidden({ onClose, content }: { onClose: () => void; content: RefObject<HTMLElement | null> }) {
+  const latest = useRef(onClose);
+  useLayoutEffect(() => {
+    latest.current = onClose;
+  });
+  const watching = useRef(false);
+  useLayoutEffect(() => {
+    watching.current = true;
+    if (content.current) content.current.style.display = '';
+    return () => {
+      watching.current = false;
+      if (content.current) content.current.style.display = 'none';
+      // StrictMode runs the effect again at once; only a scope that stays hidden closes.
+      queueMicrotask(() => {
+        if (!watching.current) latest.current();
+      });
+    };
+  }, [content]);
+  useEffect(() => {
+    const close = () => latest.current();
+    window.addEventListener('blur', close);
+    return () => window.removeEventListener('blur', close);
+  }, []);
+  return null;
+}
+
+/** Open state for a menu that may be controlled, closed with its scope (`CloseWhenHidden`). */
+function useMenuOpen(open: boolean | undefined, onOpenChange: ((open: boolean) => void) | undefined) {
+  const [own, setOwn] = useState(false);
+  const content = useRef<HTMLDivElement>(null);
+  const isOpen = open ?? own;
+  const change = (next: boolean) => {
+    setOwn(next);
+    onOpenChange?.(next);
+  };
+  const guard = isOpen ? <CloseWhenHidden onClose={() => change(false)} content={content} /> : null;
+  return { isOpen, change, content, guard };
+}
 
 /** A GitHub setting that acts at once: Draft, Auto-merge. Its state is GitHub's, shown optimistically while sending. */
 export function ActionToggle({ label, checked, detail, reason, busy, onToggle, size = 'sm', children }: {
@@ -50,17 +95,24 @@ export function ActionToggle({ label, checked, detail, reason, busy, onToggle, s
 }
 
 /** The chevron half of a split control: a menu of merge methods. */
-export function MethodMenu({ label, methods, current, reason, onPick, size = 'sm', variant = 'outline' }: {
+export function MethodMenu({ label, methods, allowed, current, reason, onPick, onOpen, size = 'sm', variant = 'outline' }: {
   label: string;
   methods: readonly MergeMethod[];
+  /** The repository's allowed methods; the others show disabled. Undefined while they are being read. */
+  allowed?: readonly MergeMethod[];
   current?: MergeMethod;
   reason?: string;
   onPick: (method: MergeMethod) => void;
+  /** Reads the allowed methods when the menu opens. */
+  onOpen?: () => void;
   size?: 'sm' | 'xs';
   variant?: 'default' | 'outline';
 }) {
+  const menu = useMenuOpen(undefined, (open) => { if (open) onOpen?.(); });
   return (
-    <DropdownMenu.Root>
+    <>
+    {menu.guard}
+    <DropdownMenu.Root open={menu.isOpen} onOpenChange={menu.change}>
       <DropdownMenu.Trigger asChild disabled={!!reason}>
         <Button size={size === 'sm' ? 'icon-sm' : 'icon-xs'} variant={variant} className="pr-action-chevron" aria-label={label} title={reason ?? label}>
           <ChevronDown size={14} aria-hidden="true" />
@@ -68,29 +120,38 @@ export function MethodMenu({ label, methods, current, reason, onPick, size = 'sm
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         {/* Picking a method opens Merge's confirmation, which takes focus: focus must not return to the chevron and close it. */}
-        <DropdownMenu.Content className="pr-update-menu pr-method-menu" align="end" sideOffset={5} onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenu.Content ref={menu.content} className="pr-update-menu pr-method-menu" align="end" sideOffset={5} onCloseAutoFocus={(event) => event.preventDefault()}>
           <DropdownMenu.Label className="pr-method-menu-label">{label}</DropdownMenu.Label>
           <DropdownMenu.RadioGroup value={current} onValueChange={(value) => onPick(value as MergeMethod)}>
-            {methods.map((method) => (
-              <DropdownMenu.RadioItem key={method} value={method}>
-                {mergeMethodLabels[method]}
-              </DropdownMenu.RadioItem>
-            ))}
+            {methods.map((method) => {
+              // A method the repository does not allow stays listed, disabled with the reason, never swapped for another.
+              const unavailableReason = !allowed ? 'Checking this repository’s merge methods…' : !allowed.includes(method) ? 'Not allowed in this repository' : undefined;
+              return (
+                <DropdownMenu.RadioItem key={method} value={method} disabled={!!unavailableReason} title={unavailableReason}>
+                  {mergeMethodLabels[method]}
+                  {unavailableReason && <span className="pr-method-unavailable">{unavailableReason === 'Not allowed in this repository' ? 'Not allowed' : 'Checking…'}</span>}
+                </DropdownMenu.RadioItem>
+              );
+            })}
           </DropdownMenu.RadioGroup>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+    </>
   );
 }
 
 /** Merge as a split button: the main part opens the confirmation, the chevron picks the method first. */
-export function MergeSplit({ label, primary, reason, busy, shortcut, methods, current, onMerge, size = 'sm', icon, extra }: {
+export function MergeSplit({ label, primary, reason, busy, shortcut, methods, allowed, onMethods, current, onMerge, size = 'sm', icon, extra }: {
   label: string;
   primary: boolean;
   reason?: string;
   busy?: boolean;
   shortcut?: string;
   methods?: readonly MergeMethod[];
+  /** The repository's allowed methods, when known; `methods` lists them all otherwise. */
+  allowed?: readonly MergeMethod[];
+  onMethods?: () => void;
   current?: MergeMethod;
   onMerge: (method?: MergeMethod) => void;
   size?: 'sm' | 'xs';
@@ -114,7 +175,7 @@ export function MergeSplit({ label, primary, reason, busy, shortcut, methods, cu
         {label}
       </Button>
       {!!methods?.length && (
-        <MethodMenu label="Merge method" methods={methods} current={current} reason={reason} onPick={onMerge} size={size} variant={variant} />
+        <MethodMenu label="Merge method" methods={methods} allowed={onMethods ? allowed : (allowed ?? methods)} current={current} reason={reason} onPick={onMerge} onOpen={onMethods} size={size} variant={variant} />
       )}
     </span>
   );
@@ -134,8 +195,11 @@ export function UpdateMenu({ reason, rebaseReason, baseBranch, headBranch, busy,
   shortcut?: string;
 }) {
   const blocked = reason || (busy ? 'Waiting for GitHub…' : undefined);
+  const menu = useMenuOpen(open, onOpenChange);
   return (
-    <DropdownMenu.Root open={blocked ? false : open} onOpenChange={onOpenChange}>
+    <>
+    {menu.guard}
+    <DropdownMenu.Root open={blocked ? false : menu.isOpen} onOpenChange={menu.change}>
       <DropdownMenu.Trigger asChild>
         <Button size={size} variant="outline" className="pr-update-trigger" {...unavailable(blocked)} title={blocked ?? (shortcut ? `Update branch (${shortcut})` : 'Update branch')}
           onPointerDown={blocked ? (event) => event.preventDefault() : undefined}>
@@ -145,7 +209,7 @@ export function UpdateMenu({ reason, rebaseReason, baseBranch, headBranch, busy,
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="pr-update-menu" align="end" sideOffset={5}>
+        <DropdownMenu.Content ref={menu.content} className="pr-update-menu" align="end" sideOffset={5}>
           <DropdownMenu.Item onSelect={() => onUpdate('update-merge')}>
             <strong>Update with merge commit…</strong>
             <span>Merge {baseBranch} into {headBranch}.</span>
@@ -157,6 +221,7 @@ export function UpdateMenu({ reason, rebaseReason, baseBranch, headBranch, busy,
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+    </>
   );
 }
 

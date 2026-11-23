@@ -29,7 +29,7 @@ interface GraphMember {
 }
 interface GraphPr extends GraphMember {
   id: string;
-  headRepository: { nameWithOwner: string; viewerPermission?: string | null } | null;
+  headRepository: { nameWithOwner: string; viewerPermission?: string | null; defaultBranchRef?: { name: string } | null } | null;
   headRef?: { id: string } | null;
   maintainerCanModify?: boolean;
   mergeable: string;
@@ -66,10 +66,12 @@ interface GraphRepo {
 const PRS_PER_QUERY = 20;
 const repoFields =
   'nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed';
-const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission} headRef{id} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission defaultBranchRef{name}} headRef{id} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
         viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
         stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}`;
 const writePermissions = ['WRITE', 'MAINTAIN', 'ADMIN'];
+/** A ref update to this commit deletes the ref. */
+const ZERO_OID = '0'.repeat(40);
 export function prActionTarget(url: string) {
   const m = typeof url === 'string' && /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9]\d*)$/.exec(url);
   if (!m || !Number.isSafeInteger(Number(m[3]))) throw new Error('Choose a valid GitHub pull request.');
@@ -105,6 +107,8 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
       : {}),
     ...(pr.maintainerCanModify !== undefined ? { maintainerCanModify: pr.maintainerCanModify } : {}),
     ...(pr.headRef !== undefined ? { headBranchExists: !!pr.headRef } : {}),
+    ...(pr.headRepository?.defaultBranchRef !== undefined ? { headIsDefaultBranch: pr.headRepository.defaultBranchRef?.name === pr.headRefName } : {}),
+    canTriage: [...writePermissions, 'TRIAGE'].includes(repo.viewerPermission ?? ''),
     repository: repo.nameWithOwner,
     archived: repo.isArchived,
     canWrite: writePermissions.includes(repo.viewerPermission ?? ''),
@@ -363,6 +367,8 @@ export function createPrActionsService(now = Date.now) {
         affected.length !== req.revisions.length ||
         affected.some((m, i) => {
           const r = req.revisions[i];
+          // Deleting a finished PR's branch depends on its head alone: a base branch that moved on does not refuse it.
+          if (req.kind === 'delete-branch') return r.url !== m.url || r.headSha !== m.headSha;
           return r.url !== m.url || r.headSha !== m.headSha || r.baseSha !== m.baseSha || r.baseBranch !== m.baseBranch;
         })
       )
@@ -384,13 +390,39 @@ export function createPrActionsService(now = Date.now) {
         const reason = deleteBranchBlockedReason(state);
         if (reason) throw new Error(reason);
         const [owner, repo] = (state.headRepo ?? '').split('/');
-        const ref = `heads/${state.headBranch}`;
-        // Commits pushed after the PR closed would go with the branch: delete it only while it is the PR's last commit.
-        const current = await client.request('GET /repos/{owner}/{repo}/git/ref/{ref}', { owner, repo, ref });
-        if (current.data.object.sha !== state.headSha)
-          throw new Error(`${state.headBranch} has commits this PR does not. Nothing was deleted; check the branch on GitHub.`);
-        await client.request('DELETE /repos/{owner}/{repo}/git/refs/{ref}', { owner, repo, ref });
-        return { status: 'completed', message: `Deleted ${state.headBranch}.` };
+        const branch = state.headBranch;
+        // Everything that should keep the branch, read just before the write. A read that fails refuses the delete.
+        const facts = await client.graphql<{
+          repository: {
+            id: string;
+            defaultBranchRef: { name: string } | null;
+            ref: { target: { oid: string } | null; branchProtectionRule: { id: string } | null; refUpdateRule: { pattern?: string } | null } | null;
+            pullRequests: { totalCount: number };
+          } | null;
+        }>(
+          `query($owner:String!,$repo:String!,$ref:String!,$branch:String!){repository(owner:$owner,name:$repo){id defaultBranchRef{name}
+          ref(qualifiedName:$ref){target{oid} branchProtectionRule{id} refUpdateRule{pattern}}
+          pullRequests(baseRefName:$branch,states:OPEN,first:1){totalCount}}}`,
+          { owner, repo, ref: `refs/heads/${branch}`, branch }
+        );
+        const head = facts.repository;
+        if (!head) throw new Error('GitHub could not read the branch’s repository. Nothing was deleted.');
+        if (!head.ref) throw new Error(`${branch} is already deleted.`);
+        if (head.defaultBranchRef?.name === branch) throw new Error(`${branch} is its repository’s default branch. Nothing was deleted.`);
+        if (head.ref.branchProtectionRule || head.ref.refUpdateRule)
+          throw new Error(`${branch} is protected or covered by a ruleset. Nothing was deleted; delete it on GitHub if you need to.`);
+        if (head.pullRequests.totalCount > 0)
+          throw new Error(`${branch} is the base of another open PR. Nothing was deleted.`);
+        // Commits pushed after the PR closed would go with the branch. GitHub deletes it only while it still ends at the
+        // PR's last commit, in the same write: there is no gap between checking and deleting.
+        const updated = await client.graphql<{ updateRefs: { clientMutationId: string | null } | null }>(
+          'mutation($input:UpdateRefsInput!){updateRefs(input:$input){clientMutationId}}',
+          { input: { repositoryId: head.id, refUpdates: [{ name: `refs/heads/${branch}`, beforeOid: state.headSha, afterOid: ZERO_OID }] } }
+        ).catch((error: unknown) => {
+          throw new Error(`${branch} was not deleted: it may have commits this PR does not. ${error instanceof Error ? error.message : String(error)}`);
+        });
+        if (!updated.updateRefs) throw new Error('GitHub did not confirm the branch was deleted. Check it on GitHub.');
+        return { status: 'completed', message: `Deleted ${branch}.` };
       }
       if (state.archived || state.state !== 'OPEN')
         throw new Error('This PR is no longer open in an active repository.');
