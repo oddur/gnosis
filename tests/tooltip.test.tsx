@@ -117,24 +117,42 @@ void test('focus the app moves opens no tooltip; keyboard focus does, in StrictM
   await run(() => root.unmount());
 });
 
-void test('a closed tooltip keeps its text for screen readers, unless the trigger has its own description', async () => {
+void test('a closed tooltip keeps plain text for screen readers on the trigger, with no extra node', async () => {
+  const { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } = ui;
+  function Custom() {
+    return <b>custom</b>;
+  }
   const root = await mount(
-    <>
+    <TooltipProvider>
       <Tip id="a" log={[]} />
       <Tip id="b" log={[]} describedBy="own" />
-    </>
+      <Tooltip>
+        <TooltipTrigger id="c">c</TooltipTrigger>
+        <TooltipContent>
+          <strong>Overview</strong>
+          <span>what you can act on now</span> <kbd>1</kbd>
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger id="d">d</TooltipTrigger>
+        <TooltipContent>
+          <Custom />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
-  const description = byId('a').getAttribute('aria-describedby');
-  assert.ok(description, 'the closed trigger points to a description');
-  assert.equal(byId(description).textContent, 'tip text');
-  assert.equal(byId(description).hidden, true, 'the description is hidden, read only through the trigger');
-  assert.equal(byId('b').getAttribute('aria-describedby'), 'own');
+  assert.equal(byId('a').getAttribute('aria-description'), 'tip text');
+  assert.equal(byId('a').hasAttribute('aria-describedby'), false);
+  assert.equal(byId('b').getAttribute('aria-describedby'), 'own', 'an existing description is kept');
+  assert.equal(byId('c').getAttribute('aria-description'), 'Overview what you can act on now 1');
+  assert.equal(byId('d').hasAttribute('aria-description'), false, 'content a component renders has none');
+  assert.equal(document.body.children.length, 1, 'closed tooltips add nothing to the document');
   await run(() => {
     tab();
     byId('a').focus();
   });
+  assert.equal(byId('a').hasAttribute('aria-description'), false, 'the open tooltip describes the trigger instead');
   const open = byId('a').getAttribute('aria-describedby') ?? '';
-  assert.notEqual(open, description, 'the open tooltip describes the trigger');
   assert.ok(byId(open).textContent.includes('tip text'));
   await run(() => root.unmount());
 });

@@ -63,7 +63,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js(tooltips), '', 'Programmatic focus opens no tooltip');
     // A screen reader moves focus without keys, so the closed tooltip's text stays in the trigger's description.
     assert.match(
-      await js<string>(`document.getElementById(${overview}.getAttribute('aria-describedby'))?.textContent ?? ''`),
+      await js<string>(`${overview}.getAttribute('aria-description') ?? ''`),
       /act on now/
     );
     // The keyboard does open one, and leaving the window closes it.

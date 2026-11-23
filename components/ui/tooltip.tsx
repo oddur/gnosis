@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { createPortal } from 'react-dom';
 import { Tooltip as TooltipPrimitive } from 'radix-ui';
 
 import { focusFromKeyboard } from './keyboard-focus';
@@ -15,12 +14,39 @@ function TooltipProvider({ delayDuration = 0, ...props }: React.ComponentProps<t
 interface TooltipScope {
   open: boolean;
   hidden: boolean;
-  /** The id of the closed tooltip's description, which keeps its text for screen readers. */
-  descriptionId: string;
+  /** The content's text, when it is plain text: a closed tooltip keeps it for screen readers. */
+  description: string | undefined;
   /** The rendered trigger and content, kept when Activity detaches refs from a hidden scope. */
   nodes: { trigger?: HTMLElement; content?: HTMLElement };
 }
 const TooltipScope = React.createContext<TooltipScope | null>(null);
+
+/**
+ * Focus the app moves opens no tooltip, and a screen reader moves focus without keys, so a closed tooltip whose content
+ * is plain text keeps it on the trigger as `aria-description`. That costs no DOM node; an `aria-describedby` the
+ * trigger has still wins. Content that is not plain text has no closed description.
+ */
+function contentText(children: React.ReactNode): string | undefined {
+  let text: string | undefined;
+  React.Children.forEach(children, (child) => {
+    if (React.isValidElement<{ children?: React.ReactNode }>(child) && child.type === TooltipContent)
+      text = plainText(child.props.children) ?? undefined;
+  });
+  return text?.replace(/\s+/g, ' ').trim() || undefined;
+}
+
+/** The text of strings and of plain elements around them; null when a component could render anything. */
+function plainText(node: React.ReactNode): string | null {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) {
+    const parts = node.map(plainText);
+    return parts.some((part) => part === null) ? null : parts.join(' ');
+  }
+  if (React.isValidElement<{ children?: React.ReactNode }>(node) && typeof node.type === 'string')
+    return plainText(node.props.children);
+  return null;
+}
 
 /**
  * A tooltip closes when the window loses focus and when its trigger is hidden. Workspaces and the queue behind an
@@ -45,9 +71,9 @@ function Tooltip({
   // hidden, or the tooltip unmounted.
   const wanted = React.useRef(open);
   wanted.current = open;
-  const descriptionId = `${React.useId()}-description`;
+  const description = React.useMemo(() => contentText(children), [children]);
   const [nodes] = React.useState<TooltipScope['nodes']>(() => ({}));
-  const scope = React.useMemo(() => ({ open, hidden, descriptionId, nodes }), [open, hidden, descriptionId, nodes]);
+  const scope = React.useMemo(() => ({ open, hidden, description, nodes }), [open, hidden, description, nodes]);
   const change = React.useCallback(
     (next: boolean) => {
       if (openProp === undefined) setUncontrolled(next);
@@ -143,6 +169,7 @@ function TooltipTrigger({
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
+      {...(scope && !scope.open && scope.description ? { 'aria-description': scope.description } : {})}
       ref={(node: HTMLButtonElement | null) => {
         if (node && scope) scope.nodes.trigger = node;
         if (typeof ref === 'function') return ref(node);
@@ -169,31 +196,6 @@ function TooltipTrigger({
   );
 }
 
-/**
- * Focus the app moves opens no tooltip, and a screen reader moves focus without keys, so a closed tooltip keeps its
- * text in a hidden description the trigger points to. A trigger with its own description keeps that instead.
- */
-function ClosedDescription({ scope, children }: { scope: TooltipScope; children: React.ReactNode }) {
-  const { descriptionId, nodes } = scope;
-  return createPortal(
-    <span
-      id={descriptionId}
-      hidden
-      ref={(node) => {
-        const trigger = nodes.trigger;
-        if (!node || !trigger || trigger.hasAttribute('aria-describedby')) return;
-        trigger.setAttribute('aria-describedby', descriptionId);
-        return () => {
-          if (trigger.getAttribute('aria-describedby') === descriptionId) trigger.removeAttribute('aria-describedby');
-        };
-      }}
-    >
-      {children}
-    </span>,
-    document.body
-  );
-}
-
 function TooltipContent({
   className,
   sideOffset = 0,
@@ -203,8 +205,7 @@ function TooltipContent({
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   const scope = React.useContext(TooltipScope);
   if (scope?.hidden) return null;
-  if (scope && !scope.open)
-    return children == null ? null : <ClosedDescription scope={scope}>{children}</ClosedDescription>;
+  if (scope && !scope.open) return null;
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
