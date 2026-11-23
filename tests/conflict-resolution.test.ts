@@ -1825,6 +1825,60 @@ void test('edits around the conflicts survive a moved base through a text merge'
   assert.match(merged, /a = 3;[\s\S]*f3 = 'moved'[\s\S]*b = 1;[\s\S]*g3 = 30;/);
 });
 
+// #451: a proposal stored beside the draft, never applied, is never applied by a base move either.
+void test('a base move never applies a proposal that was only stored beside the draft', async (t) => {
+  const f = await fixture(t, false, {
+    name: 'sample.ts',
+    base: '// header 0\n\nexport const answer = 0;\n',
+    ours: '// header 0\n\nexport const answer = 1;\n',
+    theirs: '// header 0\n\nexport const answer = 2;\n',
+  });
+  // The checks would Merge it, so only the carry stands between it and the draft.
+  Object.assign(f.deps, {
+    verify: () => Promise.resolve({ merged: true, note: 'Merged.', blocks: [{ merged: true, note: 'Merged.' }] }),
+  });
+  const key = `conflict-draft:${f.context.account}:${f.session.id}`;
+  const saved = structuredClone(f.session);
+  const stored = saved.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  // As the reopen pass leaves it (#448): the proposal beside the draft, the draft still Git's conflict.
+  Object.assign(stored, {
+    proposals: [{ source: 'mergiraf', text: 'export const answer = 12;\n' }],
+    result: stored.original,
+    source: 'manual',
+    structuralRan: true,
+  });
+  delete stored.structuralNote;
+  f.deps.storage.write(key, saved);
+  let session = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(session.files.find((x) => x.path === 'sample.ts')?.result, stored.original, 'Reopen leaves it beside');
+  // Your own resolution, with an edit above the conflict too, so a later text merge can fail. Saved once to get its
+  // verdict, then marked reviewed.
+  for (const file of session.files)
+    for (const resolved of [false, true])
+      session = (
+        await f.run({
+          kind: 'save',
+          id: session.id,
+          version: session.version,
+          path: file.path,
+          contents: file.path === 'sample.ts' ? '// header mine\n\nexport const answer = 3;\n' : file.result,
+          resolved,
+        })
+      ).session;
+  // main changes the same header line: the conflicts are the same, but your draft can't be carried.
+  await f.git('checkout', 'main');
+  await fs.writeFile(path.join(f.remote, 'sample.ts'), '// header main\n\nexport const answer = 2;\n');
+  await f.git('commit', '-am', 'Another PR merged');
+  f.state.baseSha = await f.git('rev-parse', 'HEAD');
+  const reply = await f.run({ kind: 'preview', id: session.id, version: session.version });
+  assert.equal(reply.baseMoved?.conflicts, 1);
+  const file = reply.session.files.find((x) => x.path === 'sample.ts') as ConflictFile;
+  assert.doesNotMatch(file.result, /answer = 12/, 'The stored proposal is not the draft');
+  assert.equal(file.result, file.original, 'The conflict waits for you with its markers');
+  assert.deepEqual(file.proposals?.map((p) => p?.text), ['export const answer = 12;\n'], 'It stays offered');
+  assert.equal(file.resolved, false);
+});
+
 void test('the PR head moved: publishing is blocked and Load latest changes reuses resolutions for review', async (t) => {
   const f = await movingFixture(t);
   await f.git('checkout', 'feature');
