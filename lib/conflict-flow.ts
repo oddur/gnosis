@@ -1,5 +1,6 @@
 import {
   SAVE_REFUSALS,
+  SAVED_WORK_UNAVAILABLE,
   STALE_DRAFT,
   UNREADABLE_DRAFT,
   type BaseMove,
@@ -150,6 +151,9 @@ export function describeConflictError(
       body: 'Nothing was pushed or overwritten. Load the saved draft, then go on from it.',
       recovery: 'reload',
     };
+  // Saved data is closed or stopped: trying again would fail the same way, so the only step is a restart.
+  if (raw.startsWith(SAVED_WORK_UNAVAILABLE))
+    return { title: SAVED_WORK_UNAVAILABLE, body: 'Your last change wasn’t saved. Nothing was pushed.' };
   // A draft the service can't use (`draftProblem`): Start over prepares the merge again.
   if (raw.startsWith(UNREADABLE_DRAFT))
     return { title: UNREADABLE_DRAFT, body: 'Start over to prepare the merge again.', recovery: 'start-over' };

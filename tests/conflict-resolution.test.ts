@@ -11,7 +11,7 @@ import { BACKGROUND_YIELDED, createConflictResolutionService, conflictSessionDir
 import { composeCarried, replayBuckets, restackWorktreePath } from '../src/conflict-restack';
 import { CONFLICT_STATS_NAME, createConflictStatsStore } from '../src/conflict-stats-store';
 import { blockFingerprints } from '../lib/conflict-stats';
-import { assertSavedState, createAppDataStore } from '../src/app-data-store';
+import { assertSavedState, createAppDataStore, SAVED_WORK_UNAVAILABLE } from '../src/app-data-store';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { conflictFileStage } from '../lib/conflict-markers';
 import {
@@ -1613,7 +1613,7 @@ void test('dropping a background draft in the real saved data never blocks the n
   assert.equal((store.read(key) as ConflictSession).version, opened.version);
 });
 
-void test('a quit that could not save never fails your next prepare with "Storage is not ready"', async (t) => {
+void test('after a quit that could not save, a prepare says to restart, and Keep open saves again', async (t) => {
   const f = await fixture(t);
   const real = await realStorage(t, f);
   t.mock.method(console, 'error', () => {});
@@ -1627,13 +1627,14 @@ void test('a quit that could not save never fails your next prepare with "Storag
   await assert.rejects(real.store().close(), /simulated disk failure/);
   db.exec('DROP TRIGGER fail_write');
   db.close();
-  // Background clean-up still runs, and drops the background draft. Before the fix its flush, and your prepare's,
-  // rejected with "Storage is not ready".
+  // Before the fix your prepare rejected with "Storage is not ready". While the store is closed it says the work wasn't
+  // saved, and what to do; it never reads as saved.
+  await assert.rejects(real.run({ kind: 'open', url: f.state.url }), { message: SAVED_WORK_UNAVAILABLE });
+  // Kept open: saved data opens again (src/main.ts `saveBeforeQuit`). Background clean-up and your prepare go through.
+  await real.store().reopen();
   await real.service.trimBackground(0);
   const opened = (await real.run({ kind: 'open', url: f.state.url })).session;
   assert.ok(opened.files.length, 'Prepared');
-  // Kept open: saved data opens again (src/main.ts `saveBeforeQuit`), and saving works again.
-  await real.store().reopen();
   const saved = (
     await real.run({ kind: 'save', id: opened.id, version: opened.version, path: 'sample.ts', contents: 'x\n', resolved: false })
   ).session;

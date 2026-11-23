@@ -9,7 +9,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
-import { SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
+import { SAVED_WORK_UNAVAILABLE, SAVE_REFUSALS, STALE_DRAFT, UNREADABLE_DRAFT, draftProblem } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -171,6 +171,16 @@ void test('an unreadable saved draft offers Start over; a failed save of a reada
   assert.equal(copy.recovery, 'start-over');
   const saveFailed = describeConflictError(`Invalid saved state: conflict-draft:oddur:${'a'.repeat(64)}`, { stage: 'other' });
   assert.notEqual(saveFailed.recovery, 'start-over');
+});
+
+void test('saved work that isn’t available says to restart, with no Try again', () => {
+  for (const stage of ['prepare', 'other'] as const) {
+    const copy = describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${SAVED_WORK_UNAVAILABLE}`, {
+      stage,
+    });
+    assert.equal(`${copy.title} ${copy.body}`, 'Saved work isn’t available. Restart Gnosis. Your last change wasn’t saved. Nothing was pushed.');
+    assert.equal(copy.recovery, undefined, 'Trying again would fail the same way');
+  }
 });
 
 void test('a saved draft is readable with fields from a newer build, and names the first field it cannot use', () => {

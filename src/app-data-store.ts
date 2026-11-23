@@ -1,4 +1,5 @@
 import { noteWork } from '../lib/perf-trace';
+import { SAVED_WORK_UNAVAILABLE } from '../lib/conflict-resolution';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MaintainResult } from './sqlite-maintain';
 import type { SearchRequest, LocalSearchResponse, SearchOp } from './command-search-service';
@@ -92,8 +93,7 @@ export function createMemoryStorage(saved = new Map<string, string>()): StateSto
     flush: () => Promise.resolve(),
   };
 }
-/** What a request to saved data says once the store can't reach the disk: its worker died, or it was closed. */
-export const SAVED_WORK_UNAVAILABLE = 'Saved work isn’t available. Restart Gnosis.';
+export { SAVED_WORK_UNAVAILABLE };
 export function createAppDataStore() {
   let worker: Worker | undefined;
   /** Where `open` read from, for `reopen`. */
@@ -194,9 +194,9 @@ export function createAppDataStore() {
       return;
     }
     if (!dirty()) return;
-    // Closed: writes since are counted as lost (`lose`), and a final save that failed stays queued for `reopen`. A
-    // flush never fails a caller for it: the quit already reported the failed save, and the app kept running.
-    if (!worker) return;
+    // Closed with a final save that failed: it stays queued for `reopen`. Until then a caller waiting for its save is
+    // told it wasn't saved; it never reads as saved. (Writes after a clean close are counted as lost, as before.)
+    if (!worker) throw new Error(SAVED_WORK_UNAVAILABLE);
     const states = [...updates];
     const changed = [...patches];
     updates.clear();
@@ -299,7 +299,18 @@ export function createAppDataStore() {
      */
     async reopen() {
       if (worker || !opened || failure) return;
-      await store.open(opened);
+      try {
+        await store.open(opened);
+      } catch (error) {
+        // Every later request says what to do. The cause goes to the log.
+        console.error('Saved work could not open again:', error);
+        failure = new Error(SAVED_WORK_UNAVAILABLE);
+        // `open` may have started a worker before it failed: stop it, so the database is released.
+        const active = worker as Worker | undefined;
+        worker = undefined;
+        await active?.terminate();
+        throw failure;
+      }
     },
     read(name: string): unknown {
       const started = performance.now();
