@@ -309,14 +309,15 @@ void test('review probe: a lost definition is excused only by its exact name, in
   });
 });
 
-void test('review probe: carrying a draft forward uses the fresh proposal for a conflict it cannot carry', () => {
+void test('review probe: carrying a draft forward uses the fresh proposal for a new conflict it cannot carry', () => {
   const proposals = [merged(imports), merged(three + four)];
   const next = file(proposals);
-  // The earlier draft resolved only an older version of the second conflict.
+  // The earlier draft resolved only an older version of the second conflict, and left the first open.
   const old = file([null, null], { original: original.replace('return 3;', 'return 30;') });
   old.result = old.original.replace(/<<<<<<< feature\nexport[\s\S]*?>>>>>>> main\n/, three.replace('3', '30'));
   const carried = carryFile(old, next, true);
-  assert.equal(carried.file.result, withProposals(original, proposals));
+  // The second conflict is new: its fresh proposal. The first was open before and stays open (#528).
+  assert.equal(carried.file.result, withProposals(original, [null, proposals[1]]));
   assert.equal(carried.file.resolved, false);
   assert.deepEqual(carried.file.proposals, proposals);
 });

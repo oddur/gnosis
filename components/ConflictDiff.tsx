@@ -47,6 +47,7 @@ import { ChangesDiff, diffHosts } from './ChangesDiff';
 import { Button } from './ui/button';
 import { DiffFileHeader } from './DiffFileHeader';
 import { useDiffFileModel } from './useDiffFileModel';
+import { textHash } from '../lib/text-hash';
 import type { ModelCard } from '../lib/conflict-model';
 import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
@@ -184,11 +185,19 @@ export function ConflictFileDiff<A>({
   // Parsed definitions are cached by revision: the same text under the same key keeps its number, so a diff that mounts
   // again, as a virtualized list scrolls it back into view, keeps its parse (#491).
   const lineCount = useMemo(() => afterLines(after).length, [after]);
+  const textKey = useMemo(
+    () =>
+      patch
+        ? `${patch.prevObjectId ?? ''}..${patch.newObjectId ?? ''}:${patch.hunks.length}`
+        : `${lineCount}:${textHash(before)}:${textHash(after)}`,
+    [patch, before, after, lineCount]
+  );
   const revision = useMemo(() => revisionOf(fileKey, before, after, patch), [fileKey, before, after, patch]);
   const model = useDiffFileModel({
     fileKey: `${fileKey}:${revision}`,
-    // Revealed lines and pins are line numbers: a choice that changes the draft's length drops them, never misplaces them.
-    revealKey: `${fileKey}:${lineCount}`,
+    // Revealed lines and pins are line numbers of this exact text: other text (a choice, a new preparation, Start over,
+    // a base move) starts without them and plans its own scopes, never reusing another draft's (#486).
+    revealKey: `${fileKey}:${textKey}`,
     path: name,
     hunks,
     contents,
@@ -812,22 +821,16 @@ export function ConflictDiff({
               written={written}
             />
           )}
-          {mode === 'main' && <CompareDiff {...diff} against="theirs" before={theirs} live actions={switcher} />}
-          {/* PR stays mounted, hidden, in the other modes: its revealed lines and shown scopes survive a round trip. */}
-          <CompareDiff
-            {...diff}
-            against="ours"
-            before={ours}
-            live={mode === 'pr'}
-            actions={mode === 'pr' ? switcher : undefined}
-          />
+          {/* One mode's diff at a time: each keeps its revealed lines and shown scopes for the session, under its own
+              key (useDiffFileModel), so a round trip through another mode loses none (#486). */}
+          {mode === 'main' && <CompareDiff {...diff} against="theirs" before={theirs} actions={switcher} />}
+          {mode === 'pr' && <CompareDiff {...diff} against="ours" before={ours} actions={switcher} />}
         </>
       )}
     </div>
   );
 }
 
-const NO_CARDS = () => null;
 /** Line numbers as runs of consecutive lines, for pins: a marked line is never hidden in a gap. */
 export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number])[] {
   const runs: [number, number][] = [];
@@ -840,8 +843,7 @@ export function lineRuns(lines: ReadonlySet<number>): (readonly [number, number]
 }
 /**
  * One mode's diff of the draft (#445 items 8 and 9), with each conflict's card under its lines: against the PR's version
- * (`against` 'ours') or main's ('theirs'). A diff that isn't `live` is hidden and keeps the draft it last showed: it
- * computes nothing and shows no cards while another mode is on screen.
+ * (`against` 'ours') or main's ('theirs').
  */
 function CompareDiff({
   name,
@@ -849,7 +851,6 @@ function CompareDiff({
   proposals,
   against,
   before,
-  live,
   fileKey,
   preferences,
   labels,
@@ -868,7 +869,6 @@ function CompareDiff({
   proposals?: readonly (ConflictProposal | null)[];
   against: 'ours' | 'theirs';
   before: string;
-  live: boolean;
   fileKey: string;
   preferences?: Preferences | null;
   labels: ConflictLabels;
@@ -879,20 +879,17 @@ function CompareDiff({
   /** Both whole versions, when the draft is a resolver's whole file: its lines neither had are marked instead. */
   sides?: { ours: string; theirs: string; resolver?: string; by?: string };
 }) {
-  const last = useRef({ model, proposals, written, sides });
-  if (live) last.current = { model, proposals, written, sides };
-  const draft = last.current;
   const shown = useMemo(
-    () => conflictDiffText(draft.model, draft.proposals, against),
-    [draft.model, draft.proposals, against]
+    () => conflictDiffText(model, proposals, against),
+    [model, proposals, against]
   );
   // The lines a resolver wrote, by line of the shown text (#445 item 10).
   const marks = useMemo(
     () =>
-      draft.sides
-        ? writtenFileLines(shown.after, draft.sides.ours, draft.sides.theirs, draft.sides.resolver)
-        : shownWritten(shown.blocks, draft.written),
-    [shown, draft.written, draft.sides]
+      sides
+        ? writtenFileLines(shown.after, sides.ours, sides.theirs, sides.resolver)
+        : shownWritten(shown.blocks, written),
+    [shown, written, sides]
   );
   // Each open conflict's two sides (lib/conflict-sides.ts): the shown lines are the version not compared with.
   const sideRanges = useMemo(() => {
@@ -900,9 +897,9 @@ function CompareDiff({
     const tone = (side: 'ours' | 'theirs'): SideTone => (side === pr ? 'pr' : 'base');
     const shownSide = against === 'ours' ? 'theirs' : 'ours';
     return shown.blocks
-      .filter((block) => draft.model.choices[block.index] === undefined)
+      .filter((block) => model.choices[block.index] === undefined)
       .map((block): SideRange => ({ start: block.start, end: block.end, added: tone(shownSide), removed: tone(against) }));
-  }, [shown, draft.model, against, kind]);
+  }, [shown, model, against, kind]);
   // A conflict's lines stay in view, and so does every marked line: the mark never sits in a hidden gap, even where
   // the diff reads the line as unchanged context (a moved line in a resolver's whole file).
   const pins = useMemo(
@@ -933,12 +930,12 @@ function CompareDiff({
     [shown]
   );
   return (
-    <div className="conflict-compare-diff" data-compare={against === 'theirs' ? 'main' : 'pr'} hidden={!live}>
+    <div className="conflict-compare-diff" data-compare={against === 'theirs' ? 'main' : 'pr'}>
       {/* A file with no lines left has nowhere to put a card: its cards come first. */}
-      {live && shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
+      {shown.blocks.filter((b) => b.anchor === undefined).map((b) => card(b.index))}
       {/* A resolver's whole file has no card per conflict: the count of its marked lines heads the diff. */}
-      {live && draft.sides && marks.size > 0 && <WrittenLegend count={marks.size} by={draft.sides.by} />}
-      <ConflictCards.Provider value={live ? card : NO_CARDS}>
+      {sides && marks.size > 0 && <WrittenLegend count={marks.size} by={sides.by} />}
+      <ConflictCards.Provider value={card}>
         <ConflictFileDiff
           name={name}
           before={before}

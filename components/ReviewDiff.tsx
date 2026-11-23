@@ -54,6 +54,11 @@ interface Props {
   renderThread?: (thread: GitHubReviewThread) => ReactNode;
   /** The PR revision the topic was written against; without it, gaps reveal only lines the topic saved. */
   source?: ReviewDiffSource;
+  /**
+   * What tells this diff from another one of the same path and slide when it has no `source`: the PR's URL, or a chat
+   * patch's hash. Its reveals and shown scopes are kept under it for the session (useDiffFileModel).
+   */
+  keyScope?: string;
   /** The file's header: hunk headers pin right below it, as in Changes. */
   stickyUnder?: RefObject<HTMLElement | null>;
   /** The file is expanded: collapsed files read nothing. */
@@ -99,6 +104,7 @@ export function ReviewDiff({
   inlineExplanations = [],
   renderThread,
   source,
+  keyScope = '',
   stickyUnder,
   active = true,
   theme,
@@ -142,7 +148,7 @@ export function ReviewDiff({
   // The revision key Changes uses for the same file, so both read and parse it once.
   const fileKey = source
     ? fileRevisionKey(source.url, source.path, source.baseSha, source.headSha)
-    : `topic:${slideIndex}:${filePath}`;
+    : `topic:${keyScope}:${slideIndex}:${filePath}`;
   const revealKey = `${fileKey}|${saved.hunks.map((h) => `${h.oldStart},${h.newStart},${h.rows.length}`).join(';')}`;
   const scopeFile = useMemo(() => {
     if (!source) return undefined;
