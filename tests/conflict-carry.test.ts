@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockResolutions, carryFile, relabelMarkers, revisionChange } from '../lib/conflict-carry';
+import {
+  blockResolutions,
+  carryFile,
+  relabelMarkers,
+  revisionChange,
+  withoutEarlierConflicts,
+} from '../lib/conflict-carry';
 import { parseConflicts } from '../lib/conflict-blocks';
 import { describeBaseMove, describeConflictError } from '../lib/conflict-flow';
 import type { ConflictFile } from '../lib/conflict-resolution';
@@ -188,8 +194,31 @@ void test('a block carry cannot reuse takes the fresh proposal only when the fre
   assert.equal(beside.open, 1);
   assert.equal(beside.file.result, `x\na\ny\n${second}z\n`);
   assert.deepEqual(beside.file.proposals, proposals);
-  // Applied by preparation: the open block shows it, as before.
+  // Applied by preparation to the same conflict you left open: still open (#528).
   const applied = carryFile(old, { ...file(fresh, `x\n${first}y\ncd\nz\n`), proposals }, false);
-  assert.equal(applied.open, 1);
-  assert.equal(applied.file.result, 'x\na\ny\ncd\nz\n');
+  assert.equal(applied.file.result, `x\na\ny\n${second}z\n`);
+  // A new conflict, applied by preparation: it shows its proposal.
+  const changed = block('c\n', 'p\n', 'D\n', 'f'.repeat(40));
+  const renewed = carryFile(old, { ...file(`x\n${first}y\n${changed}z\n`, `x\n${first}y\ncd\nz\n`), proposals }, false);
+  assert.equal(renewed.open, 1);
+  assert.equal(renewed.file.result, 'x\na\ny\ncd\nz\n');
+});
+
+void test('after a base move, a conflict you left open stays open even when its file changed; a new one takes its proposal (#528)', () => {
+  // You decided the first conflict and reset the second: open, its proposal offered beside it.
+  const old = file(`x\n${block('a\n', 'o\n', 'b\n')}y\n${block('c\n', 'p\n', 'd\n')}z\n`);
+  old.result = `x\na\ny\n${block('c\n', 'p\n', 'd\n')}z\n`;
+  old.proposals = [null, { source: 'mergiraf', text: 'cd\n' }];
+  // main changed the first conflict: the file is prepared again, with fresh proposals applied to both.
+  const first = block('a\n', 'o\n', 'B\n', 'f'.repeat(40));
+  const second = block('c\n', 'p\n', 'd\n', 'f'.repeat(40));
+  const fresh = `x\n${first}y\n${second}z\n`;
+  const proposals = [{ source: 'mergiraf' as const, text: 'aB\n' }, { source: 'mergiraf' as const, text: 'cd\n' }];
+  const next = { ...file(fresh, 'x\naB\ny\ncd\nz\n'), proposals };
+  const carried = carryFile(old, next, false);
+  assert.equal(carried.reused, 0);
+  assert.equal(carried.file.result, `x\naB\ny\n${second}z\n`, 'The new conflict takes its proposal; the open one stays open');
+  // A draft that can't be carried at all: the same rule on the fresh merge.
+  assert.equal(withoutEarlierConflicts({ ...old, result: 'edited\n' }, next), `x\naB\ny\n${second}z\n`);
+  assert.equal(withoutEarlierConflicts(file('nothing\n'), next), undefined, 'Every conflict is new');
 });

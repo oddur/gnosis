@@ -21,13 +21,14 @@ import {
   HEAD_MOVED,
   RETARGETED,
   blockProposals,
-  blockResolutions,
   carryFile,
+  heldProposals,
   conflictKeys,
   relabelMarkers,
   revisionChange,
   withProposals,
   withResult,
+  withoutEarlierConflicts,
 } from '../lib/conflict-carry';
 import { conflictCount, parseConflicts } from '../lib/conflict-blocks';
 import { holdsResolverLines } from '../lib/conflict-diff';
@@ -1426,7 +1427,16 @@ export function createConflictResolutionService(deps: Deps) {
       }
       // Nothing carried over: keep the fresh merge, with any remembered resolution.
       const stale = result.file.modelStale;
-      const file = result.reused ? result.file : { ...next, resolved: false, ...(stale ? { modelStale: stale } : {}) };
+      // Nothing carried: a conflict the earlier draft had too gets no fresh proposal put in (#528).
+      const fresh = old && !old.unsupported && !next.unsupported ? withoutEarlierConflicts(old, next) : undefined;
+      const file = result.reused
+        ? result.file
+        : {
+            ...next,
+            ...(fresh !== undefined ? { result: fresh } : {}),
+            resolved: false,
+            ...(stale ? { modelStale: stale } : {}),
+          };
       carried.push(file);
       if (!file.resolved) {
         reopened.push(file.path);
@@ -1484,11 +1494,8 @@ export function createConflictResolutionService(deps: Deps) {
           file.proposals = old.proposals;
           // Only the proposals the old draft held. One stored beside it (the reopen pass, or a reset after a
           // suggestion) was never applied, and a base move doesn't apply it either (#451).
-          const held = blockResolutions(parseConflicts(old.original), old.result);
-          file.result = withProposals(
-            file.original,
-            old.proposals.map((proposal, index) => (proposal && held?.[index] === proposal.text ? proposal : null))
-          );
+          const held = heldProposals(parseConflicts(old.original), old.result, old.proposals);
+          file.result = withProposals(file.original, held ?? []);
           file.source = old.source;
         }
         return false;
