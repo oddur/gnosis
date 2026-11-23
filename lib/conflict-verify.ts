@@ -22,7 +22,6 @@ import {
   type TypeErrorMark,
 } from './conflict-resolution';
 import { commaUnion, keepsLayout, orderFree, unionNote, unionOf } from './conflict-union';
-export { keepsLayout } from './conflict-union';
 import {
   definitionChain,
   syntaxLanguage,

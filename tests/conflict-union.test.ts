@@ -5,7 +5,9 @@ import { test } from 'node:test';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { withProposals } from '../lib/conflict-carry';
-import { layoutMerge, sameTokens, unionNote, unionOf, withUnions } from '../lib/conflict-union';
+import { keepsLayout, layoutMerge, sameTokens, unionNote, unionOf, withUnions } from '../lib/conflict-union';
+import { assertPerf } from './perf-budget';
+import type { SyntaxLanguage } from '../lib/syntax-scope';
 import {
   blockBuckets,
   NOT_SAME,
@@ -330,25 +332,25 @@ const TRAPS: [string, string, [string, string, string], string][] = [
 
 void test('the same change in another layout is a candidate; a different token, order or spacing is not', () => {
   assert.equal(
-    sameTokens('f(a, { retries: 3 }, "json");\n', "f(\n  a,\n  { retries: 3 },\n  'json',\n);\n", false),
+    sameTokens('f(a, { retries: 3 }, "json");\n', "f(\n  a,\n  { retries: 3 },\n  'json',\n);\n", 'typescript'),
     true
   );
-  assert.equal(sameTokens('x = ["a", "b"]\n', 'x = [\n    "a",\n    "b",\n]\n', true), true);
+  assert.equal(sameTokens('x = ["a", "b"]\n', 'x = [\n    "a",\n    "b",\n]\n', 'python'), true);
   // Traps: one token, a string's content, a number, the order, a space inside a string.
-  assert.equal(sameTokens('f(a, true);\n', 'f(\n  a,\n  false\n);\n', false), false);
-  assert.equal(sameTokens("f('hey');\n", "f('hey!');\n", false), false);
-  assert.equal(sameTokens('x = [30]\n', 'x = [\n    300,\n]\n', true), false);
-  assert.equal(sameTokens('f(a, b);\n', 'f(\n  b,\n  a\n);\n', false), false);
-  assert.equal(sameTokens('x = ["beta gamma"]\n', 'x = ["beta  gamma"]\n', true), false);
+  assert.equal(sameTokens('f(a, true);\n', 'f(\n  a,\n  false\n);\n', 'typescript'), false);
+  assert.equal(sameTokens("f('hey');\n", "f('hey!');\n", 'typescript'), false);
+  assert.equal(sameTokens('x = [30]\n', 'x = [\n    300,\n]\n', 'python'), false);
+  assert.equal(sameTokens('f(a, b);\n', 'f(\n  b,\n  a\n);\n', 'typescript'), false);
+  assert.equal(sameTokens('x = ["beta gamma"]\n', 'x = ["beta  gamma"]\n', 'python'), false);
   // Python: a line's indentation outside brackets is meaning, not layout.
-  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', true), false);
-  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', false), true);
+  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', 'python'), false);
+  assert.equal(sameTokens('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', 'typescript'), true);
   // Inside a string or comment, brackets, commas and line breaks are content.
-  assert.equal(sameTokens("f('a,)');\n", "f('a)');\n", false), false);
-  assert.equal(sameTokens('f(`a\n  b`);\n', 'f(`a\nb`);\n', false), false);
-  assert.equal(sameTokens('f(a); // x, )\n', 'f(a); // x )\n', false), false);
-  assert.equal(sameTokens('f(a); /* (\n */\n', 'f(a); /* ( */\n', false), false);
-  assert.equal(sameTokens('x = "a, )"\n', "x = 'a )'\n", true), false);
+  assert.equal(sameTokens("f('a,)');\n", "f('a)');\n", 'typescript'), false);
+  assert.equal(sameTokens('f(`a\n  b`);\n', 'f(`a\nb`);\n', 'typescript'), false);
+  assert.equal(sameTokens('f(a); // x, )\n', 'f(a); // x )\n', 'typescript'), false);
+  assert.equal(sameTokens('f(a); /* (\n */\n', 'f(a); /* ( */\n', 'typescript'), false);
+  assert.equal(sameTokens('x = "a, )"\n', "x = 'a )'\n", 'python'), false);
 });
 
 void test('preparation proposes the PR’s version where both sides may have made the same change, with a grammar', () => {
@@ -465,9 +467,11 @@ void test('one side only reformatted, the other edited: the edit in the reformat
   const wrapped = '  return combine(\n    value,\n    total,\n    4,\n  );\n';
   const edited = '  return combine(value, total, 5);\n';
   const want = '  return combine(\n    value,\n    total,\n    5,\n  );\n';
-  // Either side may be the one that reformatted; the result is always the edit in its layout.
-  assert.equal(layoutMerge({ base: one, ours: wrapped, theirs: edited }, false), want);
-  assert.equal(layoutMerge({ base: one, ours: edited, theirs: wrapped }, false), want);
+  const merge = (base: string, ours: string, theirs: string, language: SyntaxLanguage = 'typescript') =>
+    layoutMerge({ base, ours, theirs }, language);
+  // Either side may be the one that reformatted; the result is always the edit in its layout, and says whose it is.
+  assert.deepEqual(merge(one, wrapped, edited), { text: want, formatted: 'ours' });
+  assert.deepEqual(merge(one, edited, wrapped), { text: want, formatted: 'theirs' });
   for (const [ours, theirs] of [
     [wrapped, edited],
     [edited, wrapped],
@@ -479,26 +483,43 @@ void test('one side only reformatted, the other edited: the edit in the reformat
     assert.deepEqual(blockBuckets(f, f.result, verdict), ['merged']);
   }
   // Spacing, quote marks and an edit that inserts tokens: the new tokens keep the editing side's own spacing.
-  assert.equal(
-    layoutMerge({ base: 'f("a", b)\n', ours: "f( 'a', b )\n", theirs: 'f("a", b, c)\n' }, false),
-    "f( 'a', b, c )\n"
-  );
+  assert.equal(merge('f("a", b)\n', "f( 'a', b )\n", 'f("a", b, c)\n')?.text, "f( 'a', b, c )\n");
+  // After a deletion, the next token keeps the editing side's spacing: words are never joined.
+  assert.equal(merge('return (a) + b;\n', 'return ( a ) +\n  b;\n', 'return a + b;\n')?.text, 'return a +\n  b;\n');
+  assert.equal(merge('f(typeof (x));\n', 'f( typeof (x) );\n', 'f(typeof x);\n')?.text, 'f( typeof x);\n');
   // Not this rule: both sides changed code, both only reformatted, or the edit is where the reformat added a comma.
-  assert.equal(layoutMerge({ base: one, ours: edited, theirs: one.replace('4', '6') }, false), undefined);
-  assert.equal(layoutMerge({ base: one, ours: wrapped, theirs: one.replace('(', '( ') }, false), undefined);
-  assert.equal(layoutMerge({ base: 'f(a)\n', ours: 'f(\n  a,\n)\n', theirs: 'f(a, b)\n' }, false), undefined);
+  assert.equal(merge(one, edited, one.replace('4', '6')), undefined);
+  assert.equal(merge(one, wrapped, one.replace('(', '( ')), undefined);
+  assert.equal(merge('f(a)\n', 'f(\n  a,\n)\n', 'f(a, b)\n'), undefined);
   // Inside a string or comment every character counts: a changed space there is code, not layout.
-  assert.equal(
-    layoutMerge({ base: 'f("a b", 1)\n', ours: 'f("a  b", 1)\n', theirs: 'f("a b", 2)\n' }, false),
-    undefined
-  );
+  assert.equal(merge('f("a b", 1)\n', 'f("a  b", 1)\n', 'f("a b", 2)\n'), undefined);
   // In Python, a line's indentation outside brackets is code.
   assert.equal(
-    layoutMerge(
-      { base: 'if a:\n    b()\nc()\n', ours: 'if a:\n    b()\n    c()\n', theirs: 'if a:\n    b(1)\nc()\n' },
-      true
-    ),
+    merge('if a:\n    b()\nc()\n', 'if a:\n    b()\n    c()\n', 'if a:\n    b(1)\nc()\n', 'python'),
     undefined
+  );
+  // ' and " are the same string only where the language says so: in Go and Rust they are different tokens.
+  assert.ok(merge('f("a", 1)\n', "f('a', 1)\n", 'f("a", 2)\n', 'python'));
+  assert.equal(merge('f("a", 1)\n', "f('a', 1)\n", 'f("a", 2)\n', 'go'), undefined);
+  assert.equal(merge('f("a", 1)\n', "f('a', 1)\n", 'f("a", 2)\n', 'rust'), undefined);
+  // A Rust lifetime is not a string: what follows it is still code, so its spacing is layout.
+  assert.deepEqual(
+    merge(
+      "fn f<'a>(x: &'a T, n: u8) {}\n",
+      "fn f<'a>(\n    x: &'a T,\n    n: u8,\n) {}\n",
+      "fn f<'a>(x: &'a T, n: u16) {}\n",
+      'rust'
+    ),
+    {
+      text: "fn f<'a>(\n    x: &'a T,\n    n: u16,\n) {}\n",
+      formatted: 'ours',
+    }
+  );
+  // JavaScript's # is a private name, not a comment; Python's // is floor division, not a comment.
+  assert.equal(merge('f(this.#a, 1);\n', 'f( this.#a, 1 );\n', 'f(this.#a, 2);\n')?.text, 'f( this.#a, 2 );\n');
+  assert.equal(
+    merge('f(a // b, 1)\n', 'f(\n    a // b,\n    1,\n)\n', 'f(a // b, 2)\n', 'python')?.text,
+    'f(\n    a // b,\n    2,\n)\n'
   );
   // A proposal the trees don't confirm is taken back: the conflict is yours to decide.
   const trap = conflict('src/x.ts', ['function f(value: number, total: number) {\n', [wrapped, one, edited], '}\n']);
@@ -510,20 +531,39 @@ void test('one side only reformatted, the other edited: the edit in the reformat
   assert.equal(back.proposals, undefined);
 });
 
-void test('the layout rule replaces structural merge’s proposal only when that one lost the reformatted layout', () => {
+void test('the layout rule takes structural merge’s place only when that one lost the layout, and gives it back', async () => {
   const block: [string, string, string] = ['  g(\n    1,\n  );\n', '  g(1);\n', '  g(2);\n'];
-  const lost = conflict('src/x.ts', ['function f() {\n', block, '}\n'], [{ source: 'mergiraf', text: '  g(2);\n' }]);
-  assert.deepEqual(lost.proposals, [{ source: 'layout', text: '  g(\n    2,\n  );\n' }]);
-  const kept = conflict(
-    'src/x.ts',
-    ['function f() {\n', block, '}\n'],
-    [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]
-  );
+  const file = (proposal: ConflictProposal) => conflict('src/x.ts', ['function f() {\n', block, '}\n'], [proposal]);
+  const lost = file({ source: 'mergiraf', text: '  g(2);\n' });
+  assert.deepEqual(lost.proposals, [{ source: 'layout', text: '  g(\n    2,\n  );\n', instead: '  g(2);\n' }]);
+  // Structural merge's proposal that keeps the layout, and a remembered resolution, stay as they are.
+  const kept = file({ source: 'mergiraf', text: '  g(\n    2,\n  );\n' });
   assert.deepEqual(kept.proposals, [{ source: 'mergiraf', text: '  g(\n    2,\n  );\n' }]);
-  const remembered = conflict(
-    'src/x.ts',
-    ['function f() {\n', block, '}\n'],
-    [{ source: 'rerere', text: '  g(3);\n' }]
-  );
-  assert.deepEqual(remembered.proposals, [{ source: 'rerere', text: '  g(3);\n' }]);
+  assert.deepEqual(file({ source: 'rerere', text: '  g(3);\n' }).proposals, [{ source: 'rerere', text: '  g(3);\n' }]);
+  // When the checks don't Merge the rule's proposal, structural merge's is offered again (Check), the file keeps its
+  // source and gets no "couldn't combine" note.
+  const back = withoutUnconfirmed(lost, undefined);
+  assert.ok(back);
+  assert.deepEqual(back.proposals, [{ source: 'mergiraf', text: '  g(2);\n' }]);
+  assert.equal(back.result, lost.original);
+  assert.equal(back.source, 'mergiraf');
+  assert.equal(back.structuralNote, undefined);
+  const again = { ...lost, ...back };
+  assert.deepEqual(blockBuckets(again, again.result, await conflictChecker(engine)(again)), ['check']);
+});
+
+void test('the layout rule stays fast on a 2000-line block, and gives up past its limits', () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => `  total = combine(total, value${i}, ${i});\n`);
+  const base = lines.join('');
+  const wrapped = lines.map((l) => l.replace('combine(', 'combine( ').replace(');', ' );')).join('');
+  const edited = base.replace('value1000, 1000', 'value1000, 1001');
+  const many = lines.map((l, i) => (i % 2 ? l.replace(/(\d+)\);/, '$1 + 1);') : l)).join('');
+  const started = performance.now();
+  const near = layoutMerge({ base, ours: wrapped, theirs: edited }, 'typescript');
+  const far = layoutMerge({ base, ours: wrapped, theirs: many }, 'typescript');
+  const sides = { base, edited, formatted: wrapped };
+  assert.ok(near && keepsLayout(sides, near.text));
+  assert.equal(far, undefined, 'Too many edits to compare: no proposal');
+  assert.equal(keepsLayout({ base, edited: many, formatted: wrapped }, many), false);
+  assertPerf('layout rule, 2000-line block', performance.now() - started, 1000);
 });
