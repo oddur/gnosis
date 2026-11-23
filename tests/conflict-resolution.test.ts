@@ -2073,6 +2073,14 @@ void test('a reopen keeps a shown move proposal when the move rule can’t run a
   const reopened = (await f.run({ kind: 'open', url: f.state.url })).session;
   assert.equal(reopened.files[0].wholeFile?.text, resolved);
   assert.equal(asked, 0, 'The same three versions: the move rule is not run again');
+  // TypeScript turned off in Settings: the rule wouldn't run, so the kept proposal goes.
+  Object.assign(f.deps, { disabledLanguages: () => ['typescript'] });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
+  // A build without the move rule keeps none either.
+  Object.assign(f.deps, { disabledLanguages: () => [], moved: (file: ConflictFile, disabled: SyntaxLanguage[]) => moveProposer(movedEngine, disabled)(file) });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile?.source, 'moved');
+  Object.assign(f.deps, { moved: undefined });
+  assert.equal((await f.run({ kind: 'open', url: f.state.url })).session.files[0].wholeFile, undefined);
 });
 
 void test('Load latest gives a draft you changed no new move proposal (#487)', async (t) => {

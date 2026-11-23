@@ -1251,15 +1251,21 @@ export function createConflictResolutionService(deps: Deps) {
     const moves = new Map<ConflictFile, ConflictProposal>();
     for (const file of queue) {
       const moved = wholeFileFrom(file, 'moved');
-      if (moved) moves.set(file, moved);
-      if (moved) delete file.wholeFile;
+      if (moved) {
+        moves.set(file, moved);
+        delete file.wholeFile;
+      }
     }
-    /** The move rule on one file structural merge is done with. */
-    const afterStructural = async (file: ConflictFile) => {
+    /**
+     * The move rule on one file structural merge is done with. A kept proposal comes back only while the rule would
+     * still run on the file: this build has it, and its language is on in Settings (`mayHaveMove`). Otherwise it goes.
+     */
+    async function afterStructural(file: ConflictFile) {
       const kept = moves.get(file);
-      if (!kept) return proposeMoves([file], signal);
-      if (!file.wholeFile && !file.proposals && file.result === file.original) file.wholeFile = kept;
-    };
+      if (!kept) await proposeMoves([file], signal);
+      else if (deps.moved && !moveTaken(file) && mayHaveMove(file, deps.disabledLanguages?.() ?? []))
+        file.wholeFile = kept;
+    }
     // A development build without `npm run prepare:mergiraf` has no binary: the conflicts stay as Git wrote them.
     if (!(await exists(deps.mergiraf()))) {
       for (const file of queue) {
@@ -1304,27 +1310,41 @@ export function createConflictResolutionService(deps: Deps) {
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
-    /** Four files at a time. A file that runs out of time goes on `late`; the move rule runs on each other one. */
-    const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
+    /**
+     * Four files at a time. A file that runs out of time goes on `late`; each other one goes to `done`, which runs the
+     * move rule on it.
+     */
+    const pool = async (
+      files: ConflictFile[],
+      budget: () => number,
+      late: ConflictFile[],
+      done: (file: ConflictFile) => Promise<void>
+    ) => {
       const work = async () => {
         for (let file = files.shift(); file; file = files.shift())
           if (budget() <= 0 || !(await propose(file, budget()))) late.push(file);
-          else await afterStructural(file);
+          else await done(file);
       };
       await Promise.all([work(), work(), work(), work()]);
     };
     const late: ConflictFile[] = [];
-    // The pool takes files off the list it is given.
-    await pool([...queue], () => first, late);
-    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
+    // The pool takes files off the list it is given. Each file has its own first budget: the move rule runs as each
+    // finishes.
+    await pool([...queue], () => first, late, afterStructural);
+    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening. The
+    // move rule waits until the pool is done, so its time never comes out of that shared limit.
     const deadline = Date.now() + cap;
     const failed: ConflictFile[] = [];
-    await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
+    const retried: ConflictFile[] = [];
+    await pool(late, () => Math.min(retry, deadline - Date.now()), failed, (file) => {
+      retried.push(file);
+      return Promise.resolve();
+    });
     for (const file of failed) {
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
-      await afterStructural(file);
     }
+    for (const file of [...retried, ...failed]) await afterStructural(file);
     return files;
   }
   /**
@@ -1334,19 +1354,19 @@ export function createConflictResolutionService(deps: Deps) {
    * changed draft gets none, and nothing of the file is changed but `wholeFile`. Its note ("Structural merge timed
    * out.") stays, and so does "Try structural merge again".
    */
+  /** Something else already stands for the file: a proposal, or a draft that is not Git's conflict. */
+  const moveTaken = (file: ConflictFile) => !!file.wholeFile || !!file.proposals || file.result !== file.original;
   async function proposeMoves(files: ConflictFile[], signal: AbortSignal) {
     if (!deps.moved) return;
     const disabled = deps.disabledLanguages?.() ?? [];
-    /** Something else already stands for the file: a proposal, or a draft that is not Git's conflict. */
-    const taken = (file: ConflictFile) => !!file.wholeFile || !!file.proposals || file.result !== file.original;
     for (const file of files) {
       signal.throwIfAborted();
-      if (taken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
+      if (moveTaken(file) || file.source === 'rerere' || !mayHaveMove(file, disabled)) continue;
       const proposal = await deps.moved(file, disabled, signal);
       signal.throwIfAborted();
       if (proposal?.source !== 'moved' || hasConflictMarkers(proposal.text)) continue;
       // The file may have changed while the worker read it.
-      if (!taken(file)) file.wholeFile = proposal;
+      if (!moveTaken(file)) file.wholeFile = proposal;
     }
   }
   async function preparation(
