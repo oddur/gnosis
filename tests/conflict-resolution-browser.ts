@@ -121,11 +121,16 @@ void app.whenReady().then(async () => {
   const pushButton = () => js(`(${visibleButton('Push merge commit')}).focus()`);
   const calls = (kind: string) => js<number>(`window.conflictCalls.filter(r=>r.kind===${JSON.stringify(kind)}).length`);
   const dir = path.resolve('.impeccable/review/conflict-resolution');
+  // GNOSIS_CONFLICT_SHOTS=<prefix>,<prefix>: the captures named so also print as `CONFLICTSHOT <name> <base64 PNG>`, for
+  // a run in Docker, whose files stay in the container.
+  const printed = (process.env.GNOSIS_CONFLICT_SHOTS ?? '').split(',').filter((prefix) => prefix && prefix !== '1');
   const capture = async (name: string) => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    const png = (await win.webContents.capturePage()).toPNG();
+    fs.writeFileSync(path.join(dir, `${name}.png`), png);
+    if (printed.some((prefix) => name.startsWith(prefix))) console.log(`CONFLICTSHOT ${name} ${png.toString('base64')}`);
   };
   const resize = async (width: number, height: number) => {
     win.setSize(width, height);
@@ -2347,6 +2352,36 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.conflictFixture.files[0].result'), mResolved);
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false, 'Using it does not review it');
     assert.equal(await publishes(), 0);
+    // Its push confirmation (#491): the note names the moved-code proposal, not structural merge. main renamed the file:
+    // only Arriving from main shows the rename. An empty file from main is empty, not binary.
+    const movedPreview = parsePatchFiles(
+      'diff --git a/src/price.ts b/src/pricing.ts\nsimilarity index 100%\nrename from src/price.ts\nrename to src/pricing.ts\n' +
+        'diff --git a/src/empty.ts b/src/empty.ts\nnew file mode 100644\nindex 0000000..e69de29\n'
+    ).flatMap((p) => p.files);
+    await js(`window.savedPreview=window.conflictPreview;window.conflictPreview=${JSON.stringify(movedPreview)}`);
+    await js("document.querySelector('[data-conflict-primary=mark-reviewed]').click()");
+    await wait("!!document.querySelector('.conflict-confirm [data-confirm-group=decided] [data-confirm-how]')");
+    const decidedNote = await js<string>("document.querySelector('[data-confirm-group=decided] [data-confirm-how]').textContent");
+    assert.match(decidedNote, /^You used the proposal for this file, where one side moved code and the other edited it\./);
+    assert.doesNotMatch(decidedNote, /structural merge/);
+    assert.equal(await js("document.querySelector('[data-confirm-group=decided] [data-confirm-how]').dataset.confirmHow"), 'whole-moved');
+    assert.equal(
+      await js("!!document.querySelector('[data-confirm-group=decided] .changes-file-header [data-renamed]')"),
+      false,
+      'You decided shows no rename: main made it'
+    );
+    await js("document.querySelector('[data-confirm-group=main] .conflict-disclosure').click()");
+    await wait(
+      "!!document.querySelector('[data-confirm-group=main] .conflict-diff-file[aria-label=\"src/empty.ts\"]') && !!document.querySelector('[data-confirm-group=main] .changes-file-header [data-renamed]')"
+    );
+    const arriving = await js<string>("document.querySelector('[data-confirm-group=main]').textContent");
+    assert.match(arriving, /src\/price\.ts/);
+    assert.match(arriving, /no line changes/);
+    assert.match(arriving, /Empty file added/);
+    assert.doesNotMatch(arriving, /Binary/);
+    await js("document.querySelector('[data-confirm-group=main]').scrollIntoView({block:'start'})");
+    await captureAll('confirm-moved-rename-empty');
+    await js('window.conflictPreview=window.savedPreview');
     await click('Close');
 
     // Review shots: with GNOSIS_CONFLICT_SHOTS set, print `CONFLICTSHOT <name> <base64 PNG>` for the states below.
