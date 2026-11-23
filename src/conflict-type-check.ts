@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import { realpath } from 'node:fs';
 import fs from 'node:fs/promises';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { inferChoices, parseConflicts, pickText } from '../lib/conflict-blocks';
 import type { ConflictFile, ConflictSession, ConflictTypeCheck } from '../lib/conflict-resolution';
@@ -165,6 +167,40 @@ function compilerEnvironment(): NodeJS.ProcessEnv {
 }
 
 /**
+ * A path as one comparable string: absolute, forward slashes, and on Windows (`api` is `path.win32`) lower case, since
+ * its file system ignores case and drive letters come in either.
+ */
+export function comparablePath(value: string, api: typeof path = path) {
+  const absolute = api.resolve(value).replaceAll('\\', '/').replace(/\/+$/, '');
+  return api.sep === '\\' ? absolute.toLowerCase() : absolute;
+}
+/**
+ * Where a file the compiler names is, given its worktree (`cwd`): relative to the worktree with forward slashes, under a
+ * labelled root (`<clone>/…`), or undefined when it is in none of the roots. The compiler may name a file relative to
+ * a real path the worktree's own path doesn't spell, such as a long Windows name for a short one (`RUNNER~1`) or
+ * another drive: the file is resolved and compared as an absolute path, never as a relative string.
+ */
+export function placeFile(file: string, cwd: string, roots: readonly [string, string][], api: typeof path = path) {
+  const absolute = api.resolve(cwd, file).replaceAll('\\', '/');
+  const key = comparablePath(absolute, api);
+  const ordered = roots
+    .filter(([root]) => root)
+    .map(([root, label]) => [comparablePath(root, api), label] as const)
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const [root, label] of ordered) {
+    if (key === root) return label;
+    if (!key.startsWith(`${root}/`)) continue;
+    const rest = absolute.slice(root.length + 1);
+    return label ? `${label}/${rest}` : rest;
+  }
+  return undefined;
+}
+/** The file system's own name for a path, such as a Windows long name for a short one. */
+const nativeRealpath = promisify(realpath.native);
+/** A file a diagnostic names outside the worktree and your clone: it can't be compared, so the run doesn't check. */
+export const outsideTree = (file: string) => `an error is in a file outside this tree (${file})`;
+
+/**
  * Diagnostics without the folder they were checked in: the merge and the PR head are checked in different worktrees,
  * and a message that names an absolute path must read the same in both. `roots` are replaced by `''` (the worktree) or
  * their label.
@@ -231,13 +267,24 @@ async function compile(
   );
   // tsc ends every line it writes; output that stops mid-line was cut off.
   if (result.stdout && !result.stdout.endsWith('\n')) throw new TypeCheckSkipped(INCOMPLETE);
-  const roots: [string, string][] = [
-    [cwd, ''],
-    [await fs.realpath(cwd).catch(() => cwd), ''],
-    [clone, '<clone>'],
-    [await fs.realpath(clone).catch(() => clone), '<clone>'],
+  // Each root as given, as Node resolves it, and as the file system names it (a Windows short name expanded).
+  const spellings = async (root: string) => [
+    root,
+    await fs.realpath(root).catch(() => root),
+    await nativeRealpath(root).catch(() => root),
   ];
-  const diagnostics = withoutRoots(parseDiagnostics(result.stdout), roots);
+  const roots: [string, string][] = [
+    ...(await spellings(cwd)).map((root): [string, string] => [root, '']),
+    ...(await spellings(clone)).map((root): [string, string] => [root, '<clone>']),
+  ];
+  const strip = rootStripper(roots);
+  const diagnostics = parseDiagnostics(result.stdout).map((d) => {
+    if (!d.file) return { ...d, message: strip(d.message) };
+    const file = placeFile(d.file, cwd, roots);
+    // Never excused, never compared: a location this run can't name.
+    if (file === undefined) throw new TypeCheckUnchecked(outsideTree(d.file).slice(0, 200));
+    return { ...d, file, message: strip(d.message) };
+  });
   // 0: no errors, and none written. 1 and 2: errors, each written. Anything else, or a code that doesn't match the
   // output, is a compiler that didn't run as expected.
   if (result.code > 2) throw new TypeCheckSkipped(`couldn’t run: the type checker exited with ${result.code}`);
@@ -250,11 +297,10 @@ async function compile(
       `${blocking.code}${blocking.file ? ` in ${blocking.file}` : ''}: ${blocking.message}`.slice(0, 200)
     );
   // The files the project checked: absolute paths in the worktree, outside node_modules.
-  const strip = rootStripper(roots);
   const own = result.stdout.split(/\r?\n/).filter((line) => {
     if (!path.isAbsolute(line)) return false;
-    const relative = strip(line);
-    return relative !== line && !relative.startsWith('<clone>') && !/(^|\/)node_modules\//.test(relative);
+    const relative = placeFile(line, cwd, roots);
+    return relative !== undefined && !relative.startsWith('<clone>') && !/(^|\/)node_modules\//.test(relative);
   });
   if (!own.length) throw new TypeCheckSkipped(REFERENCES);
   return diagnostics;
@@ -272,13 +318,21 @@ async function adminFolder(worktree: string) {
   return owner === undefined ? undefined : { admin, owner };
 }
 /**
+ * Whether two `gitdir` files name the same worktree: trimmed (a line break, CRLF), and compared as paths, so `C:/…` and
+ * `C:\\…` or another case of a Windows path are the same.
+ */
+export function sameGitdir(a: string, b: string, api: typeof path = path) {
+  return comparablePath(a.trim(), api) === comparablePath(b.trim(), api);
+}
+/**
  * Removes a worktree's entry in the session repository by hand, only while it is still this worktree's. Git names the
  * entry after the folder (`worktrees/merge`), so after Start over a new run's worktree can have the same entry: its
  * `gitdir` names another folder, and it stays.
  */
 async function removeOwnAdmin({ admin, owner }: { admin: string; owner: string }) {
   if (path.basename(path.dirname(admin)) !== 'worktrees') return;
-  if ((await fs.readFile(path.join(admin, 'gitdir'), 'utf8').catch(() => undefined)) !== owner) return;
+  const now = await fs.readFile(path.join(admin, 'gitdir'), 'utf8').catch(() => undefined);
+  if (now === undefined || !sameGitdir(now, owner)) return;
   await fs.rm(admin, { recursive: true, force: true }).catch(() => undefined);
 }
 /**
@@ -427,8 +481,15 @@ async function linkModules(worktree: string, modules: string, packages: Readonly
 function unresolvedWorkspace(diagnostics: readonly TypeDiagnostic[], linked: ReadonlyMap<string, string>) {
   for (const d of diagnostics) {
     if (d.code !== 'TS2307' && d.code !== 'TS7016') continue;
+    // Case and separators as the file system compares them: `d.file` and `folder` are both relative to the worktree.
+    const file = d.file?.replaceAll('\\', '/');
+    const fold = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value);
     for (const [name, folder] of linked)
-      if (d.file?.startsWith(`${folder}/`) || d.message.includes(`'${name}'`) || d.message.includes(`'${name}/`))
+      if (
+        (file !== undefined && fold(file).startsWith(`${fold(folder)}/`)) ||
+        d.message.includes(`'${name}'`) ||
+        d.message.includes(`'${name}/`)
+      )
         return name;
   }
   return undefined;

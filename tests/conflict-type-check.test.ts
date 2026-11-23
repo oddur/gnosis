@@ -17,6 +17,9 @@ import {
   typeCheckMerge,
   withoutRoots,
   workspaceNoTypes,
+  comparablePath,
+  placeFile,
+  sameGitdir,
   workspaceRoot,
   workspaceUnresolved,
   NOT_SUPPORTED,
@@ -1047,10 +1050,39 @@ void test('type check: cleanup never removes a newer run’s worktree entry of t
     signal: new AbortController().signal,
   });
   assert.equal(status.state, 'passed');
+  // Git lists worktrees with forward slashes, Windows paths included.
   const { stdout } = await exec('git', ['worktree', 'list', '--porcelain'], { cwd: repo });
-  assert.ok(stdout.includes(`worktree ${await fs.realpath(newer)}`), stdout);
-  assert.ok(
-    (await fs.stat(path.join(repo, '.git', 'worktrees', 'merge', 'gitdir'))).isFile(),
-    'The newer run keeps its entry'
-  );
+  const listed = stdout.split(/\r?\n/).flatMap((line) => (line.startsWith('worktree ') ? [comparablePath(line.slice(9))] : []));
+  assert.ok(listed.includes(comparablePath(await fs.realpath(newer))), stdout);
+  // The newer run's own entry, wherever Git put it, is still there and still names it.
+  const pointer = /^gitdir:\s*(.+)$/m.exec(await fs.readFile(path.join(newer, '.git'), 'utf8'));
+  assert.ok(pointer);
+  const admin = path.resolve(newer, pointer[1].trim());
+  assert.ok((await fs.stat(path.join(admin, 'gitdir'))).isFile(), 'The newer run keeps its entry');
+});
+
+void test('type check: paths compare as the file system does, on Windows too (#523)', () => {
+  const win = path.win32;
+  const roots: [string, string][] = [
+    ['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\gnosis-type-check-1\\merge', ''],
+    ['C:\\Users\\runneradmin\\AppData\\Local\\Temp\\gnosis-type-check-1\\merge', ''],
+    ['D:\\a\\clone', '<clone>'],
+  ];
+  const cwd = roots[0][0];
+  // tsc names the file relative to the long name the short one stands for: a climb out and back in.
+  const climbed = '../../../../../../runneradmin/AppData/Local/Temp/gnosis-type-check-1/merge/packages/util/index.ts';
+  assert.equal(placeFile(climbed, cwd, roots, win), 'packages/util/index.ts');
+  // Another case, backslashes, an absolute path, and a lower-case drive letter: the same file.
+  assert.equal(placeFile('c:\\users\\RUNNERADMIN\\appdata\\local\\temp\\gnosis-type-check-1\\merge\\Sample.ts', cwd, roots, win), 'Sample.ts');
+  assert.equal(placeFile('D:/a/clone/node_modules/x/index.d.ts', cwd, roots, win), '<clone>/node_modules/x/index.d.ts');
+  // Outside every root, also on another drive: no place, never a relative climb.
+  assert.equal(placeFile('E:/elsewhere/x.ts', cwd, roots, win), undefined);
+  assert.equal(placeFile('../../outside.ts', cwd, roots, win), undefined);
+  // POSIX keeps case.
+  assert.equal(placeFile('/w/merge/A.ts', '/w/merge', [['/w/merge', '']], path.posix), 'A.ts');
+  assert.equal(placeFile('/W/merge/A.ts', '/w/merge', [['/w/merge', '']], path.posix), undefined);
+  // A worktree's gitdir file: trimmed, either separator, any case on Windows.
+  assert.ok(sameGitdir('C:/Temp/run/merge/.git\n', 'c:\\temp\\run\\merge\\.git\r\n', win));
+  assert.ok(!sameGitdir('C:/Temp/run/merge/.git', 'C:/Temp/newer/merge/.git', win));
+  assert.ok(!sameGitdir('/tmp/Run/merge/.git', '/tmp/run/merge/.git', path.posix));
 });
