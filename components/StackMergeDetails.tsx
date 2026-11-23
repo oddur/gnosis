@@ -5,6 +5,7 @@ import { stackMemberStatus } from '../lib/stack-member-status';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import type { ReviewMember } from '../lib/workbench';
 import { PrActions } from './PrActions';
+import { ActionToggle, UpdateMenu } from './PrActionControls';
 import { StackCheckRerun } from './StackCheckRerun';
 
 /** Facts and remedies belong to the same PR; optional checks never join its blocker list. */
@@ -73,20 +74,12 @@ export function StackMemberDetails({
                   <PrActions
                     member={member}
                     onChanged={onRefresh}
-                    trigger={(open, busy) =>
+                    trigger={(open, busy, quick) =>
+                      // The header's controls (#542): Draft is a toggle that acts at once; Update is one menu.
                       blocker.key === 'draft' ? (
-                        <button disabled={busy} onClick={() => open('mark-ready')}>
-                          Mark ready for review…
-                        </button>
+                        <ActionToggle size="xs" label="Draft" checked busy={busy} onToggle={() => quick('mark-ready')} />
                       ) : (
-                        <>
-                          <button disabled={busy} onClick={() => open('update-merge')}>
-                            Update with merge…
-                          </button>
-                          <button disabled={busy} onClick={() => open('update-rebase')}>
-                            Update with rebase…
-                          </button>
-                        </>
+                        <UpdateMenu size="xs" busy={busy} baseBranch={member.baseBranch} headBranch={member.headBranch} onUpdate={open} />
                       )
                     }
                   />

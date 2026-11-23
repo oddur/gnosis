@@ -6194,3 +6194,87 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-timeline .github-comment-body { font-size:var(--type-prose); }
 .timeline-title .entity-badge.github-author, .conversation-description-header .entity-badge.github-author { font-size:inherit; font-weight:650; }
 .band-readiness .merge-readiness-badge { font-size:var(--type-body); font-weight:650; }
+
+/* The PR header (#542): two rows. Row 1 is the title with its star, snooze and ⋯, then the PR's facts, readiness and
+   review status on the right; they drop under the title when the header is short of room, and the title truncates
+   last. Row 2 is the tabs with every action right-aligned. Actions that do not fit go to ⋯, Merge and Review last. */
+.pr-overview-heading { container-type:inline-size; padding:10px var(--pr-frame-inset) 8px; }
+.pr-heading-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px 20px; min-width:0; }
+.pr-heading-row .pr-title-with-star { flex:0 1 auto; min-width:0; max-width:100%; align-items:center; gap:2px; }
+.pr-heading-row h1 { display:flex; align-items:center; gap:8px; min-width:0; margin-right:4px; font-size:var(--type-panel-title); line-height:1.4; }
+.pr-heading-row .pr-title-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pr-heading-row .pr-star-button, .pr-heading-row .entry-star-marker { margin-top:0; }
+.pr-heading-meta { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px 12px; margin-left:auto; min-width:0; }
+.pr-heading-meta .pr-summary-context { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; margin:0; }
+@container (max-width:1100px) { .pr-heading-meta { flex-basis:100%; justify-content:flex-start; margin-left:0; } }
+.pr-summary-page.is-stack .pr-heading-row .pr-title-with-star { flex-wrap:nowrap; }
+.pr-summary-page.is-stack .pr-heading-row .pr-actions-stack { margin-left:8px; }
+
+/* The readiness chip opens the full verdict: its sentences, the checks, and when Gnosis last checked. */
+.merge-readiness-chip { padding:3px 6px 3px 7px; border-radius:4px; line-height:20px; background:color-mix(in srgb, currentColor 9%, var(--background)); cursor:pointer; }
+.merge-readiness-chip.is-success { background:var(--status-success-bg); }
+.merge-readiness-chip.is-danger { background:var(--status-danger-bg); }
+.merge-readiness-chip.is-warning { background:var(--status-warning-bg); }
+.merge-readiness-chip:hover { box-shadow:inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent); }
+.merge-readiness-chip:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.merge-readiness-chip[data-state=open] .merge-readiness-chevron { transform:rotate(180deg); }
+.merge-readiness-chip .merge-readiness-blocked { font-weight:500; }
+.readiness-popover { z-index:60; display:grid; gap:10px; width:min(380px, calc(100vw - 24px)); padding:14px 16px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:6px; box-shadow:0 8px 24px -8px rgb(0 0 0 / .25); font-size:var(--type-control); line-height:1.55; }
+.readiness-popover:focus-visible { outline:none; }
+.readiness-popover > .merge-readiness-badge { font-size:var(--type-control); }
+.readiness-popover ul { display:grid; gap:4px; margin:0; padding:0; list-style:none; overflow-wrap:anywhere; }
+.readiness-popover-checks { display:grid; gap:6px; padding-top:10px; border-top:1px solid var(--border); }
+.readiness-popover-checks li { display:flex; justify-content:space-between; gap:12px; color:var(--muted-foreground); }
+.readiness-popover-checks li > span:first-child { color:var(--foreground); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.readiness-popover-checks [data-slot=button] { justify-self:start; height:auto; padding:0; }
+.readiness-popover-freshness { display:flex; flex-wrap:wrap; gap:4px 12px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.readiness-popover-freshness .pr-freshness { min-width:0; }
+.readiness-popover-link { color:var(--ring); font-size:var(--type-caption); text-decoration:underline; text-underline-offset:3px; justify-self:start; }
+
+.pr-workspace-navigation { flex-wrap:wrap; column-gap:20px; padding-right:var(--pr-frame-inset); }
+.pr-workspace-navigation .pr-overview-tabs { flex:1 0 auto; max-width:100%; }
+.pr-header-actions { display:flex; align-items:center; gap:8px; margin:0 0 0 auto; padding-block:6px; flex-shrink:0; }
+.pr-header-notes { flex-shrink:0; padding:0 var(--pr-frame-inset); }
+.pr-header-notes:empty { display:none; }
+.pr-header-notes > .pr-action-note, .pr-header-notes > .pr-action-error { margin:6px 0; }
+
+/* Toggles, split buttons and the Update menu (components/PrActionControls.tsx), on every surface with PR actions. */
+.pr-action-split { display:inline-flex; align-items:center; }
+.pr-action-split > [data-slot=button]:first-child:not(:only-child) { border-start-end-radius:0; border-end-end-radius:0; }
+.pr-action-split > [data-slot=button]:last-child:not(:only-child) { border-start-start-radius:0; border-end-start-radius:0; margin-left:-1px; }
+.pr-merge-split[data-primary] > .pr-action-chevron { margin-left:0; border-left:1px solid color-mix(in srgb, var(--primary-foreground) 35%, transparent); }
+.pr-merge-anchor { display:inline-flex; }
+.pr-action-chevron[data-size=icon-sm] { width:28px; }
+.pr-action-chevron[data-size=icon-xs] { width:20px; }
+.pr-action-toggle { gap:7px; }
+.pr-action-switch { position:relative; flex:none; width:24px; height:14px; border-radius:999px; background:color-mix(in srgb, var(--muted-foreground) 45%, transparent); transition:background-color .16s cubic-bezier(.16,1,.3,1); }
+.pr-action-switch::after { content:""; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:var(--background); transition:transform .16s cubic-bezier(.16,1,.3,1); }
+.pr-action-switch[data-checked] { background:var(--primary); }
+.pr-action-switch[data-checked]::after { transform:translateX(10px); }
+.pr-action-toggle[aria-busy=true] .pr-action-switch { background:color-mix(in srgb, var(--primary) 55%, transparent); }
+.pr-action-toggle-detail { color:var(--muted-foreground); font-weight:400; }
+[data-slot=button][data-unavailable] { opacity:.5; cursor:not-allowed; }
+[data-slot=button][data-unavailable]:hover { background:inherit; }
+.pr-action-split [data-slot=button][data-unavailable]:hover { background:var(--background); }
+.dark .pr-action-split [data-slot=button][data-unavailable]:hover { background:color-mix(in srgb, var(--input) 30%, transparent); }
+@media (prefers-reduced-motion: reduce) { .pr-action-switch, .pr-action-switch::after { transition:none; } }
+.pr-method-menu { width:min(240px, calc(100vw - 24px)); }
+.pr-method-menu-label { padding:6px 12px 4px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.pr-method-menu [role=menuitemradio] { display:flex; align-items:center; padding:8px 12px; outline:none; border-radius:4px; font-size:var(--type-control); cursor:default; }
+.pr-method-menu [role=menuitemradio][data-highlighted] { background:var(--accent); color:var(--accent-foreground); }
+.pr-method-menu [role=menuitemradio][data-state=checked] { font-weight:600; }
+.pr-method-menu [role=menuitemradio][data-state=checked]::after { content:"Current"; margin-left:auto; color:var(--muted-foreground); font-size:var(--type-caption); font-weight:400; }
+.stack-inline-actions .pr-actions [data-slot=button] { color:var(--foreground); text-decoration:none; }
+
+/* Merge's confirmation: short, beside the button. Enter confirms once GitHub's current state allows the merge. */
+.pr-merge-confirm { z-index:60; display:grid; gap:12px; width:min(400px, calc(100vw - 24px)); max-height:min(560px, calc(100vh - 80px)); overflow:auto; padding:16px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:6px; box-shadow:0 10px 30px -10px rgb(0 0 0 / .3); font-size:var(--type-control); }
+.pr-merge-confirm:focus-visible { outline:none; }
+.pr-merge-confirm h2 { font-size:var(--type-body); font-weight:650; line-height:1.4; }
+.pr-merge-confirm-description { margin-top:-8px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.pr-merge-confirm .pr-action-members { margin:0; }
+.pr-merge-confirm .pr-action-members li { padding-block:0 10px; }
+.pr-merge-confirm .pr-action-note { margin:0; display:block; }
+.pr-merge-confirm-footer { display:flex; justify-content:flex-end; gap:8px; }
+.pr-action-group { display:inline-flex; align-items:center; gap:8px; }
+/* A stack member's picker shares the row with the tabs, which scroll before they wrap under it. */
+.pr-workspace-navigation:has(.stack-scope-bar) .pr-overview-tabs { flex:1 1 0; min-width:240px; }

@@ -331,6 +331,23 @@ export function useChangesComments({
       </p>
     ) : null,
     draftCount: drafts.length,
+    /** For the PR header's Drafts and Review PR (#542), which act on this PR's drafts. */
+    header: {
+      draftCount: drafts.length,
+      draftsDisabled: !account || !snapshot,
+      reviewBlocked: stale.length
+        ? 'Some drafts refer to an earlier version. Open Drafts to copy or remove them first.'
+        : !writable
+          ? 'Connect GitHub and open a current, open PR to submit a review.'
+          : undefined,
+      toggleDrafts: () => setDraftsOpen((open) => !open),
+      openReview: () => {
+        if (stale.length) setDraftsOpen(true);
+        if (stale.length || !writable) return;
+        setTarget(snapshot);
+        setReviewOpen(true);
+      },
+    },
     annotations,
     renderAnnotation,
     renderThread,

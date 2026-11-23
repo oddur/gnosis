@@ -10,7 +10,7 @@ import type {
 import { chunked, mapBounded, settleInOrder } from '../lib/bounded';
 import { githubRateLimit } from '../lib/github-client';
 import { aliasedGraphql } from '../lib/github-graphql-batch';
-import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason } from '../lib/pr-actions';
+import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason, closeBlockedReason, reopenBlockedReason, deleteBranchBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
 const memberFields =
@@ -30,6 +30,7 @@ interface GraphMember {
 interface GraphPr extends GraphMember {
   id: string;
   headRepository: { nameWithOwner: string; viewerPermission?: string | null } | null;
+  headRef?: { id: string } | null;
   maintainerCanModify?: boolean;
   mergeable: string;
   mergeStateStatus: string;
@@ -65,7 +66,7 @@ interface GraphRepo {
 const PRS_PER_QUERY = 20;
 const repoFields =
   'nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed';
-const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+const prFields = `${memberFields} id headRepository{nameWithOwner viewerPermission} headRef{id} maintainerCanModify mergeable mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}
         viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
         stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}`;
 const writePermissions = ['WRITE', 'MAINTAIN', 'ADMIN'];
@@ -103,6 +104,7 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
       ? { headRepoCanWrite: writePermissions.includes(pr.headRepository.viewerPermission ?? '') }
       : {}),
     ...(pr.maintainerCanModify !== undefined ? { maintainerCanModify: pr.maintainerCanModify } : {}),
+    ...(pr.headRef !== undefined ? { headBranchExists: !!pr.headRef } : {}),
     repository: repo.nameWithOwner,
     archived: repo.isArchived,
     canWrite: writePermissions.includes(repo.viewerPermission ?? ''),
@@ -331,6 +333,8 @@ export function createPrActionsService(now = Date.now) {
         'mark-ready',
         'convert-draft',
         'close',
+        'reopen',
+        'delete-branch',
       ].includes(req.kind)
     )
       throw new Error('Unknown PR action.');
@@ -365,6 +369,29 @@ export function createPrActionsService(now = Date.now) {
         throw new Error(
           'This PR or stack changed since confirmation. Refresh the action and inspect the new revisions before continuing.'
         );
+      if (req.kind === 'reopen') {
+        const reason = reopenBlockedReason(state);
+        if (reason) throw new Error(reason);
+        const reopened = await client.graphql<{ reopenPullRequest: { pullRequest: { state: string } | null } | null }>(
+          'mutation($input:ReopenPullRequestInput!){reopenPullRequest(input:$input){pullRequest{state}}}',
+          { input: { pullRequestId: state.id } }
+        );
+        if (reopened.reopenPullRequest?.pullRequest?.state !== 'OPEN')
+          throw new Error('GitHub did not confirm that this PR reopened. Check it on GitHub before trying again.');
+        return { status: 'completed', message: `Reopened #${state.number}.` };
+      }
+      if (req.kind === 'delete-branch') {
+        const reason = deleteBranchBlockedReason(state);
+        if (reason) throw new Error(reason);
+        const [owner, repo] = (state.headRepo ?? '').split('/');
+        const ref = `heads/${state.headBranch}`;
+        // Commits pushed after the PR closed would go with the branch: delete it only while it is the PR's last commit.
+        const current = await client.request('GET /repos/{owner}/{repo}/git/ref/{ref}', { owner, repo, ref });
+        if (current.data.object.sha !== state.headSha)
+          throw new Error(`${state.headBranch} has commits this PR does not. Nothing was deleted; check the branch on GitHub.`);
+        await client.request('DELETE /repos/{owner}/{repo}/git/refs/{ref}', { owner, repo, ref });
+        return { status: 'completed', message: `Deleted ${state.headBranch}.` };
+      }
       if (state.archived || state.state !== 'OPEN')
         throw new Error('This PR is no longer open in an active repository.');
       if (req.kind === 'merge' && plan.blockedReason) throw new Error(plan.blockedReason);

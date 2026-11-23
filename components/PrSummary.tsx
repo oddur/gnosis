@@ -17,10 +17,13 @@ import { stackScopeChoices } from '../lib/stack-workspace';
 import { Button } from './ui/button';
 import { PrChecksView, type CheckFocus } from './PrChecksView';
 import { usePrChecks } from '../lib/use-pr-checks';
-import { checkCounts, type PrChecks } from '../lib/pr-checks';
+import { checkCounts, checkGroup, checkLabel, type PrChecks } from '../lib/pr-checks';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
-import { PrActions } from './PrActions';
+import { PrActions, isShortcut, shortcutLabel } from './PrActions';
+import type { EntryActionGroups } from './EntryActions';
+import { PrHeaderReviewContext, type HeaderReview } from '../lib/pr-header-review';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
 import { Activity, Suspense, type ComponentProps, type ReactNode, type Ref, type UIEvent } from 'react';
@@ -38,11 +41,11 @@ import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
 import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import { usePrMoves } from '../lib/use-pr-moves';
 import type { PrFocus } from '../lib/deep-link';
-import { AlarmClock, ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
+import { AlarmClock, ChevronLeft, ChevronRight, Layers, MessageSquareReply, Pencil, UserPlus } from 'lucide-react';
 import { canSnooze, openSnoozePicker } from '../lib/snooze-picker';
 import { backLine } from '../lib/snooze';
 import { Markdown } from './Markdown';
@@ -56,7 +59,7 @@ import { useQueueSignals } from '../lib/use-queue-signals';
 import { conflictStateFrom } from '../lib/merge-conflicts';
 import { stackMergeStatus } from '../lib/stack-merge-status';
 import { subjectReadiness } from '../lib/merge-readiness';
-import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
+import { ReadinessChip, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
 import { ArrivalProbe, contentMarkers, useIntent, usePredictions } from '../lib/use-predictions';
@@ -361,11 +364,11 @@ function PrSummaryContent({
     if (landing.focus === 'merge') setMergeLanding(landing.nonce);
   }, [landing?.nonce]);
   useEffect(() => {
-    if (mergeLanding === undefined || tab !== 'summary') return;
-    // The merge action renders once its state loads: wait for it, then bring it into view and focus it.
+    if (mergeLanding === undefined) return;
+    // The merge action renders in the header once its state loads: wait for it, then focus it.
     let tries = 0;
     const timer = setInterval(() => {
-      const button = page.current?.querySelector<HTMLButtonElement>('[data-merge-action]');
+      const button = heading.current?.closest('main')?.querySelector<HTMLButtonElement>('.pr-workspace-navigation [data-merge-action]');
       if (button || ++tries > 50) {
         clearInterval(timer);
         setMergeLanding(undefined);
@@ -374,7 +377,7 @@ function PrSummaryContent({
       }
     }, 100);
     return () => clearInterval(timer);
-  }, [mergeLanding, tab]);
+  }, [mergeLanding]);
   const heading = useRef<HTMLHeadingElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const restoring = useRef(false);
@@ -559,6 +562,57 @@ function PrSummaryContent({
       refreshError={Object.values(statusErrors)[0]}
     />
   );
+  // The header's actions (#542): GitHub's actions, then Drafts and the review action, in one place on every tab.
+  const [overflow, setOverflow] = useState<EntryActionGroups>([]);
+  const [notes, setNotes] = useState<HTMLDivElement | null>(null);
+  const [changesReview, setChangesReview] = useState<HeaderReview>();
+  const headerReview: HeaderReview = tab === 'changes' && changesReview ? changesReview : summaryReview.header;
+  const navigationRow = useRef<HTMLDivElement>(null);
+  const collapse = useCollapsedActions(navigationRow, `${item.subject.id}:${tab}`);
+  const openPr = !first.merged && first.state === 'open';
+  const own = !!account && first.author.toLowerCase() === account.toLowerCase();
+  const unresolved = signals.find((signal) => signal.url === first.url)?.threads?.unresolved.length ?? 0;
+  const requestReview = () => { setFeedbackPr(first.url); setFeedbackIntent('request'); setFeedbackJump(n => n + 1); onTabChange('summary'); };
+  // One review action: reply when threads wait for you, ask for review on your own PR, otherwise review it. A merged
+  // or closed PR keeps it while threads are unresolved.
+  const reviewAction = stacked || (!openPr && !unresolved) ? undefined
+    : !openPr ? { label: 'Review PR', icon: <WorkbenchIcon name="review" />, run: () => openFeedback(first.url) }
+    : needsResponse(item.responses?.[first.url]) ? { label: 'Reply to feedback', icon: <MessageSquareReply size={14} aria-hidden="true" />, run: () => openFeedback(first.url) }
+    : own ? { label: 'Request review…', icon: <UserPlus size={14} aria-hidden="true" />, run: requestReview }
+    : { label: 'Review PR', icon: <WorkbenchIcon name="review" />, run: headerReview.openReview, blocked: headerReview.reviewBlocked, count: headerReview.draftCount };
+  const reviewShortcut = useRef(reviewAction);
+  reviewShortcut.current = reviewAction;
+  useEffect(() => {
+    if (!shortcutsEnabled || stacked) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (!isShortcut(event, 'r') || event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest('[role=dialog], [role=menu]')) return;
+      // Ahead of the default menu's Force Reload, which would drop unsaved work.
+      event.preventDefault();
+      const action = reviewShortcut.current;
+      if (action && !action.blocked) action.run();
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [shortcutsEnabled, stacked]);
+  const headerReadiness = subjectReadiness(item.subject, signals);
+  const draftsLabel = `Drafts${headerReview.draftCount ? ` (${headerReview.draftCount})` : ''}`;
+  const headerActions = !stacked && (
+    <PrActions key={first.url} member={first} onChanged={onRetryStatus} mergeReady={headerReadiness.ready} hasConflicts={headerReadiness.label === 'Merge conflicts'}
+      collapse={collapse} onOverflow={setOverflow} notes={notes} shortcuts={shortcutsEnabled}
+      review={(primary) => <>
+        {openPr && collapse < 2 && <Button data-collapse-at="2" variant="outline" size="sm" disabled={headerReview.draftsDisabled} onClick={headerReview.toggleDrafts}>{draftsLabel}</Button>}
+        {reviewAction && (
+          <Button size="sm" variant={primary ? 'default' : 'outline'} className="pr-review-action" aria-disabled={reviewAction.blocked ? true : undefined} data-unavailable={reviewAction.blocked ? '' : undefined}
+            title={reviewAction.blocked ?? `${reviewAction.label} (${shortcutLabel('R')})`} onClick={() => { if (!reviewAction.blocked) reviewAction.run(); }}>
+            {reviewAction.icon}{reviewAction.label}{reviewAction.count ? ` (${reviewAction.count})` : ''}
+          </Button>
+        )}
+      </>} />
+  );
+  const menuExtra: EntryActionGroups = collapse > 1 && openPr && !stacked
+    ? [[{ label: draftsLabel, disabled: headerReview.draftsDisabled, run: headerReview.toggleDrafts }, ...(overflow[0] ?? [])]]
+    : overflow;
   // The Conflicts view is a tab while it is open: Close leaves it, and its drafts are saved (ConflictWorkspace).
   const conflictsOpen = !stacked && visited.has('conflicts');
   const tabs = conflictsOpen ? [...workspaceTabs, conflictsTab] : workspaceTabs;
@@ -627,18 +681,41 @@ function PrSummaryContent({
           </div>
         </div>
         <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
-          busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute}
+          busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute} extra={menuExtra}
           conflictState={conflictStateFrom([...signals, ...item.subject.members.map((m) => statuses[m.url]?.signals)])}
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
-          <div className="pr-title-with-star">
-            <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
-              <SubjectIcon kind={stacked ? 'stack' : 'pr'} pr={stacked ? undefined : item.subject.members[0]} decorative />{item.subject.title}
-            </h1>
-            <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
-            {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
-            {account && canSnooze(item.subject.members) && <button className="workbench-icon pr-snooze-button" aria-label={stacked ? 'Snooze stack' : 'Snooze PR'} title={stacked ? 'Snooze stack' : 'Snooze PR'} onClick={() => openSnoozePicker({ groups: [item.subject.members] })}><AlarmClock size={15} /></button>}
-            {actions}
-            {stacked && <StackMergeActions subject={item.subject} signals={signals} checks={checks.values} onChanged={onRetryStatus} />}
+          <div className="pr-heading-row">
+            <div className="pr-title-with-star">
+              <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
+                <SubjectIcon kind={stacked ? 'stack' : 'pr'} pr={stacked ? undefined : item.subject.members[0]} decorative /><span className="pr-title-text">{item.subject.title}</span>
+              </h1>
+              <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
+              {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
+              {account && canSnooze(item.subject.members) && <button className="workbench-icon pr-snooze-button" aria-label={stacked ? 'Snooze stack' : 'Snooze PR'} title={stacked ? 'Snooze stack' : 'Snooze PR'} onClick={() => openSnoozePicker({ groups: [item.subject.members] })}><AlarmClock size={15} /></button>}
+              {actions}
+              {stacked && <StackMergeActions subject={item.subject} signals={signals} checks={checks.values} onChanged={onRetryStatus} />}
+            </div>
+            <div ref={statusRef} className="pr-heading-meta" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
+              <span className="pr-summary-context">
+                {stacked ? (
+                  <>
+                    <Layers size={14} aria-hidden="true" />
+                    {item.subject.members.length} PRs{commonRepo && <RepositoryBadge repo={commonRepo} />}
+                  </>
+                ) : (
+                  <>
+                    <RepositoryBadge repo={first.repo} /> <PrBadge url={first.url} number={first.number} title={first.title} /> ·{' '}
+                    <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by{' '}
+                    <GitHubAuthor login={first.author} /> · updated{' '}
+                    <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>
+                  </>
+                )}
+              </span>
+              {revalidating && <PrFreshness className="pr-freshness" refreshing />}
+              <PrStatusLine subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
+                updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])}
+                freshness={<PrFreshness className="pr-freshness" checkedAt={checkedAt} />} onChecks={() => onTabChange('checks')} />
+            </div>
           </div>
           {snoozeBack && <p className="queue-snooze-back pr-snooze-back"><AlarmClock size={13} aria-hidden="true" />{backLine(snoozeBack)}</p>}
           {renaming && <form className="stack-name-form" onSubmit={event => {
@@ -655,38 +732,8 @@ function PrSummaryContent({
               {starError}
             </p>
           )}
-          <div className="pr-summary-context">
-            <span>
-              {stacked ? (
-                <>
-                  <Layers size={14} />
-                  {item.subject.members.length} PRs{commonRepo && <RepositoryBadge repo={commonRepo} />}
-                </>
-              ) : (
-                <>
-                  <RepositoryBadge repo={first.repo} /> <PrBadge url={first.url} number={first.number} title={first.title} /> ·{' '}
-                  <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by{' '}
-                  <GitHubAuthor login={first.author} /> · updated{' '}
-                  <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>
-                </>
-              )}
-            </span>
-            <PrFreshness className="pr-freshness" checkedAt={checkedAt} refreshing={revalidating} />
-            {!stacked && (
-              <a className="pr-github-link" href={first.url} target="_blank" rel="noopener noreferrer">
-                GitHub <ExternalLink size={13} />
-              </a>
-            )}
-          </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
-          <PrStatusLine subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} checks={checks.values} checkErrors={checks.errors}
-            showReadiness={stacked || tab !== 'summary'} updating={item.subject.members.some(member => statuses[member.url]?.stale && !statusErrors[member.url])} />
-          {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
-          {/* Changes shows the same review controls for its loaded diff; the slot keeps its space there so the header never moves. */}
-          {!stacked && <div className="pr-summary-review-actions" inert={tab === 'changes'} style={{ visibility: tab === 'changes' ? 'hidden' : 'visible' }}>{summaryReview.controls}</div>}
-        </div>
-        <div className="pr-workspace-navigation">
+        <div className="pr-workspace-navigation" ref={navigationRow}>
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
           {parentStack ? <Button variant="ghost" size="sm" className="stack-back" aria-label="Back to stack" onClick={() => changeScope(parentStack.id)}><ChevronLeft size={15} aria-hidden="true" /><SubjectIcon kind="stack" />Stack</Button> : null}
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
@@ -700,7 +747,9 @@ function PrSummaryContent({
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" /><PrTabLabel>Local notes</PrTabLabel>{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
           {conflictsOpen && <Tabs.Trigger value="conflicts"><WorkspaceIcon tab="conflicts" /><PrTabLabel>Conflicts</PrTabLabel></Tabs.Trigger>}
         </Tabs.List>
+        {headerActions}
         </div>
+        <div className="pr-header-notes" ref={setNotes} />
         {/* The header's Drafts and Review PR open here on every other section; Summary shows them in its body. */}
         {!stacked && tab !== 'summary' && tab !== 'changes' && tab !== 'conflicts' && <div className="pr-header-review-panel">{summaryReview.panel}</div>}
         {conflictsOpen && (
@@ -711,6 +760,7 @@ function PrSummaryContent({
           </KeptTab>
         )}
         <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
+          <PrHeaderReviewContext.Provider value={stacked ? undefined : setChangesReview}>
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={openFeedback} onOpenPr={changeScope} onOpenBrief={openBrief} /> :
             <KeptChangesView
               key={item.subject.id}
@@ -723,6 +773,7 @@ function PrSummaryContent({
               onOpenBrief={openBrief}
             />
           )}
+          </PrHeaderReviewContext.Provider>
         </KeptTab>
         <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
@@ -848,15 +899,17 @@ function PrTabLabel({ children }: { children: string }) {
   return <span className="pr-tab-label" data-label={children}>{children}</span>;
 }
 
-/** Review status and merge readiness in the page header. It re-renders on each status clock tick. */
-function PrStatusLine({ subject, signals, checking, checks, checkErrors, showReadiness, updating }: {
+/** Review status and merge readiness in the page header, on every tab. It re-renders on each status clock tick. */
+function PrStatusLine({ subject, signals, checking, checks, checkErrors, updating, freshness, onChecks }: {
   subject: ReviewSubject;
   signals: QueueSignals[];
   checking: boolean;
   checks: Partial<Record<string, PrChecks>>;
   checkErrors: Partial<Record<string, string>>;
-  showReadiness: boolean;
   updating: boolean;
+  /** "Checked just now": when Gnosis last read the PR from GitHub. */
+  freshness: ReactNode;
+  onChecks: () => void;
 }) {
   countRender('PrStatusLine');
   const now = useStatusNow();
@@ -866,25 +919,102 @@ function PrStatusLine({ subject, signals, checking, checks, checkErrors, showRea
   const readiness = stackStatus?.summary ?? subjectReadiness(subject, signals, now);
   const delayed = Object.values(checkErrors).some(Boolean);
   const iso = (time: number) => new Date(time).toISOString();
+  const member = subject.members[0];
+  const signal = stacked ? undefined : signals.find((value) => value.url === member.url && value.headSha === member.headSha);
+  const rollup = signal?.checks;
+  // The review chip says "Approval required" and the like. The readiness chip then says what else stands in the way.
+  const behind = signal?.readiness?.behindBy ?? 0;
+  const chip = stacked
+    ? (stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness)
+    : !['Changes requested', 'Approval required'].includes(readiness.label)
+      ? readiness
+      : rollup?.state === 'pending'
+        ? { ...readiness, label: 'Checks running', tone: 'warning' as const }
+        : rollup?.state === 'failure'
+          ? { ...readiness, label: 'Checks failing', tone: 'danger' as const }
+          : behind > 0
+            ? { ...readiness, label: `Behind by ${behind}`, tone: 'muted' as const }
+            : readiness;
+  const unfinished = (checks[member.url]?.checks ?? []).filter((check) => ['attention', 'running'].includes(checkGroup(check)));
   // When merge requirements and check results were read at the same time, one freshness note says so.
   const together =
-    showReadiness && mergePlan && readiness.checkedAt !== undefined && mergePlan.checksCheckedAt !== undefined &&
+    mergePlan && readiness.checkedAt !== undefined && mergePlan.checksCheckedAt !== undefined &&
     !updating && !delayed && now - mergePlan.checksCheckedAt < QUEUE_SIGNALS_TTL &&
     timeAgo(iso(readiness.checkedAt)) === timeAgo(iso(mergePlan.checksCheckedAt))
       ? { requirements: readiness.checkedAt, checks: mergePlan.checksCheckedAt }
       : undefined;
   return <>
     {!stacked && <SubjectReviewStatus subject={subject} signals={signals} checking={checking} now={now} />}
-    {showReadiness && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
-    {together ? (
-      <span className="merge-readiness-checked stack-checks-freshness" title={`Merge requirements checked ${new Date(together.requirements).toLocaleString()}. Check results checked ${new Date(together.checks).toLocaleString()}.`}>
-        Merge status checked <time dateTime={iso(together.requirements)}>{timeAgo(iso(together.requirements))}</time>
-      </span>
-    ) : <>
-      {showReadiness && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} updating={updating} />)}
-      {mergePlan && <StackChecksFreshness plan={mergePlan} now={now} delayed={delayed} />}
-    </>}
+    <ReadinessChip readiness={chip} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined}>
+      {rollup && rollup.total > 0 && (
+        <div className="readiness-popover-checks">
+          <p>
+            {rollup.passed} of {rollup.total} checks passed
+            {rollup.running ? ` · ${rollup.running} running` : ''}
+            {rollup.failed ? ` · ${rollup.failed} failed` : ''}
+          </p>
+          {unfinished.length > 0 && (
+            <ul>
+              {unfinished.slice(0, 5).map((check) => (
+                <li key={check.id}><span>{check.name}</span><span>{checkLabel(check)}</span></li>
+              ))}
+              {unfinished.length > 5 && <li>{unfinished.length - 5} more</li>}
+            </ul>
+          )}
+          <Button variant="link" size="sm" onClick={onChecks}>Open Checks</Button>
+        </div>
+      )}
+      <p className="readiness-popover-freshness">
+        {together ? (
+          <span className="merge-readiness-checked stack-checks-freshness" title={`Merge requirements checked ${new Date(together.requirements).toLocaleString()}. Check results checked ${new Date(together.checks).toLocaleString()}.`}>
+            Merge status checked <time dateTime={iso(together.requirements)}>{timeAgo(iso(together.requirements))}</time>
+          </span>
+        ) : <>
+          {!stacked ? freshness : readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label="Merge requirements checked" updating={updating} />}
+          {mergePlan && <StackChecksFreshness plan={mergePlan} now={now} delayed={delayed} />}
+        </>}
+      </p>
+      {!stacked && <a className="readiness-popover-link" href={member.url} target="_blank" rel="noopener noreferrer">Merge requirements on GitHub</a>}
+    </ReadinessChip>
   </>;
+}
+
+/**
+ * How many of the header's actions move to ⋯ (#542): none, the toggles (1), or Update and Drafts too (2). The widths are
+ * read while every action shows, so collapsing never undoes itself. A stack member's picker takes room, so it collapses
+ * earlier; Merge and the review action always stay.
+ */
+function useCollapsedActions(row: RefObject<HTMLDivElement | null>, key: string): 0 | 1 | 2 {
+  const [collapse, setCollapse] = useState<0 | 1 | 2>(0);
+  const widths = useRef({ full: 0, 1: 0, 2: 0 });
+  useLayoutEffect(() => {
+    const element = row.current;
+    if (!element) return;
+    const measure = () => {
+      const actions = element.querySelector<HTMLElement>('.pr-header-actions');
+      const tabs = element.querySelector<HTMLElement>('.pr-overview-tabs');
+      if (!actions || !tabs) {
+        setCollapse(0);
+        return;
+      }
+      const actionGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
+      const room = (level: '1' | '2') =>
+        [...actions.querySelectorAll<HTMLElement>(`[data-collapse-at="${level}"]`)].reduce((total, part) => total + part.offsetWidth + actionGap, 0);
+      if (actions.dataset.collapse === '0') widths.current = { full: actions.scrollWidth, 1: room('1'), 2: room('2') };
+      const { full, 1: first } = widths.current;
+      const gap = parseFloat(getComputedStyle(tabs).columnGap) || 0;
+      const tabsWidth = [...tabs.children].reduce((total, tab) => total + (tab as HTMLElement).offsetWidth + gap, 0);
+      const available = element.clientWidth - (element.querySelector<HTMLElement>('.stack-scope-bar')?.offsetWidth ?? 0) - tabsWidth - 32;
+      setCollapse(full <= available ? 0 : full - first <= available ? 1 : 2);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    const actions = element.querySelector('.pr-header-actions');
+    if (actions) observer.observe(actions);
+    return () => observer.disconnect();
+  }, [key]);
+  return collapse;
 }
 
 /** Merge actions for a whole stack. Whether it can merge depends on the status clock. */
