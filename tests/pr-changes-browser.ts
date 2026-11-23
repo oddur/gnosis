@@ -671,8 +671,12 @@ void app.whenReady().then(async () => {
       window.cappedSnapshot={...original,url:members[1].url,filesTruncated:true,metadata:{...original.metadata,changedFileCount:3237},files:Array.from({length:3000},(_,i)=>({path:'src/file'+String(i).padStart(4,'0')+'.ts',status:'modified',additions:1,deletions:1,changeId:'cap-'+i,patch:'@@ -1 +1 @@\n-old\n+new'}))};
       window.capRecovered=false;window.capOpened=[];window.capReads=[];window.capWait=new Promise(resolve=>window.releaseCap=resolve);
       window.electronAPI.openExternal=async url=>{window.capOpened.push(url)};
-      window.electronAPI.getPrChanges=async url=>{
-        window.capReads.push(url);
+      // A shown diff whose contents do not match its patch re-lists its PR's files by itself (lib/stale-diff-refresh.ts),
+      // with a recheck. These fixture files never match, so when such a recheck lands depends on which rows have
+      // rendered. capReads counts the member loads only; the rechecks are kept apart.
+      window.capRechecks=[];
+      window.electronAPI.getPrChanges=async (url,refresh,options)=>{
+        (options?.recheck?window.capRechecks:window.capReads).push(url);
         if(url===members[0].url&&!window.capRecovered)throw Error('GitHub could not load this data (HTTP 503). Try again after '+new Date(Date.now()+2000).toISOString()+'.');
         if(url===members[1].url){await window.capWait;return window.cappedSnapshot;}
         return {...original,url,files:[{...window.cappedSnapshot.files[0],path:'src/small.ts'}]};
