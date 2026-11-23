@@ -34,6 +34,11 @@ export interface ConflictFile {
    */
   wholeFile?: ConflictProposal;
   /**
+   * The service's name for this file's saved draft (src/conflict-resolution-service.ts `fileRevision`): its conflicts,
+   * then its draft, proposals, choices and edits. A save sends it back as `base`.
+   */
+  revision?: string;
+  /**
    * The whole draft a resolver last wrote for this file (#445 item 10): a remembered resolution, structural merge's
    * result, a whole-file proposal you used, or a suggestion. It stays when you then keep or edit parts of the draft, so
    * the lines the resolver wrote that neither side had stay marked, and lines you typed never are.
@@ -75,7 +80,7 @@ export interface ConflictFile {
  * never Merged either.
  */
 export interface ConflictProposal {
-  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'moved' | 'model';
+  source: 'rerere' | 'mergiraf' | 'union' | 'same' | 'layout' | 'moved' | 'model';
   text: string;
   /**
    * A 'moved' proposal: what moved and who edited it, such as "The PR moved orderTotal, and main edited it." A 'model'
@@ -84,6 +89,11 @@ export interface ConflictProposal {
   note?: string;
   /** A 'model' proposal (lib/conflict-model.ts): the provider that wrote it, such as "Claude". */
   by?: string;
+  /**
+   * A 'layout' proposal that took the place of structural merge's (lib/conflict-union.ts withUnions): that proposal's
+   * text, offered again when the checks don't Merge this one (src/conflict-checks.ts withoutUnconfirmed).
+   */
+  instead?: string;
   /** A 'model' proposal: what the model says each side meant. The model's words, never checked. */
   intents?: { pr: string; main: string };
 }
@@ -202,6 +212,11 @@ export type ConflictRequest =
       picks?: ('ours' | 'theirs' | 'both' | 'proposal' | null)[];
       /** Your in-place edits per block (`ConflictFile.edits`); absent leaves the saved ones. */
       edits?: (SavedBlockEdit | null)[];
+      /**
+       * The file's `revision` your edit started from. A draft that another writer moved on since `version` still takes
+       * the save while this file is the same; when the file changed too, the save is refused (`SAVE_REFUSALS`).
+       */
+      base?: string;
     }
   | {
       kind: 'resolve';
@@ -290,6 +305,35 @@ export interface SavedBlockEdit {
   written?: number[];
 }
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
+/** A request made from an earlier version of the draft, refused. */
+export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
+/**
+ * Why the service refused a save made from an earlier version of the draft (`refusedSave`). The renderer matches the
+ * message to say what happened and offer what can still be done.
+ */
+export const SAVE_REFUSALS = {
+  /** Another view saved this file: the same conflicts, another draft. Keep my edit may replace it. */
+  changed: 'This file’s saved draft changed in another view while you edited it, so your edit wasn’t saved.',
+  /** The file's conflicts are new (Start over, new base commits): the edit no longer fits them. */
+  conflicts: 'This file’s conflicts changed in another view while you edited it, so your edit wasn’t saved.',
+  /** The file is no longer in the merge. */
+  left: 'This file is no longer in the merge, so your edit wasn’t saved.',
+  /** Another view pushed the resolution. */
+  pushed: 'This PR’s resolution was pushed from another view.',
+} as const;
+export type SaveRefusal = keyof typeof SAVE_REFUSALS;
+/** The refusal an error carries, or undefined. */
+export function refusedSave(error: unknown): SaveRefusal | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  return (Object.keys(SAVE_REFUSALS) as SaveRefusal[]).find((reason) => message.includes(SAVE_REFUSALS[reason]));
+}
+/** The part of a file's `revision` that names its conflicts (Git's conflict text and the path). */
+export const revisionConflicts = (revision: string | undefined) => revision?.split('.')[0];
+/** The paths whose saved file is another one in `after` than in `before`, by `revision`; `except` left out. */
+export function changedFiles(before: ConflictSession, after: ConflictSession, except?: string) {
+  const known = new Map(before.files.map((f) => [f.path, f.revision]));
+  return after.files.filter((f) => f.path !== except && known.get(f.path) !== f.revision).map((f) => f.path);
+}
 /** A line Git writes around a conflict. A lone `=======` counts in every file, a Markdown heading underline too. */
 const MARKER_LINE = /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/;
 const MARKER_LINES = new RegExp(MARKER_LINE.source, 'm');
@@ -362,7 +406,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     typeof r.resolved === 'boolean' &&
     (r.picks === undefined ||
       (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
-    (r.edits === undefined || validEdits(r.edits))
+    (r.edits === undefined || validEdits(r.edits)) &&
+    (r.base === undefined || (r.kind === 'save' && text('base', 64)))
   )
     return;
   if (

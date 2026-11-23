@@ -8,6 +8,7 @@ import {
   shellQuote,
   STRUCTURAL_UNAVAILABLE,
 } from '../lib/conflict-flow';
+import { SAVE_REFUSALS, STALE_DRAFT } from '../lib/conflict-resolution';
 
 void test('each file state has one next action; the result is in the diff, so a resolved file goes to Mark reviewed', () => {
   const base = { otherFilesPending: true };
@@ -77,6 +78,24 @@ void test('errors use plain copy and keep the raw output for Details', () => {
     describeConflictError('Select an unresolved text file.', { stage: 'other' }).title,
     'Select an unresolved text file.'
   );
+  // A draft another view saved since: say so, and offer the saved draft, never "reopen" alone.
+  for (const message of [
+    `Error invoking remote method 'conflict-resolution': Error: ${STALE_DRAFT}`,
+    SAVE_REFUSALS.changed,
+    SAVE_REFUSALS.conflicts,
+    SAVE_REFUSALS.left,
+  ]) {
+    const copy = describeConflictError(message, { stage: 'other' });
+    assert.equal(copy.title, 'This draft changed in another view.');
+    assert.equal(copy.recovery, 'reload');
+    assert.doesNotMatch(copy.body, /Reopen/);
+  }
+  // Pushed from another view: it is on the branch, so the copy never says nothing was pushed.
+  const pushed = describeConflictError(`Error invoking remote method 'conflict-resolution': Error: ${SAVE_REFUSALS.pushed}`, {
+    stage: 'other',
+  });
+  assert.equal(pushed.title, 'This PR’s resolution was pushed from another view.');
+  assert.doesNotMatch(`${pushed.title} ${pushed.body}`, /[Nn]othing was pushed/);
 });
 
 void test('local merge commands quote every name, and refuse names a shell could run', () => {
