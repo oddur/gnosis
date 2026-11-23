@@ -372,6 +372,36 @@ export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 export const UNDO_LATER =
   'Undo also discards what you changed after your first whole-file edit. Select Undo again to go on.';
 export const STALE_DRAFT = 'The saved resolution changed. Reopen the workspace before continuing.';
+/** A saved draft the service can't use (`draftProblem`). Start over prepares the merge again. */
+export const UNREADABLE_DRAFT = 'This saved draft couldn’t be read.';
+/**
+ * The first field of a saved draft that can't be used, or undefined. Only the fields every step reads are checked:
+ * fields from a newer build are left alone. `resolved` must be a boolean, so nothing reads as reviewed by mistake.
+ */
+export function draftProblem(value: unknown, account: string, id: string): string | undefined {
+  const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!record(value)) return 'draft';
+  if (value.account !== account) return 'account';
+  if (value.id !== id) return 'id';
+  if (value.status !== 'editing' && value.status !== 'published') return 'status';
+  if (!Number.isSafeInteger(value.version)) return 'version';
+  for (const field of ['url', 'headRepo', 'baseRepo', 'headBranch', 'baseBranch', 'headSha', 'baseSha'])
+    if (typeof value[field] !== 'string') return field;
+  if (!Array.isArray(value.files)) return 'files';
+  for (const [index, file] of value.files.entries()) {
+    if (!record(file)) return `files[${index}]`;
+    for (const field of ['path', 'original', 'result', 'base', 'ours', 'theirs'])
+      if (typeof file[field] !== 'string') return `files[${index}].${field}`;
+    if (typeof file.resolved !== 'boolean') return `files[${index}].resolved`;
+    // Undo of a whole-file edit (#503) restores it: it needs the draft and review flag it puts back.
+    if (
+      file.wholeEdit !== undefined &&
+      !(record(file.wholeEdit) && typeof file.wholeEdit.result === 'string' && typeof file.wholeEdit.resolved === 'boolean')
+    )
+      return `files[${index}].wholeEdit`;
+  }
+  return undefined;
+}
 /**
  * Why the service refused a save made from an earlier version of the draft (`refusedSave`). The renderer matches the
  * message to say what happened and offer what can still be done.

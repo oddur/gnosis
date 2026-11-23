@@ -1278,6 +1278,30 @@ void app.whenReady().then(async () => {
     await resize(1280, 900);
     await click('Close');
 
+    // A saved draft the service can't read: the view explains, and Start over prepares the merge again, both when
+    // opening and from the footer while you work.
+    const unreadable = "Error invoking remote method 'conflict-resolution': Error: This saved draft couldn’t be read.";
+    const unreadableCopy = 'This saved draft couldn’t be read. Start over to prepare the merge again.';
+    await js(`window.failOpen=${JSON.stringify(unreadable)}`);
+    await open();
+    await wait("document.querySelector('.conflict-state[data-state=failed] .conflict-error')");
+    assert.equal(await js("document.querySelector('.conflict-error-title').textContent"), 'This saved draft couldn’t be read.');
+    await js('window.failOpen=undefined');
+    await click('Start over');
+    await wait("window.conflictCalls.at(-1).kind==='open' && window.conflictCalls.at(-1).restart===true");
+    await wait("document.querySelector('.conflict-footer')");
+    await js(`window.failOpen=${JSON.stringify(unreadable)}`);
+    await click('Start over with latest code…');
+    await click('Start over');
+    await wait(`document.querySelector('.conflict-footer [data-error]')?.textContent===${JSON.stringify(unreadableCopy)}`);
+    await capture('unreadable-draft');
+    await js('window.failOpen=undefined');
+    const startOverCalls = await js<number>('window.conflictCalls.length');
+    await click('Start over');
+    await wait(`window.conflictCalls.length>${startOverCalls} && !document.querySelector('.conflict-footer [data-error]')`);
+    assert.equal(await js('window.conflictCalls.at(-1).restart'), true);
+    await click('Close');
+
     // Edge screens drop the resolve controls and draft status, and name the state.
     const noResolveChrome = async () => {
       for (const selector of [
