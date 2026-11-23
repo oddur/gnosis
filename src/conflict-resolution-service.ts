@@ -113,6 +113,8 @@ const BACKGROUND_DRAFTS = 8;
 const REOPEN_STRUCTURAL_BUDGET = 2000;
 /** Less time than this left in the reopen pass: a file doesn't start. */
 const REOPEN_MIN_START = 250;
+/** A file the reopen pass starts within this long of its start had the pass's whole time. */
+const REOPEN_START_SLACK = 100;
 const BACKGROUND_AGE = 7 * 24 * 60 * 60 * 1000;
 interface Context {
   account: string;
@@ -1263,11 +1265,12 @@ export function createConflictResolutionService(deps: Deps) {
       await proposeMoves(queue, signal);
       return files;
     }
-    // A note from an earlier try (no binary, out of time) gives way to this one.
-    for (const file of queue) delete file.structuralNote;
     report(`Combining both sides’ changes in ${queue.length} ${queue.length === 1 ? 'file' : 'files'}.`);
     /** Keeps what structural merge proposed for one file. False when it ran out of time. */
     const propose = async (file: ConflictFile, budget: number) => {
+      // A note from an earlier try (no binary, out of time) gives way to this one. A file the pass never reaches keeps
+      // its note, and with it "Try structural merge again".
+      delete file.structuralNote;
       const started = Date.now();
       let output: string;
       try {
@@ -1299,37 +1302,43 @@ export function createConflictResolutionService(deps: Deps) {
       return true;
     };
     const [first, retry, cap] = deps.structuralTimeouts ?? [5000, 10_000, 30_000];
-    /** Files structural merge ran on. One that never got its turn in time has no note, and the next reopen tries it. */
-    const started = new Set<ConflictFile>();
-    /** Four files at a time. A file that runs out of time goes on `late`. */
+    /**
+     * The most time each file was given. Only a file that had the whole first-try budget counts as run (#450): `first`,
+     * or the reopen pass's whole time when that is shorter. One started near the pass's end doesn't.
+     */
+    const tried = new Map<ConflictFile, number>();
+    /** Four files at a time. A file that runs out of time, or gets no time, goes on `late`. */
     const pool = async (files: ConflictFile[], budget: () => number, late: ConflictFile[]) => {
       const work = async () => {
         for (let file = files.shift(); file; file = files.shift()) {
           const time = budget();
-          if (time > 0) started.add(file);
+          if (time > 0) tried.set(file, Math.max(time, tried.get(file) ?? 0));
           if (time <= 0 || !(await propose(file, time))) late.push(file);
         }
       };
       await Promise.all([work(), work(), work(), work()]);
     };
-    const late: ConflictFile[] = [];
     const end = total === undefined ? Infinity : Date.now() + total;
-    // The pool takes files off the list it is given. Too little time left to merge a file is none.
-    await pool(
-      [...queue],
-      () => {
-        const left = end - Date.now();
-        return left < Math.min(first, REOPEN_MIN_START) ? 0 : Math.min(first, left);
-      },
-      late
-    );
-    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening.
-    // The reopen pass has no retry: what it can't finish waits for Suggest.
-    const deadline = Math.min(Date.now() + (total === undefined ? cap : 0), end);
+    /** The first try's budget: `first`, or what is left of the reopen pass. Too little left to merge a file is none. */
+    const firstBudget = () => {
+      const left = end - Date.now();
+      return left < Math.min(first, REOPEN_MIN_START) ? 0 : Math.min(first, left);
+    };
+    // A reopen pass's first four files start a moment after it does: they count as having its whole time.
+    const whole = total === undefined ? first : Math.min(first, total) - REOPEN_START_SLACK;
+    const late: ConflictFile[] = [];
+    // The pool takes files off the list it is given.
+    await pool([...queue], firstBudget, late);
+    // One more try each with the Suggest budget, within a total limit, so many slow files cannot hold up opening. The
+    // reopen pass has no retry: what it can't finish waits for the next reopen or for Suggest.
     const failed: ConflictFile[] = [];
-    await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
+    if (total === undefined) {
+      const deadline = Date.now() + cap;
+      await pool(late, () => Math.min(retry, deadline - Date.now()), failed);
+    } else failed.push(...late);
     for (const file of failed) {
-      if (!started.has(file)) continue;
+      // Never tried, or cut short by the reopen pass's end: no note, and the next reopen tries it again.
+      if ((tried.get(file) ?? 0) < whole) continue;
       console.warn(`[conflicts] Structural merge timed out on ${file.path}.`);
       file.structuralNote = 'Structural merge timed out.';
       // It ran: a reopen doesn't wait for it again. "Try structural merge again" does, with the Suggest budget.
