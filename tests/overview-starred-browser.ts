@@ -1,7 +1,7 @@
 /**
  * The Overview's Starred section (lib/overview-starred.ts): first on the page, above Next up, only when something is
- * starred. Covers its rows and their order (needs you, ready to merge, waiting on others, quiet, done), a starred
- * stack with its PRs under it in merge order, a merged PR as a quiet done row, the draft word, each PR listed once on
+ * starred. Covers its rows and their order (needs you, ready to merge, waiting on others, quiet), a starred stack with
+ * its PRs under it in merge order, a starred merged PR left off the page but still starred, the draft word, each PR listed once on
  * the whole page, j/k and Enter reaching the starred rows first, unstarring a PR and a stack from the row menus,
  * the cap with "Show all N", no section with no stars, and the layout in light, dark and narrow. Synthetic data only
  * (tests/fixtures/overview.ts, `overview-stars`).
@@ -122,9 +122,10 @@ void app.whenReady().then(async () => {
     await load('&overview-stars=day');
     await wait(`!!document.querySelector('${section('starred')} [data-overview-row]')`);
     assert.deepEqual(await headings(), ['Starred', 'Next up', 'Waiting on you', 'Waiting on others', 'Needs a decision'], 'Starred is first');
-    assert.equal(await count('starred'), '7');
+    assert.equal(await count('starred'), '6');
     const stackId = await js<string>(`document.querySelector('${section('starred')} [data-overview-stack]').dataset.overviewStack`);
-    // Needs you (a review, then the failing stack), ready to merge, waiting on others, quiet (latest change first), done.
+    // Needs you (a review, then the failing stack), ready to merge, waiting on others, quiet (latest change first).
+    // The starred merged PR (#350) is not on the Overview.
     assert.deepEqual(await starredRows(), [
       '#322 | Add a dry-run flag to the release script | Review requested | passing',
       'Split the scheduler into phases | 2 PRs · #331 failing checks | 2 failed',
@@ -132,14 +133,13 @@ void app.whenReady().then(async () => {
       '#341 | Print a summary after install | Waits on review from lena | passing',
       '#351 | Sketch the new onboarding checklist | Review required | passing',
       '#352 | Try a streaming config parser | Draft | passing',
-      '#350 | Pin the toolchain for release builds | Merged',
     ]);
     // The stack lists its PRs under it, base first, on the chain.
     assert.deepEqual(await js(`[...document.querySelectorAll('${P} [data-overview-stack="${stackId}"] .morning-chain > li')].map(${parts})`), [
       '#331 | Split the scheduler into phases | Failing checks | 2 failed',
       '#332 | Run phases on a worker pool | Conflicts | passing',
     ]);
-    // Actions, in Next up's words; a merged row has none and no check state.
+    // Actions, in Next up's words.
     assert.deepEqual(await js(`[...document.querySelectorAll('${section('starred')} .morning-rows > .morning-row [data-quick-action], ${section('starred')} .morning-stack-head [data-quick-action]')].map(b=>b.textContent.trim())`), ['Review', 'Rerun', 'Merge', 'Remind']);
     // A starred PR waiting on lena can be reminded from Starred: A opens the confirmation, and the row then says so.
     await js(`document.querySelector('${P} [data-overview-row="starred|${url('klang/cli', 341)}"]').focus()`);
@@ -150,9 +150,10 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelector('${P} [data-overview-row-item="starred|${url('klang/cli', 341)}"] .morning-done')?.textContent === 'Reminded'`);
     const nudges = await js<{ kind: string; url: string }[]>('window.fixtureOverview.writes');
     assert.ok(nudges.some((w) => w.kind === 'nudge:lena' && w.url === url('klang/cli', 341)), 'Remind re-requests lena on #341');
-    assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"]').classList.contains('is-done')`), true, 'a merged starred PR is a quiet done row');
-    assert.equal(await js(`!!document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"] [data-overview-check]')`), false);
-    assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/engine', 350)}"] [data-pr-state]')?.dataset.prState`), 'merged');
+    // The merged PR is on no section of the page, yet it stays starred.
+    assert.equal(await js(`[...document.querySelectorAll('${P} [data-overview-prs]')].some(r=>r.dataset.overviewPrs.split(' ').includes(${JSON.stringify(url('klang/engine', 350))}))`), false, 'a starred merged PR is not on the Overview');
+    assert.equal(await js(`!!document.querySelector('${P} [data-overview-row*="pull/350"]')`), false);
+    assert.equal(await js(`window.electronAPI.workbenchQueue().then(q=>(q.starredPrs??[]).some(e=>e.member.url===${JSON.stringify(url('klang/engine', 350))}))`), true, 'it stays starred');
     assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-row-item="starred|${url('klang/cli', 352)}"] [data-pr-state]')?.dataset.prState`), 'draft');
     await noneTwice();
     // Next up and the sections below leave the starred PRs out, and still read correctly.
@@ -212,13 +213,9 @@ void app.whenReady().then(async () => {
     await js('window.__releaseStar()');
     assert.deepEqual(items, ['Open', 'Snooze PR…', 'Mark as read', 'Unstar PR #341', 'Copy link', 'Copy repository', 'Copy PR number', 'Open on GitHub']);
     await wait(`!document.querySelector('${P} [data-overview-row="starred|${url('klang/cli', 341)}"]')`);
-    assert.equal(await count('starred'), '6');
+    assert.equal(await count('starred'), '5');
     await wait(`[...document.querySelectorAll('${section('others')} [data-overview-prs]')].some(r=>r.dataset.overviewPrs===${JSON.stringify(url('klang/cli', 341))})`);
     await noneTwice();
-    // A merged PR has no snooze; unstarring it removes the done row.
-    const done = await menu(`${P} [data-overview-row="starred|${url('klang/engine', 350)}"]`, 'Unstar PR #350');
-    assert.ok(!done.includes('Snooze PR…'), 'a merged PR cannot be snoozed');
-    await wait(`!document.querySelector('${P} [data-overview-row="starred|${url('klang/engine', 350)}"]')`);
     // The stack's header offers Unstar for the whole stack. With its starred PR (#332) snoozed, the stack is one line
     // for #331, which nobody starred: its menu still unstars the stack, hidden PR included.
     assert.ok((await menuItems(`${P} [data-overview-row="${stackId}"]`)).includes('Unstar PRs in this stack'));
@@ -247,13 +244,14 @@ void app.whenReady().then(async () => {
     step = 'many';
     await load('&overview-stars=many');
     await wait(`!!document.querySelector('${section('starred')} [data-overview-more="starred"]')`);
-    assert.equal(await count('starred'), '13');
+    // Thirteen starred, one of them merged: twelve show.
+    assert.equal(await count('starred'), '12');
     const top = () => js<number>(`document.querySelectorAll('${section('starred')} .morning-rows > .morning-row, ${section('starred')} .morning-rows > .morning-stack').length`);
     assert.equal(await top(), 8, 'eight starred entries show');
-    assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-more="starred"]').textContent`), 'Show all 13');
+    assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-more="starred"]').textContent`), 'Show all 12');
     await both('many-1280');
     await js(`document.querySelector('${section('starred')} [data-overview-more="starred"]').click()`);
-    await wait(`document.querySelectorAll('${section('starred')} .morning-rows > .morning-row, ${section('starred')} .morning-rows > .morning-stack').length === 13`);
+    await wait(`document.querySelectorAll('${section('starred')} .morning-rows > .morning-row, ${section('starred')} .morning-rows > .morning-stack').length === 12`);
     assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-more="starred"]').getAttribute('aria-expanded')`), 'true');
     assert.equal(await js(`document.querySelector('${section('starred')} [data-overview-more="starred"]').textContent`), 'Show fewer');
     await noneTwice();

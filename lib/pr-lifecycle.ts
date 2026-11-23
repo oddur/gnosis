@@ -5,6 +5,8 @@ import type { QueueItem, ReviewMember, ReviewSubject } from './workbench';
 export type PrLifecycle = Pick<PrMetadata, 'state' | 'merged' | 'updatedAt'>;
 
 export const isOpenPr = (member: Pick<PrMetadata, 'state' | 'merged'>) => member.state === 'open' && !member.merged;
+/** GitHub reported the PR merged or closed. A PR whose state is not known yet is neither. */
+export const isMergedOrClosedPr = (member: Partial<Pick<PrMetadata, 'state' | 'merged'>>) => member.merged === true || member.state === 'closed';
 export const lifecycleOf = ({ state, merged, updatedAt }: PrLifecycle): PrLifecycle => ({ state, merged, updatedAt });
 
 const time = (value: string) => Date.parse(value) || 0;

@@ -47,7 +47,7 @@ const listed = (value: ReturnType<typeof page>) => [
   ...value.page.others.flatMap((group) => group.urls),
 ];
 
-void test('Starred orders by what needs you: your action, then ready to merge, then waiting on others, then quiet, then done', () => {
+void test('Starred orders by what needs you: your action, then ready to merge, then waiting on others, then quiet', () => {
   const status: Record<string, QueueSignals> = {};
   const quiet = pr(1, { updatedAt: iso(2 * HOUR) });
   const waiting = mine(2, { requestedReviewers: ['lena'] });
@@ -68,12 +68,10 @@ void test('Starred orders by what needs you: your action, then ready to merge, t
     [3, 'merge', 'Ready to merge · approved by lena'],
     [2, 'others', 'Waits on review from lena'],
     [1, 'quiet', 'Approved'],
-    [6, 'done', 'Merged'],
   ]);
-  assert.deepEqual(section.entries.map((entry) => entry.lead.action), ['review', 'rerun', 'merge', 'nudge', undefined, undefined]);
-  // Open PRs carry their check state; a merged one has none, and claims nothing.
+  assert.deepEqual(section.entries.map((entry) => entry.lead.action), ['review', 'rerun', 'merge', 'nudge', undefined]);
+  // Open PRs carry their check state; the merged one is not listed, and claims nothing.
   assert.equal(section.entries[0].check?.label, 'passing');
-  assert.equal(section.entries.at(-1)?.check, undefined);
   assert.deepEqual(section.urls.sort(), [quiet, waiting, merge, review, failing].map((m) => m.url).sort());
   // Starred status reads cover the open PRs, merged ones aside.
   assert.deepEqual(starredStatusRequests(items).map((request) => request.url).sort(), section.urls.sort());
@@ -129,13 +127,12 @@ void test('A stack is starred when any of its PRs is: one entry, its PRs in merg
   const value = page([stacked], status);
   const [entry] = value.section.entries;
   assert.equal(entry.kind, 'stack');
-  assert.deepEqual(entry.lines.map((line) => line.member.number), [30, 31, 32], 'base first');
+  assert.deepEqual(entry.lines.map((line) => line.member.number), [30, 31], 'base first, open PRs only');
   assert.equal(entry.lead.member.number, 31);
-  assert.equal(entry.why, '3 PRs · #31 failing checks');
-  // The base waits on a review GitHub requires; the closed PR is done.
-  assert.deepEqual(entry.lines.map((line) => line.tier), ['others', 'you', 'done']);
+  assert.equal(entry.why, '2 PRs · #31 failing checks');
+  // The base waits on a review GitHub requires; the closed PR is not listed.
+  assert.deepEqual(entry.lines.map((line) => line.tier), ['others', 'you']);
   assert.equal(entry.lines[0].why, 'Awaiting review');
-  assert.equal(entry.lines[2].why, 'Closed');
   // Every open PR of the stack is claimed, the unstarred base too, so the stack is not repeated below.
   assert.deepEqual(entry.urls, [base.url, middle.url]);
   const all = listed(value);
@@ -160,7 +157,7 @@ void test('A stack chain elsewhere links to Starred for its starred PR', () => {
   assert.equal(new Set(all).size, all.length);
 });
 
-void test('Merged and closed starred PRs stay at the end as quiet done rows; snoozed, muted and closing PRs leave', () => {
+void test('The Overview lists only open PRs: merged and closed starred PRs stay starred but leave; snoozed, muted and closing PRs leave', () => {
   const status: Record<string, QueueSignals> = {};
   const open = pr(50, { updatedAt: iso(HOUR) });
   const merged = pr(51, { state: 'closed', merged: true, updatedAt: iso(10 * DAY) });
@@ -168,28 +165,63 @@ void test('Merged and closed starred PRs stay at the end as quiet done rows; sno
   const muted = pr(53);
   const snoozed = pr(54);
   const closing = pr(55);
-  const items = [merged, closed, open, muted, closing].map((m) => star(item([m])));
+  const draft = pr(56, { isDraft: true, updatedAt: iso(3 * HOUR) });
+  const items = [merged, closed, open, muted, closing, draft].map((m) => star(item([m])));
   items.push(star(item([snoozed]), [snoozed.url]));
   items[items.length - 1] = { ...items[items.length - 1], snoozedUrls: [snoozed.url] };
   const model = overviewModel({ items, signals: (m) => status[m.url], login: LOGIN, now: T0 });
   const section = starredSection({ items, model, signals: (m) => status[m.url], login: LOGIN, now: T0, excluded: new Set([muted.url]), hidden: new Set([closing.url]) });
-  // Done rows: the latest change first.
   assert.deepEqual(section.entries.map((entry) => [entry.lead.member.number, entry.tier, entry.why]), [
     // Its status is not read yet: it says only that it is open.
     [50, 'quiet', 'Open'],
-    [52, 'done', 'Closed'],
-    [51, 'done', 'Merged'],
+    // An open draft stays.
+    [56, 'quiet', 'Draft'],
   ]);
-  assert.deepEqual(section.urls, [open.url]);
+  assert.deepEqual(section.urls, [open.url, draft.url]);
+  // They stay starred: the entries still carry their star, so the queue's Starred view lists them.
+  assert.ok(items.slice(0, 2).every((entry) => entry.starred));
 });
 
-void test('A stack with every PR merged is a done row that says so', () => {
+void test('A starred merged PR and a starred closed PR leave the Overview; the section, its claims and the tab count drop them', () => {
+  const status: Record<string, QueueSignals> = {};
+  // Both still wait on your review: had they stayed open, they would be work and counted.
+  const merged = pr(70, { state: 'closed', merged: true, requestedReviewers: [LOGIN] });
+  const closed = pr(71, { state: 'closed', merged: false, requestedReviewers: [LOGIN] });
+  const review = pr(72, { requestedReviewers: [LOGIN] });
+  for (const m of [merged, closed, review]) status[m.url] = signals(m, { checks: 'success' });
+  const only = page([star(item([merged])), star(item([closed]))], status);
+  assert.deepEqual(only.section.entries, [], 'no Starred entries, so the section is not drawn');
+  assert.deepEqual(only.section.urls, []);
+  assert.deepEqual(only.section.actionable, []);
+  assert.equal(only.page.count, 0);
+  assert.deepEqual(only.page.starredHolds, { next: false, others: false, decide: false }, 'the empty states do not say "else"');
+  const value = page([star(item([merged])), star(item([closed])), item([review])], status);
+  assert.deepEqual(listed(value), [review.url]);
+  assert.equal(value.page.count, 1);
+});
+
+void test('A starred PR whose state is not known yet stays on the Overview until it is', () => {
+  const unknown = { ...pr(80, { updatedAt: iso(HOUR) }), state: undefined, merged: undefined } as unknown as ReviewMember;
+  const { section } = page([], {}, [star(item([unknown]))]);
+  assert.deepEqual(section.entries.map((entry) => [entry.lead.member.number, entry.tier, entry.why]), [[80, 'quiet', 'Open']]);
+  assert.deepEqual(section.urls, [unknown.url]);
+  assert.deepEqual(section.actionable, []);
+  // Once GitHub reports it merged, it leaves.
+  const known = page([], {}, [star(item([{ ...unknown, state: 'closed', merged: true }]))]);
+  assert.deepEqual(known.section.entries, []);
+});
+
+void test('A starred stack lists only its open PRs, and leaves when every PR merged or closed', () => {
   const a = pr(60, { state: 'closed', merged: true, headBranch: 'a' });
-  const b = pr(61, { state: 'closed', merged: true, baseBranch: 'a' });
-  const { section } = page([], {}, [star(item([a, b]))]);
-  assert.equal(section.entries[0].tier, 'done');
-  assert.equal(section.entries[0].why, '2 PRs · all merged');
-  assert.deepEqual(section.urls, []);
+  const b = pr(61, { state: 'closed', merged: true, baseBranch: 'a', headBranch: 'b' });
+  const c = pr(62, { baseBranch: 'b', headBranch: 'c' });
+  const d = pr(63, { baseBranch: 'c' });
+  assert.deepEqual(page([], {}, [star(item([a, b]))]).section.entries, []);
+  const [entry] = page([], {}, [star(item([a, b, c, d]))]).section.entries;
+  assert.equal(entry.kind, 'stack');
+  assert.deepEqual(entry.lines.map((line) => line.member.number), [62, 63]);
+  assert.deepEqual(entry.urls, [c.url, d.url]);
+  assert.match(entry.why, /^2 PRs · /);
 });
 
 void test('Drafts, change requests, replies and rebases say so in words', () => {

@@ -7,21 +7,23 @@
  * - **Each PR once.** Starred claims its open PRs before every other section (`lib/morning.ts`), so a starred PR is
  *   listed here and nowhere else on the page. A stack chain elsewhere that holds one links here ("↑ Starred").
  * - **Order** (`STARRED_TIERS`), as the Overview ranks work: needs you (replies, change requests, reviews, then fixes),
- *   then ready to merge, then waiting on others, then quiet (open, nothing to do), then done. Action tiers list the
- *   longest wait first, as the lanes do; quiet and done rows list the latest change first. A stack takes the tier of
- *   its most actionable open PR, and its line says which PR that is.
- * - **Merged and closed.** A starred PR (or a stack with no open PR) that merged or closed stays while it is starred,
- *   as a quiet done row at the end: "Merged", "Closed". Unstar removes it.
+ *   then ready to merge, then waiting on others, then quiet (open, nothing to do). Action tiers list the longest wait
+ *   first, as the lanes do; quiet rows list the latest change first. A stack takes the tier of its most actionable
+ *   PR, and its line says which PR that is.
+ * - **Open PRs only.** The Overview lists only open PRs, drafts included. A starred PR that merged or closed stays
+ *   starred (the review queue's Starred view still lists it) but leaves this section, and a stack lists only its
+ *   open PRs; one with none leaves too. A PR whose state is not known yet stays until it is, so it does not flicker
+ *   out and back (`isMergedOrClosedPr`).
  * - **Cap.** The section shows `STARRED_SHOWN` entries; "Show all N" opens the rest.
  *
  * Every line says the state it is acted on in: why (the lane reason, a merge's notes, who it waits on, the review
- * decision), the check state, comments, how long it has waited, and draft, merged or closed (`PrStateIcon`, and the
- * "Draft" leading its why).
+ * decision), the check state, comments, how long it has waited, and draft (`PrStateIcon`, and the "Draft" leading its
+ * why).
  */
 import { checkView, type CheckView } from './check-summary';
 import { prTarget, type DeepLinkTarget } from './deep-link';
 import { commentsOf, mergeCaveats, prDecision, prNeed } from './morning';
-import { isOpenPr } from './pr-lifecycle';
+import { isMergedOrClosedPr, isOpenPr } from './pr-lifecycle';
 import { sameLogin } from './github-actors';
 import { OVERVIEW_REASON_LABEL, type OverviewModel, type OverviewRow, type OverviewSinceSource } from './overview';
 import { stackDependencyOrder } from './stack-overview';
@@ -29,8 +31,8 @@ import type { QueueSignals } from './queue-signals';
 import type { QueueItem, ReviewMember } from './workbench';
 
 /** Most actionable first. */
-export type StarredTier = 'you' | 'merge' | 'others' | 'quiet' | 'done';
-export const STARRED_TIERS: readonly StarredTier[] = ['you', 'merge', 'others', 'quiet', 'done'];
+export type StarredTier = 'you' | 'merge' | 'others' | 'quiet';
+export const STARRED_TIERS: readonly StarredTier[] = ['you', 'merge', 'others', 'quiet'];
 /** Entries shown before "Show all N". */
 export const STARRED_SHOWN = 8;
 /** The one action a line offers, as Next up's rows do. Absent: Enter opens it. */
@@ -41,12 +43,12 @@ export interface StarredLine {
   id: string;
   member: ReviewMember;
   tier: StarredTier;
-  /** "Review requested", "lena requested changes", "Ready to merge · approved by lena", "Waits on review from lena", "Merged". */
+  /** "Review requested", "lena requested changes", "Ready to merge · approved by lena", "Waits on review from lena". */
   why: string;
   /** The PR's row in the lanes, when it has one: its actions and where it opens. */
   row?: OverviewRow;
   target: DeepLinkTarget;
-  /** Open PRs only. */
+  /** Absent while the PR's state is not known. */
   check?: CheckView;
   comments?: number;
   since: number;
@@ -81,7 +83,7 @@ export interface StarredEntry {
   lead: StarredLine;
   /** A stack's PRs in merge order, base first; a PR's own line. */
   lines: StarredLine[];
-  /** The open PRs it lists, which no other section lists. */
+  /** The PRs it lists, which no other section lists. */
   urls: string[];
   /** A stack: "3 PRs · #362 review requested". A PR: its line's why. */
   why: string;
@@ -93,7 +95,7 @@ export interface StarredEntry {
 }
 export interface StarredSection {
   entries: StarredEntry[];
-  /** Every open PR the section lists: the PRs it claims from the other sections. */
+  /** Every PR the section lists: the PRs it claims from the other sections. */
   urls: string[];
   /** Its PRs that are work (`StarredLine.actionable`), for the tab count and Next up's empty state. */
   actionable: string[];
@@ -125,16 +127,17 @@ const current = (input: Pick<StarredInput, 'signals'>, member: ReviewMember) => 
   return value && value.url === member.url && value.headSha === member.headSha ? value : undefined;
 };
 
-/** One PR's line: its tier, why, action and age, from what it needs (`prNeed`). An open draft's why says "Draft". */
+/** One open PR's line: its tier, why, action and age, from what it needs (`prNeed`). A draft's why says "Draft". */
 export function starredLine(input: Pick<StarredInput, 'signals' | 'login' | 'model' | 'hidden'>, item: QueueItem, member: ReviewMember): StarredLine {
   const line = needLine(input, item, member);
-  return member.isDraft && line.tier !== 'done' && line.why !== 'Draft' ? { ...line, why: `Draft · ${line.why}` } : line;
+  return member.isDraft && line.why !== 'Draft' ? { ...line, why: `Draft · ${line.why}` } : line;
 }
 function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model' | 'hidden'>, item: QueueItem, member: ReviewMember): StarredLine {
   const fresh = current(input, member);
   const base = { id: member.url, member, target: prTarget(member.url) ?? { kind: 'queue' as const }, actionable: false };
   const updated = time(member.updatedAt) ?? time(member.createdAt) ?? 0;
-  if (!isOpenPr(member)) return { ...base, tier: 'done', why: member.merged ? 'Merged' : 'Closed', since: updated, source: 'updated', rank: 0 };
+  // Not known yet: a quiet line until it is, which then says what it needs or leaves the page.
+  if (!isOpenPr(member)) return { ...base, tier: 'quiet', why: 'Open', since: updated, source: 'updated', rank: 0 };
   const comments = commentsOf(input, [member]);
   const open = { ...base, check: checkView([fresh]), ...(comments !== undefined ? { comments } : {}) };
   const need = prNeed(input.model, member, input.signals, input.hidden);
@@ -200,9 +203,9 @@ function needLine(input: Pick<StarredInput, 'signals' | 'login' | 'model' | 'hid
   return { ...lined, tier: 'others', rank: 0, why: OVERVIEW_REASON_LABEL['checks-pending'] };
 }
 
-/** Best first: tier, then people blocked on you before fixes, then the longest wait (quiet and done: the latest change). */
+/** Best first: tier, then people blocked on you before fixes, then the longest wait (quiet: the latest change). */
 export function compareStarred(a: Pick<StarredLine, 'tier' | 'rank' | 'since'> & { title?: string }, b: Pick<StarredLine, 'tier' | 'rank' | 'since'> & { title?: string }): number {
-  const late = a.tier === 'quiet' || a.tier === 'done';
+  const late = a.tier === 'quiet';
   return tierRank(a.tier) - tierRank(b.tier) || a.rank - b.rank || (late ? b.since - a.since : a.since - b.since) || (a.title ?? '').localeCompare(b.title ?? '');
 }
 
@@ -217,19 +220,14 @@ export function starredSection(input: StarredInput): StarredSection {
     if (seen.has(subject.id) || !subject.members.length) continue;
     seen.add(subject.id);
     const ordered = subject.kind === 'stack' ? stackDependencyOrder(subject).members : subject.members;
-    const members = ordered.filter((member) => !hidden.has(member.url) && !excluded.has(member.url) && !item.snoozedUrls?.includes(member.url));
+    // Open PRs only: a merged or closed one stays starred but leaves the Overview.
+    const members = ordered.filter((member) => !isMergedOrClosedPr(member) && !hidden.has(member.url) && !excluded.has(member.url) && !item.snoozedUrls?.includes(member.url));
     if (!members.length) continue;
     const lines = members.map((member) => starredLine(input, item, member));
     const lead = [...lines].sort(compareStarred)[0];
-    const openLines = lines.filter((line) => line.tier !== 'done');
     const stack = subject.kind === 'stack' && lines.length > 1;
-    const comments = stack ? commentsOf(input, openLines.map((line) => line.member)) : lead.comments;
-    const allDone = !openLines.length;
-    const why = !stack
-      ? lead.why
-      : allDone
-        ? `${prs(lines.length)} · ${lines.every((line) => line.member.merged) ? 'all merged' : 'all merged or closed'}`
-        : `${prs(lines.length)} · #${lead.member.number} ${lower(lead.why)}`;
+    const comments = stack ? commentsOf(input, members) : lead.comments;
+    const why = stack ? `${prs(lines.length)} · #${lead.member.number} ${lower(lead.why)}` : lead.why;
     entries.push({
       id: `starred|${subject.id}`,
       item,
@@ -238,9 +236,9 @@ export function starredSection(input: StarredInput): StarredSection {
       tier: lead.tier,
       lead,
       lines,
-      urls: openLines.map((line) => line.member.url),
+      urls: members.map((member) => member.url),
       why,
-      ...(allDone ? {} : { check: stack ? checkView(openLines.map((line) => current(input, line.member))) : lead.check }),
+      ...(stack ? { check: checkView(members.map((member) => current(input, member))) } : lead.check ? { check: lead.check } : {}),
       ...(comments !== undefined ? { comments } : {}),
       since: lead.since,
       source: lead.source,
