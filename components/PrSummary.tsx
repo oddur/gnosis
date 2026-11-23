@@ -571,7 +571,8 @@ function PrSummaryContent({
   const [changesReview, setChangesReview] = useState<HeaderReview>();
   const headerReview: HeaderReview = tab === 'changes' && changesReview ? changesReview : summaryReview.header;
   const navigationRow = useRef<HTMLDivElement>(null);
-  const collapse = useCollapsedActions(navigationRow, `${item.subject.id}:${tab}`);
+  // Measured again only when the row's contents change; a tab switch never forces a layout read here.
+  const collapse = useCollapsedActions(navigationRow, `${item.subject.id}:${!stacked && visited.has('conflicts')}`);
   const openPr = !first.merged && first.state === 'open';
   const own = !!account && first.author.toLowerCase() === account.toLowerCase();
   const unresolved = signals.find((signal) => signal.url === first.url)?.threads?.unresolved.length ?? 0;
