@@ -224,6 +224,8 @@ declare global {
       conflictHeader: (url: string, headSha: string) => Promise<import('../lib/conflict-header').ConflictHeader | null>;
       conflictTypeCheck: (id: string) => Promise<import('../lib/conflict-resolution').ConflictTypeCheck | null | undefined>;
       cancelConflictTypeCheck: (id: string) => Promise<void>;
+      /** The saved draft as it is now, while it is being edited (#517). */
+      conflictDraft?: (id: string) => Promise<import('../lib/conflict-resolution').ConflictSession | null>;
       onConflictTypeCheckChanged: (callback: (id: string) => void) => () => void;
       conflictPushed?: (url: string, headSha: string) => Promise<import('../lib/conflict-undo').PushedUpdate | null>;
       /** Local counts for Settings › Diagnostics › Conflict resolution stats (lib/conflict-stats.ts). Fire and forget. */
