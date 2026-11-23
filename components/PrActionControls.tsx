@@ -23,29 +23,36 @@ const guard = (blocked: unknown, run: () => void) => () => {
  * effects that would close it. Hiding destroys this layout effect: the popup is hidden in the same commit, so it never
  * paints without its control, then closed (as `components/ui/tooltip.tsx` does for tooltips).
  */
-export function CloseWhenHidden({ onClose, content }: { onClose: () => void; content: RefObject<HTMLElement | null> }) {
+export function CloseWhenHidden({ open, onClose, content }: { open: boolean; onClose: () => void; content: RefObject<HTMLElement | null> }) {
   const latest = useRef(onClose);
   useLayoutEffect(() => {
     latest.current = onClose;
   });
+  // The open state this render asks for. A watcher removed while it is still true was not closed by its owner: its
+  // scope was hidden (or it unmounted). A normal close renders `open` false first, and is left alone.
+  const wanted = useRef(open);
+  wanted.current = open;
   const watching = useRef(false);
   useLayoutEffect(() => {
+    if (!open) return;
     watching.current = true;
     if (content.current) content.current.style.display = '';
     return () => {
       watching.current = false;
+      if (!wanted.current) return;
       if (content.current) content.current.style.display = 'none';
       // StrictMode runs the effect again at once; only a scope that stays hidden closes.
       queueMicrotask(() => {
-        if (!watching.current) latest.current();
+        if (!watching.current && wanted.current) latest.current();
       });
     };
-  }, [content]);
+  }, [open, content]);
   useEffect(() => {
+    if (!open) return;
     const close = () => latest.current();
     window.addEventListener('blur', close);
     return () => window.removeEventListener('blur', close);
-  }, []);
+  }, [open]);
   return null;
 }
 
@@ -58,7 +65,7 @@ function useMenuOpen(open: boolean | undefined, onOpenChange: ((open: boolean) =
     setOwn(next);
     onOpenChange?.(next);
   };
-  const guard = isOpen ? <CloseWhenHidden onClose={() => change(false)} content={content} /> : null;
+  const guard = <CloseWhenHidden open={isOpen} onClose={() => change(false)} content={content} />;
   return { isOpen, change, content, guard };
 }
 

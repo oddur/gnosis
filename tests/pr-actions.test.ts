@@ -700,10 +700,10 @@ void test('bulk draft changes stop before writing after an account switch or nav
   assert.equal(f.writes.length, 0);
 });
 /** The PR header's Reopen and Delete branch (#542), on a fixture PR changed by `change` before it is read. */
-interface BranchFacts { tip: string | null; defaultBranch: string; protectedBranch: boolean; ruleset: boolean; basePrs: number; refuse: boolean }
+interface BranchFacts { tip: string | null; defaultBranch: string; protectedBranch: boolean; ruleset: boolean; rules: readonly string[] | null; rulesError: boolean; basePrs: number; refuse: boolean }
 function finishedFixture(change: (pr: ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>) => void, facts: Partial<BranchFacts> = {}) {
   const f = fixture();
-  const branch: BranchFacts = { tip: 'head-1', defaultBranch: 'main', protectedBranch: false, ruleset: false, basePrs: 0, refuse: false, ...facts };
+  const branch: BranchFacts = { tip: 'head-1', defaultBranch: 'main', protectedBranch: false, ruleset: false, rules: [], rulesError: false, basePrs: 0, refuse: false, ...facts };
   const pr = f.prs[0] as ReturnType<typeof fixture>['prs'][number] & Record<string, unknown>;
   pr.state = 'MERGED';
   pr.headRef = { id: 'REF_1' };
@@ -716,11 +716,12 @@ function finishedFixture(change: (pr: ReturnType<typeof fixture>['prs'][number] 
     graphql: async (query: string, params: Record<string, unknown>) => {
       if (query.includes('ref(qualifiedName')) {
         reads.push(params);
+        if (branch.rulesError) throw new Error("Field 'rules' doesn't exist on type 'Ref'");
         return {
           repository: {
             id: 'REPO_1',
             defaultBranchRef: { name: branch.defaultBranch },
-            ref: branch.tip === null ? null : { target: { oid: branch.tip }, branchProtectionRule: branch.protectedBranch ? { id: 'BPR_1' } : null, refUpdateRule: branch.ruleset ? { pattern: '*' } : null },
+            ref: branch.tip === null ? null : { target: { oid: branch.tip }, branchProtectionRule: branch.protectedBranch ? { id: 'BPR_1' } : null, refUpdateRule: branch.ruleset ? { pattern: '*' } : null, rules: branch.rules && { nodes: branch.rules.map((type) => ({ type })) } },
             pullRequests: { totalCount: branch.basePrs },
           },
         };
@@ -784,11 +785,15 @@ void test('delete branch: one atomic ref update from the PR’s last commit, nev
   assert.equal((await moving.service.act(moving.client, request)).message, 'Deleted branch-1.');
   // GitHub refuses the update when commits were pushed after the PR closed: nothing is deleted.
   const pushed = finishedFixture(() => {}, { tip: 'pushed-later' });
-  await assert.rejects(pushed.service.act(pushed.client, await pushed.request(1, 'delete-branch')), /may have commits this PR does not/);
+  await assert.rejects(pushed.service.act(pushed.client, await pushed.request(1, 'delete-branch')), /GitHub refused to delete branch-1; nothing was deleted/);
   for (const [facts, reason, change] of [
     [{ defaultBranch: 'branch-1' }, /default branch/, undefined],
     [{ protectedBranch: true }, /protected or covered by a ruleset/, undefined],
     [{ ruleset: true }, /protected or covered by a ruleset/, undefined],
+    // A ruleset that restricts deletions, which admins could bypass, and rules GitHub would not show: both refuse.
+    [{ rules: ['DELETION'] }, /protected or covered by a ruleset/, undefined],
+    [{ rules: null }, /protected or covered by a ruleset/, undefined],
+    [{ rulesError: true }, /rules/, undefined],
     [{ basePrs: 2 }, /base of another open PR/, undefined],
     [{ tip: null }, /already deleted/, undefined],
     [{}, /Merge or close this PR/, (pr: Record<string, unknown>) => { pr.state = 'OPEN'; }],
@@ -816,4 +821,8 @@ void test('a packaged build blocks reload, view source and print, but not Cmd+Sh
   assert.equal(key('U', { shiftKey: true }), false);
   assert.equal(key('u', { metaKey: false, ctrlKey: true, shiftKey: true }), false);
   assert.equal(key('u', { metaKey: false }), false, 'Without Cmd or Ctrl nothing is blocked');
+});
+void test('delete branch: a ruleset rule of another kind does not refuse it', async () => {
+  const f = finishedFixture(() => {}, { rules: ['PULL_REQUEST', 'REQUIRED_STATUS_CHECKS'] });
+  assert.equal((await f.service.act(f.client, await f.request(1, 'delete-branch'))).message, 'Deleted branch-1.');
 });

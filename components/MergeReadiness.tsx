@@ -60,7 +60,7 @@ function ReadinessChipPopover({ readiness, label, Icon, children }: { readiness:
   const content = useRef<HTMLDivElement>(null);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      {open && <CloseWhenHidden onClose={() => setOpen(false)} content={content} />}
+      <CloseWhenHidden open={open} onClose={() => setOpen(false)} content={content} />
       <Popover.Trigger asChild>
         <button type="button" className={`merge-readiness-badge merge-readiness-chip is-${readiness.tone}`} aria-label={`${label}. Merge readiness details`}>
           <Icon size={14} aria-hidden="true" />

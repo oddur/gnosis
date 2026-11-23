@@ -702,7 +702,7 @@ export function PrActions({
   const mergeMethods = state && !state.mergeQueue ? state.methods : undefined;
   const mergeControl = (
     <Popover.Root open={popover} onOpenChange={(value) => { if (!value && !busy) cancel(); }}>
-      {popover && <CloseWhenHidden onClose={() => { if (!pending.current) cancel(); }} content={confirmContent} />}
+      <CloseWhenHidden open={popover} onClose={() => { if (!pending.current) cancel(); }} content={confirmContent} />
       <Popover.Anchor asChild>
         <span className="pr-merge-anchor">
           {trigger ? (

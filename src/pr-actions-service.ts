@@ -396,12 +396,18 @@ export function createPrActionsService(now = Date.now) {
           repository: {
             id: string;
             defaultBranchRef: { name: string } | null;
-            ref: { target: { oid: string } | null; branchProtectionRule: { id: string } | null; refUpdateRule: { pattern?: string } | null } | null;
+            ref: {
+              target: { oid: string } | null;
+              branchProtectionRule: { id: string } | null;
+              refUpdateRule: { pattern?: string } | null;
+              /** Ruleset rules on the branch. `refUpdateRule` covers classic protection only, and admins bypass rulesets. */
+              rules: { nodes: ({ type: string } | null)[] | null } | null;
+            } | null;
             pullRequests: { totalCount: number };
           } | null;
         }>(
           `query($owner:String!,$repo:String!,$ref:String!,$branch:String!){repository(owner:$owner,name:$repo){id defaultBranchRef{name}
-          ref(qualifiedName:$ref){target{oid} branchProtectionRule{id} refUpdateRule{pattern}}
+          ref(qualifiedName:$ref){target{oid} branchProtectionRule{id} refUpdateRule{pattern} rules(first:100){nodes{type}}}
           pullRequests(baseRefName:$branch,states:OPEN,first:1){totalCount}}}`,
           { owner, repo, ref: `refs/heads/${branch}`, branch }
         );
@@ -409,7 +415,9 @@ export function createPrActionsService(now = Date.now) {
         if (!head) throw new Error('GitHub could not read the branch’s repository. Nothing was deleted.');
         if (!head.ref) throw new Error(`${branch} is already deleted.`);
         if (head.defaultBranchRef?.name === branch) throw new Error(`${branch} is its repository’s default branch. Nothing was deleted.`);
-        if (head.ref.branchProtectionRule || head.ref.refUpdateRule)
+        // Unreadable rules count as protection: the delete fails closed.
+        const rules = head.ref.rules?.nodes;
+        if (head.ref.branchProtectionRule || head.ref.refUpdateRule || !rules || rules.some((rule) => !rule || rule.type === 'DELETION'))
           throw new Error(`${branch} is protected or covered by a ruleset. Nothing was deleted; delete it on GitHub if you need to.`);
         if (head.pullRequests.totalCount > 0)
           throw new Error(`${branch} is the base of another open PR. Nothing was deleted.`);
@@ -419,7 +427,7 @@ export function createPrActionsService(now = Date.now) {
           'mutation($input:UpdateRefsInput!){updateRefs(input:$input){clientMutationId}}',
           { input: { repositoryId: head.id, refUpdates: [{ name: `refs/heads/${branch}`, beforeOid: state.headSha, afterOid: ZERO_OID }] } }
         ).catch((error: unknown) => {
-          throw new Error(`${branch} was not deleted: it may have commits this PR does not. ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(`GitHub refused to delete ${branch}; nothing was deleted. ${error instanceof Error ? error.message : String(error)}`);
         });
         if (!updated.updateRefs) throw new Error('GitHub did not confirm the branch was deleted. Check it on GitHub.');
         return { status: 'completed', message: `Deleted ${branch}.` };
