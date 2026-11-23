@@ -133,7 +133,7 @@ void test('the scheme decides the build: gnosis when packaged, gnosis-dev in dev
 });
 
 void test('errors name the route word at most and never echo the link', () => {
-  const secret = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz';
+  const secret = 'ghp_' + '0123456789abcdefghijklmnopqrstuvwxyz';
   for (const link of [`gnosis://pr/o/r/1?file=${secret}%00`, `gnosis://${secret}/x`, `gnosis://open?url=https%3A%2F%2Fevil.io%2F${secret}`]) {
     const result = parseDeepLink(link, schemes);
     assert.ok('error' in result);

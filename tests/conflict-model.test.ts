@@ -200,22 +200,22 @@ test('files that match secret patterns never go to a model', async () => {
     assert.equal(isSecretPath(name), true, name);
   for (const name of ['src/settings.ts', 'README.md', 'lib/environment.ts', 'src/tokenizer.ts'])
     assert.equal(isSecretPath(name), false, name);
-  assert.equal(hasSecretText('const key = "AKIAABCDEFGHIJKLMNOP";'), true);
+  assert.equal(hasSecretText('const key = "' + 'AKIA' + 'ABCDEFGHIJKLMNOP";'), true);
   assert.equal(hasSecretText('-----BEGIN RSA PRIVATE KEY-----'), true);
   assert.equal(hasSecretText('const x = 10;'), false);
   for (const text of [
-    'const stripe = "sk_live_abcdefghij0123456789";',
-    'const restricted = "rk_live_abcdefghij0123456789";',
-    'const stripeTest = "sk_test_abcdefghij0123456789";',
+    'const stripe = "' + 'sk_live_' + 'abcdefghij0123456789";',
+    'const restricted = "' + 'rk_live_' + 'abcdefghij0123456789";',
+    'const stripeTest = "' + 'sk_test_' + 'abcdefghij0123456789";',
     '-----BEGIN PGP PRIVATE KEY BLOCK-----',
     '-----BEGIN OPENSSH PRIVATE KEY-----',
     '-----BEGIN PRIVATE KEY-----',
-    '//registry.npmjs.org/:_authToken=npm_abcdefghijklmnopqrstuvwxyz0123456789',
-    'const hook = "https://hooks.slack.com/services/T000/B000/XXXX";',
-    'const key = "ASIAABCDEFGHIJKLMNOP";',
-    'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG',
-    'SENDGRID=SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123',
-    'const google = "ya29.a0AfH6SMBabcdefghijklmnopqrstuvwxyz";',
+    '//registry.npmjs.org/:_authToken=' + 'npm_' + 'abcdefghijklmnopqrstuvwxyz0123456789',
+    'const hook = "https://hooks.' + 'slack.com/services/T000/B000/XXXX";',
+    'const key = "' + 'ASIA' + 'ABCDEFGHIJKLMNOP";',
+    'aws_secret_access_key = ' + 'wJalrXUtnFEMI/K7MDENG',
+    'SENDGRID=' + 'SG.' + 'abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123',
+    'const google = "' + 'ya29.' + 'a0AfH6SMBabcdefghijklmnopqrstuvwxyz";',
     'password: "hunter2hunter2"',
     'DB_PASSWD=correcthorse',
     'secret = "abcdefgh123"',
@@ -229,7 +229,7 @@ test('files that match secret patterns never go to a model', async () => {
   const secret = conflictFile({ path: 'config/.env.production' });
   const keyed = conflictFile({
     path: 'src/keys.ts',
-    original: original.replace('const y = 20;', 'const y = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";'),
+    original: original.replace('const y = 20;', 'const y = "' + 'ghp_' + 'abcdefghijklmnopqrstuvwxyz0123456789";'),
   });
   keyed.result = keyed.original;
   const f = fixture([secret, keyed], () => resolved());
@@ -651,7 +651,7 @@ test('secret text in its common forms is refused (round 3, item 1)', () => {
 test('a title or branch name that looks like a secret is not sent (round 3, item 2)', async () => {
   const session = {
     title: 'Rotate creds: password=hunter2hunter2',
-    headBranch: 'fix/token=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+    headBranch: 'fix/token=' + 'ghp_' + 'abcdefghijklmnopqrstuvwxyz0123456789',
     baseBranch: 'main',
   };
   const built = modelInput(session, conflictFile(), 0, undefined);
