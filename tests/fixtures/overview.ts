@@ -355,7 +355,8 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
 
   // `?overview&overview-stars=day|many`: starred work for the Starred section's suite (tests/overview-starred-browser.ts).
   // `day` stars a review request, an approved merge, a PR waiting on lena, one PR of the failing stack (so the stack
-  // is starred), someone else's quiet PR, your draft and a merged PR. `many` stars thirteen, past the section's cap.
+  // is starred), someone else's quiet PR, your draft and a merged PR, which the Overview leaves out. `many` stars
+  // thirteen, past the section's cap.
   const starScenario = params.get('overview-stars');
   if (starScenario) {
     const quiet = add(pr({ number: 351, repo: 'acme/web', title: 'Sketch the new onboarding checklist', author: 'maya', created: 3 * DAY, updated: 2 * HOUR }), { checks: 'success' });
