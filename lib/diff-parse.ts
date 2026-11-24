@@ -197,111 +197,151 @@ export function parseUnifiedDiff(diff: string): ParsedHunk[] {
 }
 
 // ── Expand context for a single hunk ─────────────────────────────
+//
+// A context row claims the same text at an old and a new line number. So
+// each extra row is taken from both files at once: walking outward from the
+// hunk's edges, where the two sides are aligned, while the base line and the
+// head line still match, and never into a neighbouring hunk's changed lines.
+// Added and deleted files, or a missing side, keep the hunk as it is.
 
+/** Limits on context taken around a hunk, as 0-based line indices: min inclusive, max exclusive. */
+interface ContextBounds {
+  minBase: number;
+  minHead: number;
+  maxBase: number;
+  maxHead: number;
+}
+
+/** File text as lines, without the empty element after a final newline. */
+function sourceLines(text: string | undefined): string[] | undefined {
+  if (text === undefined) return undefined;
+  const lines = text.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+/** The 0-based line range a hunk header covers on each side (a 0 count names the line before). */
+function hunkRange(parsed: NonNullable<ReturnType<typeof parseHunkHeader>>) {
+  const base0 = parsed.baseCount === 0 ? parsed.baseStart : parsed.baseStart - 1;
+  const head0 = parsed.headCount === 0 ? parsed.headStart : parsed.headStart - 1;
+  return { base0, baseEnd: base0 + parsed.baseCount, head0, headEnd: head0 + parsed.headCount };
+}
+
+/** Bounds that stop context at the changed lines of the other hunks in the same file. */
+function boundsFromNeighbours(header: string, neighbours: readonly string[]): ContextBounds {
+  const bounds: ContextBounds = { minBase: 0, minHead: 0, maxBase: Infinity, maxHead: Infinity };
+  const own = parseHunkHeader(header);
+  if (!own) return bounds;
+  const self = hunkRange(own);
+  for (const other of neighbours) {
+    if (other === header) continue;
+    const parsed = parseHunkHeader(other);
+    if (!parsed) continue;
+    const r = hunkRange(parsed);
+    if (r.baseEnd <= self.base0 && r.headEnd <= self.head0) {
+      bounds.minBase = Math.max(bounds.minBase, r.baseEnd);
+      bounds.minHead = Math.max(bounds.minHead, r.headEnd);
+    } else if (r.base0 >= self.baseEnd && r.head0 >= self.headEnd) {
+      bounds.maxBase = Math.min(bounds.maxBase, r.base0);
+      bounds.maxHead = Math.min(bounds.maxHead, r.head0);
+    }
+  }
+  return bounds;
+}
+
+function expandHunkBody(
+  header: string,
+  body: string[],
+  baseLines: string[] | undefined,
+  headLines: string[] | undefined,
+  targetContext: number,
+  bounds: ContextBounds
+): { expandedHunkHeader: string; expandedContent: string } | null {
+  const parsed = parseHunkHeader(header);
+  if (!parsed || !baseLines || !headLines || body.length === 0) return null;
+
+  let leadCtx = 0;
+  for (const line of body) {
+    if (line.startsWith(' ')) leadCtx++;
+    else break;
+  }
+  let trailCtx = 0;
+  for (let j = body.length - 1; j >= 0; j--) {
+    if (body[j].startsWith(' ')) trailCtx++;
+    else if (body[j].startsWith('\\')) continue;
+    else break;
+  }
+
+  const { base0, head0 } = hunkRange(parsed);
+  let baseEnd = base0;
+  let headEnd = head0;
+  for (const line of body) {
+    if (line.startsWith(' ')) {
+      baseEnd++;
+      headEnd++;
+    } else if (line.startsWith('-')) baseEnd++;
+    else if (line.startsWith('+')) headEnd++;
+  }
+
+  const prepend: string[] = [];
+  for (let k = 1; k <= Math.max(0, targetContext - leadCtx); k++) {
+    const b = base0 - k;
+    const h = head0 - k;
+    if (b < bounds.minBase || h < bounds.minHead || b >= baseLines.length || h >= headLines.length) break;
+    if (baseLines[b] !== headLines[h]) break;
+    prepend.unshift(' ' + baseLines[b]);
+  }
+
+  const append: string[] = [];
+  for (let k = 0; k < Math.max(0, targetContext - trailCtx); k++) {
+    const b = baseEnd + k;
+    const h = headEnd + k;
+    if (b >= bounds.maxBase || h >= bounds.maxHead || b >= baseLines.length || h >= headLines.length) break;
+    if (baseLines[b] !== headLines[h]) break;
+    append.push(' ' + baseLines[b]);
+  }
+
+  if (prepend.length === 0 && append.length === 0) return null;
+
+  const extra = prepend.length + append.length;
+  const baseCount = baseEnd - base0 + extra;
+  const headCount = headEnd - head0 + extra;
+  const expandedHunkHeader = buildHunkHeader(
+    base0 - prepend.length + 1,
+    baseCount,
+    head0 - prepend.length + 1,
+    headCount,
+    parsed.suffix
+  );
+  return { expandedHunkHeader, expandedContent: [...prepend, ...body, ...append].join('\n') };
+}
+
+/**
+ * Add up to `targetContext` lines of unchanged context around a hunk. Pass the
+ * headers of the file's other hunks as `neighbours` so context stops at them.
+ */
 export function expandHunkContext(
   hunk: ParsedHunk,
   filesBefore: Record<string, string>,
   filesAfter: Record<string, string>,
-  targetContext = 15
+  targetContext = 15,
+  neighbours: readonly string[] = []
 ): { expandedHunkHeader: string; expandedContent: string } {
-  const parsed = parseHunkHeader(hunk.hunkHeader);
-  if (!parsed) {
-    return { expandedHunkHeader: hunk.hunkHeader, expandedContent: hunk.content };
-  }
-
-  // Choose source file for context padding
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-  const baseLines = filesBefore[hunk.filePath]?.split('\n');
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-  const headLines = filesAfter[hunk.filePath]?.split('\n');
-
-  // For added files, context comes from head; for others, from base
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-  const ctxSource = hunk.fileStatus === 'added' ? headLines : (baseLines ?? headLines);
-
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-  if (!ctxSource) {
-    return { expandedHunkHeader: hunk.hunkHeader, expandedContent: hunk.content };
-  }
-
-  // Parse body lines
-  const rawLines = hunk.content.split('\n');
-  const bodyLines: { marker: string; text: string }[] = [];
-  for (const raw of rawLines) {
-    if (raw === '') continue;
-    const marker = raw[0];
-    bodyLines.push({ marker, text: raw.slice(1) });
-  }
-
-  if (bodyLines.length === 0) {
-    return { expandedHunkHeader: hunk.hunkHeader, expandedContent: hunk.content };
-  }
-
-  // Count existing leading/trailing context
-  let leadCtx = 0;
-  for (const bl of bodyLines) {
-    if (bl.marker === ' ') leadCtx++;
-    else break;
-  }
-  let trailCtx = 0;
-  for (let j = bodyLines.length - 1; j >= 0; j--) {
-    if (bodyLines[j].marker === ' ') trailCtx++;
-    else break;
-  }
-
-  // For added files (all + lines), use headStart for positioning
-  const hunkStart0 = hunk.fileStatus === 'added' ? parsed.headStart - 1 : parsed.baseStart - 1;
-
-  // Prepend leading context
-  const extraLead = Math.max(0, targetContext - leadCtx);
-  const prependFrom = Math.max(0, hunkStart0 - extraLead);
-  const prepend = ctxSource.slice(prependFrom, hunkStart0).map((l) => ' ' + l);
-
-  // Calculate where the hunk body ends in the source file
-  // Walk through body lines to find where base pointer ends
-  let basePos = parsed.baseStart - 1;
-  let headPos = parsed.headStart - 1;
-  for (const bl of bodyLines) {
-    if (bl.marker === ' ') {
-      basePos++;
-      headPos++;
-    } else if (bl.marker === '-') {
-      basePos++;
-    } else if (bl.marker === '+') {
-      headPos++;
-    }
-  }
-  const hunkEnd0 = hunk.fileStatus === 'added' ? headPos : basePos;
-
-  // Append trailing context
-  const extraTrail = Math.max(0, targetContext - trailCtx);
-  const appendTo = Math.min(ctxSource.length, hunkEnd0 + extraTrail);
-  const append = ctxSource.slice(hunkEnd0, appendTo).map((l) => ' ' + l);
-
-  // Rebuild hunk header with new counts
-  const allContent = [...prepend, ...rawLines.filter((l) => l !== ''), ...append];
-
-  let newBaseCount = 0;
-  let newHeadCount = 0;
-  for (const l of allContent) {
-    const m = l[0];
-    if (m === ' ') {
-      newBaseCount++;
-      newHeadCount++;
-    } else if (m === '-') {
-      newBaseCount++;
-    } else if (m === '+') {
-      newHeadCount++;
-    }
-  }
-
-  const newBaseStart = Math.max(1, parsed.baseStart - prepend.length);
-  const newHeadStart = Math.max(1, parsed.headStart - prepend.length);
-
-  const expandedHunkHeader = buildHunkHeader(newBaseStart, newBaseCount, newHeadStart, newHeadCount, parsed.suffix);
-  const expandedContent = allContent.join('\n');
-
-  return { expandedHunkHeader, expandedContent };
+  const unchanged = { expandedHunkHeader: hunk.hunkHeader, expandedContent: hunk.content };
+  if (hunk.fileStatus === 'added' || hunk.fileStatus === 'deleted') return unchanged;
+  const baseLines = sourceLines(filesBefore[hunk.filePath]);
+  const headLines = sourceLines(filesAfter[hunk.filePath]);
+  const body = hunk.content.split('\n').filter((line) => line !== '');
+  return (
+    expandHunkBody(
+      hunk.hunkHeader,
+      body,
+      baseLines,
+      headLines,
+      targetContext,
+      boundsFromNeighbours(hunk.hunkHeader, neighbours)
+    ) ?? unchanged
+  );
 }
 
 // ── Full pipeline: parse → expand → index ────────────────────────
@@ -313,9 +353,21 @@ export function buildIndexedHunks(
   targetContext = 15
 ): IndexedHunk[] {
   const parsed = parseUnifiedDiff(diff);
+  const headersByFile = new Map<string, string[]>();
+  for (const hunk of parsed) {
+    const headers = headersByFile.get(hunk.filePath) ?? [];
+    headers.push(hunk.hunkHeader);
+    headersByFile.set(hunk.filePath, headers);
+  }
 
   return parsed.map((hunk) => {
-    const { expandedHunkHeader, expandedContent } = expandHunkContext(hunk, filesBefore, filesAfter, targetContext);
+    const { expandedHunkHeader, expandedContent } = expandHunkContext(
+      hunk,
+      filesBefore,
+      filesAfter,
+      targetContext,
+      headersByFile.get(hunk.filePath)
+    );
     const language = inferLanguage(hunk.filePath);
 
     return {
@@ -328,8 +380,7 @@ export function buildIndexedHunks(
 }
 
 // ── Expand full diff as a single string ──────────────────────────
-// Replaces expandDiffContext from context-builder.ts but also
-// handles added files by using head file contents.
+// The same context rows as expandHunkContext, for the whole diff.
 
 export function expandFullDiff(
   diff: string,
@@ -338,45 +389,27 @@ export function expandFullDiff(
   targetContext = 15
 ): string {
   const result: string[] = [];
-  let currentBasePath: string | null = null;
-  let currentFileStatus: 'added' | 'deleted' | 'modified' = 'modified';
+  let basePath: string | null = null;
+  let headPath: string | null = null;
+  let fileHeaders: string[] = [];
   const lines = diff.split('\n');
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i];
 
-    if (line.startsWith('--- /dev/null')) {
-      currentBasePath = null;
-      currentFileStatus = 'added';
-      result.push(line);
-      i++;
-      continue;
-    }
-
-    if (line.startsWith('--- a/')) {
-      currentBasePath = line.slice('--- a/'.length);
-      currentFileStatus = 'modified';
-      result.push(line);
-      i++;
-      continue;
-    }
-
-    if (line.startsWith('+++ /dev/null')) {
-      currentFileStatus = 'deleted';
-      result.push(line);
-      i++;
-      continue;
-    }
-
-    if (line.startsWith('+++ b/')) {
-      const headPath = line.slice('+++ b/'.length);
-      if (currentFileStatus === 'added') {
-        currentBasePath = headPath; // use headPath for context lookup
-      }
-      result.push(line);
-      i++;
-      continue;
+    if (line.startsWith('diff ')) {
+      basePath = null;
+      headPath = null;
+      fileHeaders = [];
+    } else if (line.startsWith('--- ')) {
+      basePath = line.startsWith('--- a/') ? line.slice('--- a/'.length) : null;
+    } else if (line.startsWith('+++ ')) {
+      headPath = line.startsWith('+++ b/') ? line.slice('+++ b/'.length) : null;
+      // The file's hunk headers, so context stops at a neighbouring hunk.
+      fileHeaders = [];
+      for (let j = i + 1; j < lines.length && !lines[j].startsWith('diff '); j++)
+        if (lines[j].startsWith('@@ ')) fileHeaders.push(lines[j]);
     }
 
     if (!line.startsWith('@@ ')) {
@@ -385,33 +418,6 @@ export function expandFullDiff(
       continue;
     }
 
-    // Hunk header
-    const match = line.match(HUNK_HEADER_RE);
-
-    // Choose file lines for context expansion
-    // For added files, use head file; for others, use base file
-    let fileLines: string[] | undefined;
-    if (currentFileStatus === 'added' && currentBasePath) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-      fileLines = filesAfter[currentBasePath]?.split('\n');
-    } else if (currentBasePath) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Record index may be undefined at runtime
-      fileLines = filesBefore[currentBasePath]?.split('\n');
-    }
-
-    if (!match || !fileLines) {
-      result.push(line);
-      i++;
-      continue;
-    }
-
-    const baseStart = parseInt(match[1]);
-    const baseCount = parseInt(match[2]) || 1;
-    const headStart = parseInt(match[3]);
-    const headCount = parseInt(match[4]) || 1;
-    const suffix = match[5];
-
-    // Collect hunk body
     i++;
     const body: string[] = [];
     while (i < lines.length && !lines[i].startsWith('@@ ') && !lines[i].startsWith('diff ')) {
@@ -420,41 +426,21 @@ export function expandFullDiff(
     }
     while (body.length > 0 && body[body.length - 1] === '') body.pop();
 
-    // Count existing leading/trailing context
-    let leadCtx = 0;
-    for (const bl of body) {
-      if (bl.startsWith(' ')) leadCtx++;
-      else break;
-    }
-    let trailCtx = 0;
-    for (let j = body.length - 1; j >= 0; j--) {
-      if (body[j].startsWith(' ')) trailCtx++;
-      else break;
-    }
-
-    // For added files, use headStart for positioning
-    const hunkStart0 = currentFileStatus === 'added' ? headStart - 1 : baseStart - 1;
-
-    // Prepend extra leading context
-    const extraLead = Math.max(0, targetContext - leadCtx);
-    const prependFrom = Math.max(0, hunkStart0 - extraLead);
-    const prepend = fileLines.slice(prependFrom, hunkStart0).map((l) => ' ' + l);
-
-    // Append extra trailing context
-    const extraTrail = Math.max(0, targetContext - trailCtx);
-    const hunkEnd0 = currentFileStatus === 'added' ? hunkStart0 + headCount : hunkStart0 + baseCount;
-    const appendTo = Math.min(fileLines.length, hunkEnd0 + extraTrail);
-    const append = fileLines.slice(hunkEnd0, appendTo).map((l) => ' ' + l);
-
-    // Rebuild hunk header
-    const newBaseStart = currentFileStatus === 'added' ? baseStart : Math.max(1, prependFrom + 1);
-    const newBaseCount = currentFileStatus === 'added' ? baseCount : prepend.length + baseCount + append.length;
-    const newHeadStart =
-      currentFileStatus === 'added' ? Math.max(1, headStart - prepend.length) : Math.max(1, headStart - prepend.length);
-    const newHeadCount = prepend.length + headCount + append.length;
-
-    result.push(`@@ -${newBaseStart},${newBaseCount} +${newHeadStart},${newHeadCount} @@${suffix}`);
-    result.push(...prepend, ...body, ...append);
+    // Added and deleted files (one path is /dev/null) are already whole. Both
+    // content maps are keyed by the file's head path, as for a renamed file.
+    const expanded =
+      basePath && headPath
+        ? expandHunkBody(
+            line,
+            body,
+            sourceLines(filesBefore[headPath]),
+            sourceLines(filesAfter[headPath]),
+            targetContext,
+            boundsFromNeighbours(line, fileHeaders)
+          )
+        : null;
+    if (expanded) result.push(expanded.expandedHunkHeader, expanded.expandedContent);
+    else result.push(line, ...body);
   }
 
   return result.join('\n');
