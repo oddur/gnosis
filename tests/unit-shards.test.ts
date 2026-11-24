@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { DURATION_FILES, NATIVE_SHARDS, browserSuites, shardSuites } from '../scripts/run-browser-suites.mjs';
-import { unitShard, unitTestFiles, usesTestPart } from '../scripts/run-unit-tests.mjs';
+import { shardRuns, unitShard, unitTestFiles, usesTestPart } from '../scripts/run-unit-tests.mjs';
 import { inPart, testPart } from './support/test-part';
 
 const scripts = (JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }).scripts;
@@ -14,7 +16,7 @@ void test('the unit shards run every npm test file, and split the long ones by t
   assert.ok(files.includes('tests/unit-shards.test.ts') && files.length > 100);
   assert.ok(usesTestPart('tests/conflict-resolution.test.ts'), 'the conflict-resolution tests run in parts');
   assert.ok(usesTestPart('tests/conflict-resolution-shallow.test.ts'), 'so does the file that imports them');
-  assert.ok(!usesTestPart('tests/unit-shards.test.ts'));
+  assert.ok(!usesTestPart('tests/pr-state.test.ts'));
   const count = Number(/run-unit-tests\.mjs --shard \$\{\{ matrix\.shard \}\}\/(\d+)/.exec(workflow)?.[1]);
   assert.ok(count >= 2, 'checks.yml runs the unit shards');
   const runs = new Map<string, number>();
@@ -66,4 +68,44 @@ void test('the native browser jobs match NATIVE_SHARDS and balance every suite b
       suites.length
     );
   }
+});
+
+/** Runs `tsx --test` on files with an environment, and returns how many tests passed and failed. */
+function runFixture(files: string[], env: NodeJS.ProcessEnv) {
+  const tsx = createRequire(import.meta.url).resolve('tsx/cli');
+  // Without NODE_TEST_CONTEXT, which marks this process as a test file, the child runs its files as a top-level runner.
+  const clean = { ...env };
+  delete clean.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, [tsx, '--test', ...files], { env: clean, encoding: 'utf8' });
+  const count = (name: string) => Number(new RegExp(`^ℹ ${name} (\\d+)`, 'm').exec(result.stdout)?.[1] ?? NaN);
+  return { pass: count('pass'), fail: count('fail'), output: result.stdout + result.stderr };
+}
+
+// GNOSIS_TEST_PART reaches only the process that runs the split files. A file that does not split, even one that
+// imports the helpers, runs every test in every shard, also when the variable is already set around the runner.
+void test('under a shard, a file that is not split runs in full and a split file runs its part', () => {
+  const whole = 'tests/fixtures/test-part/whole.ts';
+  const split = 'tests/fixtures/test-part/split.ts';
+  const isSplit = (file: string) => file === split;
+  let wholeShards = 0;
+  for (const index of [1, 2]) {
+    const runs = shardRuns([whole, split], index, 2, { ...process.env, GNOSIS_TEST_PART: '1/2' }, isSplit);
+    const splitRun = runs.find((run) => run.files.includes(split));
+    assert.ok(splitRun && !splitRun.files.includes(whole));
+    assert.equal(splitRun.env.GNOSIS_TEST_PART, `${index}/2`);
+    const splitResult = runFixture(splitRun.files, splitRun.env);
+    assert.deepEqual([splitResult.pass, splitResult.fail], [2, 0], splitResult.output);
+    const wholeRun = runs.find((run) => run.files.includes(whole));
+    if (!wholeRun) continue;
+    wholeShards++;
+    assert.equal(wholeRun.env.GNOSIS_TEST_PART, undefined);
+    const wholeResult = runFixture(wholeRun.files, wholeRun.env);
+    assert.deepEqual([wholeResult.pass, wholeResult.fail], [4, 0], wholeResult.output);
+  }
+  assert.equal(wholeShards, 1, 'a file that is not split runs in one shard');
+});
+
+void test('a split file that uses describe fails with a message instead of running its tests in every part', () => {
+  const result = runFixture(['tests/fixtures/test-part/describe.ts'], { ...process.env, GNOSIS_TEST_PART: '1/2' });
+  assert.match(result.output, /describe is not supported in a file split by tests\/support\/test-part\.ts/);
 });

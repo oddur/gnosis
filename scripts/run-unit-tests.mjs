@@ -36,8 +36,9 @@ export function unitTestFiles(scripts) {
 }
 
 /**
- * Whether a test file splits its tests by GNOSIS_TEST_PART: it takes `test` from tests/support/test-part.ts, or imports a
- * test file that does.
+ * Whether a test file may split its tests by GNOSIS_TEST_PART: it imports tests/support/test-part.ts (any specifier
+ * that names it), or imports a test file that does. A file found here runs in every shard; one that only uses the
+ * helpers, not its `test`, then runs whole in each, which costs time but loses no test.
  * @param {string} file
  * @returns {boolean}
  */
@@ -46,9 +47,9 @@ export function usesTestPart(file, seen = new Set()) {
   if (seen.has(full) || !fs.existsSync(full)) return false;
   seen.add(full);
   const source = fs.readFileSync(full, 'utf8');
-  if (/^import\s*\{\s*test\s*\}\s*from\s*['"]\.\/support\/test-part(\.ts)?['"]/m.test(source)) return true;
-  for (const [, specifier] of source.matchAll(/(?:\bfrom|^import)\s*['"](\.{1,2}\/[^'"]+)['"]/gm)) {
-    if (/\.test(\.tsx?)?$/.test(specifier)) {
+  for (const [, specifier] of source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+    if (specifier.includes('support/test-part')) return true;
+    if (specifier.startsWith('.') && /\.test(\.tsx?)?$/.test(specifier)) {
       const target = path.resolve(path.dirname(full), specifier);
       const candidate = [target, `${target}.ts`, `${target}.tsx`].find(
         (f) => fs.existsSync(f) && fs.statSync(f).isFile()
@@ -72,32 +73,74 @@ export function unitShard(files, index, count, split = usesTestPart) {
   return { files: files.filter((file) => parted.includes(file) || whole.includes(file)), parted };
 }
 
+/**
+ * The `tsx --test` processes one shard starts: the whole files, with GNOSIS_TEST_PART removed so none of them can lose
+ * tests, and the split files, with GNOSIS_TEST_PART=index/count.
+ * @param {string[]} files
+ * @param {number} index
+ * @param {number} count
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ name: string, files: string[], env: NodeJS.ProcessEnv }[]}
+ */
+export function shardRuns(files, index, count, env = process.env, split = usesTestPart) {
+  const { files: selected, parted } = unitShard(files, index, count, split);
+  const rest = { ...env };
+  delete rest.GNOSIS_TEST_PART;
+  const runs = [
+    { name: 'whole files', files: selected.filter((file) => !parted.includes(file)), env: rest },
+    {
+      name: `split files, part ${index}/${count}`,
+      files: parted,
+      env: { ...rest, GNOSIS_TEST_PART: `${index}/${count}` },
+    },
+  ];
+  return runs.filter((run) => run.files.length > 0);
+}
+
+// Spawn tsx's CLI with this Node, not node_modules/.bin/tsx: on Windows that is a .cmd shim that needs a shell.
+const tsx = () => createRequire(import.meta.url).resolve('tsx/cli');
+
+/**
+ * Runs one `tsx --test` process and resolves with its exit code.
+ * @param {{ files: string[], env: NodeJS.ProcessEnv }} run
+ * @param {'inherit' | 'pipe'} stdio
+ * @returns {Promise<{ code: number, output: string }>}
+ */
+function runTests(run, stdio) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [tsx(), '--test', ...run.files], { cwd: root, env: run.env, stdio });
+    let output = '';
+    child.stdout?.on('data', (chunk) => (output += chunk));
+    child.stderr?.on('data', (chunk) => (output += chunk));
+    child.on('exit', (status, signal) => resolve({ code: status ?? (signal ? 1 : 0), output }));
+    child.on('error', (error) => resolve({ code: 1, output: output + String(error) }));
+  });
+}
+
 async function main() {
   const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
   const files = unitTestFiles(scripts);
   const shard = argument('--shard');
-  let selected = files;
-  let parted = [];
-  const env = { ...process.env };
+  let runs = [{ name: 'all files', files, env: process.env }];
   if (shard) {
     const [index, count] = shard.split('/').map(Number);
     if (!(count >= 1 && index >= 1 && index <= count)) throw new Error(`Invalid --shard ${shard}; expected i/n`);
-    ({ files: selected, parted } = unitShard(files, index, count));
-    env.GNOSIS_TEST_PART = `${index}/${count}`;
+    runs = shardRuns(files, index, count);
   }
   if (process.argv.includes('--list')) {
-    for (const file of selected) console.log(`${parted.includes(file) ? `part ${shard}` : 'whole'}\t${file}`);
+    for (const run of runs) for (const file of run.files) console.log(`${run.name}\t${file}`);
     return;
   }
-  console.log(`Running ${selected.length} of ${files.length} unit test files${shard ? ` (shard ${shard})` : ''}.`);
-  // Spawn tsx's CLI with this Node, not node_modules/.bin/tsx: on Windows that is a .cmd shim that needs a shell.
-  const tsx = createRequire(import.meta.url).resolve('tsx/cli');
-  const code = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [tsx, '--test', ...selected], { cwd: root, env, stdio: 'inherit' });
-    child.on('exit', (status, signal) => resolve(status ?? (signal ? 1 : 0)));
-    child.on('error', () => resolve(1));
+  const total = runs.reduce((sum, run) => sum + run.files.length, 0);
+  console.log(`Running ${total} of ${files.length} unit test files${shard ? ` (shard ${shard})` : ''}.`);
+  // The runs go in parallel. The first prints as it goes; the others print when they finish, so lines don't interleave.
+  const results = await Promise.all(runs.map((run, i) => runTests(run, i === 0 ? 'inherit' : 'pipe')));
+  results.forEach((result, i) => {
+    if (i > 0) console.log(`\n── ${runs[i].name} ──\n${result.output}`);
   });
-  process.exitCode = code;
+  const failed = runs.filter((_, i) => results[i].code !== 0).map((run) => run.name);
+  if (failed.length) console.log(`\nFailed: ${failed.join(', ')}`);
+  process.exitCode = failed.length ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === self) {

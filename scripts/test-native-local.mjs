@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs the browser suites the macOS and Windows CI jobs run, natively on this machine, with the same shards and
-// test-window size. Run it before opening a PR that changes UI: the native jobs on a PR take about 20 minutes, and a
-// failure there costs a whole round. The suites open real Electron windows that take focus.
+// test-window size. Run it before opening a PR that changes more than docs: the native jobs on a PR take about 20
+// minutes, and a failure there costs a whole round. The suites open real Electron windows that take focus.
 //
 //   npm run test:native-local                       # every suite (about an hour)
 //   npm run test:native-local -- --shard 1/4        # the suites of CI's "Browser (macos-latest 1/4)"

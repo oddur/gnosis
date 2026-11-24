@@ -2,23 +2,29 @@
 
 The Checks workflow uses different browser coverage for pull requests and pushes to `main`.
 
-| Check                                       | PR: Linux         | PR: macOS / Windows                           | Every push to `main`: all platforms |
-| ------------------------------------------- | ----------------- | --------------------------------------------- | ----------------------------------- |
-| TypeScript and unit tests                   | Full              | Full (Windows unit tests in 2 shards)         | Full                                |
-| Startup bundle                              | Yes               | No                                            | Linux only                          |
-| Electron integration smoke                  | Yes               | Yes                                           | Yes                                 |
-| Explainer, workbench, and D2 browser suites | Full, in 6 shards | Targeted smoke; full on UI PRs (4 / 5 shards) | Full                                |
-| Unsigned app and installers                 | Yes               | Yes                                           | Yes                                 |
+| Check                                       | PR: Linux         | PR: macOS / Windows                         | Every push to `main`: all platforms |
+| ------------------------------------------- | ----------------- | ------------------------------------------- | ----------------------------------- |
+| TypeScript and unit tests                   | Full              | Full (Windows unit tests in 2 shards)       | Full                                |
+| Startup bundle                              | Yes               | No                                          | Linux only                          |
+| Electron integration smoke                  | Yes               | Yes                                         | Yes                                 |
+| Explainer, workbench, and D2 browser suites | Full, in 6 shards | Full (4 / 5 shards) unless only docs change | Full                                |
+| Unsigned app and installers                 | Yes               | Yes                                         | Yes                                 |
 
 A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` gets a unique concurrency group: a later push does not cancel or replace an earlier full run. There are no path filters on the workflow.
 
 ## Native browser suites on pull requests
 
-The `Native suites needed` job decides whether a run gets the full macOS and Windows browser suites (`Browser (macos-latest n/4)` and `Browser (windows-latest n/5)`). They run on every push to `main`. On a pull request they run when it changes a path they cover: `components/`, `lib/`, `src/renderer*`, CSS under `src/`, `tests/*-browser.ts`, `tests/fixtures/`, the browser test harness (`scripts/test-workbench.mjs`, `scripts/run-browser-suites.mjs`, `tests/electron-test-shim.ts`, `tests/workbench-ready.ts`), the native duration files, or `.github/workflows/checks.yml`. To run them on any other PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, not from the event.
+The `Native suites needed` job decides whether a run gets the full macOS and Windows browser suites (`Browser (macos-latest n/4)` and `Browser (windows-latest n/5)`). They run on every push to `main`, and on every pull request unless each file it changes is on a short list known not to affect them:
 
-On other PRs the native jobs show as skipped. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.
+- `docs/`, `site/` and `.github/ISSUE_TEMPLATE/`
+- Markdown files, except under `tests/`, `src/`, `lib/`, `components/`, `scripts/`, `resources/` and `extensions/` (there Markdown can be test data, as in `tests/fixtures/conflicts`)
+- license files: `LICENSE`, `COPYING`, `NOTICE`, with or without an extension
 
-Before you open a PR that changes UI, run the same suites on your own Mac or Windows machine:
+Any other path runs them, so a new kind of file is covered without a change here. If the job cannot read the PR's labels or files, or fails, the suites run too. To run them on a docs-only PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, not from the event.
+
+On docs-only PRs the native jobs show as skipped, and Check runs the browser smoke suite. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.
+
+Before you open a PR that changes anything outside that list, run the same suites on your own Mac or Windows machine:
 
 ```sh
 npm run test:native-local -- --list --shard 1/4   # the suites of Browser (macos-latest 1/4)
@@ -49,7 +55,7 @@ The macOS and Windows jobs balance with their own measurements, `scripts/browser
 
 ## Windows unit tests
 
-On Windows, `npm test` runs in two `Unit tests (windows-latest n/2)` jobs instead of in `Check (windows-latest)`. Spawning git is several times slower there, and the conflict-resolution tests, which run twice (full history and shallow), took about 16 minutes in one file. `scripts/run-unit-tests.mjs --shard i/n` gives each job a share of the files. A file that takes `test` from `tests/support/test-part.ts` runs in every job, and each job runs every n-th of its tests (`GNOSIS_TEST_PART`). Use it for any other unit test file that grows that long.
+On Windows, `npm test` runs in two `Unit tests (windows-latest n/2)` jobs instead of in `Check (windows-latest)`. Spawning git is several times slower there, and the conflict-resolution tests, which run twice (full history and shallow), took about 16 minutes in one file. `scripts/run-unit-tests.mjs --shard i/n` gives each job a share of the files. A file that takes `test` from `tests/support/test-part.ts` runs in every job, in a separate `tsx --test` process that alone gets `GNOSIS_TEST_PART`, and each job runs every n-th of its tests. Every other file runs in a process without that variable, so it always runs in full. In a split file, `test.only`, `it`, `describe` and `suite` throw: they would register outside the part count. Use it for any other unit test file that grows that long.
 
 ```sh
 node scripts/run-browser-suites.mjs --list --shard 2/6    # suites in one shard, with weights

@@ -17,9 +17,11 @@ concurrency:
 
 jobs:
   changes:
-    # Whether this run needs the full macOS and Windows browser suites: on every push to main, and on a pull request
-    # that changes a path the suites cover or has the `native-ci` label. The labels are read from the API, not the event,
-    # so re-running the workflow after adding the label runs the suites.
+    # Whether this run needs the full macOS and Windows browser suites. They run on every push to main, and on a pull
+    # request unless every file it changes is on a short list known not to affect them (docs, the site, issue
+    # templates, license files, and Markdown outside the code and test folders). A path that is not on the list runs them. So does the `native-ci` label, read
+    # from the API when the job runs, so re-running all jobs after adding it is enough. If the job cannot tell (an API
+    # call fails, or the job fails), the suites run.
     name: Native suites needed
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -36,30 +38,34 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          set -euo pipefail
-          if [ "$EVENT" != pull_request ]; then
-            echo "A push: the native suites run."
+          set -uo pipefail
+          run_native() {
+            echo "$1"
             echo native=true >> "$GITHUB_OUTPUT"
             exit 0
-          fi
-          labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          }
+          [ "$EVENT" = pull_request ] || run_native "A push: the native suites run."
+          labels=$(gh api --paginate "repos/$REPO/issues/$PR/labels" --jq '.[].name') ||
+            run_native "Could not read the PR's labels: the native suites run."
           if printf '%s\n' "$labels" | grep -qx native-ci; then
-            echo "The PR has the native-ci label: the native suites run."
-            echo native=true >> "$GITHUB_OUTPUT"
-            exit 0
+            run_native "The PR has the native-ci label: the native suites run."
           fi
           # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs them.
-          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
-          ui='^(components/|lib/|tests/fixtures/|src/renderer|src/.*\.css$|tests/[^/]*-browser\.ts$|tests/electron-test-shim\.ts$|tests/workbench-ready\.ts$|scripts/test-workbench\.mjs$|scripts/run-browser-suites\.mjs$|scripts/browser-suite-durations-(macos|windows)\.json$|\.github/workflows/checks\.yml$)'
-          matched=$(printf '%s\n' "$files" | grep -E "$ui" || true)
-          if [ -n "$matched" ] || [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
-            echo "The PR changes paths the native suites cover:"
-            printf '%s\n' "$matched" | sed -n '1,20p'
-            echo native=true >> "$GITHUB_OUTPUT"
-          else
-            echo "No UI-affecting paths changed: the native suites are skipped. Add the native-ci label to run them."
-            echo native=false >> "$GITHUB_OUTPUT"
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||
+            run_native "Could not read the PR's files: the native suites run."
+          [ -n "$files" ] || run_native "The PR lists no files: the native suites run."
+          [ "$(printf '%s\n' "$files" | wc -l)" -lt 3000 ] || run_native "The PR changes 3000 files or more: the native suites run."
+          safe='^(docs/|site/|\.github/ISSUE_TEMPLATE/)|\.md$|(^|/)(LICENSE|LICENCE|COPYING|NOTICE)([.-][^/]*)?$'
+          # Markdown under the code and test folders can be test data (tests/fixtures/conflicts), so it is not safe.
+          code='^(tests|src|lib|components|scripts|resources|extensions)/'
+          others=$( (printf '%s\n' "$files" | grep -Ev "$safe"; printf '%s\n' "$files" | grep -E "$code") | sort -u)
+          if [ -n "$others" ]; then
+            echo "These files are not on the list that skips the native suites:"
+            printf '%s\n' "$others" | sed -n '1,20p'
+            run_native "The native suites run."
           fi
+          echo "Every changed file is documentation or similar: the native suites are skipped. Add the native-ci label to run them."
+          echo native=false >> "$GITHUB_OUTPUT"
 
   check:
     # Preserve the existing required-check names.
@@ -208,14 +214,15 @@ jobs:
         run: node scripts/run-unit-tests.mjs --shard ${{ matrix.shard }}/2
 
   native-browser:
-    # The full browser suite on macOS and Windows: on pushes to main, and on pull requests that change UI-affecting
-    # paths or have the `native-ci` label (see `changes`). Other pull requests run the smoke suite in Check. The shards
+    # The full browser suite on macOS and Windows: on pushes to main, and on pull requests unless `changes` finds only
+    # documentation-like files (see there). Those pull requests run the smoke suite in Check. The shards
     # are balanced by each platform's measured durations (scripts/browser-suite-durations-<platform>.json); their
     # counts must match NATIVE_SHARDS in scripts/run-browser-suites.mjs. macOS gets 4 shards: the account runs at most
     # 5 macOS jobs at once, and Check and Package take one each.
     name: Browser (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }})
     needs: changes
-    if: needs.changes.outputs.native == 'true'
+    # Only an explicit `false` skips them: a failed or cancelled gate leaves no output, and the suites run.
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     strategy:
