@@ -4,7 +4,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
-import { sliceFile, sliceMoves } from '../lib/explanation-slices';
+import { filePrints, sliceFile, sliceMoves } from '../lib/explanation-slices';
 import {
   conflictChecker,
   definitionsOf,
@@ -28,6 +28,13 @@ const engine = createSyntaxEngine(TreeSitter, {
   grammar: async (language) => new Uint8Array(await fs.readFile(path.join(files.grammars, `${language}.wasm`))),
   tags: (name) => Promise.resolve(TAGS[name] ?? ''),
 });
+/** Posts a job's answer, or its error. */
+const reply = (id: number, answer: Promise<CheckResponse>) =>
+  answer.then(
+    (response) => port.postMessage(response satisfies CheckResponse),
+    (error: unknown) =>
+      port.postMessage({ id, error: error instanceof Error ? error.message : String(error) } satisfies CheckResponse)
+  );
 port.on('message', (message: CheckRequest) => {
   if (message.kind === 'noise') {
     // Reduce noise for an explanation (lib/explanation-noise.ts): one file at a time, each failure its own null.
@@ -38,19 +45,26 @@ port.on('message', (message: CheckRequest) => {
     })();
     return;
   }
-  if (message.kind === 'slices' || message.kind === 'slice-moves') {
-    // Focused explanation sections (lib/explanation-slices.ts): one file's slices, or the PR's moves among them.
-    const answer: Promise<CheckResponse> =
-      message.kind === 'slices'
-        ? sliceFile(engine, message.file, message.disabled).then((slices) => ({ id: message.id, slices }))
-        : Promise.resolve().then(() => ({ id: message.id, moves: sliceMoves(message.files) }));
-    answer.then(
-      (response) => port.postMessage(response satisfies CheckResponse),
-      (error: unknown) =>
-        port.postMessage({
-          id: message.id,
-          error: error instanceof Error ? error.message : String(error),
-        } satisfies CheckResponse)
+  // Focused explanation sections (lib/explanation-slices.ts): one file's slices or candidates, or the PR's moves.
+  if (message.kind === 'slices') {
+    void reply(
+      message.id,
+      sliceFile(engine, message.file, message.disabled).then((slices) => ({ id: message.id, slices }))
+    );
+    return;
+  }
+  if (message.kind === 'slice-prints') {
+    void reply(
+      message.id,
+      filePrints(engine, message.file, message.disabled).then((prints) => ({ id: message.id, prints }))
+    );
+    return;
+  }
+  if (message.kind === 'slice-moves') {
+    const files = message.files;
+    void reply(
+      message.id,
+      Promise.resolve().then(() => ({ id: message.id, moves: sliceMoves(files) }))
     );
     return;
   }
