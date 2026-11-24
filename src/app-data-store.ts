@@ -193,6 +193,17 @@ export function createAppDataStore() {
       return false;
     }
   };
+  /** A copy of a written state. One that can't be cloned is kept as is: the flush drops it alone and says so (#534). */
+  const snapshot = (name: string, value: unknown) => {
+    const started = performance.now();
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    } finally {
+      noteWork(`saved data write ${name.split(':')[0]}`, started);
+    }
+  };
   async function flush(): Promise<void> {
     if (failure) throw failure;
     if (writing) {
@@ -346,10 +357,13 @@ export function createAppDataStore() {
       // refuses would fail every later flush, and with it every save in the app.
       assertSavedState(name, value);
       const removed = value === null || value === undefined;
+      // A snapshot, so a caller that changes its object after writing it changes neither memory nor the queued save:
+      // after a failed save, memory still matches what was written (#536). Memory and the queue share the snapshot.
+      const saved = removed ? null : snapshot(name, value);
       if (removed) Reflect.deleteProperty(all, name);
-      else all[name] = value;
+      else all[name] = saved;
       if (late()) return lose(name);
-      updates.set(name, removed ? null : value);
+      updates.set(name, saved);
       // The whole state replaces any row changes queued before it.
       patches.delete(name);
       schedule();
