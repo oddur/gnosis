@@ -157,9 +157,12 @@ export function CommitDiffStream({
     // undo a scroll made since, such as find in page or a link scrolling the stream: before the layout switch's
     // anchor reads the top line, an unrelated render put the file's top back (--changes, unified → split).
     const placement = `${item.start}:${item.size}`;
-    if (el && target.placed !== placement) {
-      target.placed = placement;
-      el.scrollTop = Math.max(0, item.start + Math.min(target.offset, Math.max(0, item.size - 60)));
+    if (el && target.placed !== placement && target.placed !== `${placement}:${el.scrollHeight}`) {
+      const wanted = Math.max(0, item.start + Math.min(target.offset, Math.max(0, item.size - 60)));
+      el.scrollTop = wanted;
+      // Landed: done until the row moves. Short, because the stream is not yet tall enough (rows below still at their
+      // estimates), or at its end: tried again once the stream's height changes, not on every render.
+      target.placed = Math.abs(el.scrollTop - wanted) <= 1 ? placement : `${placement}:${el.scrollHeight}`;
     }
     if (el) {
       if (target.focus) {

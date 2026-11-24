@@ -139,6 +139,14 @@ void app.whenReady().then(async () => {
       'Folders sort before files at every depth, with natural names'
     );
     await assertStreamFollowsTree();
+    // A jump to the last file goes as far as the stream allows: its row at the top, or the stream at its end. A first
+    // placement cut short while rows are still at their estimates is tried again as the stream grows, and the place
+    // still holds once the jump's 1.5 s follow has ended.
+    const lastFileInPlace = `(()=>{const s=document.querySelector('.commit-diff-stream');const r=document.querySelector('.commit-stream-row[data-file="pnpm-lock.yaml"]');
+      if(!s||!r)return false;return Math.abs(r.getBoundingClientRect().top-s.getBoundingClientRect().top)<=1||Math.abs(s.scrollTop-(s.scrollHeight-s.clientHeight))<=1})()`;
+    await js("window.openFile('pnpm-lock.yaml');window.lastJumpAt=performance.now()");
+    await wait(lastFileInPlace);
+    await wait(`performance.now()>window.lastJumpAt+1600 && ${lastFileInPlace}`);
     await js("window.openFile('worker.ts')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
