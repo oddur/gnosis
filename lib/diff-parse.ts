@@ -69,6 +69,8 @@ export function parseUnifiedDiff(diff: string): ParsedHunk[] {
     if (line.startsWith('diff --git')) {
       isRename = false;
       renameFrom = null;
+      // Each file starts modified: a status from the file before (an added one) must not carry over.
+      currentFileStatus = 'modified';
       i++;
       continue;
     }
@@ -109,6 +111,9 @@ export function parseUnifiedDiff(diff: string): ParsedHunk[] {
     if (line.startsWith('--- ')) {
       if (line === '--- /dev/null') {
         currentFileStatus = 'added';
+      } else {
+        // A deleted file has no +++ path (+++ /dev/null): its path is the old one.
+        currentFilePath = line.slice('--- a/'.length);
       }
       i++;
       continue;
