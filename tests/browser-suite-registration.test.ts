@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { LOCAL_SCRIPTS, browserSuites, perfSuites, suiteFile, usesPerfBudget, workbenchSuiteFiles } from '../scripts/run-browser-suites.mjs';
+import {
+  LOCAL_SCRIPTS,
+  browserSuites,
+  perfSuites,
+  suiteFile,
+  suiteTimeoutSeconds,
+  usesPerfBudget,
+  workbenchSuiteFiles,
+} from '../scripts/run-browser-suites.mjs';
 
 const scripts = (JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }).scripts;
 const files = workbenchSuiteFiles();
@@ -34,4 +42,15 @@ void test('a test file uses the perf budgets through any import form, a re-expor
   assert.equal(usesPerfBudget('tests/fixtures/perf-budget-reexport.ts'), true, 'a re-export');
   assert.equal(usesPerfBudget('tests/fixtures/perf-budget-helper.ts'), true, 'through a helper that re-exports it');
   assert.equal(usesPerfBudget('tests/workbench-browser.ts'), false);
+});
+
+// A hung suite fails alone instead of using up its shard's job timeout (#554).
+void test('a suite may run 3× its measured duration, and at least 4 minutes', () => {
+  const durations = { short: 10, long: 286, edge: 80, zero: 0 };
+  assert.equal(suiteTimeoutSeconds('short', durations), 240, 'a short suite gets the 4-minute floor');
+  assert.equal(suiteTimeoutSeconds('edge', durations), 240, '3× 80 s is exactly the floor');
+  assert.equal(suiteTimeoutSeconds('long', durations), 858, 'a long suite gets 3× its duration');
+  assert.equal(suiteTimeoutSeconds('new', durations), 858, 'an unmeasured suite gets the limit of the slowest suite');
+  assert.equal(suiteTimeoutSeconds('zero', durations), 858, 'a zero measurement counts as unmeasured');
+  assert.equal(suiteTimeoutSeconds('new', {}), 240, 'with no measurements at all, the floor');
 });
