@@ -33,13 +33,13 @@ export async function waitSettled(contents: WebContents, key: string, timeoutMs 
 
 const loadTimeoutMs = 60_000;
 
-/** loadURL did not settle, or the fixture never rendered after it did. */
+/** loadURL did not settle or could not connect, or the fixture never rendered after it did. */
 class LoadStalled extends Error {}
 
 /**
  * loadURL resolves before the fixture's top-level dynamic imports finish rendering.
  *
- * A page that never reaches its load event, or a fixture that never renders, is loaded once more.
+ * A page that never reaches its load event, cannot connect, or a fixture that never renders, is loaded once more.
  * On Windows CI the first load of a suite once stalled for over a minute with no script error,
  * while the same load normally takes a few seconds. The stalled attempt's diagnostics are printed
  * either way, so a stall that recovers still shows which requests were pending.
@@ -130,6 +130,14 @@ async function loadAndRender(window: BrowserWindow, url: string, renderTimeoutMs
         );
       }),
     ]);
+  } catch (error) {
+    // On Windows CI the connection to the suite's own dev server on 127.0.0.1 failed now and then, while the server
+    // was listening: on the first load of moved-symbols (PR #566), and on a later load of syntax-scope after earlier
+    // loads from the same server worked. It is a failed connection, not a fixture that does not render, so it is
+    // tried once more like a stall. A server that is really down fails the second load too.
+    if (!(error instanceof LoadStalled) && /ERR_CONNECTION_(FAILED|REFUSED|RESET|CLOSED)/.test(String(error)))
+      throw new LoadStalled(`Could not connect to the dev server: ${(error as Error).message}`);
+    throw error;
   } finally {
     clearTimeout(timer);
   }
