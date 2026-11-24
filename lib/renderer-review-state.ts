@@ -5,8 +5,10 @@ const sending = new Set<Promise<unknown>>();
 /** Keys with a save in flight, so a repeated value is never skipped behind a different one. */
 const sendingKeys = new Map<string, number>();
 /** Debounced saves that have not run yet. Quit runs them at once. */
-const deferred = new Set<(quit?: boolean) => void>();
+const deferred = new Set<() => void>();
 let quitting = false;
+/** True once main asked this window to save before quit. Work that pauses on timers should stop pausing. */
+export const reviewStateQuitting = () => quitting;
 function track<T>(promise: Promise<T>, key?: string): Promise<T> {
   sending.add(promise);
   if (key) sendingKeys.set(key, (sendingKeys.get(key) ?? 0) + 1);
@@ -24,16 +26,15 @@ function track<T>(promise: Promise<T>, key?: string): Promise<T> {
  * Run `save` after `delayMs`, or sooner if the app quits first. Returns a cancel function that drops
  * the save. Use it for debounced writes, such as scroll positions, so quitting does not lose them.
  * A save that returns a promise (one that prepares its value before it writes) is waited for at quit.
- * At quit, `save` gets `true`: it should not wait on timers, which background windows throttle.
  */
-export function scheduleReviewStateWrite(save: (quit: boolean) => unknown, delayMs: number): () => void {
-  const run = (quit = false) => {
+export function scheduleReviewStateWrite(save: () => unknown, delayMs: number): () => void {
+  const run = () => {
     clearTimeout(timer);
     if (!deferred.delete(run)) return;
-    const result = save(quit);
+    const result = save();
     if (result instanceof Promise) void track(result).catch(() => {});
   };
-  const timer = setTimeout(() => run(), delayMs);
+  const timer = setTimeout(run, delayMs);
   deferred.add(run);
   return () => {
     clearTimeout(timer);
@@ -60,7 +61,7 @@ export async function flushReviewState({ quit = false } = {}) {
   for (let round = 0; round < 10; round++) {
     for (const run of [...deferred]) {
       try {
-        run(true);
+        run();
       } catch {
         /* One failed save must not keep the others from quit. */
       }

@@ -9,7 +9,7 @@ import { ActivityMenuContext, TitlebarRoot, TitlebarScope, useWindowChrome } fro
 import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
-import { readReviewState, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
+import { readReviewState, reviewStateQuitting, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
 import { keepSavedQueue } from '../lib/saved-queue';
 import { onQueueSignals, publishQueueSignals, signalStamp, signalValues } from '../lib/queue-signal-store';
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
@@ -61,7 +61,8 @@ const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
 let savedQueue: ReturnType<typeof keepSavedQueue> | undefined;
 /** Shows the queue saved at the end of the last session, once per window, and keeps that copy current. */
 function startSavedQueue() {
-  savedQueue ??= keepSavedQueue(workbenchStore, { read: readReviewState, write: writeReviewState, schedule: scheduleReviewStateWrite },
+  savedQueue ??= keepSavedQueue(workbenchStore, { read: readReviewState, write: writeReviewState,
+    schedule: scheduleReviewStateWrite, quitting: reviewStateQuitting },
     { signals: { read: signalValues, publish: publishQueueSignals, stamp: signalStamp, subscribe: onQueueSignals } });
   return savedQueue.account;
 }

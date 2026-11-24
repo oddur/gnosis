@@ -152,7 +152,12 @@ interface Storage {
    * Runs a debounced save later and returns a function that drops it. Review state's scheduler also runs it, and
    * waits for the promise it returns, when the app quits, so a queue that changed just before quit is saved.
    */
-  schedule?: (save: (quit: boolean) => Promise<void>, delayMs: number) => () => void;
+  schedule?: (save: () => Promise<void>, delayMs: number) => () => void;
+  /**
+   * True once the app is quitting. A save then stops pausing between slices, even one that was already running:
+   * its pauses wait on timers, which background windows throttle, and quit waits only a short time.
+   */
+  quitting?: () => boolean;
 }
 const scheduleTimer = (save: () => Promise<void>, delayMs: number) => {
   const timer = setTimeout(() => void save(), delayMs);
@@ -210,13 +215,10 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
       lastKey = undefined;
     });
   };
-  // At quit, slices do not wait on timers: background windows throttle them, and quit waits a short time.
-  let hurry = false;
-  const pause = () => (hurry ? Promise.resolve() : yieldToInput());
+  const pause = () => (storage.quitting?.() ? Promise.resolve() : yieldToInput());
   // Returns the save in progress, so quit can wait for the queue it is still preparing.
-  const save = (quit = false): Promise<void> => {
+  const save = (): Promise<void> => {
     cancel = undefined;
-    if (quit) hurry = true;
     if (saving) return saving;
     const next = due();
     if (!next) return Promise.resolve();
@@ -227,7 +229,6 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
         if (store.getQueue() === next.queue) await write(next, json);
       } finally {
         saving = undefined;
-        hurry = false;
       }
       if (due()) schedule();
     })();
