@@ -7,6 +7,8 @@ const sendingKeys = new Map<string, number>();
 /** Debounced saves that have not run yet. Quit runs them at once. */
 const deferred = new Set<() => void>();
 let quitting = false;
+/** True once main asked this window to save before quit. Work that pauses on timers should stop pausing. */
+export const reviewStateQuitting = () => quitting;
 function track<T>(promise: Promise<T>, key?: string): Promise<T> {
   sending.add(promise);
   if (key) sendingKeys.set(key, (sendingKeys.get(key) ?? 0) + 1);
@@ -23,12 +25,14 @@ function track<T>(promise: Promise<T>, key?: string): Promise<T> {
 /**
  * Run `save` after `delayMs`, or sooner if the app quits first. Returns a cancel function that drops
  * the save. Use it for debounced writes, such as scroll positions, so quitting does not lose them.
+ * A save that returns a promise (one that prepares its value before it writes) is waited for at quit.
  */
-export function scheduleReviewStateWrite(save: () => void, delayMs: number): () => void {
+export function scheduleReviewStateWrite(save: () => unknown, delayMs: number): () => void {
   const run = () => {
     clearTimeout(timer);
     if (!deferred.delete(run)) return;
-    save();
+    const result = save();
+    if (result instanceof Promise) void track(result).catch(() => {});
   };
   const timer = setTimeout(run, delayMs);
   deferred.add(run);
@@ -64,7 +68,7 @@ export async function flushReviewState({ quit = false } = {}) {
     }
     await Promise.allSettled([...sending]);
     // Writers often chain a save behind an earlier one; a task lets those chains send theirs. A message
-    // port, not a timer: background windows throttle timers, and quit gives each window 500 ms.
+    // port, not a timer: background windows throttle timers, and quit gives each window a short limit.
     await nextTask();
     if (!sending.size && !deferred.size) return;
   }
