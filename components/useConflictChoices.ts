@@ -268,6 +268,9 @@ export function useConflictChoices({
     return next;
   };
   function choose(index: number, choice: BlockPick | undefined) {
+    // Cards of the draft's own markers (not undoable) have their own indexes: no proposal is written there, since the
+    // file's proposal of that index is another conflict's, and nothing is recorded or focused for it (#556 review).
+    if (!model.undoable && choice === 'proposal') return;
     const next = [...model.choices];
     const before = next[index];
     next[index] = choice;
@@ -276,10 +279,8 @@ export function useConflictChoices({
     // Replacing your edit is not a choice between Gnosis's options: the stats count none.
     if (before !== 'edit') onChoice?.(index, before, choice, picks?.[index]);
     else onEdits?.(editsWithout(index));
-    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick. Cards
-    // of the draft's own markers (not undoable) have their own indexes: no pick is saved for them, and no proposal is
-    // written there, since the file's proposal of that index is another conflict's (#556 review).
-    if (!model.undoable && choice === 'proposal') return;
+    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick. A card
+    // of the draft's own markers saves no pick: its index names no conflict of the file.
     if (model.undoable) onPick?.(index, choice);
     onChange(applyChoices(model.segments, next, model.undoable ? proposals : undefined, model.edits));
   }
@@ -403,7 +404,8 @@ export function useConflictChoices({
         return true;
       },
       accept() {
-        if (disabled) return false;
+        // A is Use the proposal: never on cards of the draft's own markers, which offer none (#556 review).
+        if (disabled || !model.undoable) return false;
         // The focused conflict, or the first that needs you with a proposal of its own; never the whole-file proposal,
         // which Use this result takes.
         const card =

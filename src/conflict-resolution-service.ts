@@ -70,6 +70,7 @@ import {
   typeErrorOf,
   unchosenConflicts,
   waitingHint,
+  namedChoices,
   startsOver,
   withTypeError,
   withoutUnchosen,
@@ -3057,7 +3058,7 @@ export function createConflictResolutionService(deps: Deps) {
             if (file.wholeEdit) {
               file.wholeEdit.later = true;
               delete file.wholeEdit.accepted;
-            } else file.wholeEdit = wholeEditSnapshot(file);
+            } else file.wholeEdit = wholeEditSnapshot({ ...file, ...namedChoices(file, file.result) });
             // A line you type is never marked as the resolver's; the resolver's lines you left keep their mark.
             if (
               file.resolverText !== undefined &&

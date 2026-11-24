@@ -13,6 +13,7 @@ import {
   type BlockPick,
   type BlockPicks,
   type ConflictSegment,
+  type ModelChoice,
 } from './conflict-blocks';
 import {
   hasConflictMarkers,
@@ -1215,13 +1216,38 @@ function conflictsLeft(blocks: readonly Conflict[], contents: string) {
 }
 
 /**
+ * Your choices in `result` that name their conflict: the draft is exactly its choices (each conflict has its own card),
+ * and the conflict's text there is exactly what the choice puts there. Any other pick or edit is dropped (null): saved
+ * by an older build, or on a card of the draft's own markers, it names no conflict of the file (#556 review). Fail
+ * closed: a dropped choice leaves its conflict to you.
+ */
+export function namedChoices(
+  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'proposals' | 'picks' | 'edits'>>,
+  result: string
+): Pick<ConflictFile, 'picks' | 'edits'> {
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, result);
+  const named = (index: number, choice: ModelChoice | null | undefined) => {
+    const s = segments.find((x) => x.kind === 'conflict' && x.index === index);
+    return !!texts && !!choice && s?.kind === 'conflict' && texts[index] === pickText(s, choice, file.proposals, file.edits);
+  };
+  if (!texts || !inferModelChoices(segments, result, file.proposals, file.edits)) return { picks: undefined, edits: undefined };
+  const picks = file.picks?.map((pick, index) => (named(index, pick) ? pick : null));
+  const edits = file.edits?.map((edit, index) => (edit && named(index, 'edit') ? edit : null));
+  return {
+    picks: picks?.some(Boolean) ? picks : undefined,
+    edits: edits?.some(Boolean) ? edits : undefined,
+  };
+}
+
+/**
  * The conflicts of a whole-file edit (#503) whose proposal still needs a choice and is still in the draft as it was:
  * its own text where the draft splits into its conflicts, else anywhere in the draft (an empty proposal always counts).
  * A conflict you chose or edited before the whole-file edit is yours already, and so is one you chose after it (a Keep,
  * Use the proposal or an edit: `picks`, `edits`), or one you accepted as edited in this draft (Accept my edit, #533).
  */
 function untouchedProposals(
-  file: Pick<ConflictFile, 'proposals'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
+  file: Pick<ConflictFile, 'original' | 'proposals'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
   segments: ConflictSegment[],
   contents: string,
   verdict: Verdict | undefined,
@@ -1234,12 +1260,14 @@ function untouchedProposals(
   // the view's cards are the draft's own conflicts, with their own indexes (conflictModel), and a pick says nothing
   // about the file's conflict of that index (#556 review).
   const inferable = !!texts && !!inferModelChoices(segments, contents, file.proposals, edits);
+  // Your choices before the edit count only where they named their conflict in the draft they were made on.
+  const before = file.wholeEdit && namedChoices({ ...file.wholeEdit, original: file.original, proposals: file.proposals }, file.wholeEdit.result);
   const indexes = new Set<number>();
   for (const s of segments) {
     if (s.kind !== 'conflict') continue;
     const proposal = file.proposals?.[s.index];
     if (!proposal || needsNoChoice(proposal, verdict, s.index)) continue;
-    if (file.wholeEdit?.picks?.[s.index] || file.wholeEdit?.edits?.[s.index]) continue;
+    if (before?.picks?.[s.index] || before?.edits?.[s.index]) continue;
     if (accepted?.includes(s.index)) continue;
     // A choice made after the edit counts only when the conflict's text is exactly what that choice puts there.
     const chosen = edits?.[s.index] ? 'edit' : picks?.[s.index];

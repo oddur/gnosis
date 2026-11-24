@@ -906,8 +906,8 @@ test('Edit whole file: Undo keeps a model proposal made after the edit on its ca
   assert.equal(open.proposals?.[0]?.source, 'model');
 });
 
-test('Edit whole file: a Keep on a card of the draft’s own markers never decides another conflict (#556 review)', async () => {
-  // Three conflicts. The checks Merge conflict 0's proposal and the type check demotes it, so it waits in Check.
+/** Three conflicts: the checks Merge conflict 0's proposal and the type check demotes it, so it waits in Check. */
+function demotedFixture() {
   const c = (n: number) => `<<<<<<< feature\nconst v${n} = 'pr';\n=======\nconst v${n} = 'main';\n>>>>>>> main\n`;
   const three = `// a\n${c(0)}// b\n${c(1)}// c\n${c(2)}// d\n`;
   const both0 = `const v0 = 'both';\n`;
@@ -945,6 +945,11 @@ test('Edit whole file: a Keep on a card of the draft’s own markers never decid
       { id: ID, version: (data.get(key) as ConflictSession).version, path: 'x.ts', ...fields } as ConflictRequest,
       new AbortController().signal
     );
+  return { run, c, three, prepared };
+}
+
+test('Edit whole file: a Keep on a card of the draft’s own markers never decides another conflict (#556 review)', async () => {
+  const { run, c, three, prepared } = demotedFixture();
   let file = (await run({ kind: 'save', contents: prepared, resolved: false })).session.files[0];
   // Your edit types conflict 1's lines, matching no option: the draft splits, but its cards are its own markers.
   const edited = prepared.replace(c(1), `const v1 = 'typed by me';\n`);
@@ -963,5 +968,28 @@ test('Edit whole file: a Keep on a card of the draft’s own markers never decid
   const split = prepared.replace(c(1), `const v1 = 'main';\n`);
   assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['ours']), [0]);
   assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['proposal']), []);
+  assert.equal(file.resolved, false);
+});
+
+test('Edit whole file: a choice from before the edit counts only where it named its conflict (#556 review 2)', async () => {
+  const { run, c, prepared } = demotedFixture();
+  // Lines typed in conflict 1 match no option: the cards are the draft's own markers. A pick saved for index 0 there
+  // (an older build, or crafted) names no conflict of the file.
+  const typed = prepared.replace(c(1), `const v1 = 'typed by me';\n`);
+  await run({ kind: 'save', contents: typed, resolved: false });
+  // Keep on the only card, conflict 2 at index 0 among the draft's own markers.
+  const kept = typed.replace(c(2), `const v2 = 'pr';\n`);
+  let file = (await run({ kind: 'save', contents: kept, resolved: false, picks: ['ours'] })).session.files[0];
+  // A whole-file edit of one comment line: the snapshot keeps no pick that names no conflict.
+  const edited = kept.replace('// d\n', '// done\n');
+  file = (await run({ kind: 'edit-file', contents: edited })).session.files[0];
+  assert.equal(file.wholeEdit?.picks, undefined);
+  // Conflict 0's demoted proposal is still nobody's choice: Mark reviewed waits.
+  await assert.rejects(run({ kind: 'save', contents: edited, resolved: true }), /in Check/);
+  // Even a pick that reached the saved snapshot decides nothing it doesn't name.
+  const verdict = { merged: false, note: 'Check.', blocks: [{ merged: false, note: 'Demoted.' }, undefined, undefined] };
+  assert.ok(file.wholeEdit);
+  const forged = { ...file, wholeEdit: { ...file.wholeEdit, picks: ['ours' as const, null, null] } };
+  assert.deepEqual(unchosenConflicts(forged, edited, verdict), [0]);
   assert.equal(file.resolved, false);
 });
