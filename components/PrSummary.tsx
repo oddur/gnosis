@@ -1013,6 +1013,19 @@ function useCollapsedActions(row: RefObject<HTMLDivElement | null>, key: string)
     if (actions) observer.observe(actions);
     return () => observer.disconnect();
   }, [key]);
+  // The groups in ⋯ keep the width they had when they last showed. Measured before the interface font had loaded, in
+  // a wider fallback, they read too wide, and the header could stay collapsed in a window wide enough for every
+  // action. Once the fonts in use have loaded, every action shows again for one measure, with the real font. Fonts
+  // that load later, such as code fonts or other weights, don't move the header.
+  useEffect(() => {
+    let alive = true;
+    void (document.fonts as FontFaceSet | undefined)?.ready.then(() => {
+      if (alive) setCollapse(0);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   return collapse;
 }
 
