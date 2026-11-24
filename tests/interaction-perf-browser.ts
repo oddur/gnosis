@@ -515,10 +515,44 @@ void app.whenReady().then(async () => {
       await sleep(offsets[sent++ % offsets.length]);
       send();
     };
+    // Every trusted click and double-click, with the element the test aimed at, so a step that loses the queue can say
+    // what the input landed on. A sync tick can resize rows between aiming and the click (a readiness badge appears),
+    // so in the queue loops below a click can land on another row's control. One that would run a control the test
+    // did not aim at, such as a row's Checks button, which opens the PR and hides the queue (main's Windows runs), is
+    // held back from the app (stopPropagation on window: the input recorder, also on window, still sees it, so its
+    // input is still timed). Clicks on plain row content go through.
+    await js(`(()=>{
+      const describe=e=>{if(!(e instanceof Element))return String(e);const p=[];for(let n=e;n&&p.length<4;n=n.parentElement)p.unshift(n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+[...n.classList].slice(0,2).map(c=>'.'+c).join('')+(n.getAttribute('aria-label')?'[aria-label="'+n.getAttribute('aria-label').slice(0,40)+'"]':''));return p.join(' > ')};
+      window.__describe=describe;window.__perfClicks=[];window.__perfQueue=null;
+      const stray=e=>{const aimed=document.querySelector('[data-perf-aim]');const control=e.target instanceof Element&&e.target.closest('a,button,[role=button],[role=menuitem],[role=tab]');
+        return !!(window.__perfQueue&&aimed&&!aimed.contains(e.target)&&control&&!control.contains(aimed))};
+      for(const type of ['pointerdown','mousedown','pointerup','mouseup'])window.addEventListener(type,e=>{if(e.isTrusted&&stray(e)){e.preventDefault();e.stopPropagation();}},true);
+      for(const type of ['click','dblclick'])window.addEventListener(type,e=>{if(!e.isTrusted)return;const aimed=document.querySelector('[data-perf-aim]');const held=stray(e);
+        const record={type,detail:e.detail,x:e.clientX,y:e.clientY,target:describe(e.target),aimed:aimed?describe(aimed):null,onAim:!!aimed?.contains(e.target),held,at:Math.round(performance.now())};
+        window.__perfClicks.push(record);if(window.__perfClicks.length>12)window.__perfClicks.shift();
+        const q=window.__perfQueue;if(q&&type==='click'){q.clicks++;if(record.onAim)q.onAim++;if(held)q.held.push(record.target);}
+        if(held){e.preventDefault();e.stopPropagation();}},true);
+    })()`);
+    let lastClick: { expression: string; x: number; y: number } | null = null;
+    const diagnose = async () =>
+      js(`(()=>{const active=document.querySelector('[data-workspace-active=true]');const tab=document.querySelector('.workspace-tab-select[aria-selected=true]');
+        const at=${JSON.stringify(lastClick)};const hit=at&&document.elementFromPoint(at.x,at.y);
+        return {activeTab:tab?.textContent.trim()??null,tabs:document.querySelectorAll('.workspace-tab-select').length,
+          active:active?{classes:active.className,queueList:!!active.querySelector('.queue-list'),queueListVisible:!!active.querySelector('.queue-list')?.checkVisibility(),
+            prHeading:active.querySelector('.pr-overview-heading h1')?.textContent??null,tab:active.querySelector('[role=tab][aria-selected=true]')?.textContent.trim()??null}:null,
+          url:location.href.split('/').slice(-1)[0],
+          rows:[...document.querySelectorAll('[data-workspace-active=true] .queue-row-main')].map(r=>({title:r.textContent.trim().slice(0,40),visible:r.checkVisibility(),top:Math.round(r.getBoundingClientRect().top)})).slice(0,10),
+          scrollTop:document.querySelector('[data-workspace-active=true] .queue-list')?.scrollTop??null,
+          dialogs:[...document.querySelectorAll('[role=dialog],[role=menu],[data-radix-popper-content-wrapper]')].map(window.__describe),
+          lastClick:at,atLastClickNow:hit?window.__describe(hit):null,clicks:window.__perfClicks}})()`);
     const click = (expression: string) => async () => {
       // A sync tick re-renders the queue, so a row's badge can be missing for a moment. Wait for it.
-      await wait(`!!(${expression})`, 100);
+      await wait(`!!(${expression})`, 100).catch(async (error: unknown) => {
+        throw new Error(`${String(error)}\nScreen at this step: ${JSON.stringify(await diagnose(), null, 1)}`);
+      });
       const { x, y } = await point(expression);
+      await js(`(()=>{document.querySelectorAll('[data-perf-aim]').forEach(e=>e.removeAttribute('data-perf-aim'));${expression}?.setAttribute('data-perf-aim','')})()`);
+      lastClick = { expression, x, y };
       return () => {
         win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
         win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
@@ -608,6 +642,7 @@ void app.whenReady().then(async () => {
       `[...document.querySelectorAll('[data-workspace-active=true] .queue-metadata .merge-readiness-badge, [data-workspace-active=true] .queue-metadata .queue-status-line')].filter(e=>e.checkVisibility())[${i}]`;
     // The same inputs with no sync event in flight: what this machine takes anyway.
     const idle = (prepare: () => Promise<() => void>) => async () => (await prepare())();
+    await js('window.__perfQueue={clicks:0,onAim:0,held:[]}');
     for (let i = 0; i < 8; i++) {
       await measure('idle queue row', idle(click(row(i % 8))), 'true');
       await sleep(120);
@@ -620,6 +655,12 @@ void app.whenReady().then(async () => {
       await measure('bg queue badge', synced(click(badge(i % 6))), 'true');
       await sleep(120);
     }
+    const queueClicks = await js<{ clicks: number; onAim: number; held: string[] }>('window.__perfQueue');
+    await js('window.__perfQueue=null');
+    console.log(`Queue clicks: ${queueClicks.clicks}, ${queueClicks.onAim} on their target, ${queueClicks.held.length} held back from another control${queueClicks.held.length ? `: ${queueClicks.held.join('; ')}` : ''}`);
+    // Not vacuous: every input arrived as a click, and most landed where the test aimed.
+    assert.equal(queueClicks.clicks, 48, 'Every queue row and badge input arrives as a click');
+    assert.ok(queueClicks.onAim >= 24, `Most queue clicks land on their target: ${queueClicks.onAim} of 48`);
 
     // Opening and closing tabs again leaves no listeners behind.
     await closeTabs();
