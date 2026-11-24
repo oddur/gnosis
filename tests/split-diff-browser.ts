@@ -18,8 +18,9 @@ void app.whenReady().then(async () => {
       throw new Error(`Browser assertion failed: ${code}\n${String(error)}`);
     }
   };
-  const wait = async (expression: string) => {
-    for (let i = 0; i < 100; i++) {
+  const wait = async (expression: string, timeoutMs = 10_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
       if (await js(expression)) return;
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -32,7 +33,10 @@ void app.whenReady().then(async () => {
     await js(
       `void (window.diffRoot = name => document.querySelector('[data-case=' + name + '] diffs-container')?.shadowRoot)`
     );
-    await wait('!!window.diffRoot("added")?.querySelector("[data-line-number]")');
+    // The first diff's rows wait for the diff renderer and its highlighter, which the dev server compiles on first
+    // request. That is page loading, not interaction latency: on a loaded Windows runner it took over 5 s (PR #568,
+    // Windows 5/5), so this first wait has the same budget as a fixture render in loadWorkbenchPage.
+    await wait('!!window.diffRoot("added")?.querySelector("[data-line-number]")', 30_000);
     for (const name of ['metadata-added', 'metadata-deleted', 'added', 'deleted', 'added-plain']) {
       const dimensions = await js<{ offset: number; width: number; available: number }>(`(() => {
         const section = document.querySelector('[data-case=${name}]');
