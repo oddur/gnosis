@@ -22,7 +22,7 @@ import {
 import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
 import { applyNoise, classifiedNoise, contextOnlyHunks, noiseRequests, normalizeNoiseReduction, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
 import { plannerEvidence } from '../lib/review-planning';
-import { hunkOwners, ownedHunkIds, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
+import { hunkOwners, ownedHunkIds, ownerSections, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -2985,6 +2985,7 @@ async function runBackgroundGeneration(
             await checkpoint!.set(topicKey, writerOutput);
             completedSections++;
             const diffHunks = resolveDiffHunks(ownedHunkIds(topic.hunkIds, owners, idx), hunkMap);
+            const shownIn = ownerSections(topic.hunkIds, owners, idx);
 
             const slide = {
               id: `slide-${slideNum}`,
@@ -2995,6 +2996,7 @@ async function runBackgroundGeneration(
               reviewFocus: writerOutput.reviewFocus,
               // The planner's reading order (lib/review-planning.ts); SlideView groups consecutive hunks of a file.
               diffHunks,
+              ...(shownIn.length ? { shownIn } : {}),
               contextSnippets: writerOutput.contextSnippets ?? [],
               affectedFiles: [...new Set(diffHunks.map((h) => h.filePath))],
               dependsOn: topic.dependsOn,
@@ -3094,6 +3096,7 @@ async function runBackgroundGeneration(
       for (const id of owners.keys()) assignedIds.add(id);
       resolvedSlides = aiResult.slides.map((aiSlide, index) => {
         const diffHunks = resolveDiffHunks(ownedHunkIds(slideHunkIds[index], owners, index), hunkMap);
+        const shownIn = ownerSections(slideHunkIds[index], owners, index);
 
         return {
           id: aiSlide.id,
@@ -3103,6 +3106,7 @@ async function runBackgroundGeneration(
           narrative: aiSlide.narrative,
           reviewFocus: aiSlide.reviewFocus,
           diffHunks,
+          ...(shownIn.length ? { shownIn } : {}),
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
           contextSnippets: aiSlide.contextSnippets ?? [],
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields

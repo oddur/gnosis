@@ -317,7 +317,7 @@ export function buildTopicContext(
   /** Hunks this topic lists that an earlier section shows (#560): hunk ID to that section's number. Read-only context. */
   shownElsewhere: ReadonlyMap<string, number> = new Map()
 ): string {
-  const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
+  const relevantHunks = [...new Set(topic.hunkIds)].map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
@@ -373,6 +373,7 @@ PR Description: ${prDescription || '(none)'}
   if (elsewhere.length) {
     ctx += `\n\n<shown_in_other_sections>
 Your section displays only the code in <diff_hunks>. These hunks are displayed in an earlier section, which explains them. Use them only as read-only context: do not explain them, and do not anchor notes or checks to them. Refer to them by section number when needed.
+When the narrative brief asks for code listed here, refer to it by its section number; do not explain or quote it.
 `;
     for (const hunk of elsewhere)
       ctx += `--- ${hunk.filePath} [${hunk.id}] (shown in section ${shownElsewhere.get(hunk.id)})\n${hunk.hunkHeader}\n${hunk.content}\n\n`;

@@ -37,6 +37,11 @@ export function shownElsewhere(
   return out;
 }
 
+/** The sections (1-based, in order) that show hunks a section lists but doesn't own; empty when it owns them all. */
+export function ownerSections(ids: readonly string[], owners: ReadonlyMap<string, number>, index: number): number[] {
+  return [...new Set(shownElsewhere(ids, owners, index).values())].sort((a, b) => a - b);
+}
+
 /** Hunk IDs to the diff hunks a slide shows. */
 export function resolveDiffHunks(ids: readonly string[], hunkMap: ReadonlyMap<string, IndexedHunk>): DiffHunk[] {
   return ids.flatMap((id) => {

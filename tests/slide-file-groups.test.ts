@@ -8,7 +8,7 @@ import {
   sectionFileCounts,
   slideFiles,
 } from '../lib/slide-file-groups';
-import { hunkOwners, ownedHunkIds, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
+import { hunkOwners, ownedHunkIds, ownerSections, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
 import { collectReviewTopics } from '../src/review-checkpoint';
 import { diffGaps, markElsewhere, revealedParts } from '../lib/diff-gaps';
 import { reviewGapHunks } from '../lib/review-gap-hunks';
@@ -408,6 +408,8 @@ void test("a section's file header counts its own lines when it shows part of th
   });
   // A section that shows every change of the file keeps the file's counts alone.
   assert.deepEqual(sectionFileCounts([part], { additions: 1, deletions: 2 }), { additions: 1, deletions: 2 });
+  // A block with none of the file's hunks keeps the file's counts, with no "here".
+  assert.deepEqual(sectionFileCounts([], { additions: 14, deletions: 1947 }), { additions: 14, deletions: 1947 });
   // Without the file's metadata, the section's own counts.
   assert.deepEqual(sectionFileCounts([part]), { additions: 1, deletions: 2 });
 });
@@ -423,4 +425,22 @@ void test('a file block lists the other sections that show parts of its file (#5
   assert.deepEqual(others.get('queue.rs'), [1, 4]);
   assert.deepEqual(others.get('a.ts'), [1]);
   assert.equal(otherFileSections(slides, 's3').get('b.ts'), undefined);
+});
+
+void test('a topic whose hunks an earlier section shows records those sections, and its writer is told (#560)', () => {
+  const map = new Map(['h0', 'h1', 'h2'].map((id) => [id, ownedHunk(id, 'queue.rs')]));
+  const topics = [['h0'], ['h1'], ['h1', 'h0'], ['h2', 'h0']];
+  const owners = hunkOwners(topics, map);
+  // The third topic shows no code: sections 1 and 2 show all of it.
+  assert.deepEqual(ownedHunkIds(topics[2], owners, 2), []);
+  assert.deepEqual(ownerSections(topics[2], owners, 2), [1, 2]);
+  // A topic that shows some code still records where the rest is; one that owns all of it records nothing.
+  assert.deepEqual(ownerSections(topics[3], owners, 3), [1]);
+  assert.deepEqual(ownerSections(topics[0], owners, 0), []);
+  const topic = { title: 'T', slideType: 'feature', importance: 'important', hunkIds: topics[2], dependsOn: [], order: 3, narrativeBrief: '' } as unknown as TopicPlan;
+  const context = buildTopicContext(topic, map, {}, {}, {}, 'PR', '', 'arc', [topic], null, [], shownElsewhere(topics[2], owners, 2));
+  assert.match(context, /<diff_hunks>\s*<\/diff_hunks>/);
+  assert.match(context, /\[h1\] \(shown in section 2\)/);
+  assert.match(context, /\[h0\] \(shown in section 1\)/);
+  assert.match(context, /When the narrative brief asks for code listed here, refer to it by its section number/);
 });

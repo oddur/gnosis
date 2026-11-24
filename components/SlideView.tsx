@@ -854,7 +854,32 @@ export function SlideView({
         </p>
       )}
 
-      {groupedHunks.length === 0 && (
+      {groupedHunks.length === 0 && !!slide.shownIn?.length && (
+        // Every hunk this topic lists is shown by an earlier section (#560): point there, not to "no code".
+        <p className="slide-meta review-code-elsewhere" data-shown-in={slide.shownIn.join(',')}>
+          The code for this topic is shown in {slide.shownIn.length === 1 ? 'section' : 'sections'}{' '}
+          {slide.shownIn.map((section, index) => (
+            <span key={section}>
+              {index > 0 && ', '}
+              {onOpenSection ? (
+                <button
+                  type="button"
+                  className="review-file-part-link"
+                  data-section={section}
+                  aria-label={`Show the code in section ${section}`}
+                  onClick={() => onOpenSection(section, slide.affectedFiles[0] ?? '')}
+                >
+                  {section} ↗
+                </button>
+              ) : (
+                section
+              )}
+            </span>
+          ))}
+          .
+        </p>
+      )}
+      {groupedHunks.length === 0 && !slide.shownIn?.length && (
         <div className="flex flex-col gap-1.5">
           <p className="editorial-label text-sm">Background topic.</p>
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>

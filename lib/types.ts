@@ -100,6 +100,8 @@ export interface Slide {
   narrative: string;
   reviewFocus: string | null;
   diffHunks: DiffHunk[];
+  /** Sections (1-based) that show hunks this topic lists but an earlier section owns (#560). */
+  shownIn?: number[];
   contextSnippets: string[];
   affectedFiles: string[];
   /** Short file header summaries scoped to the hunks in this topic. */

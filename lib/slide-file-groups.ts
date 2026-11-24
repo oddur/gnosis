@@ -188,13 +188,14 @@ export function shownCounts(hunks: readonly DiffHunk[]): Counts {
 }
 
 /**
- * A section's file header counts (#560): the whole file's counts when the section shows all of its changes, else the
- * section's own, with the whole file's beside them (`file`). Without the file's counts, the section's own.
+ * A section's file header counts (#560): the whole file's counts when the section shows all of its changes or none
+ * of them, else the section's own, with the whole file's beside them (`file`). Without the file's counts, the section's own.
  */
 export function sectionFileCounts(hunks: readonly DiffHunk[], file?: Counts): Counts & { file?: Counts } {
   if (!file) return shownCounts(hunks);
   const here = shownCounts(hunks);
   const part =
+    here.additions + here.deletions > 0 &&
     here.additions <= file.additions &&
     here.deletions <= file.deletions &&
     here.additions + here.deletions < file.additions + file.deletions;
