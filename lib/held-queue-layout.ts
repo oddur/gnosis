@@ -23,6 +23,9 @@ export interface QueueLayout {
   sections?: ReadonlyMap<string, QueueSection>;
 }
 
+/** The heading of entries that arrive, or lose their group, while the layout is held. */
+export const HELD_NEW_GROUP = 'held:new';
+
 export type QueueSection = QueueItem['attention'] | 'starred';
 export const queueSection = (item: QueueItem, starredFirst: boolean): QueueSection => (item.starred && starredFirst ? 'starred' : item.attention);
 
@@ -39,7 +42,7 @@ export function snapshotQueueLayout(items: readonly QueueItem[], grouping: Queue
 /**
  * The live entries laid out as the snapshot has them. Entries keep their place, group and section, and every held
  * group keeps its heading, even when it is now empty. Entries the snapshot does not have go to the end, after every
- * group; entries that are gone are left out. Row content is always the live one.
+ * group, under a "New" heading when grouped; entries that are gone are left out. Row content is always the live one.
  */
 export function holdQueueLayout(
   snapshot: QueueLayoutSnapshot,
@@ -75,8 +78,16 @@ export function holdQueueLayout(
     }
     return { ...group, count: group.collapsed ? liveCounts.get(group.key) ?? group.count : members.length };
   });
-  // Entries whose held group is gone, and new ones, follow every group (VirtualReviewQueue lists them last).
-  ordered.push(...loose, ...fresh);
+  // Entries whose held group is gone, and new ones, follow every group under their own heading, so they never read
+  // as part of the last held group.
+  const added = [...loose, ...fresh];
+  if (added.length) {
+    groups.push({ key: HELD_NEW_GROUP, label: 'New', count: added.length, collapsed: false });
+    for (const item of added) {
+      ordered.push(item);
+      groupOf.set(item.subject.id, HELD_NEW_GROUP);
+    }
+  }
   return { items: ordered, grouping: { groups, items: ordered, groupOf }, sections };
 }
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { holdQueueLayout, snapshotQueueLayout } from '../lib/held-queue-layout';
+import { HELD_NEW_GROUP, holdQueueLayout, snapshotQueueLayout } from '../lib/held-queue-layout';
 import type { QueueGrouping } from '../lib/queue-groups';
 import type { QueueItem } from '../lib/workbench';
 
@@ -33,11 +33,11 @@ void test('a held grouped layout keeps every entry in its group and every headin
   const live = grouping([['review', [item('d')]], ['fix', [item('a')]], ['merge', [item('b'), item('c')]]]);
   const held = holdQueueLayout(snapshot, live.items, live, true);
   assert.ok(held.grouping);
-  assert.deepEqual(held.grouping.groups.map((group) => `${group.key}:${group.count}`), ['fix:2', 'merge:1']);
+  assert.deepEqual(held.grouping.groups.map((group) => `${group.key}:${group.count}`), ['fix:2', 'merge:1', `${HELD_NEW_GROUP}:1`]);
   assert.deepEqual(ids(held.items), ['a', 'b', 'c', 'd'], 'the list and j/k walk the same order');
   assert.equal(held.grouping.items, held.items);
   assert.equal(held.grouping.groupOf.get('b'), 'fix');
-  assert.equal(held.grouping.groupOf.has('d'), false, 'a new entry follows every group');
+  assert.equal(held.grouping.groupOf.get('d'), HELD_NEW_GROUP, 'a new entry follows every group, under its own heading');
 });
 
 void test('a held group that sync removed keeps its heading and its entries', () => {

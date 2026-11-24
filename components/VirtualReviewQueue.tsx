@@ -116,8 +116,14 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
   const margin = useScrollMargin(scrollElement, container, virtual);
   const category = useCallback((item: QueueItem) => sections?.get(item.subject.id) ?? queueSection(item, starredFirst), [sections, starredFirst]);
   const { indexes, counts, ids, headings, positions } = useMemo(() => {
-    const counts = new Map<QueueItem['attention'] | 'starred', number>();
-    for (const item of items) counts.set(category(item), (counts.get(category(item)) ?? 0) + 1);
+    // Each section heading counts the entries under it, up to the next heading. A held layout (#549) can show a
+    // section twice, so this is not always the section's total. Keyed by the index of the heading's first entry.
+    const counts = new Map<number, number>();
+    let start = 0;
+    items.forEach((item, index) => {
+      if (index > 0 && category(items[index - 1]) !== category(item)) start = index;
+      counts.set(start, (counts.get(start) ?? 0) + 1);
+    });
     // Entries are numbered among entries only: headings are not list items.
     const headings: number[] = [];
     const positions = new Map<number, number>();
@@ -175,6 +181,7 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
     };
     const rest = () => {
       window.clearTimeout(idle);
+      lastMove = 0;
       set(false);
     };
     const over = (event: PointerEvent) => {
@@ -182,13 +189,15 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
     };
     const move = (event: PointerEvent) => {
       const inList = event.target instanceof Node && list.contains(event.target);
-      set(inList);
       if (!inList) {
-        window.clearTimeout(idle);
+        rest();
         return;
       }
-      // Restarting the timer on every move costs more than it needs to; a few times a second is enough.
-      if (event.timeStamp - lastMove < 250) return;
+      const entering = !inside;
+      set(true);
+      // Restarting the timer on every move costs more than it needs to; a few times a second is enough. The hold
+      // always starts with a timer, so it ends even if the pointer never moves again.
+      if (!entering && event.timeStamp - lastMove < 250) return;
       lastMove = event.timeStamp;
       window.clearTimeout(idle);
       idle = window.setTimeout(rest, POINTER_REST_MS);
@@ -285,7 +294,7 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
     const group = category(item);
     const first = index === 0 || category(items[index - 1]) !== group;
     return <>
-      {grouped && first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(group)}</span></h2>}
+      {grouped && first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(index)}</span></h2>}
       {renderRow(item)}
     </>;
   };

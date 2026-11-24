@@ -19,12 +19,15 @@ void app.whenReady().then(async () => {
     }
     throw Error('Timed out: ' + code);
   };
+  // capturePage can stall without settling; then the suite would sit until its 300 s timeout instead of reporting.
+  const capturePage = (rect?: Electron.Rectangle) =>
+    Promise.race([
+      win.webContents.capturePage(rect),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('capturePage did not finish within 10 s')), 10_000)),
+    ]);
   const capture = async (name: string) => {
     await new Promise((r) => setTimeout(r, 250));
-    fs.writeFileSync(
-      path.join(os.tmpdir(), `gnosis-queue-metadata-${name}.png`),
-      (await win.webContents.capturePage()).toPNG()
-    );
+    fs.writeFileSync(path.join(os.tmpdir(), `gnosis-queue-metadata-${name}.png`), (await capturePage()).toPNG());
   };
   /**
    * Rows stay put under the pointer when sync changes them (#549). Background sync adds and removes readiness, review
@@ -74,7 +77,7 @@ void app.whenReady().then(async () => {
       const rect = await js<{ x: number; y: number; width: number; height: number }>(
         `(()=>{const r=${rows}.slice(0,3).map(row=>row.getBoundingClientRect());return {x:Math.floor(r[0].left),y:Math.floor(r[0].top),width:Math.ceil(r[0].width),height:Math.ceil(Math.min(innerHeight,r.at(-1).bottom)-r[0].top)}})()`
       );
-      const png = (await win.webContents.capturePage(rect)).toPNG().toString('base64');
+      const png = (await capturePage(rect)).toPNG().toString('base64');
       const parts = Math.ceil(png.length / 4000);
       for (let i = 0; i < parts; i++) console.log(`QRSHOT ${name} ${i + 1}/${parts} ${png.slice(i * 4000, (i + 1) * 4000)}`);
     };
@@ -94,7 +97,8 @@ void app.whenReady().then(async () => {
       await waitSettled(win.webContents, 'queue-list');
     };
     const compare = (label: string, before: Row[], after: Row[]) => {
-      assert.ok(before.length >= 3, `${label}: several rows on screen (${before.length})`);
+      // Windows runners leave less room than 677 px of content: two rows, the one under the pointer and one above it.
+      assert.ok(before.length >= 2, `${label}: several rows on screen (${before.length})`);
       assert.ok(after.some((row, i) => row.status !== before.at(i)?.status), `${label}: sync changed the rows' badges`);
       const moved = after.flatMap((row, i) => {
         const was = before.at(i);
@@ -372,7 +376,7 @@ void app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error);
-    await capture('failure');
+    await capture('failure').catch((captureError: unknown) => console.error(captureError));
     win.webContents.setZoomFactor(1);
     win.destroy();
     app.exit(1);
