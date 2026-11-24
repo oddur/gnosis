@@ -125,6 +125,7 @@ jobs:
         run: |
           node scripts/run-browser-suites.mjs --verify 6
           node scripts/run-browser-suites.mjs --verify 4 --weights scripts/browser-suite-durations-macos.json
+          node scripts/run-browser-suites.mjs --verify 2 --weights scripts/browser-suite-durations-macos.json
           node scripts/run-browser-suites.mjs --verify 5 --weights scripts/browser-suite-durations-windows.json
       - name: Browser smoke (PR, macOS / Windows)
         if: github.event_name == 'pull_request' && runner.os != 'Linux'
@@ -219,27 +220,20 @@ jobs:
     # The full browser suite on macOS and Windows: on pushes to main, and on pull requests unless `changes` finds only
     # documentation-like files (see there). Those pull requests run the smoke suite in Check. The shards
     # are balanced by each platform's measured durations (scripts/browser-suite-durations-<platform>.json); their
-    # counts must match NATIVE_SHARDS in scripts/run-browser-suites.mjs. macOS gets 4 shards: the account runs at most
-    # 5 macOS jobs at once, and Check and Package take one each.
+    # counts must match NATIVE_SHARDS (main) and NATIVE_PR_SHARDS (pull requests) in scripts/run-browser-suites.mjs.
+    # The account runs at most 5 macOS jobs at once, and Check and Package take one each.
     name: Browser (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }})
     needs: changes
     # Only an explicit `false` skips them: a failed or cancelled gate leaves no output, and the suites run.
     if: ${{ !cancelled() && needs.changes.outputs.native != 'false' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: macos-latest, platform: macos, shards: 4, shard: 1 }
-          - { os: macos-latest, platform: macos, shards: 4, shard: 2 }
-          - { os: macos-latest, platform: macos, shards: 4, shard: 3 }
-          - { os: macos-latest, platform: macos, shards: 4, shard: 4 }
-          - { os: windows-latest, platform: windows, shards: 5, shard: 1 }
-          - { os: windows-latest, platform: windows, shards: 5, shard: 2 }
-          - { os: windows-latest, platform: windows, shards: 5, shard: 3 }
-          - { os: windows-latest, platform: windows, shards: 5, shard: 4 }
-          - { os: windows-latest, platform: windows, shards: 5, shard: 5 }
+        # Pull requests: 2 longer macOS shards (NATIVE_PR_SHARDS), so a few PRs at once fit the 5 macOS runners and no
+        # job waits in the queue until it is cancelled. Pushes to main: 4 shards (NATIVE_SHARDS).
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"macos-latest","platform":"macos","shards":2,"shard":1,"timeout":55},{"os":"macos-latest","platform":"macos","shards":2,"shard":2,"timeout":55},{"os":"windows-latest","platform":"windows","shards":5,"shard":1,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":2,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":3,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":4,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":5,"timeout":35}]' || '[{"os":"macos-latest","platform":"macos","shards":4,"shard":1,"timeout":35},{"os":"macos-latest","platform":"macos","shards":4,"shard":2,"timeout":35},{"os":"macos-latest","platform":"macos","shards":4,"shard":3,"timeout":35},{"os":"macos-latest","platform":"macos","shards":4,"shard":4,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":1,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":2,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":3,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":4,"timeout":35},{"os":"windows-latest","platform":"windows","shards":5,"shard":5,"timeout":35}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
