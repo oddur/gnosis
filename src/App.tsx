@@ -61,7 +61,7 @@ const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
 let savedQueue: ReturnType<typeof keepSavedQueue> | undefined;
 /** Shows the queue saved at the end of the last session, once per window, and keeps that copy current. */
 function startSavedQueue() {
-  savedQueue ??= keepSavedQueue(workbenchStore, { read: readReviewState, write: writeReviewState },
+  savedQueue ??= keepSavedQueue(workbenchStore, { read: readReviewState, write: writeReviewState, schedule: scheduleReviewStateWrite },
     { signals: { read: signalValues, publish: publishQueueSignals, stamp: signalStamp, subscribe: onQueueSignals } });
   return savedQueue.account;
 }
