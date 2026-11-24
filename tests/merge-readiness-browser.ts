@@ -133,6 +133,10 @@ void app.whenReady().then(async () => {
     await click('Merge pull request');
     await wait("document.querySelector('.pr-merge-confirm .pr-action-error')?.textContent.includes('Repository rule violations found')");
     assert.equal(await js('window.mergeWrites.length'), 1);
+    // A refusal stays until the reader dismisses it, even when the window loses focus or the workspace is hidden.
+    await js("window.dispatchEvent(new Event('blur'))");
+    await js('new Promise(r=>setTimeout(r,0))');
+    assert.ok(await js("document.querySelector('.pr-merge-confirm .pr-action-error')?.checkVisibility()"), 'GitHub’s refusal stays after the window loses focus');
     await capture('github-blocked-refused');
     await click('Cancel');
     await wait("!document.querySelector('.pr-merge-confirm')");

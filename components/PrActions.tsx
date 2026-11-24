@@ -708,7 +708,9 @@ export function PrActions({
   const mergeMethods = state && !state.mergeQueue ? state.methods : undefined;
   const mergeControl = (
     <Popover.Root open={popover} onOpenChange={(value) => { if (!value && !busy) cancel(); }}>
-      <CloseWhenHidden open={popover} onClose={() => { if (!pending.current) cancel(); }} content={confirmContent} />
+      {/* A confirmation that is sending, or shows GitHub's refusal, stays until the reader closes it: switching windows
+          or workspaces must not lose a refusal (main's macOS readiness run). Hidden, it comes back with its workspace. */}
+      <CloseWhenHidden open={popover} onClose={() => { if (!pending.current && !error) cancel(); }} content={confirmContent} />
       <Popover.Anchor asChild>
         <span className="pr-merge-anchor">
           {trigger ? (

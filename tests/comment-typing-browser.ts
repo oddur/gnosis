@@ -136,6 +136,13 @@ void app.whenReady().then(async () => {
     await js(
       `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];void 0`
     );
+    // The large file's later slices mount in idle time. On a fast runner they could all mount before typing starts, and
+    // then nothing would be pending while the reader types. Idle callbacks wait here until the first key is typed, so
+    // the measured keys always meet pending mounting work, as on a slower machine. The first slices mount at once.
+    await js(`(()=>{const ric=window.requestIdleCallback.bind(window),cic=window.cancelIdleCallback.bind(window);window.heldIdle=[];
+      window.requestIdleCallback=(cb,options)=>{if(!window.heldIdle)return ric(cb,options);window.heldIdle.push([cb,options]);return -window.heldIdle.length};
+      window.cancelIdleCallback=id=>{if(id<0&&window.heldIdle)window.heldIdle[-id-1][0]=null;else if(id>0)cic(id)};
+      window.releaseIdle=()=>{const held=window.heldIdle;window.heldIdle=null;for(const [cb,options] of held)if(cb)ric(cb,options)};})()`);
     // Background preparation may have read the small fixture PR already; load the large one.
     await click('Update changes');
     await wait("document.querySelectorAll('.commit-stream-row[data-file^=\"src/\"]').length>0 && !document.querySelector('.commit-stream-row[data-file=\"src/new.ts\"]')");
@@ -173,6 +180,8 @@ void app.whenReady().then(async () => {
     assert.ok(pendingAtStart > 0, 'Typing starts while the large file is still mounting');
     // Settle: the first key enables the buttons, so it is typed before measuring.
     await typeKeys('K');
+    // From here, mounting runs as it would for the reader: it waits for a pause in typing.
+    await js('window.releaseIdle()');
     await new Promise((r) => setTimeout(r, 300));
     await js(`window.keyEvents=[];new PerformanceObserver(list=>{for(const e of list.getEntries())if(['keydown','keypress','input','keyup','beforeinput'].includes(e.name))window.keyEvents.push({name:e.name,id:e.interactionId,duration:e.duration})}).observe({type:'event',durationThreshold:16});void 0`);
     const text = 'eep the retry bounda'.slice(0, KEYS);
