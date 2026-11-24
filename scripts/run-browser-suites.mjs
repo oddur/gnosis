@@ -7,6 +7,7 @@
 //   node scripts/run-browser-suites.mjs --shard 2/6     # one balanced sixth
 //   node scripts/run-browser-suites.mjs --list --shard 2/6
 //   node scripts/run-browser-suites.mjs --durations out.json   # also record measured seconds
+//   node scripts/run-browser-suites.mjs --shard 1/4 --weights scripts/browser-suite-durations-macos.json
 //   node scripts/run-browser-suites.mjs --perf          # suites with timing budgets, enforced (npm run test:perf)
 //
 // Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. CI runs every suite,
@@ -30,6 +31,17 @@ const argument = (name) => {
 export const CI_SCRIPTS = ['test:explainer', 'test:workbench', 'test:diagrams'];
 /** Long suites that only run on a developer's machine, never in a CI shard (tests/fixtures/conflicts/README.md). */
 export const LOCAL_SCRIPTS = ['test:conflict-gallery'];
+/**
+ * The measured seconds that balance the shards, per platform. The macOS and Windows jobs (and npm run test:native-local)
+ * use their own file: a suite's share of the time differs a lot between the platforms.
+ */
+export const DURATION_FILES = {
+  linux: 'scripts/browser-suite-durations.json',
+  darwin: 'scripts/browser-suite-durations-macos.json',
+  win32: 'scripts/browser-suite-durations-windows.json',
+};
+/** How many shards the native browser jobs in .github/workflows/checks.yml use, per platform. */
+export const NATIVE_SHARDS = { darwin: 4, win32: 5 };
 /** A `scripts/test-workbench.mjs --flag` suite flag. */
 export const SUITE_FLAG = /--[a-z0-9-]+/;
 const workbenchCommand = new RegExp(`scripts/test-workbench\\.mjs(?:\\s+(${SUITE_FLAG.source}))?\\s*$`);
@@ -137,7 +149,7 @@ export function shardSuites(suites, durations, index, count) {
 
 async function main() {
   const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
-  const durations = JSON.parse(fs.readFileSync(path.join(root, 'scripts/browser-suite-durations.json'), 'utf8'));
+  const durations = JSON.parse(fs.readFileSync(path.resolve(root, argument('--weights') ?? DURATION_FILES.linux), 'utf8'));
   let all = browserSuites(scripts);
   const verify = argument('--verify');
   if (verify) {
@@ -177,21 +189,27 @@ async function main() {
   const env = { ...process.env, [pathKey]: `${path.join(root, 'node_modules/.bin')}${path.delimiter}${process.env[pathKey] ?? ''}` };
   const measured = {};
   const failed = [];
+  const started = performance.now();
   for (const suite of selected) {
     console.log(`\n▶ ${suite.key}: ${suite.command}`);
-    const started = performance.now();
+    const suiteStarted = performance.now();
     const code = await new Promise((resolve) => {
       const child = spawn(suite.command, { cwd: root, env, shell: true, stdio: 'inherit' });
       child.on('exit', (status, signal) => resolve(status ?? (signal ? 1 : 0)));
       child.on('error', () => resolve(1));
     });
-    const seconds = Math.round((performance.now() - started) / 1000);
+    const seconds = Math.round((performance.now() - suiteStarted) / 1000);
     measured[suite.key] = seconds;
     console.log(`${code === 0 ? '✔' : '✖'} ${suite.key} (${seconds}s)`);
     if (code !== 0) failed.push(suite.key);
   }
   const out = argument('--durations');
   if (out) fs.writeFileSync(out, JSON.stringify(measured, null, 2) + '\n');
+  // Suite output runs to thousands of lines, so repeat each result in one place, slowest first.
+  const minutes = ((performance.now() - started) / 60000).toFixed(1);
+  console.log(`\nSummary${shard ? ` of shard ${shard}` : ''}: ${selected.length} suites in ${minutes} min`);
+  for (const [key, seconds] of Object.entries(measured).sort((a, b) => b[1] - a[1]))
+    console.log(`  ${failed.includes(key) ? '✖ failed' : '✔ passed'} ${String(seconds).padStart(5)}s  ${key}`);
   console.log(
     `\n${selected.length - failed.length}/${selected.length} browser suites passed${shard ? ` in shard ${shard}` : ''}.`
   );
