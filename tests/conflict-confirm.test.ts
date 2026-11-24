@@ -15,6 +15,7 @@ import {
   fileStatus,
   unchosenConflicts,
   waitingHint,
+  startsOver,
   wholeEdited,
   withTypeError,
   type Verdict,
@@ -310,7 +311,7 @@ void test('Edit whole file: the whole file is yours, its Merged proposal too, an
   const edited = file(draft, proposal, {
     wholeEdit: { result: before, resolved: false, source: 'manual', picks: ['theirs', null] },
   });
-  assert.equal(wholeEdited(edited, draft), true);
+  assert.equal(wholeEdited(edited), true);
   assert.deepEqual(blockBuckets(edited, draft, merged), ['decided', 'decided'], 'Every conflict is yours');
   assert.deepEqual(unchosenConflicts(edited, draft, merged), [], 'Nothing waits for a choice');
   assert.deepEqual(unchosenConflicts(edited, draft, check), [1], 'An unproven proposal left as it was still waits');
@@ -343,11 +344,13 @@ void test('Edit whole file: a draft that splits into its conflicts again is told
   // A line between the conflicts changed: this draft can't be split into them.
   const draft = 'a = 11\nb = 3\nx = 5\nc = 3031\n';
   const edited = file(draft, proposal, { wholeEdit });
-  // Reset file: back to the conflicts, which split. The per-conflict rules apply, nothing is yours by default.
-  assert.equal(wholeEdited(edited, original), false);
-  assert.deepEqual(blockBuckets(edited, original, check), ['decide', 'check']);
-  // An unsaved change that still can't split stays your whole-file edit.
-  assert.equal(wholeEdited(edited, draft.replace('x = 5', 'x = 6')), true);
+  // Only your Reset file ends the edit, once the service saves it (`reset`): text alone never does (#533). Until then
+  // its conflicts show markers and wait; after it, the per-conflict rules apply, and nothing is yours by default.
+  assert.equal(wholeEdited(edited), true);
+  assert.equal(startsOver(edited, original), true);
+  assert.equal(startsOver(edited, draft), false);
+  assert.deepEqual(blockBuckets(edited, original, check), ['decide', 'decide']);
+  assert.deepEqual(blockBuckets(file(draft, proposal), original, check), ['decide', 'check']);
   // A marker left in your edit: that conflict is still to decide, and the file is conflicted.
   const open = `import { x } from "./x";\n${original}`;
   const marked = file(open, proposal, { wholeEdit, resolved: false });

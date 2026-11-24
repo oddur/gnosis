@@ -276,9 +276,12 @@ export function useConflictChoices({
     // Replacing your edit is not a choice between Gnosis's options: the stats count none.
     if (before !== 'edit') onChoice?.(index, before, choice, picks?.[index]);
     else onEdits?.(editsWithout(index));
-    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick.
-    onPick?.(index, choice);
-    onChange(applyChoices(model.segments, next, proposals, model.edits));
+    // Use the proposal after another choice is yours too (#445 item 12): only an untouched proposal has no pick. Cards
+    // of the draft's own markers (not undoable) have their own indexes: no pick is saved for them, and no proposal is
+    // written there, since the file's proposal of that index is another conflict's (#556 review).
+    if (!model.undoable && choice === 'proposal') return;
+    if (model.undoable) onPick?.(index, choice);
+    onChange(applyChoices(model.segments, next, model.undoable ? proposals : undefined, model.edits));
   }
   /** Undo: a Keep or a proposal opens the conflict again; your edit returns to the choice it replaced (#445 item 11). */
   function undo(index: number) {

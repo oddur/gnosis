@@ -240,7 +240,7 @@ export function confirmGroups<P extends { name: string; prevName?: string }>(
     // Your whole-file edit (#503): the whole file is yours, Merged proposals in it included, and its note lists every
     // line you changed in it, the ones outside the conflicts too.
     // Checked before the whole-file proposal, as the header's buckets are (blockBuckets).
-    if (file.wholeEdit && wholeEdited(file, file.result)) {
+    if (file.wholeEdit && wholeEdited(file)) {
       whole('manual', withMain, file.wholeEdit.result);
       if (withMain !== file.ours || previousPath) groups.main.push(mainPart(file.path, named, file.ours, withMain));
       continue;

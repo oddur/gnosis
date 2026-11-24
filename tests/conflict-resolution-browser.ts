@@ -228,7 +228,7 @@ void app.whenReady().then(async () => {
         // As the service does: a save from an earlier version lands while its file is the one it started from.
         if(['save','edit-file','undo-edit-file','accept-edit-file'].includes(req.kind)&&req.base!==undefined){if(s.status==='published')throw Error(window.refusals.pushed);if(req.version>s.version)throw Error(window.stale);const f=s.files.find(f=>f.path===req.path);if(!f)throw Error(window.refusals.left);const r=window.rev(f);if(r!==req.base)throw Error(r.split('.')[0]===req.base.split('.')[0]?window.refusals.changed:window.refusals.conflicts);}
         else if(req.version!==s.version)throw Error('The saved resolution changed. Reopen the workspace before continuing.');
-        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.wholeEdit&&!window.wholeEdited(f,req.contents))delete f.wholeEdit;else if(f.wholeEdit&&req.contents!==f.result){f.wholeEdit.later=true;delete f.wholeEdit.accepted;}if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);if(f.wholeEdit&&req.reset&&window.startsOver(f,req.contents))delete f.wholeEdit;else if(f.wholeEdit&&req.contents!==f.result){f.wholeEdit.later=true;delete f.wholeEdit.accepted;}if(f.result!==req.contents){f.source='manual';f.explanation=undefined;}f.result=req.contents;f.resolved=req.resolved;if(req.picks)f.picks=req.picks.some(Boolean)?req.picks:undefined;if(req.edits)f.edits=req.edits.some(Boolean)?req.edits:undefined;}
         // Edit whole file (#503), as the service does it: the state before the first edit is kept for Undo.
         if(req.kind==='edit-file'&&req.contents===s.files.find(f=>f.path===req.path).wholeEdit?.result)req={...req,kind:'undo-edit-file',typedBack:true};
         if(req.kind==='edit-file'){const f=s.files.find(f=>f.path===req.path);if(req.contents===f.result)throw Error('Nothing in the file changed, so nothing was saved.');if(f.wholeEdit){f.wholeEdit.later=true;delete f.wholeEdit.accepted;}f.wholeEdit??={result:f.result,resolved:f.resolved,source:f.source,...(f.picks?{picks:f.picks}:{}),...(f.edits?{edits:f.edits}:{})};f.result=req.contents;f.resolved=false;f.source='manual';f.explanation=undefined;f.picks=undefined;f.edits=undefined;}
@@ -243,7 +243,7 @@ void app.whenReady().then(async () => {
       };
     })()`);
     // Each file's revision, as the service names it (fileRevision): its conflicts, then its draft and your choices.
-    await js(`import('/lib/conflict-verify.ts').then(m=>{window.wholeEdited=m.wholeEdited;})`);
+    await js(`import('/lib/conflict-verify.ts').then(m=>{window.startsOver=m.startsOver;})`);
     await js(`import('/lib/conflict-resolution.ts').then(m=>{
       window.refusals=m.SAVE_REFUSALS;window.stale=m.STALE_DRAFT;window.undoLater=m.UNDO_LATER;
       const h=t=>{let a=0x811c9dc5;for(let i=0;i<t.length;i++)a=Math.imul(a^t.charCodeAt(i),16777619);return (a>>>0).toString(36)+'-'+t.length};
@@ -2416,6 +2416,13 @@ void app.whenReady().then(async () => {
     assert.ok(await js("window.conflictCalls.some(r=>r.kind==='accept-edit-file'&&!!r.base)"), 'Accept names the file’s revision');
     await click('Mark reviewed');
     await wait('window.conflictFixture.files[0].resolved===true');
+    // The last file reviewed opens the confirmation on its own.
+    await wait(`!!document.querySelector('.conflict-confirm') || !!(${visibleButton('Review and push…')})`);
+    if (await js<boolean>("!!document.querySelector('.conflict-confirm')")) await click('Back to files');
+    // Only your Reset file ends the whole-file edit (#556 review): its save says so, and the note goes.
+    await click('Reset file');
+    await wait("!window.conflictFixture.files[0].wholeEdit && !document.querySelector('[data-conflict-file-edited]')");
+    assert.ok(await js("window.conflictCalls.findLast(r=>r.kind==='save').reset===true"));
     await click('Close');
 
     // A reorder: Mergiraf's result also moves lines outside Git's conflict, so it is one whole-file proposal in Check.

@@ -7,7 +7,15 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service';
 import { conflictChecker, definitionsOf } from '../src/conflict-checks';
 import { createSyntaxEngine } from '../lib/syntax-scope';
-import { blockBuckets, blockVerdict, MODEL_UNCHECKED, verifyProposals, wholeEdited } from '../lib/conflict-verify';
+import {
+  blockBuckets,
+  blockVerdict,
+  MODEL_UNCHECKED,
+  unchosenConflicts,
+  verifyProposals,
+  wholeEdited,
+} from '../lib/conflict-verify';
+import { applyChoices, conflictModel } from '../lib/conflict-blocks';
 import {
   validateConflictRequest,
   type ConflictFile,
@@ -779,7 +787,7 @@ test('Edit whole file: a proposal your edit left in a draft that can’t be spli
   const edited = 'export function settings() {\n  return x + y;\n}\n// checked\n';
   let file = (await request(f, { kind: 'edit-file', contents: edited })).session.files[0];
   assert.ok(file.wholeEdit);
-  assert.equal(wholeEdited(file, edited), true);
+  assert.equal(wholeEdited(file), true);
   assert.deepEqual(bucketsOf(file), ['check'], 'Nobody chose the proposal: it stays in Check');
   await assert.rejects(request(f, { kind: 'save', contents: edited, resolved: true }), /Select Accept my edit/);
   // Your explicit choice: the proposal as your edit left it is yours. The draft doesn't change, and isn't reviewed yet.
@@ -834,12 +842,17 @@ test('Edit whole file: a Keep after the edit keeps the edit, its Undo and its no
   assert.ok(file.wholeEdit, 'The Keep doesn’t end your whole-file edit');
   assert.equal(file.wholeEdit.result, twoConflicts);
   assert.equal(file.wholeEdit.later, true, 'Undo asks before it discards the Keep');
-  assert.equal(wholeEdited(file, file.result), true, 'The "Edited by you" note stays');
+  assert.equal(wholeEdited(file), true, 'The "Edited by you" note stays');
   assert.deepEqual(bucketsOf(file), ['decided', 'decided']);
-  // Use the proposal after the edit is your choice too; the same text without it stays in Check.
-  const used = typed.replace(second, proposal.text);
+  // Use the proposal after the edit is your choice too, where each conflict has its own card (your edit took a side);
+  // the same text without it stays in Check.
+  const sided = twoConflicts.replace(block, '  const x = 10;\n  const y = 2;\n');
+  const used = sided.replace(second, proposal.text);
   assert.deepEqual(blockBuckets(file, used, file.verdict?.verdict, [undefined, 'proposal']), ['decided', 'decided']);
   assert.deepEqual(blockBuckets(file, used, file.verdict?.verdict), ['decided', 'check']);
+  // Where the cards are the draft's own markers (the lines you typed match no option), a pick names no conflict.
+  const typedUsed = typed.replace(second, proposal.text);
+  assert.deepEqual(blockBuckets(file, typedUsed, file.verdict?.verdict, [undefined, 'proposal']), ['decided', 'check']);
   file = (await request(f, { kind: 'save', contents: kept, resolved: true, picks: [null, 'theirs'] })).session.files[0];
   assert.equal(file.resolved, true);
   // Undo: the Keep goes too, only once you chose Undo again.
@@ -848,13 +861,17 @@ test('Edit whole file: a Keep after the edit keeps the edit, its Undo and its no
   assert.equal(file.result, twoConflicts);
   assert.equal(file.wholeEdit, undefined);
   assert.equal(file.picks, undefined);
-  // Start from Git's conflict, or Reset file (a proposal the checks Merged back in place), starts the conflicts over
-  // and ends the edit.
+  // Start from Git's conflict, or Reset file (a proposal the checks Merged back in place), ends the edit: only as your
+  // explicit choice (`reset`). The same text from a choice of yours, Use the proposal say, is still your edit (#556).
   for (const reset of [twoConflicts, twoConflicts.replace(second, proposal.text)]) {
     file = (await request(f, { kind: 'edit-file', contents: typed })).session.files[0];
     assert.ok(file.wholeEdit);
-    assert.equal(wholeEdited(file, reset), false);
     file = (await request(f, { kind: 'save', contents: reset, resolved: false })).session.files[0];
+    assert.ok(file.wholeEdit, 'Text alone never ends your whole-file edit');
+    assert.equal(file.wholeEdit.later, true);
+    file = (await request(f, { kind: 'save', contents: typed, resolved: false })).session.files[0];
+    await assert.rejects(request(f, { kind: 'save', contents: reset, resolved: false, reset: 'yes' }), /Invalid/);
+    file = (await request(f, { kind: 'save', contents: reset, resolved: false, reset: true })).session.files[0];
     assert.equal(file.wholeEdit, undefined);
   }
 });
@@ -887,4 +904,64 @@ test('Edit whole file: Undo keeps a model proposal made after the edit on its ca
   open = (await g.run({ kind: 'model', path: 'src/settings.ts', index: 0 })).session.files[0];
   assert.equal(open.result, twoConflicts, 'Offered on its card, never written into the draft');
   assert.equal(open.proposals?.[0]?.source, 'model');
+});
+
+test('Edit whole file: a Keep on a card of the draft’s own markers never decides another conflict (#556 review)', async () => {
+  // Three conflicts. The checks Merge conflict 0's proposal and the type check demotes it, so it waits in Check.
+  const c = (n: number) => `<<<<<<< feature\nconst v${n} = 'pr';\n=======\nconst v${n} = 'main';\n>>>>>>> main\n`;
+  const three = `// a\n${c(0)}// b\n${c(1)}// c\n${c(2)}// d\n`;
+  const both0 = `const v0 = 'both';\n`;
+  const prepared = three.replace(c(0), both0);
+  const data = new Map<string, unknown>();
+  const key = `conflict-draft:tester:${ID}`;
+  data.set(key, {
+    ...sessionWith([
+      conflictFile({
+        path: 'x.ts',
+        original: three,
+        result: prepared,
+        source: 'mergiraf',
+        proposals: [{ source: 'mergiraf', text: both0 }, null, null],
+        typeError: { key: 'k', note: 'The type check found a new error.' },
+      }),
+    ]),
+  });
+  const service = createConflictResolutionService({
+    storage: {
+      read: (k: string) => structuredClone(data.get(k)),
+      write: (k: string, v: unknown) => (v == null ? data.delete(k) : data.set(k, structuredClone(v))),
+      flush: async () => {},
+    },
+    directory: () => '/nonexistent',
+    context: () => ({ account: 'tester', token: 'not-a-real-token' }),
+    read: () => Promise.reject(new Error('No GitHub in this test.')),
+    mergiraf: () => '/nonexistent',
+    suggest: () => Promise.reject(new Error('Not used.')),
+    verify: () => Promise.resolve({ merged: false, note: 'Check.', blocks: [{ merged: true, note: 'Merged.' }, undefined, undefined] }),
+    definitions: () => Promise.resolve([]),
+  });
+  const run = (fields: Record<string, unknown>) =>
+    service.run(
+      { id: ID, version: (data.get(key) as ConflictSession).version, path: 'x.ts', ...fields } as ConflictRequest,
+      new AbortController().signal
+    );
+  let file = (await run({ kind: 'save', contents: prepared, resolved: false })).session.files[0];
+  // Your edit types conflict 1's lines, matching no option: the draft splits, but its cards are its own markers.
+  const edited = prepared.replace(c(1), `const v1 = 'typed by me';\n`);
+  file = (await run({ kind: 'edit-file', contents: edited })).session.files[0];
+  const model = conflictModel(three, file.result, file.proposals);
+  assert.equal(model.undoable, false);
+  // Keep on the only card: conflict 2, at index 0 among the draft's own markers. Conflict 0 is still nobody's choice.
+  const kept = applyChoices(model.segments, ['ours'], undefined);
+  await assert.rejects(run({ kind: 'save', contents: kept, resolved: true, picks: ['ours'] }), /in Check/);
+  file = (await run({ kind: 'save', contents: kept, resolved: false, picks: ['ours'] })).session.files[0];
+  const verdict = { merged: false, note: 'Check.', blocks: [{ merged: false, note: 'Demoted.' }, undefined, undefined] };
+  assert.deepEqual(unchosenConflicts(file, file.result, verdict, ['ours']), [0]);
+  // Nor does a pick of the proposal there: those cards never name the file's conflict of their index.
+  assert.deepEqual(unchosenConflicts(file, file.result, verdict, ['proposal']), [0]);
+  // A pick counts only when the conflict holds exactly that choice's text.
+  const split = prepared.replace(c(1), `const v1 = 'main';\n`);
+  assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['ours']), [0]);
+  assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['proposal']), []);
+  assert.equal(file.resolved, false);
 });

@@ -270,6 +270,11 @@ export type ConflictRequest =
        * the save while this file is the same; when the file changed too, the save is refused (`SAVE_REFUSALS`).
        */
       base?: string;
+      /**
+       * You chose Reset file or Start from Git's conflict (#533): a whole-file edit ends, when `contents` is that draft.
+       * Without it, no draft ends the edit, whatever its text.
+       */
+      reset?: boolean;
     }
   | {
       kind: 'resolve';
@@ -541,7 +546,8 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     (r.picks === undefined ||
       (Array.isArray(r.picks) && r.picks.length <= 10_000 && (r.picks as unknown[]).every(isPick))) &&
     (r.edits === undefined || validEdits(r.edits)) &&
-    (r.base === undefined || (r.kind === 'save' && text('base', 64)))
+    (r.base === undefined || (r.kind === 'save' && text('base', 64))) &&
+    (r.reset === undefined || (r.kind === 'save' && typeof r.reset === 'boolean'))
   )
     return;
   // Edit whole file (#503) names the file's revision its editor started from (`base`), as a save does.

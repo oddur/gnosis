@@ -128,6 +128,7 @@ export function FileEditNote({
   conflicts,
   markers,
   accept,
+  waiting,
   disabled,
   onEdit,
   onUndo,
@@ -138,6 +139,8 @@ export function FileEditNote({
   markers: boolean;
   /** The proposals in Check that Accept my edit would make yours (acceptableConflicts); 0 hides it. */
   accept: number;
+  /** The conflicts in Check that still wait for a choice (unchosenConflicts): the file isn't all yours yet. */
+  waiting: number;
   disabled: boolean;
   onEdit: () => void;
   onUndo: () => void;
@@ -152,7 +155,9 @@ export function FileEditNote({
           ? 'A conflict marker is left. Edit the file again to finish it.'
           : accept
             ? `Your edit left ${accept === 1 ? 'a proposal' : `${accept} proposals`} in Check as ${accept === 1 ? 'it was' : 'they were'}.`
-            : `The whole file is your decision, its ${conflicts === 1 ? 'conflict' : `${conflicts} conflicts`} included.`}
+            : waiting
+              ? `${waiting === 1 ? 'A conflict' : `${waiting} conflicts`} in Check still ${waiting === 1 ? 'waits' : 'wait'} for your choice.`
+              : `The whole file is your decision, its ${conflicts === 1 ? 'conflict' : `${conflicts} conflicts`} included.`}
       </span>
       {accept > 0 && (
         <Button size="sm" variant="ghost" disabled={disabled} data-conflict-file-accept="" onClick={onAccept}>

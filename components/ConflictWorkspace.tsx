@@ -746,17 +746,25 @@ export function ConflictWorkspace({
     contents: string,
     resolved: boolean,
     own: { picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] } = {}
-  ): ConflictRequest => ({
-    kind: 'save',
-    id: session.id,
-    version: session.version,
-    path: file.path,
-    contents,
-    resolved,
-    // What your text came from, never a newer revision: a view another view overtook is refused, whatever saves it.
-    ...(loaded.current.get(file.path)?.revision ? { base: loaded.current.get(file.path)?.revision } : {}),
-    ...own,
-  });
+  ): ConflictRequest => {
+    // Your Reset file or Start from Git's conflict, saved as you left it: it ends a whole-file edit (#533). Once.
+    const reset = resets.current.get(file.path) === contents;
+    resets.current.delete(file.path);
+    return {
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents,
+      resolved,
+      // What your text came from, never a newer revision: a view another view overtook is refused, whatever saves it.
+      ...(loaded.current.get(file.path)?.revision ? { base: loaded.current.get(file.path)?.revision } : {}),
+      ...own,
+      ...(reset ? { reset } : {}),
+    };
+  };
+  /** The draft your Reset file or Start from Git's conflict left, per file, until it is saved. */
+  const resets = useRef(new Map<string, string>());
   /** Your unsaved choices and edits for these files go: the saved ones show and save from now on. */
   const forgetOwn = (paths: readonly string[]) => {
     if (!paths.length) return;
@@ -1583,6 +1591,7 @@ export function ConflictWorkspace({
   function resetTo(text: string) {
     if (editHeld()) return;
     if (file) dropPicks(file.path);
+    if (file) resets.current.set(file.path, text);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
     setOutcome('');
     setContents(text);
@@ -2599,11 +2608,13 @@ export function ConflictWorkspace({
                               )
                             }
                             note={
-                              wholeEdited(file, contents) && (
+                              wholeEdited(file) &&
+                              resets.current.get(file.path) !== contents && (
                                 <FileEditNote
                                   conflicts={conflictCount(file.original)}
                                   markers={markersRemain}
                                   accept={acceptable.length}
+                                  waiting={unchosen.length}
                                   disabled={!canEdit}
                                   onEdit={editFile}
                                   onUndo={undoFileEdit}

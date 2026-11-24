@@ -70,7 +70,7 @@ import {
   typeErrorOf,
   unchosenConflicts,
   waitingHint,
-  wholeEdited,
+  startsOver,
   withTypeError,
   withoutUnchosen,
   type Verdict,
@@ -3006,9 +3006,10 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('This file cannot be saved in the conflict editor.');
           if (request.resolved && markersLeft(file, request.contents))
             throw new Error('Remove the remaining conflict markers first.');
-          // Your whole-file edit (#503) lasts through a Keep or an edit after it, with its Undo (#533). Reset file and
-          // Start from Git's conflict start the conflicts over: they are told apart again, before any check of them.
-          if (file.wholeEdit && !wholeEdited(file, request.contents)) delete file.wholeEdit;
+          // Your whole-file edit (#503) lasts through a Keep or an edit after it, with its Undo (#533). Only your Reset
+          // file or Start from Git's conflict (`reset`, with that draft) ends it: the conflicts are told apart again,
+          // before any check of them. A draft whose text only looks like one is still your edit.
+          if (file.wholeEdit && request.reset && startsOver(file, request.contents)) delete file.wholeEdit;
           else if (file.wholeEdit && request.contents !== file.result) {
             file.wholeEdit.later = true;
             // Accept my edit was for the draft you chose it on: a changed draft waits for you again.
