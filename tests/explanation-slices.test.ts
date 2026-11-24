@@ -11,13 +11,18 @@ import { buildIndexedHunks } from '../lib/diff-parse';
 import {
   SLICE_MIN_CHANGED,
   coversExactly,
+  filePrints,
+  linkMoves,
   sliceFile,
   sliceMoves,
   slicePr,
   sliceRequests,
+  triviaLines,
+  type HunkSlice,
   type HunkSlices,
   type SliceFile,
 } from '../lib/explanation-slices';
+import type { MoveEnd, SymbolMove } from '../lib/moved-symbols';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
 import { createConflictCheckWorker } from '../src/conflict-checks';
 import {
@@ -67,21 +72,32 @@ function gitDiff(changes: readonly Change[]) {
     })
     .join('\n');
 }
-/** The worker's files for the changes, as the explanation builds them from its indexed hunks. */
-function requests(changes: readonly Change[]): SliceFile[] {
+/**
+ * The worker's files for the changes, as the explanation builds them from its indexed hunks. `alsoChanged`: files the
+ * PR changes that the explanation leaves out (filtered, generated, without a patch).
+ */
+function requests(changes: readonly Change[], alsoChanged: readonly string[] = []): SliceFile[] {
   const before: Record<string, string> = {},
     after: Record<string, string> = {};
   for (const change of changes) {
     if (change.before !== undefined) before[change.path] = change.before;
     after[change.path] = change.after;
   }
-  return sliceRequests(buildIndexedHunks(gitDiff(changes), before, after), before, after);
+  const changed = [
+    ...changes.map((c) => ({
+      filename: c.path,
+      status: c.before === undefined ? ('added' as const) : ('modified' as const),
+    })),
+    ...alsoChanged.map((filename) => ({ filename, status: 'modified' as const })),
+  ];
+  return sliceRequests(changed, buildIndexedHunks(gitDiff(changes), before, after), before, after);
 }
 /** The PR's slices, each file read in turn and the moves matched, as the worker does it, without the worker. */
 function slices(files: readonly SliceFile[], disabled: SyntaxLanguage[] = []): Promise<HunkSlices[]> {
   return slicePr(
     files,
     (file) => sliceFile(engine, file, disabled),
+    (file) => filePrints(engine, file, disabled),
     (candidates) => Promise.resolve(sliceMoves(candidates))
   );
 }
@@ -137,10 +153,13 @@ void describe('a Rust PR shaped like klanggames/seed#38134', () => {
     assert.ok(labels.includes('fn supersede (impl EntityDrainState)'));
     assert.equal(labels.filter((l) => /^fn drains_case_\d+ \(mod tests\)$/.test(l)).length, 26);
     for (const slice of drain.slices) assert.ok(slice.additions <= 150, `${slice.label} is at most 150 lines`);
-    // The new file's lines, in order, with no gap and no overlap.
-    assert.deepEqual(drain.slices[0].newLines[0].start, 1);
-    for (let i = 1; i < drain.slices.length; i++)
-      assert.equal(drain.slices[i].newLines[0].start, (drain.slices[i - 1].newLines.at(-1)?.end ?? 0) + 1);
+    // Every line of the new file is in one slice.
+    const seen = new Array<number>(drainLines).fill(0);
+    for (const slice of drain.slices)
+      for (const range of slice.newLines) for (let l = range.start; l <= range.end; l++) seen[l - 1]++;
+    assert.ok(seen.slice(0, drainLines - 1).every((n) => n === 1));
+    // The tests module's own lines (its attribute, `use super::*;`, its closing brace) are a part of it.
+    assert.ok(labels.includes('mod tests (part)'));
   });
 
   void test('the deletion splits by method, and moved methods link to their new copies', async () => {
@@ -182,10 +201,52 @@ void describe('a Rust PR shaped like klanggames/seed#38134', () => {
     const sliced = await slicePr(
       files,
       (file) => (file.path === 'src/other.rs' ? Promise.resolve(undefined) : sliceFile(engine, file)),
+      (file) => filePrints(engine, file),
       (candidates) => Promise.resolve(sliceMoves(candidates))
     );
     assert.equal(ofFile(sliced, 'src/other.rs').whole, 'timeout');
     assert.ok(sliced.every((hunk) => hunk.slices.every((s) => !s.movedTo && !s.movedFrom)));
+  });
+
+  void test("a file the explanation leaves out refuses its family's moves", async () => {
+    // A generated or filtered Rust file the PR changes: it has no hunks here, so it is unread, and could hold a rival.
+    const files = requests(seedChanges(), ['src/generated.rs']);
+    assert.deepEqual(
+      files.map((f) => [f.path, f.hunks.length]),
+      [
+        ['src/queue.rs', 1],
+        ['src/drain.rs', 1],
+        ['src/generated.rs', 0],
+      ]
+    );
+    const sliced = await slices(files);
+    assert.ok(sliced.every((hunk) => hunk.slices.every((s) => !s.movedTo && !s.movedFrom)));
+    assert.equal(ofFile(sliced, 'src/drain.rs').whole, undefined, 'the slices stay');
+  });
+
+  void test('a slow fingerprint keeps the slices read, and no more jobs are sent after it', async () => {
+    const files = requests(seedChanges());
+    const jobs: string[] = [];
+    const sliced = await slicePr(
+      files,
+      (file) => {
+        jobs.push(`slices ${file.path}`);
+        return sliceFile(engine, file);
+      },
+      (file) => {
+        jobs.push(`prints ${file.path}`);
+        return Promise.resolve(undefined);
+      },
+      () => {
+        jobs.push('moves');
+        return Promise.resolve([]);
+      }
+    );
+    assert.deepEqual(jobs, ['slices src/queue.rs', 'prints src/queue.rs']);
+    assert.equal(ofFile(sliced, 'src/queue.rs').whole, undefined, "the first file's slices stay");
+    assert.ok(ofFile(sliced, 'src/queue.rs').slices.length > 1);
+    assert.equal(ofFile(sliced, 'src/drain.rs').whole, 'timeout', 'the file after it is not sent');
+    assertCovered(files, sliced);
   });
 
   void test('slice IDs are stable, and editing one method changes only its own', async () => {
@@ -222,6 +283,8 @@ void describe('slicing other files', () => {
     assert.match(labels[0], /^import \{ readFile \}.*interface StoreOptions$/);
     assert.ok(labels.includes('save() (class Store)'));
     assert.equal(labels.filter((l) => l.endsWith('(class Store)')).length, 12);
+    // The class's own lines (its header and fields) are a part of it, not the first method's.
+    assert.ok(labels.includes('class Store (part)'));
     assert.equal(labels.at(-1), 'function openStore(), function storeSize()');
   });
 
@@ -278,8 +341,8 @@ void describe('slicing other files', () => {
   void test('a text that does not match its hunk keeps it whole', async () => {
     const [file] = requests([{ path: 'src/drain.rs', after: drainFile() }]);
     const answer = await sliceFile(engine, { ...file, head: drainFile().replace('supersede', 'replaced') });
-    assert.equal(answer.slices[0].whole, 'failed');
-    assert.ok(coversExactly(file.hunks[0], answer.slices[0].slices));
+    assert.equal(answer[0].whole, 'failed');
+    assert.ok(coversExactly(file.hunks[0], answer[0].slices));
   });
 
   void test('coverage fails when a changed line is in two slices or in none', () => {
@@ -292,6 +355,8 @@ void describe('slicing other files', () => {
       lines: [{ start, end }],
       oldLines: [],
       newLines: [],
+      removed: [],
+      added: [],
       additions: 0,
       deletions: 0,
     });
@@ -323,4 +388,144 @@ void test('the worker: a file it does not answer for keeps whole hunks', async (
     ]
   );
   assertCovered(files, sliced);
+});
+
+void describe('moves and labels', () => {
+  const nestedOuter = () => {
+    const lines = ['export function outer(weights: number[]): number {', '  let sum = 0;'];
+    for (let i = 0; i < 200; i++) lines.push(`  sum += weights[${i % 7}] * ${i + 3} - Math.min(sum, ${i});`);
+    lines.push(...normalizeWeights('  '), '  return normalizeWeights(weights, sum).length;', '}');
+    return lines;
+  };
+  const normalizeWeights = (indent: string) => [
+    `${indent}function normalizeWeights(values: number[], scale: number): number[] {`,
+    `${indent}  const total = values.reduce((sum, value) => sum + Math.abs(value), 0) || 1;`,
+    `${indent}  const shifted = values.map((value, index) => value * scale + index / total);`,
+    `${indent}  const largest = Math.max(...shifted.map((value) => Math.abs(value)), 1);`,
+    `${indent}  return shifted.map((value) => Math.round((value / largest) * 1000) / 1000);`,
+    `${indent}}`,
+  ];
+  const keep = ['export function keep(): number {', '  return 1;', '}'];
+
+  void test('a definition over 150 lines with its own body is sliced as a part, and only the moved child links', async () => {
+    const before = [...nestedOuter(), '', ...keep].join('\n') + '\n';
+    const after = `${keep.join('\n')}\n`;
+    const files = requests([
+      { path: 'src/a.ts', before, after },
+      { path: 'src/b.ts', after: `${normalizeWeights('').join('\n')}\n` },
+    ]);
+    const sliced = await slices(files);
+    assertCovered(files, sliced);
+    const a = ofFile(sliced, 'src/a.ts');
+    const part = a.slices.find((s) => s.label === 'function outer() (part)');
+    assert.ok(part, a.slices.map((s) => s.label).join(' | '));
+    assert.equal(part.movedTo, undefined, 'the outer body did not move');
+    const child = a.slices.find((s) => s.label.startsWith('function normalizeWeights()'));
+    assert.ok(child);
+    assert.ok(child.deletions <= 8, `only the nested function's lines (${child.deletions})`);
+    const b = ofFile(sliced, 'src/b.ts');
+    assert.equal(child.movedTo, b.slices[0].id);
+    assert.equal(b.slices[0].movedFrom, child.id);
+    assert.equal(child.moveBody, 'identical');
+  });
+
+  const end = (side: 'before' | 'after', name: string, start: number, last: number): MoveEnd => ({
+    file: side === 'before' ? 'a.ts' : 'b.ts',
+    url: '',
+    headSha: '',
+    path: side === 'before' ? 'a.ts' : 'b.ts',
+    diffPath: side === 'before' ? 'a.ts' : 'b.ts',
+    side,
+    kind: 'function',
+    name,
+    label: `${name}()`,
+    start,
+    end: last,
+    signatureEnd: start,
+  });
+  const move = (from: MoveEnd, to: MoveEnd, fields: Partial<SymbolMove> = {}): SymbolMove => ({
+    from,
+    to,
+    exact: true,
+    renamed: false,
+    similarity: 1,
+    commentsChanged: false,
+    lines: { before: new Uint32Array(), after: new Uint32Array() },
+    ...fields,
+  });
+  /** A slice of one definition on one side, its changed lines `start` to `last`. */
+  const oneSlice = (
+    side: 'before' | 'after',
+    name: string,
+    def: [number, number],
+    changed: [number, number]
+  ): HunkSlices => {
+    const range = { start: changed[0], end: changed[1] };
+    const count = changed[1] - changed[0] + 1;
+    const slice: HunkSlice = {
+      id: `${side}:${name}`,
+      label: `${name}()`,
+      symbols: [
+        {
+          side,
+          kind: 'function',
+          name,
+          label: `${name}()`,
+          start: def[0],
+          end: def[1],
+          span: { start: def[0] - 1, end: def[1] },
+        },
+      ],
+      lines: [{ start: 0, end: count - 1 }],
+      oldLines: side === 'before' ? [range] : [],
+      newLines: side === 'after' ? [range] : [],
+      removed: side === 'before' ? [range] : [],
+      added: side === 'after' ? [range] : [],
+      additions: side === 'after' ? count : 0,
+      deletions: side === 'before' ? count : 0,
+    };
+    return { hunkId: side, filePath: side === 'before' ? 'a.ts' : 'b.ts', slices: [slice] };
+  };
+
+  void test('a move links only when the slice changes nothing outside the definition and its comments', () => {
+    const exact = move(end('before', 'save', 10, 30), end('after', 'save', 5, 25));
+    const linked = linkMoves(
+      [oneSlice('before', 'save', [10, 30], [9, 30]), oneSlice('after', 'save', [5, 25], [5, 25])],
+      [exact]
+    );
+    assert.equal(linked[0].slices[0].movedTo, 'after:save');
+    assert.equal(linked[0].slices[0].moveBody, 'identical');
+    // The deleted slice also removes line 31, past the definition (a closing brace, an `impl` header): no link.
+    const wider = linkMoves(
+      [oneSlice('before', 'save', [10, 30], [10, 31]), oneSlice('after', 'save', [5, 25], [5, 25])],
+      [exact]
+    );
+    assert.equal(wider[0].slices[0].movedTo, undefined);
+    assert.equal(wider[1].slices[0].movedFrom, undefined);
+  });
+
+  void test('a renamed move is edited, and says the old and new names', () => {
+    const renamed = move(end('before', 'save', 10, 30), end('after', 'store', 5, 25), { renamed: true });
+    const [from, to] = linkMoves(
+      [oneSlice('before', 'save', [10, 30], [10, 30]), oneSlice('after', 'store', [5, 25], [5, 25])],
+      [renamed]
+    );
+    assert.equal(from.slices[0].moveBody, 'edited');
+    assert.deepEqual(from.slices[0].renamed, { from: 'save', to: 'store' });
+    assert.deepEqual(to.slices[0].renamed, { from: 'save', to: 'store' });
+  });
+
+  void test('a modified file with only one text has no candidates', async () => {
+    const [queue] = requests(seedChanges());
+    assert.ok(queue.base !== undefined && queue.head !== undefined);
+    assert.ok(await filePrints(engine, queue), 'both texts: read');
+    assert.equal(await filePrints(engine, { ...queue, base: undefined }), null);
+    assert.equal(await filePrints(engine, { ...queue, head: undefined }), null);
+  });
+
+  void test('a line starting with * is a comment only inside a block comment', () => {
+    const lines = ['const total = base', '  * factor;', '/**', ' * Docs.', ' */', '// note', '', 'x();'];
+    assert.deepEqual([...triviaLines(lines, 'typescript')].slice(1), [0, 0, 1, 1, 1, 1, 1, 0]);
+    assert.deepEqual([...triviaLines(['# note', 'x = 1', '* y'], 'python')].slice(1), [1, 0, 0]);
+  });
 });

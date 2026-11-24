@@ -63,11 +63,12 @@ export function rustTest(name: string, seed: number): string[] {
 export const MOVED_IDENTICAL = ['supersede', 'drain_entities'];
 export const MOVED_EDITED = 'requeue';
 export const DELETED_ONLY = ['legacy_flush', 'legacy_compact'];
+// The first method takes the impl's header line, and the last its closing brace: the moved ones are neither.
 const DRAIN_METHODS = [
+  'claim_batch',
   'supersede',
   'drain_entities',
   'requeue',
-  'claim_batch',
   'release_batch',
   'schedule_retry',
   'expire_leases',

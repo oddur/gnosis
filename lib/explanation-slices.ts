@@ -1,5 +1,6 @@
 import { createPatch } from 'diff';
 import type { IndexedHunk } from './diff-parse';
+import type { ChangedFile } from './types';
 import {
   languageFamily,
   matchMoves,
@@ -10,6 +11,7 @@ import {
 } from './moved-symbols';
 import { patchHunks } from './semantic-noise';
 import {
+  SYNTAX_LANGUAGES,
   SYNTAX_MAX_CHARACTERS,
   WHOLE_DEFINITION_LINES,
   definitionLines,
@@ -62,6 +64,13 @@ export interface SliceSymbol {
   /** The unit's lines on its side, from 1, inclusive. */
   start: number;
   end: number;
+  /** `start` to `end` with the comments and blank lines right before and after it, such as a doc comment. */
+  span: LineRange;
+  /**
+   * The lines of a definition over `WHOLE_DEFINITION_LINES` that are its own and not its children's: its body code
+   * around them, labelled `function outer() (part)`. `start` and `end` are the whole definition's.
+   */
+  part?: true;
 }
 export interface HunkSlice {
   /** `<hunkId>:<content hash>`: the same lines give the same ID on every run. */
@@ -74,13 +83,18 @@ export interface HunkSlice {
   /** The same lines on the old and new side, from 1. */
   oldLines: LineRange[];
   newLines: LineRange[];
+  /** Only the changed lines: the removed ones on the old side and the added ones on the new side. */
+  removed: LineRange[];
+  added: LineRange[];
   additions: number;
   deletions: number;
   /** A proven move (lib/moved-symbols.ts): the slice the deleted definition reappears in, or came from. */
   movedTo?: string;
   movedFrom?: string;
-  /** Whether the moved definition's body is unchanged (comments included), or edited. */
+  /** Whether the moved definition's body is unchanged (comments and name included), or edited. */
   moveBody?: 'identical' | 'edited';
+  /** The moved definition's old and new names, when the move renamed it: Changes' "renamed from X". */
+  renamed?: { from: string; to: string };
 }
 /** Why a hunk is one slice. */
 export type WholeReason =
@@ -109,9 +123,13 @@ export interface SliceHunk {
   header: string;
   content: string;
 }
-/** One file for the worker: both texts (undefined for the missing side of an added or deleted file) and its hunks. */
+/**
+ * One file for the worker: its status, its texts (undefined for the missing side of an added or deleted file, or a
+ * text that couldn't be read) and its hunks (none for a file the explanation leaves out).
+ */
 export interface SliceFile {
   path: string;
+  status: ChangedFile['status'];
   base?: string;
   head?: string;
   hunks: SliceHunk[];
@@ -147,12 +165,31 @@ function hunkRows(hunk: SliceHunk): Row[] | undefined {
 }
 const isChanged = (row: Row) => row.marker === '+' || row.marker === '-';
 
-/** Comments and blank lines, by their text: they attach to a neighbour and never make a unit or a slice alone. */
-function isTrivia(text: string, language: SyntaxLanguage | undefined) {
-  const t = text.trim();
-  if (!t) return true;
-  if (language === 'python' || language === 'yaml') return t.startsWith('#');
-  return /^(\/\/|\/\*|\*)/.test(t);
+/**
+ * Comments and blank lines, by their text: they attach to a neighbour and never make a unit or a slice alone. Index =
+ * line, from 1. A line starting with `*` is a comment only inside a block comment: elsewhere it is code, such as a
+ * multiplication carried onto the next line.
+ */
+export function triviaLines(lines: readonly string[], language: SyntaxLanguage | undefined): Uint8Array {
+  const trivia = new Uint8Array(lines.length + 1);
+  const hashes = language === 'python' || language === 'yaml';
+  let block = false;
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (block) {
+      trivia[i + 1] = 1;
+      if (t.includes('*/')) block = false;
+      return;
+    }
+    if (!t) trivia[i + 1] = 1;
+    else if (hashes) trivia[i + 1] = t.startsWith('#') ? 1 : 0;
+    else if (t.startsWith('//')) trivia[i + 1] = 1;
+    else if (t.startsWith('/*')) {
+      trivia[i + 1] = 1;
+      block = !t.slice(2).includes('*/');
+    }
+  });
+  return trivia;
 }
 
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -170,6 +207,8 @@ interface Unit {
 export interface SideOutline {
   units: (Unit | undefined)[];
   lines: string[];
+  /** `triviaLines` of the side. */
+  trivia: Uint8Array;
   errorLines?: readonly (readonly [number, number])[];
 }
 interface DefinitionNode {
@@ -212,19 +251,35 @@ export function sideOutline(
   const lines = text.split('\n');
   const count = lines.length;
   const units: (Unit | undefined)[] = new Array<Unit | undefined>(count + 1).fill(undefined);
-  /** `parents`: the definitions around it, outermost first, as definitionChain gives them, from the tree. */
-  const definitionUnit = (definition: SyntaxDefinition, parents: readonly SyntaxDefinition[]): Unit => {
+  const trivia = triviaLines(lines, language);
+  const isTrivia = (line: number) => trivia[line] === 1;
+  /** Lines `start` to `end` with the comments and blank lines right around them. */
+  const spanOf = (start: number, end: number): LineRange => {
+    let first = start,
+      last = end;
+    while (first > 1 && isTrivia(first - 1)) first--;
+    while (last < count && isTrivia(last + 1)) last++;
+    return { start: first, end: last };
+  };
+  /**
+   * `parents`: the definitions around it, outermost first, as definitionChain gives them, from the tree. `part`: the
+   * unit is the definition's own lines around its children.
+   */
+  const definitionUnit = (definition: SyntaxDefinition, parents: readonly SyntaxDefinition[], part = false): Unit => {
     const chain = [...parents, definition];
+    const crumb = part ? `${definition.crumb} (part)` : definition.crumb;
     return {
-      id: `${side}:${definition.start}:${definition.end}`,
-      key: chain.map((d) => `${d.kind}\u0001${d.crumb}`).join('\u0000'),
+      id: `${side}:${part ? 'part:' : ''}${definition.start}:${definition.end}`,
+      key: chain.map((d) => `${d.kind}\u0001${d.crumb}`).join('\u0000') + (part ? '\u0002part' : ''),
       symbol: {
         side,
         kind: definition.kind,
         name: definition.name,
-        label: parents.length ? `${definition.crumb} (${parents.map((p) => p.crumb).join(' › ')})` : definition.crumb,
+        label: parents.length ? `${crumb} (${parents.map((p) => p.crumb).join(' › ')})` : crumb,
         start: definition.start,
         end: definition.end,
+        span: part ? { start: definition.start, end: definition.end } : spanOf(definition.start, definition.end),
+        ...(part ? { part: true as const } : {}),
       },
     };
   };
@@ -249,26 +304,34 @@ export function sideOutline(
         for (let l = definition.start; l <= definition.end; l++) units[l] = unit;
         continue;
       }
-      // Too large: its children are the units, and its own lines go with them.
+      // Too large: its children are the units. Its own lines go with them, unless it has body code of its own (beyond
+      // its signature and closing line): that is a unit labelled as a part of it.
       place(node.children, [...parents, definition]);
+      const own: number[] = [];
+      for (let l = definition.start; l <= definition.end; l++) if (!units[l] && !isTrivia(l)) own.push(l);
+      if (own.some((l) => l > definition.signatureEnd && l < definition.end)) {
+        const part = definitionUnit(definition, parents, true);
+        for (const l of own) units[l] = part;
+      }
       attach(definition.start, definition.end);
     }
   };
   place(definitionTree(definitions, count), []);
   // Top-level code outside every definition: a unit for each run of lines.
   for (let l = 1; l <= count; l++) {
-    if (units[l] || isTrivia(lines[l - 1], language)) continue;
+    if (units[l] || isTrivia(l)) continue;
     let end = l;
-    while (end < count && !units[end + 1] && !isTrivia(lines[end], language)) end++;
+    while (end < count && !units[end + 1] && !isTrivia(end + 1)) end++;
+    const name = clip(squash(lines[l - 1]));
     const unit: Unit = {
       id: `${side}:code:${l}:${end}`,
-      symbol: { side, name: clip(squash(lines[l - 1])), label: clip(squash(lines[l - 1])), start: l, end },
+      symbol: { side, name, label: name, start: l, end, span: { start: l, end } },
     };
     for (let k = l; k <= end; k++) units[k] = unit;
     l = end;
   }
   attach(1, count);
-  return { units, lines, ...(errorLines?.length ? { errorLines } : {}) };
+  return { units, lines, trivia, ...(errorLines?.length ? { errorLines } : {}) };
 }
 
 // ── Slicing ─────────────────────────────────────────────────────────────────
@@ -325,6 +388,8 @@ function buildSlice(
     lines: ranges(sorted.map((r) => r.index)),
     oldLines: ranges(sorted.flatMap((r) => (r.old !== undefined ? [r.old] : []))),
     newLines: ranges(sorted.flatMap((r) => (r.new !== undefined ? [r.new] : []))),
+    removed: ranges(sorted.flatMap((r) => (r.marker === '-' && r.old !== undefined ? [r.old] : []))),
+    added: ranges(sorted.flatMap((r) => (r.marker === '+' && r.new !== undefined ? [r.new] : []))),
     additions: sorted.filter((r) => r.marker === '+').length,
     deletions: sorted.filter((r) => r.marker === '-').length,
   };
@@ -422,6 +487,19 @@ export function sliceHunk(
     if (enclosing && place !== undefined && other?.units[place] === enclosing) unitOf.set(row.index, enclosing);
   }
   if (!unitOf.size) return wholeHunk(hunk, filePath, 'no-definitions');
+  const isTrivia = (row: Row) =>
+    (row.marker === '-' ? before?.trivia[row.old ?? 0] : after?.trivia[row.new ?? 0]) === 1;
+  // A small hunk is one slice, before any grouping. Its symbols are its code rows' units, for linking moves.
+  if (changed.length <= SLICE_MIN_CHANGED)
+    return wholeHunk(
+      hunk,
+      filePath,
+      'small',
+      changed.flatMap((row) => {
+        const unit = unitOf.get(row.index);
+        return unit && !isTrivia(row) ? [unit.symbol] : [];
+      })
+    );
 
   // Groups by unit; a definition edited in place (one unit on each side with the same chain) is one group.
   const groupOf = new Map<string, string>();
@@ -462,14 +540,33 @@ export function sliceHunk(
     into.symbols.push(...from.symbols);
     into.rows.sort((a, b) => a.index - b.index);
   };
-  // A group of only comments and blank lines joins the next group, or the one before it.
+  // A group of only comments and blank lines joins the group of the changed row right after it in the hunk, or of the
+  // one right before it: the code it sits next to, which may be a part around a child, not the child.
+  const rowGroup = new Map<number, Group>();
+  for (const group of ordered) for (const row of group.rows) rowGroup.set(row.index, group);
   for (let i = 0; i < ordered.length && ordered.length > 1; ) {
-    if (!ordered[i].rows.every((row) => isTrivia(row.text, language))) {
+    const group = ordered[i];
+    if (!group.rows.every(isTrivia)) {
+      i++;
+      continue;
+    }
+    const first = changed.indexOf(group.rows[0]),
+      last = changed.indexOf(group.rows[group.rows.length - 1]);
+    const neighbour = (from: number, step: number) => {
+      for (let k = from; k >= 0 && k < changed.length; k += step) {
+        const other = rowGroup.get(changed[k].index);
+        if (other && other !== group) return other;
+      }
+      return undefined;
+    };
+    const target = neighbour(last + 1, 1) ?? neighbour(first - 1, -1);
+    if (!target) {
       i++;
       continue;
     }
     // Its rows only: the definition its comments sat before isn't part of the change.
-    merge(ordered[i + 1] ?? ordered[i - 1], { rows: ordered[i].rows, symbols: [] });
+    merge(target, { rows: group.rows, symbols: [] });
+    for (const row of group.rows) rowGroup.set(row.index, target);
     ordered.splice(i, 1);
   }
   // Neighbouring tiny groups join, when neither reaches into the other.
@@ -497,13 +594,6 @@ export function sliceHunk(
     } else if (previous) pending.push(row);
   }
 
-  if (changed.length <= SLICE_MIN_CHANGED)
-    return wholeHunk(
-      hunk,
-      filePath,
-      'small',
-      ordered.flatMap((group) => group.symbols)
-    );
   const slices = ordered.map((group) => buildSlice(hunk.id, group.rows, group.symbols, fileName(filePath)));
   // Two slices with the same lines keep apart.
   const seen = new Map<string, number>();
@@ -519,9 +609,11 @@ export function sliceHunk(
 // ── Moves ───────────────────────────────────────────────────────────────────
 
 /**
- * Links each proven move (lib/moved-symbols.ts `matchMoves`) to its slices: a deleted slice that is the moved
- * definition alone, and an added slice that is its new copy alone. A move whose end is part of a larger slice, or of
- * a slice that also adds or deletes other lines, is not linked: the slices stay ordinary.
+ * Links each proven move (lib/moved-symbols.ts `matchMoves`) to its slices: a deleted slice whose removed lines all lie
+ * in the moved definition (with its doc comment and the blank lines around it), and an added slice whose added lines
+ * all lie in the new copy. A slice that also holds other code (an `impl` header, a closing brace, another definition)
+ * or changes the other side is not linked, and nor is a move whose end is the part of a larger definition: the slices
+ * stay ordinary.
  */
 export function linkMoves(sliced: readonly HunkSlices[], moves: readonly SymbolMove[]): HunkSlices[] {
   const result = sliced.map((hunk) => ({ ...hunk, slices: hunk.slices.map((slice) => ({ ...slice })) }));
@@ -529,10 +621,13 @@ export function linkMoves(sliced: readonly HunkSlices[], moves: readonly SymbolM
     for (const hunk of result) {
       if (hunk.filePath !== end.diffPath) continue;
       for (const slice of hunk.slices) {
-        if (slice.symbols.length !== 1) continue;
-        const [symbol] = slice.symbols;
-        if (symbol.side !== end.side || symbol.start !== end.start || symbol.end !== end.end) continue;
+        const symbol = slice.symbols.find(
+          (s) => !s.part && s.side === end.side && s.start === end.start && s.end === end.end
+        );
+        if (!symbol) continue;
         if (end.side === 'before' ? slice.additions : slice.deletions) continue;
+        const changed = end.side === 'before' ? slice.removed : slice.added;
+        if (!changed.length || changed.some((r) => r.start < symbol.span.start || r.end > symbol.span.end)) continue;
         return slice;
       }
     }
@@ -542,11 +637,10 @@ export function linkMoves(sliced: readonly HunkSlices[], moves: readonly SymbolM
     const from = endSlice(move.from),
       to = endSlice(move.to);
     if (!from || !to || from === to || from.movedTo || to.movedFrom) continue;
-    const body = move.exact && !move.commentsChanged ? 'identical' : 'edited';
-    from.movedTo = to.id;
-    from.moveBody = body;
-    to.movedFrom = from.id;
-    to.moveBody = body;
+    const body = move.exact && !move.commentsChanged && !move.renamed ? 'identical' : 'edited';
+    const renamed = move.renamed ? { renamed: { from: move.from.name, to: move.to.name } } : {};
+    Object.assign(from, { movedTo: to.id, moveBody: body, ...renamed });
+    Object.assign(to, { movedFrom: from.id, moveBody: body, ...renamed });
   }
   return result;
 }
@@ -578,53 +672,66 @@ export const sliceFamily = (path: string) => {
 };
 
 /**
- * A PR's slices with their moves linked, from a reader of one file's answer (`sliceFile`, in the worker) and a matcher
- * of moves (`sliceMoves`). Fail safe: a file without an answer keeps whole hunks and refuses its family's moves; no
- * answer from the matcher links nothing. `stopped` ends the reading early, with the files left keeping whole hunks.
+ * A PR's slices with their moves linked. For each file with hunks, `read` gives its slices (`sliceFile`, in the worker)
+ * and `fingerprint` its moved-symbol candidates (`filePrints`), as two jobs, so a slow fingerprint keeps the slices;
+ * then `match` finds the moves (`sliceMoves`).
+ *
+ * Fail safe: undefined from any of them means no answer (a timeout, an error, a stopped worker). After the first, as
+ * Reduce noise does, no more jobs are sent: the files not yet read keep whole hunks, and no moves are matched. A file
+ * without candidates (no hunks, no texts, unread) refuses its family's moves. `stopped` ends the reading the same way.
  */
 export async function slicePr(
   files: readonly SliceFile[],
-  read: (file: SliceFile) => Promise<SliceAnswer | undefined>,
+  read: (file: SliceFile) => Promise<HunkSlices[] | undefined>,
+  fingerprint: (file: SliceFile) => Promise<FilePrints | null | undefined>,
   match: (files: SliceMoveFile[]) => Promise<SymbolMove[] | undefined>,
   stopped: () => boolean = () => false
 ): Promise<HunkSlices[]> {
   const sliced: HunkSlices[] = [];
   const candidates: SliceMoveFile[] = [];
+  let failed = false as boolean;
+  const ask = async <T>(job: () => Promise<T | undefined>): Promise<T | undefined> => {
+    if (failed || stopped()) return undefined;
+    const answer = await job();
+    if (answer === undefined) failed = true;
+    return answer;
+  };
   for (const file of files) {
-    const answer = stopped() ? undefined : await read(file);
-    sliced.push(...(answer?.slices ?? file.hunks.map((hunk) => wholeHunk(hunk, file.path, 'timeout'))));
-    // A file of the family without candidates (unread, off, too large) refuses the family's moves.
+    const slices = file.hunks.length ? await ask(() => read(file)) : [];
+    sliced.push(...(slices ?? file.hunks.map((hunk) => wholeHunk(hunk, file.path, 'timeout'))));
     const family = sliceFamily(file.path);
-    if (family) candidates.push({ path: file.path, family, ...(answer?.prints ? { prints: answer.prints } : {}) });
+    if (!family) continue;
+    const prints = file.hunks.length ? await ask(() => fingerprint(file)) : undefined;
+    candidates.push({ path: file.path, family, ...(prints ? { prints } : {}) });
   }
-  if (!candidates.some((file) => file.prints) || stopped()) return sliced;
+  if (failed || stopped() || !candidates.some((file) => file.prints)) return sliced;
   const moves = await match(candidates);
   return moves ? linkMoves(sliced, moves) : sliced;
 }
 
-// ── The worker's job ────────────────────────────────────────────────────────
+// ── The worker's jobs ───────────────────────────────────────────────────────
 
-/** The worker's answer for one file: its hunks' slices, and its moved-symbol candidates when it could read them. */
-export interface SliceAnswer {
-  slices: HunkSlices[];
-  prints?: FilePrints;
+/** A file's language when the worker may read it: one it has a grammar for, turned on, and within the limits. */
+function readable(file: SliceFile, disabled: readonly SyntaxLanguage[]): SyntaxLanguage | WholeReason {
+  const language = syntaxLanguage(file.path);
+  if (!language) return 'no-grammar';
+  if (disabled.includes(language)) return 'off';
+  if ([file.base, file.head].some((text) => text !== undefined && text.length > SYNTAX_MAX_CHARACTERS))
+    return 'too-large';
+  return language;
 }
+const isLanguage = (value: SyntaxLanguage | WholeReason): value is SyntaxLanguage =>
+  (SYNTAX_LANGUAGES as readonly string[]).includes(value);
 
-/**
- * One file's slices and moved-symbol candidates, in the worker. Both sides are parsed once for all of its hunks. Any
- * failure keeps whole hunks and reads no candidates.
- */
+/** One file's slices, in the worker. Both sides are parsed once for all of its hunks; any failure keeps whole hunks. */
 export async function sliceFile(
-  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'definitions' | 'symbols'>,
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'definitions'>,
   file: SliceFile,
   disabled: readonly SyntaxLanguage[] = []
-): Promise<SliceAnswer> {
-  const whole = (reason: WholeReason) => ({ slices: file.hunks.map((h) => wholeHunk(h, file.path, reason)) });
-  const language = syntaxLanguage(file.path);
-  if (!language) return whole('no-grammar');
-  if (disabled.includes(language)) return whole('off');
-  if ([file.base, file.head].some((text) => text !== undefined && text.length > SYNTAX_MAX_CHARACTERS))
-    return whole('too-large');
+): Promise<HunkSlices[]> {
+  const whole = (reason: WholeReason) => file.hunks.map((h) => wholeHunk(h, file.path, reason));
+  const language = readable(file, disabled);
+  if (!isLanguage(language)) return whole(language);
   let before: SideOutline | undefined, after: SideOutline | undefined;
   try {
     if (file.base !== undefined) {
@@ -638,45 +745,74 @@ export async function sliceFile(
   } catch {
     return whole('failed');
   }
-  const slices = file.hunks.map((hunk) => sliceHunk(hunk, file.path, language, before, after));
-  let prints: FilePrints | undefined;
-  try {
-    if (file.base !== undefined && file.head !== undefined) {
-      const hunks = patchHunks(createPatch(file.path, file.base, file.head, '', '', { context: 3 })) ?? [];
-      prints = (await engine.symbols(language, { mode: 'modified', text: file.head, hunks })).prints;
-    } else if (file.head !== undefined)
-      prints = (await engine.symbols(language, { mode: 'added', text: file.head })).prints;
-    else if (file.base !== undefined)
-      prints = (await engine.symbols(language, { mode: 'deleted', text: file.base })).prints;
-  } catch {
-    prints = undefined;
-  }
-  return { slices, ...(prints ? { prints } : {}) };
+  return file.hunks.map((hunk) => sliceHunk(hunk, file.path, language, before, after));
 }
 
-/** The worker's files for an explanation's hunks: one per file, with the texts its hunks were made from. */
+/**
+ * One file's moved-symbol candidates, in the worker, as Changes reads them (#438): an added file from its new text, a
+ * deleted one from its old text, and any other from both. Null when the file can't be read whole: a text it should
+ * have is missing (a modified file is never read as added or deleted), its language is off, or the read fails. The
+ * changed lines come from a diff of the two whole texts: the explanation's hunks carry extra context, and two of
+ * them can overlap.
+ */
+export async function filePrints(
+  engine: Pick<ReturnType<typeof createSyntaxEngine>, 'symbols'>,
+  file: SliceFile,
+  disabled: readonly SyntaxLanguage[] = []
+): Promise<FilePrints | null> {
+  const language = readable(file, disabled);
+  if (!isLanguage(language)) return null;
+  try {
+    if (file.status === 'added')
+      return file.head === undefined
+        ? null
+        : (await engine.symbols(language, { mode: 'added', text: file.head })).prints;
+    if (file.status === 'deleted')
+      return file.base === undefined
+        ? null
+        : (await engine.symbols(language, { mode: 'deleted', text: file.base })).prints;
+    if (file.base === undefined || file.head === undefined) return null;
+    const hunks = patchHunks(createPatch(file.path, file.base, file.head, '', '', { context: 3 })) ?? [];
+    return (await engine.symbols(language, { mode: 'modified', text: file.head, hunks })).prints;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The worker's files for an explanation: one for every file the PR changes, so files the explanation leaves out
+ * (filtered, generated, without a patch) still count for moves, as unread. Each has the texts its status says it has.
+ */
 export function sliceRequests(
+  changedFiles: readonly Pick<ChangedFile, 'filename' | 'status'>[],
   hunks: readonly Pick<IndexedHunk, 'id' | 'filePath' | 'expandedHunkHeader' | 'expandedContent'>[],
   before: Record<string, string>,
   after: Record<string, string>
 ): SliceFile[] {
   const text = (files: Record<string, string>, path: string) => (Object.hasOwn(files, path) ? files[path] : undefined);
   const files = new Map<string, SliceFile>();
-  for (const hunk of hunks) {
-    let file = files.get(hunk.filePath);
+  const fileOf = (path: string, status: SliceFile['status']) => {
+    let file = files.get(path);
     if (!file) {
-      // By the texts there are, not `fileStatus`: a text the hunk wasn't made from fails the slicer's check anyway.
-      const base = text(before, hunk.filePath);
-      const head = text(after, hunk.filePath);
+      const base = status === 'added' ? undefined : text(before, path);
+      const head = status === 'deleted' ? undefined : text(after, path);
       file = {
-        path: hunk.filePath,
+        path,
+        status,
         ...(base !== undefined ? { base } : {}),
         ...(head !== undefined ? { head } : {}),
         hunks: [],
       };
-      files.set(hunk.filePath, file);
+      files.set(path, file);
     }
-    file.hunks.push({ id: hunk.id, header: hunk.expandedHunkHeader, content: hunk.expandedContent });
-  }
+    return file;
+  };
+  for (const changed of changedFiles) fileOf(changed.filename, changed.status);
+  for (const hunk of hunks)
+    fileOf(hunk.filePath, 'modified').hunks.push({
+      id: hunk.id,
+      header: hunk.expandedHunkHeader,
+      content: hunk.expandedContent,
+    });
   return [...files.values()];
 }

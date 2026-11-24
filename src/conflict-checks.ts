@@ -20,14 +20,8 @@ import {
   type SyntaxLanguage,
 } from '../lib/syntax-scope';
 import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
-import {
-  slicePr,
-  type HunkSlices,
-  type SliceAnswer,
-  type SliceFile,
-  type SliceMoveFile,
-} from '../lib/explanation-slices';
-import type { SymbolMove } from '../lib/moved-symbols';
+import { slicePr, type HunkSlices, type SliceFile, type SliceMoveFile } from '../lib/explanation-slices';
+import type { FilePrints, SymbolMove } from '../lib/moved-symbols';
 import { createPatch } from 'diff';
 
 /**
@@ -170,8 +164,9 @@ export type CheckRequest =
   /** A text's definitions, for a conflict's enclosing definition (lib/conflict-model.ts). */
   | { id: number; kind: 'definitions'; path: string; text: string; disabled: SyntaxLanguage[] }
   | { id: number; kind: 'noise'; files: NoiseFile[] }
-  /** An explanation's file cut into slices (lib/explanation-slices.ts), with its moved-symbol candidates. */
+  /** An explanation's file cut into slices (lib/explanation-slices.ts), or its moved-symbol candidates. */
   | { id: number; kind: 'slices'; file: SliceFile; disabled: SyntaxLanguage[] }
+  | { id: number; kind: 'slice-prints'; file: SliceFile; disabled: SyntaxLanguage[] }
   /** The proven moves among the files' candidates (sliceMoves). */
   | { id: number; kind: 'slice-moves'; files: SliceMoveFile[] };
 /** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
@@ -181,7 +176,8 @@ export type CheckResponse =
   | { id: number; proposal?: ConflictProposal }
   | { id: number; noise: (NoiseAnswer | null)[] }
   | { id: number; definitions?: SyntaxDefinition[] }
-  | { id: number; slices: SliceAnswer }
+  | { id: number; slices: HunkSlices[] }
+  | { id: number; prints: FilePrints | null }
   | { id: number; moves: SymbolMove[] }
   | { id: number; error: string };
 
@@ -416,6 +412,10 @@ export function createConflictCheckWorker(
         async (file) => {
           const response = await run({ id: ++serial, kind: 'slices', file, disabled }, signal);
           return response && 'slices' in response ? response.slices : undefined;
+        },
+        async (file) => {
+          const response = await run({ id: ++serial, kind: 'slice-prints', file, disabled }, signal);
+          return response && 'prints' in response ? response.prints : undefined;
         },
         async (candidates) => {
           const response = await run({ id: ++serial, kind: 'slice-moves', files: candidates }, signal);
