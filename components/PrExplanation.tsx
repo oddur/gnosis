@@ -16,7 +16,7 @@ import { readReviewState } from '../lib/renderer-review-state';
 import { explanationPositionKey } from '../lib/use-explanation-scroll';
 import { isActiveTask, type ActivityTask } from '../lib/activity';
 import { countRender } from '../lib/render-count';
-import { NOISE_LEVELS } from '../lib/explanation-options';
+import { NOISE_LEVELS, focusedSectionsChanged, savedFocusedSections } from '../lib/explanation-options';
 import { noiseLevelChanged, savedNoiseLevel } from '../lib/explanation-noise';
 
 export function PrExplanation({
@@ -306,6 +306,10 @@ export function PrExplanation({
   const currentNoise = preferences && noiseRepository ? savedNoiseLevel(preferences, noiseRepository) : undefined;
   const noiseChanged = !!review && noiseLevelChanged(review.noiseReduction, currentNoise);
   const noiseLabel = (value?: string) => NOISE_LEVELS.find((level) => level.value === value)?.label ?? value;
+  // Focused sections (#562): the repository's setting differs from how this explanation was made.
+  const focusRepository = review?.focusedSections?.repository ?? noiseRepository;
+  const currentFocused = preferences && focusRepository ? savedFocusedSections(preferences, focusRepository) : undefined;
+  const focusChanged = !!review && !noiseChanged && focusedSectionsChanged(review.focusedSections, currentFocused);
   async function openUpdated() {
     if (!completed) return;
     try {
@@ -456,6 +460,17 @@ export function PrExplanation({
           <span>
             Reduce noise is now {noiseLabel(currentNoise)} for this repository. This explanation used{' '}
             {noiseLabel(review.noiseReduction?.level)}.
+          </span>
+          <Button size="sm" onClick={generate} disabled={limited.length > 0}>
+            Regenerate
+          </Button>
+        </div>
+      )}
+      {focusChanged && !running && !newer && !changed && !failed && !error && !loadError && (
+        <div className="explanation-status explanation-noise-outdated explanation-focus-outdated" role="status">
+          <span>
+            Focused sections is now {currentFocused ? 'on' : 'off'} for this repository. This explanation was made with
+            it {currentFocused ? 'off' : 'on'}.
           </span>
           <Button size="sm" onClick={generate} disabled={limited.length > 0}>
             Regenerate

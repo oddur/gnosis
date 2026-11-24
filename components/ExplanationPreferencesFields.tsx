@@ -10,10 +10,13 @@ export function ExplanationPreferencesFields({
   value,
   onChange,
   extensions = false,
+  focusedSections = false,
 }: {
   value: ExplanationPreferences;
   onChange: (value: ExplanationPreferences) => void;
   extensions?: boolean;
+  /** Show the per-repository Focused sections setting (#562). Settings only: generation reads the repository's value. */
+  focusedSections?: boolean;
 }) {
   const id = useId();
   const extensionsLabel = value.hiddenExtensions.map((extension) => extension || '[none]').join(', ');
@@ -106,6 +109,22 @@ export function ExplanationPreferencesFields({
           Changes.
         </small>
       </div>
+      {focusedSections && (
+        <label className="explanation-focused-setting">
+          <input
+            type="checkbox"
+            checked={value.focusedSections}
+            onChange={(event) => onChange({ ...value, focusedSections: event.target.checked })}
+          />
+          <span>
+            <strong>Focused sections</strong>
+            <small>
+              Each section shows only the parts of large changes it explains. Code no section needs is listed
+              separately. Changes still shows every line.
+            </small>
+          </span>
+        </label>
+      )}
       {extensions && (
         <label className="explanation-custom-label" htmlFor={`${id}-extensions`}>
           Hidden extensions

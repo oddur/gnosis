@@ -155,6 +155,7 @@ export function RepositorySettingsEditor({
               <ExplanationPreferencesFields
                 value={draft.explanation}
                 extensions
+                focusedSections
                 onChange={(explanation) => patch({ explanation })}
               />
             )}

@@ -32,6 +32,11 @@ export interface ExplanationPreferences {
   hiddenExtensions: string[];
   /** Reduce noise (lib/explanation-noise.ts). Part of the options, so a change makes a new explanation. */
   reduceNoise: NoiseLevel;
+  /**
+   * Focused sections (#562): sections show only the slices of large hunks they explain. A per-repository setting, off
+   * by default; generation reads the repository's value, and a later change makes the explanation out of date.
+   */
+  focusedSections: boolean;
 }
 export interface ExplanationOptions extends ExplanationPreferences {
   /** Source paths (namespaced by PR in a stack). Explicit choices override filter rules. */
@@ -67,6 +72,7 @@ export const DEFAULT_EXPLANATION_PREFERENCES: ExplanationPreferences = {
   excludeTests: false,
   hiddenExtensions: [],
   reduceNoise: DEFAULT_NOISE_LEVEL,
+  focusedSections: false,
 };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 export function normalizeExplanationPreferences(value: unknown): ExplanationPreferences {
@@ -84,6 +90,7 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
       ),
     ].slice(0, 1000),
     reduceNoise: normalizeNoiseLevel(v.reduceNoise),
+    focusedSections: v.focusedSections === true,
   };
 }
 export function normalizeNoiseLevel(value: unknown): NoiseLevel {
@@ -152,4 +159,27 @@ export function normalizeLocalExplanationPreferences(value: unknown): Record<str
       .filter(([key, entry]) => key.startsWith('local:/') && object(entry))
       .map(([key, entry]) => [key, normalizeExplanationPreferences(entry)])
   );
+}
+
+/** The repository's saved Focused sections setting (#562), read as the main process reads its defaults. */
+export function savedFocusedSections(
+  preferences: {
+    repositorySettings?: Record<string, { explanation?: Partial<ExplanationPreferences> } | undefined>;
+    localExplanationPreferences?: Record<string, Partial<ExplanationPreferences> | undefined>;
+  },
+  repository: string
+): boolean {
+  const saved = repository.startsWith('local:')
+    ? preferences.localExplanationPreferences?.[repository]
+    : preferences.repositorySettings?.[repository]?.explanation;
+  return saved?.focusedSections === true;
+}
+
+/**
+ * Whether the repository's Focused sections setting differs from how an explanation was made, so it can be
+ * regenerated. `saved` is the explanation's `focusedSections`: an explanation without it was made with the setting off.
+ * Unknown when the repository isn't known.
+ */
+export function focusedSectionsChanged(saved: object | undefined, current: boolean | undefined): boolean {
+  return current !== undefined && current !== !!saved;
 }

@@ -24,6 +24,16 @@ export interface DiffHunk {
   content: string;
   language: string;
   renderedHtml: string;
+  /**
+   * Focused sections (#562): the slice of the hunk this entry shows, as ranges of indexes into `content` lines. Unset
+   * for a whole hunk. A renderer that doesn't read ranges shows the whole hunk, which is still correct (#563 draws them).
+   */
+  lineRanges?: { start: number; end: number }[];
+  /** The slice's ID (`<hunkId>:<hash>`) and its symbol label, such as `fn supersede (impl EntityDrainState)`. */
+  sliceId?: string;
+  label?: string;
+  /** A proven move: this is the new copy of a definition from `filePath`'s old lines. */
+  movedFrom?: import('./explanation-focus').SliceMoveSource;
 }
 
 export interface ReviewCheck {
@@ -250,6 +260,8 @@ export interface ReviewGuide {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
   /** Reduce noise: the level and the hunks left out of the explanation, listed in the overview. */
   noiseReduction?: import('./explanation-noise').NoiseReduction;
+  /** Set when the repository's Focused sections setting was on (#562): the code no section shows. */
+  focusedSections?: import('./explanation-focus').FocusedSections;
   /** Immutable revisions and eligible image paths for on-demand previews. */
   baseSha?: string;
   baseRepo?: string;

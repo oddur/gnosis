@@ -315,7 +315,9 @@ export function buildTopicContext(
   /** Reduce noise: hunks left out of the explanation in this topic's files, shown as context only. */
   leftOutHunks: IndexedHunk[] = [],
   /** Hunks this topic lists that an earlier section shows (#560): hunk ID to that section's number. Read-only context. */
-  shownElsewhere: ReadonlyMap<string, number> = new Map()
+  shownElsewhere: ReadonlyMap<string, number> = new Map(),
+  /** Focused sections (#562): the section's code blocks (focusedTopicDiff), in place of the hunk blocks. */
+  focusedDiff?: string
 ): string {
   const relevantHunks = [...new Set(topic.hunkIds)].map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
@@ -360,16 +362,19 @@ PR: ${prTitle}
 PR Description: ${prDescription || '(none)'}
 </topic>
 
-<diff_hunks>
 `;
-  const elsewhere = relevantHunks.filter((h) => shownElsewhere.has(h.id));
-  for (const hunk of relevantHunks) {
-    if (shownElsewhere.has(hunk.id)) continue;
-    ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
-    ctx += `${hunk.expandedHunkHeader}\n`;
-    ctx += `${hunk.expandedContent}\n\n`;
+  const elsewhere = focusedDiff === undefined ? relevantHunks.filter((h) => shownElsewhere.has(h.id)) : [];
+  if (focusedDiff !== undefined) ctx += focusedDiff;
+  else {
+    ctx += '<diff_hunks>\n';
+    for (const hunk of relevantHunks) {
+      if (shownElsewhere.has(hunk.id)) continue;
+      ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
+      ctx += `${hunk.expandedHunkHeader}\n`;
+      ctx += `${hunk.expandedContent}\n\n`;
+    }
+    ctx += '</diff_hunks>';
   }
-  ctx += '</diff_hunks>';
   if (elsewhere.length) {
     ctx += `\n\n<shown_in_other_sections>
 Your section displays only the code in <diff_hunks>. These hunks are displayed in an earlier section, which explains them. Use them only as read-only context: do not explain them, and do not anchor notes or checks to them. Refer to them by section number when needed.

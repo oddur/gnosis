@@ -23,6 +23,21 @@ import { explanationFiles as setupFiles, explanationRepository, loadExplanationS
 import { applyNoise, classifiedNoise, contextOnlyHunks, noiseRequests, normalizeNoiseReduction, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
 import { plannerEvidence } from '../lib/review-planning';
 import { hunkOwners, ownedHunkIds, ownerSections, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
+import { sliceRequests } from '../lib/explanation-slices';
+import {
+  focusCutUnits,
+  focusDiffHunks,
+  focusIndex,
+  focusLeftovers,
+  focusPlannerNoise,
+  focusCheckpointKey,
+  focusPlannerIndex,
+  focusedTopicDiff,
+  unitHunkIds,
+  validateFocusTopics,
+  type FocusIndex,
+  type FocusedSections,
+} from '../lib/explanation-focus';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -210,6 +225,7 @@ import { createHeadInvalidation, setPrHeadReporter, type HeadChange, type HeadOb
 import { prRef, prUrl as deepLinkPrUrl } from '../lib/deep-link';
 import type {
   ChangedFile,
+  DiffHunk,
   GenerateReviewRequest,
   ModelId,
   Preferences,
@@ -2629,6 +2645,8 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
     );
   if (!previous || !previous.explanationOptions) return { options: explanationDefaults(source), restored: false };
   const options = normalizeExplanationOptions(previous.explanationOptions);
+  // Focused sections is the repository's setting, never a choice for one explanation (#562).
+  options.focusedSections = explanationDefaults(source).focusedSections;
   // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
   if (!('reduceNoise' in previous.explanationOptions) || (previous.noiseDefault && options.reduceNoise === previous.noiseDefault))
     options.reduceNoise = explanationDefaults(source).reduceNoise;
@@ -2692,7 +2710,8 @@ async function runBackgroundGeneration(
   signal: AbortSignal,
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
-  const options = request.explanationOptions ?? explanationDefaults(source);
+  // Focused sections (#562) is always the repository's current setting, so a change to it makes this explanation out of date.
+  const options = { ...(request.explanationOptions ?? explanationDefaults(source)), focusedSections: explanationDefaults(source).focusedSections };
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
@@ -2715,6 +2734,10 @@ async function runBackgroundGeneration(
   } = request;
 
   let optionalMetadata: ReturnType<typeof startReviewFileMetadata> | undefined;
+  // One instance of the conflict checks' worker (src/conflict-checks.ts) for noise and, with Focused sections, slices.
+  let treeSitterWorker: ReturnType<typeof createConflictCheckWorker> | undefined;
+  const explanationWorker = () =>
+    (treeSitterWorker ??= createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets, 5_000, 10_000));
   try {
     const token = getResolvedToken();
 
@@ -2792,6 +2815,8 @@ async function runBackgroundGeneration(
     reportReviewPhase( { reviewId, phase: 'Building context' });
 
     const prefs = loadPreferences();
+    // Focused sections (#562) works on the two-phase path: the planner and writers get slices of large hunks.
+    const focused = options.focusedSections && prefs.parallelReview;
 
     // Parse diff into indexed hunks — always needed
     const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
@@ -2806,7 +2831,7 @@ async function runBackgroundGeneration(
       const requests = noiseRequests(indexedHunks, fileContents, headFileContents, (language) => !off.includes(language));
       // Its own instance of the conflict checks' worker (src/conflict-checks.ts), so it never waits behind a conflict
       // check: 10 s for each file. Cancelling the explanation stops it. Fail closed: no answer, no rule cuts.
-      const noiseWorker = createConflictCheckWorker(path.join(__dirname, 'conflict-check-worker.js'), treeSitterAssets, 5_000, 10_000);
+      const noiseWorker = explanationWorker();
       const stop = () => noiseWorker.dispose();
       signal.addEventListener('abort', stop, { once: true });
       let answers: Awaited<ReturnType<typeof noiseWorker.noise>>;
@@ -2814,7 +2839,8 @@ async function runBackgroundGeneration(
         answers = await noiseWorker.noise(requests, signal);
       } finally {
         signal.removeEventListener('abort', stop);
-        noiseWorker.dispose();
+        // Focused sections slices with the same worker next.
+        if (!focused) noiseWorker.dispose();
       }
       signal.throwIfAborted();
       ruleCuts = ruleNoise(indexedHunks, fileContents, headFileContents, classifiedNoise(requests, answers), noiseLevel);
@@ -2823,6 +2849,30 @@ async function runBackgroundGeneration(
     }
     const planningHunks = indexedHunks.filter((hunk) => !ruleCuts.has(hunk.id));
     const hunkIndex = formatHunkIndexForPrompt(planningHunks);
+    // Focused sections (#562): large planning hunks cut into slices at definition boundaries, in the same worker.
+    // Fail closed, as noise: a file the worker doesn't answer for, or a failed run, keeps whole hunks.
+    let focus: FocusIndex | undefined;
+    if (focused) {
+      reportReviewPhase({ reviewId, phase: 'Slicing large hunks' });
+      const sliceWorker = explanationWorker();
+      const stop = () => sliceWorker.dispose();
+      signal.addEventListener('abort', stop, { once: true });
+      try {
+        const off = disabledLanguages(codeIntelligenceSettings(loadPreferences()));
+        focus = focusIndex(planningHunks, await sliceWorker.slices(sliceRequests(planningHunks, fileContents, headFileContents), off, signal));
+      } catch (error) {
+        if (!signal.aborted) console.warn('[main] Slicing failed; hunks stay whole:', error);
+        focus = focusIndex(planningHunks, []);
+      } finally {
+        signal.removeEventListener('abort', stop);
+        sliceWorker.dispose();
+      }
+      signal.throwIfAborted();
+    }
+    // The planner's index: slices for sliced hunks when Focused sections is on, else the hunk index.
+    const plannerIndex = focus ? focusPlannerIndex(planningHunks, focus) : hunkIndex;
+    let focusOther: DiffHunk[] = [];
+    let focusedSections: FocusedSections | undefined;
     let noise = applyNoise([], indexedHunks, ruleCuts, undefined, noiseLevel);
     const noiseReduction = (): NoiseReduction => ({
       level: noiseLevel,
@@ -2883,14 +2933,15 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, planningHunks, noise.leftOut) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
-      checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
+      const plannerContext = buildPlannerContext(prData, changedFiles, plannerIndex, excludedFilesSummary, projectClaudeContext, planningHunks, noise.leftOut) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
+      // With Focused sections the slices' content hash is part of the key: a different cut is a different plan (#562).
+      checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), focusCheckpointKey({
         version: 9, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
-        localToolsOn, plannerContext, hunkIndex, reduceNoise: noiseLevel,
-      });
+        localToolsOn, plannerContext, hunkIndex: plannerIndex, reduceNoise: noiseLevel,
+      }, focus));
       plan = checkpoint.plan ?? await planReview(
-        hunkIndex,
+        plannerIndex,
         plannerContext,
         provider,
         model,
@@ -2906,7 +2957,11 @@ async function runBackgroundGeneration(
 
       // The planner's noise list, fail closed: a hunk it neither assigns nor lists still goes to "Other changes".
       // Only hunks whose whole source the planner saw can be cut from its list.
-      noise = applyNoise(plan.topics, indexedHunks, ruleCuts, plan.noise, noiseLevel, plannerEvidence(planningHunks).complete);
+      // With slices, every listed ID is checked against the hunk and slice IDs; unknown ones are dropped. A hunk the
+      // plan lists part of is never cut as noise.
+      const plannedTopics = focus ? validateFocusTopics(plan.topics, focus) : plan.topics;
+      const plannerNoise = focus ? focusPlannerNoise(plan.noise, plannedTopics, focus) : plan.noise;
+      noise = applyNoise(plannedTopics, indexedHunks, ruleCuts, plannerNoise, noiseLevel, plannerEvidence(planningHunks).complete);
       assignedIds.clear();
       for (const id of noise.cut.keys()) assignedIds.add(id);
       if (noise.cut.size) console.log(`[main] Reduce noise (${noiseLevel}) left out ${noise.cut.size} hunks`);
@@ -2915,9 +2970,19 @@ async function runBackgroundGeneration(
       const sortedTopics = [...noise.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
       let completedSections = 0;
-      // Each hunk is shown by the first topic that lists it, fixed before the writers start (#560).
-      const owners = hunkOwners(sortedTopics.map((topic) => topic.hunkIds), hunkMap, noise.cut);
-      for (const id of owners.keys()) assignedIds.add(id);
+      // Each hunk is shown by the first topic that lists it, fixed before the writers start (#560). With Focused
+      // sections, each unit (a whole hunk or a slice) is.
+      const cutUnits = focus ? focusCutUnits(focus, noise.cut) : undefined;
+      const owners = focus && cutUnits
+        ? hunkOwners(sortedTopics.map((topic) => topic.hunkIds), focus.units, cutUnits)
+        : hunkOwners(sortedTopics.map((topic) => topic.hunkIds), hunkMap, noise.cut);
+      if (focus && cutUnits) {
+        // Units no section lists: left out and listed, or to "Other changes" when they are small together.
+        const leftovers = focusLeftovers(focus, owners, cutUnits);
+        focusOther = focusDiffHunks(leftovers.other, focus, hunkMap);
+        focusedSections = { repository: explanationRepository(source), outside: leftovers.outside };
+        for (const unit of focus.units.values()) assignedIds.add(unit.hunkId);
+      } else for (const id of owners.keys()) assignedIds.add(id);
       explanationBuilds.event(reviewId, { type: 'plan', topics: sortedTopics.map((topic, idx) => ({ id: `slide-${idx + 1}`, title: topic.title })) });
       explanationBuilds.draftBase(reviewId, {
         snapshot: reviewSnapshot,
@@ -2948,14 +3013,20 @@ async function runBackgroundGeneration(
             const slideNum = idx + 1;
 
 
+            // With Focused sections the writer gets its owned units, the units other sections show as read-only
+            // context, and the definitions around each slice; file contents and noise context follow the units' hunks.
+            const topicHunkIds = focus ? unitHunkIds(topic.hunkIds, focus) : topic.hunkIds;
             const topicCtx = buildTopicContext(
-              topic, hunkMap, fileContents, headFileContents, neighborFiles,
+              focus ? { ...topic, hunkIds: topicHunkIds } : topic, hunkMap, fileContents, headFileContents, neighborFiles,
               prData.title, prData.description, storyArc, sortedTopics,
-              projectClaudeContext, contextOnlyHunks(topic.hunkIds, indexedHunks, noise.cut),
-              shownElsewhere(topic.hunkIds, owners, idx),
+              projectClaudeContext, contextOnlyHunks(topicHunkIds, indexedHunks, noise.cut),
+              focus ? new Map() : shownElsewhere(topic.hunkIds, owners, idx),
+              focus
+                ? focusedTopicDiff(ownedHunkIds(topic.hunkIds, owners, idx), shownElsewhere(topic.hunkIds, owners, idx), focus, hunkMap, fileContents, headFileContents)
+                : undefined,
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 9 });
+            const topicKey = reviewFingerprint(focusCheckpointKey({ topicCtx, topic, version: 9 }, focus));
             const topicId = `slide-${slideNum}`;
             const saved = checkpoint!.get(topicKey);
             if (!saved) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'writing' });
@@ -2984,7 +3055,9 @@ async function runBackgroundGeneration(
 
             await checkpoint!.set(topicKey, writerOutput);
             completedSections++;
-            const diffHunks = resolveDiffHunks(ownedHunkIds(topic.hunkIds, owners, idx), hunkMap);
+            const diffHunks = focus
+              ? focusDiffHunks(ownedHunkIds(topic.hunkIds, owners, idx), focus, hunkMap)
+              : resolveDiffHunks(ownedHunkIds(topic.hunkIds, owners, idx), hunkMap);
             const shownIn = ownerSections(topic.hunkIds, owners, idx);
 
             const slide = {
@@ -3180,8 +3253,9 @@ async function runBackgroundGeneration(
 
     // Catch-all slide for unassigned hunks
     const unassigned = indexedHunks.filter((h) => !assignedIds.has(h.id));
-    if (unassigned.length > 0) {
-      const otherHunks = resolveDiffHunks(unassigned.map((h) => h.id), hunkMap);
+    if (unassigned.length > 0 || focusOther.length > 0) {
+      // Focused sections: the small leftovers (focusLeftovers) come first; nothing else is unassigned then.
+      const otherHunks = [...focusOther, ...resolveDiffHunks(unassigned.map((h) => h.id), hunkMap)];
 
       resolvedSlides.push({
         id: 'other-changes',
@@ -3192,7 +3266,7 @@ async function runBackgroundGeneration(
         reviewFocus: null,
         diffHunks: sortDiffHunks(otherHunks),
         contextSnippets: [],
-        affectedFiles: [...new Set(unassigned.map((h) => h.filePath))],
+        affectedFiles: [...new Set([...focusOther, ...unassigned].map((h) => h.filePath))],
         dependsOn: [],
         mermaidDiagram: null,
       });
@@ -3218,6 +3292,8 @@ async function runBackgroundGeneration(
       excludedFiles: [...excludedPaths],
       explanationOptions: options,
       noiseReduction: noiseReduction(),
+      // Set when the repository's setting was on; on the single-shot path nothing is left out.
+      ...(options.focusedSections ? { focusedSections: focusedSections ?? { repository: explanationRepository(source), outside: [] } } : {}),
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
@@ -3294,6 +3370,7 @@ async function runBackgroundGeneration(
     broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
   } finally {
     optionalMetadata?.finish();
+    treeSitterWorker?.dispose();
     explanationBuilds.clear(reviewId);
     activeGenerations.delete(reviewId);
   }
@@ -3823,6 +3900,8 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const options = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)
     : explanationDefaults(source);
+  // Focused sections is the repository's setting (#562): remembering options never changes it.
+  options.focusedSections = explanationDefaults(source).focusedSections;
   if (options.style === 'custom' && !options.customInstructions.trim())
     throw new Error('Add instructions for the Custom explanation style.');
   request = { ...request, explanationOptions: options, rememberExplanationOptions: false };
