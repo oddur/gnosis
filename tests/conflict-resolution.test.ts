@@ -4077,10 +4077,15 @@ void test('Edit whole file: the file becomes yours, Undo restores your choices, 
   assert.equal(saved.resolved, false);
   assert.equal(saved.wholeEdit, undefined);
   await assert.rejects(f.run({ kind: 'undo-edit-file', id, version: session.version, path: 'sample.ts' }), /no whole-file edit/);
-  // Reset file after an edit: the draft is Git's conflict again, and the conflict is told apart again (Decide).
+  // Reset file after an edit: the draft is Git's conflict again, and the conflict is told apart again (Decide). Only
+  // your Reset ends the edit (`reset`); the same text saved otherwise is still your edit (#533).
   session = (await f.run({ kind: 'edit-file', id, version: session.version, path: 'sample.ts', contents: edited })).session;
   session = (
     await f.run({ kind: 'save', id, version: session.version, path: 'sample.ts', contents: file.original, resolved: false })
+  ).session;
+  assert.ok(session.files[0].wholeEdit);
+  session = (
+    await f.run({ kind: 'save', id, version: session.version, path: 'sample.ts', contents: file.original, resolved: false, reset: true })
   ).session;
   saved = session.files[0];
   assert.equal(saved.wholeEdit, undefined);

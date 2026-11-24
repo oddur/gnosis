@@ -7,8 +7,21 @@ import * as TreeSitter from 'web-tree-sitter';
 import { createConflictResolutionService } from '../src/conflict-resolution-service';
 import { conflictChecker, definitionsOf } from '../src/conflict-checks';
 import { createSyntaxEngine } from '../lib/syntax-scope';
-import { blockBuckets, blockVerdict, MODEL_UNCHECKED, verifyProposals } from '../lib/conflict-verify';
-import { validateConflictRequest, type ConflictFile, type ConflictSession } from '../lib/conflict-resolution';
+import {
+  blockBuckets,
+  blockVerdict,
+  MODEL_UNCHECKED,
+  unchosenConflicts,
+  verifyProposals,
+  wholeEdited,
+} from '../lib/conflict-verify';
+import { applyChoices, conflictModel } from '../lib/conflict-blocks';
+import {
+  validateConflictRequest,
+  type ConflictFile,
+  type ConflictRequest,
+  type ConflictSession,
+} from '../lib/conflict-resolution';
 import {
   MODEL_SYSTEM_PROMPT,
   checkReplacement,
@@ -752,4 +765,231 @@ test('a refused proposal leaves the queue with its reason (round 3, item 8)', as
   queue.push({ key: 'b' });
   while (queue.entries.length) await new Promise((r) => setImmediate(r));
   assert.deepEqual(refusals, ['This conflict changed, so the proposal wasn’t used.', 'used']);
+});
+
+// Edit whole file leftovers from the #532 review (#533). Fail closed: nothing leaves Check without your choice.
+const second = '<<<<<<< feature/retry\nexport const a = 1;\n=======\nexport const a = 2;\n>>>>>>> main\n';
+const twoConflicts = `${original}${second}`;
+/** A service request on src/settings.ts of the in-memory draft, at its current version. */
+const request = (f: ReturnType<typeof fixture>, fields: Record<string, unknown>) =>
+  f.service.run(
+    { id: ID, version: f.saved().version, path: 'src/settings.ts', ...fields } as ConflictRequest,
+    new AbortController().signal
+  );
+const bucketsOf = (file: ConflictFile) => blockBuckets(file, file.result, file.verdict?.verdict, file.picks, file.edits);
+
+test('Edit whole file: a proposal your edit left in a draft that can’t be split waits until you accept your edit (#533)', async () => {
+  // An empty proposal is "in" any draft: before Accept my edit, nothing could take it out of Check.
+  const f = fixture([conflictFile({ proposals: [{ source: 'mergiraf', text: '' }] })], () => resolved());
+  validateConflictRequest({ kind: 'accept-edit-file', id: ID, version: 1, path: 'a' });
+  validateConflictRequest({ kind: 'accept-edit-file', id: ID, version: 1, path: 'a', base: 'b'.repeat(16) });
+  assert.throws(() => validateConflictRequest({ kind: 'accept-edit-file', id: ID, version: 1, path: 'a\0' }));
+  const edited = 'export function settings() {\n  return x + y;\n}\n// checked\n';
+  let file = (await request(f, { kind: 'edit-file', contents: edited })).session.files[0];
+  assert.ok(file.wholeEdit);
+  assert.equal(wholeEdited(file), true);
+  assert.deepEqual(bucketsOf(file), ['check'], 'Nobody chose the proposal: it stays in Check');
+  await assert.rejects(request(f, { kind: 'save', contents: edited, resolved: true }), /Select Accept my edit/);
+  // Your explicit choice: the proposal as your edit left it is yours. The draft doesn't change, and isn't reviewed yet.
+  file = (await request(f, { kind: 'accept-edit-file' })).session.files[0];
+  assert.deepEqual(file.wholeEdit?.accepted, [0]);
+  assert.equal(file.result, edited);
+  assert.equal(file.resolved, false);
+  assert.deepEqual(bucketsOf(file), ['decided']);
+  await assert.rejects(request(f, { kind: 'accept-edit-file' }), /Nothing your edit left waits/);
+  // Only for the draft you accepted: text you haven't saved yet, or a changed draft, waits for you again.
+  const later = `${edited}// again\n`;
+  assert.deepEqual(blockBuckets(file, later, file.verdict?.verdict), ['check']);
+  file = (await request(f, { kind: 'edit-file', contents: later })).session.files[0];
+  assert.equal(file.wholeEdit?.accepted, undefined);
+  assert.deepEqual(bucketsOf(file), ['check']);
+  await assert.rejects(request(f, { kind: 'save', contents: later, resolved: true }), /Select Accept my edit/);
+  file = (await request(f, { kind: 'accept-edit-file' })).session.files[0];
+  file = (await request(f, { kind: 'save', contents: later, resolved: true })).session.files[0];
+  assert.equal(file.resolved, true);
+  // Undo ends the edit, and its acceptance with it: the proposal is offered on its card again.
+  file = (await request(f, { kind: 'undo-edit-file', confirmed: true })).session.files[0];
+  assert.equal(file.wholeEdit, undefined);
+  assert.equal(file.result, original);
+  await assert.rejects(request(f, { kind: 'accept-edit-file' }), /no whole-file edit to accept/);
+  // A short proposal, such as a closing brace, is in any such draft too, and waits the same way.
+  const brace = fixture([conflictFile({ proposals: [{ source: 'mergiraf', text: '}\n' }] })], () => resolved());
+  file = (await request(brace, { kind: 'edit-file', contents: edited })).session.files[0];
+  assert.deepEqual(bucketsOf(file), ['check']);
+  file = (await request(brace, { kind: 'accept-edit-file' })).session.files[0];
+  assert.deepEqual(bucketsOf(file), ['decided']);
+  // A draft that splits into its conflicts has a choice on each card: nothing to accept there.
+  const split = twoConflicts.replace(second, 'export const a = 3;\n');
+  const g = fixture(
+    [conflictFile({ original: twoConflicts, result: twoConflicts, proposals: [{ source: 'mergiraf', text: '' }, null] })],
+    () => resolved()
+  );
+  file = (await request(g, { kind: 'edit-file', contents: split })).session.files[0];
+  assert.deepEqual(bucketsOf(file), ['decide', 'decided']);
+  await assert.rejects(request(g, { kind: 'accept-edit-file' }), /Nothing your edit left waits/);
+});
+
+test('Edit whole file: a Keep after the edit keeps the edit, its Undo and its note (#533)', async () => {
+  const proposal = { source: 'mergiraf' as const, text: 'export const a = 3;\n' };
+  const f = fixture([conflictFile({ original: twoConflicts, result: twoConflicts, proposals: [null, proposal] })], () => resolved());
+  // Your edit types the first conflict's lines and leaves the second one open: the draft still splits into them.
+  const typed = twoConflicts.replace(block, '  const x = 10;\n  const y = 20; // both\n');
+  let file = (await request(f, { kind: 'edit-file', contents: typed })).session.files[0];
+  assert.deepEqual(bucketsOf(file), ['decided', 'decide']);
+  // A Keep on the conflict your edit left open: still your whole-file edit, with its Undo.
+  const kept = typed.replace(second, 'export const a = 2;\n');
+  file = (await request(f, { kind: 'save', contents: kept, resolved: false, picks: [null, 'theirs'] })).session.files[0];
+  assert.ok(file.wholeEdit, 'The Keep doesn’t end your whole-file edit');
+  assert.equal(file.wholeEdit.result, twoConflicts);
+  assert.equal(file.wholeEdit.later, true, 'Undo asks before it discards the Keep');
+  assert.equal(wholeEdited(file), true, 'The "Edited by you" note stays');
+  assert.deepEqual(bucketsOf(file), ['decided', 'decided']);
+  // Use the proposal after the edit is your choice too, where each conflict has its own card (your edit took a side);
+  // the same text without it stays in Check.
+  const sided = twoConflicts.replace(block, '  const x = 10;\n  const y = 2;\n');
+  const used = sided.replace(second, proposal.text);
+  assert.deepEqual(blockBuckets(file, used, file.verdict?.verdict, [undefined, 'proposal']), ['decided', 'decided']);
+  assert.deepEqual(blockBuckets(file, used, file.verdict?.verdict), ['decided', 'check']);
+  // Where the cards are the draft's own markers (the lines you typed match no option), a pick names no conflict.
+  const typedUsed = typed.replace(second, proposal.text);
+  assert.deepEqual(blockBuckets(file, typedUsed, file.verdict?.verdict, [undefined, 'proposal']), ['decided', 'check']);
+  file = (await request(f, { kind: 'save', contents: kept, resolved: true, picks: [null, 'theirs'] })).session.files[0];
+  assert.equal(file.resolved, true);
+  // Undo: the Keep goes too, only once you chose Undo again.
+  await assert.rejects(request(f, { kind: 'undo-edit-file' }), /Select Undo again/);
+  file = (await request(f, { kind: 'undo-edit-file', confirmed: true })).session.files[0];
+  assert.equal(file.result, twoConflicts);
+  assert.equal(file.wholeEdit, undefined);
+  assert.equal(file.picks, undefined);
+  // Start from Git's conflict, or Reset file (a proposal the checks Merged back in place), ends the edit: only as your
+  // explicit choice (`reset`). The same text from a choice of yours, Use the proposal say, is still your edit (#556).
+  for (const reset of [twoConflicts, twoConflicts.replace(second, proposal.text)]) {
+    file = (await request(f, { kind: 'edit-file', contents: typed })).session.files[0];
+    assert.ok(file.wholeEdit);
+    file = (await request(f, { kind: 'save', contents: reset, resolved: false })).session.files[0];
+    assert.ok(file.wholeEdit, 'Text alone never ends your whole-file edit');
+    assert.equal(file.wholeEdit.later, true);
+    file = (await request(f, { kind: 'save', contents: typed, resolved: false })).session.files[0];
+    await assert.rejects(request(f, { kind: 'save', contents: reset, resolved: false, reset: 'yes' }), /Invalid/);
+    file = (await request(f, { kind: 'save', contents: reset, resolved: false, reset: true })).session.files[0];
+    assert.equal(file.wholeEdit, undefined);
+  }
+});
+
+test('Edit whole file: Undo keeps a model proposal made after the edit on its card, never in the draft (#533)', async () => {
+  const f = fixture([conflictFile({ original: twoConflicts, result: twoConflicts })], () => resolved());
+  // Your Keep on the first conflict, then a whole-file edit that opens it again and decides the second.
+  const keptFirst = twoConflicts.replace(block, '  const x = 10;\n  const y = 2;\n');
+  await request(f, { kind: 'save', contents: keptFirst, resolved: false, picks: ['ours', null] });
+  const edited = twoConflicts.replace(second, 'export const a = 2;\n');
+  await request(f, { kind: 'edit-file', contents: edited });
+  // The model answers for the conflict your edit opened; the proposal waits to go in (the editor was open, say).
+  assert.deepEqual(await f.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 }), { status: 'proposal' });
+  const file = (await request(f, { kind: 'undo-edit-file' })).session.files[0];
+  // Your Keep is back and decides the conflict; the model's proposal is kept beside it, not applied.
+  assert.equal(file.result, keptFirst);
+  assert.deepEqual(file.picks, ['ours', null]);
+  assert.equal(file.proposals?.[0]?.source, 'model');
+  assert.equal(file.proposals?.[0]?.text, both);
+  assert.equal(file.resolverText, undefined);
+  assert.deepEqual(bucketsOf(file), ['decided', 'decide']);
+  // It is used once: the waiting request finds nothing left to put in.
+  await assert.rejects(f.run({ kind: 'model', path: 'src/settings.ts', index: 0 }), /changed/);
+  // A conflict the restored draft leaves open takes the proposal as always, through `model`.
+  const g = fixture([conflictFile({ original: twoConflicts, result: twoConflicts })], () => resolved());
+  await request(g, { kind: 'edit-file', contents: edited });
+  await g.service.askModel({ id: ID, path: 'src/settings.ts', index: 0 });
+  let open = (await request(g, { kind: 'undo-edit-file' })).session.files[0];
+  assert.equal(open.proposals, undefined);
+  open = (await g.run({ kind: 'model', path: 'src/settings.ts', index: 0 })).session.files[0];
+  assert.equal(open.result, twoConflicts, 'Offered on its card, never written into the draft');
+  assert.equal(open.proposals?.[0]?.source, 'model');
+});
+
+/** Three conflicts: the checks Merge conflict 0's proposal and the type check demotes it, so it waits in Check. */
+function demotedFixture() {
+  const c = (n: number) => `<<<<<<< feature\nconst v${n} = 'pr';\n=======\nconst v${n} = 'main';\n>>>>>>> main\n`;
+  const three = `// a\n${c(0)}// b\n${c(1)}// c\n${c(2)}// d\n`;
+  const both0 = `const v0 = 'both';\n`;
+  const prepared = three.replace(c(0), both0);
+  const data = new Map<string, unknown>();
+  const key = `conflict-draft:tester:${ID}`;
+  data.set(key, {
+    ...sessionWith([
+      conflictFile({
+        path: 'x.ts',
+        original: three,
+        result: prepared,
+        source: 'mergiraf',
+        proposals: [{ source: 'mergiraf', text: both0 }, null, null],
+        typeError: { key: 'k', note: 'The type check found a new error.' },
+      }),
+    ]),
+  });
+  const service = createConflictResolutionService({
+    storage: {
+      read: (k: string) => structuredClone(data.get(k)),
+      write: (k: string, v: unknown) => (v == null ? data.delete(k) : data.set(k, structuredClone(v))),
+      flush: async () => {},
+    },
+    directory: () => '/nonexistent',
+    context: () => ({ account: 'tester', token: 'not-a-real-token' }),
+    read: () => Promise.reject(new Error('No GitHub in this test.')),
+    mergiraf: () => '/nonexistent',
+    suggest: () => Promise.reject(new Error('Not used.')),
+    verify: () => Promise.resolve({ merged: false, note: 'Check.', blocks: [{ merged: true, note: 'Merged.' }, undefined, undefined] }),
+    definitions: () => Promise.resolve([]),
+  });
+  const run = (fields: Record<string, unknown>) =>
+    service.run(
+      { id: ID, version: (data.get(key) as ConflictSession).version, path: 'x.ts', ...fields } as ConflictRequest,
+      new AbortController().signal
+    );
+  return { run, c, three, prepared };
+}
+
+test('Edit whole file: a Keep on a card of the draft’s own markers never decides another conflict (#556 review)', async () => {
+  const { run, c, three, prepared } = demotedFixture();
+  let file = (await run({ kind: 'save', contents: prepared, resolved: false })).session.files[0];
+  // Your edit types conflict 1's lines, matching no option: the draft splits, but its cards are its own markers.
+  const edited = prepared.replace(c(1), `const v1 = 'typed by me';\n`);
+  file = (await run({ kind: 'edit-file', contents: edited })).session.files[0];
+  const model = conflictModel(three, file.result, file.proposals);
+  assert.equal(model.undoable, false);
+  // Keep on the only card: conflict 2, at index 0 among the draft's own markers. Conflict 0 is still nobody's choice.
+  const kept = applyChoices(model.segments, ['ours'], undefined);
+  await assert.rejects(run({ kind: 'save', contents: kept, resolved: true, picks: ['ours'] }), /in Check/);
+  file = (await run({ kind: 'save', contents: kept, resolved: false, picks: ['ours'] })).session.files[0];
+  const verdict = { merged: false, note: 'Check.', blocks: [{ merged: false, note: 'Demoted.' }, undefined, undefined] };
+  assert.deepEqual(unchosenConflicts(file, file.result, verdict, ['ours']), [0]);
+  // Nor does a pick of the proposal there: those cards never name the file's conflict of their index.
+  assert.deepEqual(unchosenConflicts(file, file.result, verdict, ['proposal']), [0]);
+  // A pick counts only when the conflict holds exactly that choice's text.
+  const split = prepared.replace(c(1), `const v1 = 'main';\n`);
+  assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['ours']), [0]);
+  assert.deepEqual(unchosenConflicts({ ...file, result: split }, split, verdict, ['proposal']), []);
+  assert.equal(file.resolved, false);
+});
+
+test('Edit whole file: a choice from before the edit counts only where it named its conflict (#556 review 2)', async () => {
+  const { run, c, prepared } = demotedFixture();
+  // Lines typed in conflict 1 match no option: the cards are the draft's own markers. A pick saved for index 0 there
+  // (an older build, or crafted) names no conflict of the file.
+  const typed = prepared.replace(c(1), `const v1 = 'typed by me';\n`);
+  await run({ kind: 'save', contents: typed, resolved: false });
+  // Keep on the only card, conflict 2 at index 0 among the draft's own markers.
+  const kept = typed.replace(c(2), `const v2 = 'pr';\n`);
+  let file = (await run({ kind: 'save', contents: kept, resolved: false, picks: ['ours'] })).session.files[0];
+  // A whole-file edit of one comment line: the snapshot keeps no pick that names no conflict.
+  const edited = kept.replace('// d\n', '// done\n');
+  file = (await run({ kind: 'edit-file', contents: edited })).session.files[0];
+  assert.equal(file.wholeEdit?.picks, undefined);
+  // Conflict 0's demoted proposal is still nobody's choice: Mark reviewed waits.
+  await assert.rejects(run({ kind: 'save', contents: edited, resolved: true }), /in Check/);
+  // Even a pick that reached the saved snapshot decides nothing it doesn't name.
+  const verdict = { merged: false, note: 'Check.', blocks: [{ merged: false, note: 'Demoted.' }, undefined, undefined] };
+  assert.ok(file.wholeEdit);
+  const forged = { ...file, wholeEdit: { ...file.wholeEdit, picks: ['ours' as const, null, null] } };
+  assert.deepEqual(unchosenConflicts(forged, edited, verdict), [0]);
+  assert.equal(file.resolved, false);
 });

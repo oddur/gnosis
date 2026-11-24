@@ -736,7 +736,9 @@ export function ConflictDiff({
         shortcuts={shortcuts}
         disabled={disabled}
         onChoose={(choice) => choose(index, choice)}
-        proposal={proposals?.[index]}
+        // A card of the draft's own markers (not undoable) has its own index: a proposal of the file's conflict with that
+        // index is another conflict's, so it is never offered there (#556 review).
+        proposal={model.undoable ? proposals?.[index] : undefined}
         verdict={blockVerdict(verdict, index)}
         note={note}
         model={models?.[index]}
