@@ -2,7 +2,7 @@ import architectureGenerated from './architecture-generated.json';
 import { EXPLORATION_FIXTURE } from './diagram-exploration';
 import { SVG_MOTION_FIXTURE } from './svg-motion';
 import { createRoot } from 'react-dom/client';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { MechanismDiagram } from '../../components/MechanismDiagram';
 import { Markdown } from '../../components/Markdown';
@@ -106,7 +106,10 @@ function Gallery() {
   const sourceStart = sourceLines.length > 200 ? Math.max(0, line - 16) : 0;
   const visibleSource = sourceLines.slice(sourceStart, sourceLines.length > 200 ? sourceStart + 100 : undefined);
   const scene = normalizeMechanism(example?.slide.mechanism);
-  const illustration = normalizeSvgIllustration(example?.slide.svgIllustration);
+  // The player reloads its frame when it gets a new illustration, and ignores a click while it does: a fresh copy on
+  // every render (the source tokens arriving late on a slow runner) made "Next" do nothing on main's macOS run.
+  const rawIllustration = example?.slide.svgIllustration;
+  const illustration = useMemo(() => normalizeSvgIllustration(rawIllustration), [rawIllustration]);
   if (!example) return <main>Generate examples with npm run eval:illustrations -- --live.</main>;
   return (
     <main className="mechanism-gallery">
