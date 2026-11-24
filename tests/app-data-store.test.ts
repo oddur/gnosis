@@ -751,6 +751,7 @@ void test('a write keeps a snapshot: changing the object after a failed save lea
   const dir = fixture();
   let store = createAppDataStore();
   const draftName = 'conflict-draft:tester:' + 'f'.repeat(64);
+  let db: DatabaseSync | undefined;
   try {
     await store.open(dir);
     const draft = { status: 'editing', commitSha: 'abc', files: [{ path: 'a.ts' }] };
@@ -759,7 +760,7 @@ void test('a write keeps a snapshot: changing the object after a failed save lea
     // The caller changes its own object after the write, and its next save fails.
     draft.status = 'published';
     draft.files[0].path = 'b.ts';
-    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
     db.exec("CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
     store.write('workbench:alice', queue());
     await assert.rejects(store.flush(), /simulated disk failure/);
@@ -770,11 +771,35 @@ void test('a write keeps a snapshot: changing the object after a failed save lea
     assert.deepEqual(store.read(draftName), expected);
     db.exec('DROP TRIGGER fail_write');
     db.close();
+    db = undefined;
     await store.flush();
     await store.close();
     store = createAppDataStore();
     await store.open(dir);
     assert.deepEqual(store.read(draftName), expected);
+  } finally {
+    // A failed assertion leaves the trigger in place: drop it, so close doesn't replace the assertion's error.
+    db?.exec('DROP TRIGGER IF EXISTS fail_write');
+    db?.close();
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('a write keeps a snapshot: changing the object before the flush never reaches the disk (#536)', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const draftName = 'conflict-draft:tester:' + 'f'.repeat(64);
+  try {
+    await store.open(dir);
+    const draft = { status: 'editing', commitSha: 'abc' };
+    store.write(draftName, draft);
+    draft.status = 'published';
+    await store.flush();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.read(draftName), { status: 'editing', commitSha: 'abc' });
   } finally {
     await store.close();
     fs.rmSync(dir, { recursive: true, force: true });
