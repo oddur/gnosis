@@ -43,7 +43,13 @@ const budgets: Record<string, number> = {
   // again. Coming back took 96-192 ms while the diffs' effects rendered the large file again. The diffs now keep
   // their lines while hidden (components/KeptFileDiff.tsx), and coming back takes 104-136 ms: React showing the tab
   // again and running its effects.
-  'tab away from large diff': 130,
+  // Leaving later crept back to 88-176 ms. One switch rendered four times before its paint: the home page for the
+  // tab; the app shell, whose new repository-settings value rendered the whole home page again; and the PR page twice
+  // more, for the header's drafts and for the checks' busy state, a GitHub read that only this fixture's missing
+  // background sync caused (it has `github-sync` now). Now the home page renders once and the shell renders alone:
+  // Checks about 40-56 ms and Summary 80-128 ms. The shell keeps recording the location at once, since a deep link
+  // right after looks for the workspace that shows its PR. Coming back takes 80-200 ms with background sync, as before.
+  'tab away from large diff': 140,
   'tab back to large diff': 160,
   'queue j/k': 200,
   'queue filter keystroke': 200,
@@ -745,7 +751,10 @@ void app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
-    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
+    // `github-sync` gives the page main's background sync, as the app always has: views watch GitHub instead of reading
+    // it again each time they show. Without it, every return to Checks or Summary read checks from GitHub again and
+    // rendered the PR page twice more for the read's busy state, which the app never does (#352).
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks&github-sync`);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);

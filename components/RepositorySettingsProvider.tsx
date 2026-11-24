@@ -1,5 +1,5 @@
-import { RepositoryContext, preferencesUpdated } from '../lib/use-repository-settings';
-import { useEffect, useState, type ReactNode } from 'react';
+import { RepositoryContext, preferencesUpdated, type RepositoryContextValue } from '../lib/use-repository-settings';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useWorkbenchQueue } from '../lib/workbench-store';
 import type { Preferences } from '../lib/types';
 import {
@@ -18,6 +18,13 @@ import {
   repositoryNotificationLevel,
   type RepositoryNotificationLevel,
 } from '../lib/notification-settings';
+/** Saves one change on top of the latest preferences, so edits made elsewhere are kept. */
+async function update(change: (current: Preferences) => Preferences) {
+  const current = await window.electronAPI.loadPreferences();
+  const next = change(current);
+  await window.electronAPI.savePreferences(next);
+  preferencesUpdated(next);
+}
 export function RepositorySettingsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<Preferences>();
   const [repo, setRepo] = useState('');
@@ -63,48 +70,44 @@ export function RepositorySettingsProvider({ children }: { children: ReactNode }
       setSaving(false);
     }
   }
-  /** Saves one change on top of the latest preferences, so edits made elsewhere are kept. */
-  async function update(change: (current: Preferences) => Preferences) {
-    const current = await window.electronAPI.loadPreferences();
-    const next = change(current);
-    await window.electronAPI.savePreferences(next);
-    preferencesUpdated(next);
-  }
-  const notifications = prefs ? notificationSettings(prefs) : undefined;
+  // One value per preferences read. A new value on every render re-rendered every reader, the whole home page among
+  // them, each time the app shell rendered: on every PR tab switch, as the workspace tab records its location (#352).
+  const value = useMemo<RepositoryContextValue>(() => {
+    const notifications = prefs ? notificationSettings(prefs) : undefined;
+    return {
+      settings: prefs?.repositorySettings ?? {},
+      notificationLevel: notifications
+        ? (name) => ({ level: repositoryNotificationLevel(notifications, name), explicit: !!notifications.repositories[repositoryKey(name)] })
+        : undefined,
+      setNotificationLevel: (name: string, level: RepositoryNotificationLevel) =>
+        update((current) => {
+          const key = repositoryKey(name);
+          return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: { ...current.repositorySettings?.[key], notifications: level } }) };
+        }),
+      setShowMergedConflicts: (name: string, show: boolean) =>
+        update((current) => {
+          const key = repositoryKey(name);
+          const value: RepositorySettings = { ...current.repositorySettings?.[key] };
+          delete value.showMergedConflicts;
+          if (!show) value.showMergedConflicts = false;
+          return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: value }) };
+        }),
+      allowBotNotifications: (login: string) =>
+        update((current) => {
+          const saved = normalizeNotificationPreferences(current);
+          return { ...current, notificationSettings: { ...saved, allowedBots: normalizeBotLogins([...saved.allowedBots, login]) } };
+        }),
+      botNotificationsAllowed: notifications ? (login) => botAllowed(notifications, login) : undefined,
+      configure: prefs
+        ? (name) => {
+            setError('');
+            setRepo(name);
+          }
+        : undefined,
+    };
+  }, [prefs]);
   return (
-    <RepositoryContext.Provider
-      value={{
-        settings: prefs?.repositorySettings ?? {},
-        notificationLevel: notifications
-          ? (name) => ({ level: repositoryNotificationLevel(notifications, name), explicit: !!notifications.repositories[repositoryKey(name)] })
-          : undefined,
-        setNotificationLevel: (name: string, level: RepositoryNotificationLevel) =>
-          update((current) => {
-            const key = repositoryKey(name);
-            return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: { ...current.repositorySettings?.[key], notifications: level } }) };
-          }),
-        setShowMergedConflicts: (name: string, show: boolean) =>
-          update((current) => {
-            const key = repositoryKey(name);
-            const value: RepositorySettings = { ...current.repositorySettings?.[key] };
-            delete value.showMergedConflicts;
-            if (!show) value.showMergedConflicts = false;
-            return { ...current, repositorySettings: normalizeRepositorySettings({ ...current.repositorySettings, [key]: value }) };
-          }),
-        allowBotNotifications: (login: string) =>
-          update((current) => {
-            const saved = normalizeNotificationPreferences(current);
-            return { ...current, notificationSettings: { ...saved, allowedBots: normalizeBotLogins([...saved.allowedBots, login]) } };
-          }),
-        botNotificationsAllowed: notifications ? (login) => botAllowed(notifications, login) : undefined,
-        configure: prefs
-          ? (name) => {
-              setError('');
-              setRepo(name);
-            }
-          : undefined,
-      }}
-    >
+    <RepositoryContext.Provider value={value}>
       {children}
       <Dialog
         open={!!repo}
