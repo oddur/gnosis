@@ -5,8 +5,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAppDataStore } from '../src/app-data-store';
 import { createRendererFlush, saveWorkBeforeQuit, type FlushTarget } from '../src/quit-flush';
-import { initializeReviewState, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
+import { initializeReviewState, readReviewState, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
+import { keepSavedQueue, parseSavedQueue, SAVED_QUEUE_KEY } from '../lib/saved-queue';
+import { createWorkbenchStore } from '../lib/workbench-store';
+import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue } from '../lib/workbench';
+import { stampQueue } from '../lib/workbench-revision';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
+
+const member = (n: number): ReviewMember => ({
+  number: n, repo: 'owner/repo', baseRepo: 'owner/repo', headRepo: 'owner/repo', url: `https://github.com/owner/repo/pull/${n}`,
+  title: `PR ${n}`, description: '', author: 'alice', role: 'watched', baseBranch: 'main', headBranch: `pr-${n}`, baseSha: 'base', headSha: `head-${n}`,
+  merged: false, state: 'open', createdAt: '2026-10-21T12:00:00Z', updatedAt: '2026-10-22T10:00:00Z', labels: [], mergeable: true,
+  isDraft: false, commitCount: 1, requestedReviewers: [], requestedTeams: [], mergeableState: 'clean', autoMerge: null, milestone: null,
+});
+const item = (n: number): QueueItem => ({ subject: groupSubjects([member(n)])[0], attention: 'other' });
+const queueOf = (...items: QueueItem[]): WorkbenchQueue => stampQueue({ items, warnings: [], remaining: 0 }, []);
 
 /** A window that answers a flush request after `delay` ms, or never. */
 function target(
@@ -167,6 +180,85 @@ void test('a scroll position saved just before quit is restored after relaunch',
     assert.deepEqual(restored[key], { top: 4321, left: 0 });
     assert.deepEqual(restored[tabs], { active: 'one' });
   } finally {
+    await store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+    if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+    if (oldStorage) Object.defineProperty(globalThis, 'localStorage', oldStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
+
+void test('a saved queue that changed just before quit reaches disk, and a write after close is refused and counted', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-quit-queue-'));
+  let store = createAppDataStore();
+  let flushRenderer: (() => Promise<void>) | undefined;
+  const pagehide: (() => void)[] = [];
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const oldStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  // Migration is done, so review state never reads browser storage.
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { length: 0, key: () => null, getItem: () => 'done', setItem: () => {}, removeItem: () => {} },
+  });
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === 'pagehide') pagehide.push(listener);
+      },
+      removeEventListener: () => {},
+      electronAPI: {
+        reviewStateStorageVersion: 1,
+        loadReviewState: (legacy: Record<string, string>) => store.loadReviewState(legacy),
+        saveReviewState: (value: ReviewStateWrite) => store.saveReviewState(value),
+        saveFileProgress: (value: FileProgressPatch) => store.saveFileProgress(value),
+        onFlushReviewState: (callback: () => Promise<void>) => {
+          flushRenderer = callback;
+        },
+      },
+    },
+  });
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => warnings.push(message);
+  const rendererFlush = createRendererFlush();
+  let kept: ReturnType<typeof keepSavedQueue> | undefined;
+  try {
+    await store.open(directory);
+    await initializeReviewState();
+    const queue = queueOf(item(1), item(2), item(3));
+    const workbench = createWorkbenchStore(
+      () => ({ workbenchSnapshot: () => Promise.resolve(structuredClone(queue)), workbenchQueue: () => Promise.resolve(structuredClone(queue)), listReviews: () => Promise.resolve([]) }),
+      { delay: 1 }
+    );
+    // The app's wiring: the queue saves through review state, a minute after it changes here, so only quit can run it.
+    kept = keepSavedQueue(workbench, { read: readReviewState, write: writeReviewState, schedule: scheduleReviewStateWrite }, { delay: 60_000 });
+    workbench.reset('alice');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(workbench.getQueue().items.length, 3, 'main answered, so the queue is due to be saved');
+    const window: FlushTarget = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: (_channel, id) => void flushRenderer?.().finally(() => rendererFlush.acknowledge(id)),
+    };
+    await saveWorkBeforeQuit({ targets: [window], flush: (targets) => rendererFlush.flush(targets), close: () => store.close() });
+    // The window closes after the store: what it saves on the way out is already on disk, so nothing is lost.
+    for (const listener of pagehide) listener();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(store.lostWrites(), 0);
+    // A write that still arrives after close is refused and counted, never reported as saved.
+    await store.saveReviewState({ key: 'gnosis-workspace-tabs:v1:alice', value: { active: 'late' } });
+    assert.equal(store.lostWrites(), 1);
+    assert.match(warnings.join('\n'), /late review state was not saved/);
+    store = createAppDataStore();
+    await store.open(directory);
+    const restored = await store.loadReviewState({});
+    assert.equal(parseSavedQueue(restored[SAVED_QUEUE_KEY])?.queue.items.length, 3, 'the queue shown at quit opens next launch');
+    assert.equal(restored['gnosis-workspace-tabs:v1:alice'], undefined, 'the late write never reached disk');
+  } finally {
+    kept?.stop();
+    console.warn = warn;
     await store.close();
     fs.rmSync(directory, { recursive: true, force: true });
     if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow);

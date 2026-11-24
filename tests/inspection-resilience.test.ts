@@ -157,6 +157,21 @@ void test('inspection request ownership and timeout cancel only the correct read
   requests.cancel(1, 'id');
   await Promise.all([first, second]);
 });
+void test('a read stopped because its window closed resolves quietly; a cancelled one still rejects', async () => {
+  const requests = createInspectionRequests();
+  const wait = (signal: AbortSignal) =>
+    new Promise<string>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
+    });
+  const closed = requests.run(1, 'a', wait);
+  const cancelled = assert.rejects(requests.run(2, 'a', wait), { name: 'AbortError' });
+  const failing = assert.rejects(requests.run(1, 'b', () => Promise.reject(new Error('GitHub is down'))), /GitHub is down/);
+  requests.cancelOwner(1);
+  requests.cancel(2, 'a');
+  // Electron logs a rejected handler as an error; a closed window's read is expected cancellation.
+  assert.equal(await closed, undefined);
+  await Promise.all([cancelled, failing]);
+});
 void test('a timed-out GitHub GET releases the scheduler and is not treated as a server cooldown', async () => {
   let stalls = true,
     calls = 0;

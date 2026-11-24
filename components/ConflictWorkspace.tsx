@@ -98,6 +98,7 @@ import {
 } from '../lib/github-access';
 import { useGitHubAccess } from '../lib/use-github-access';
 import {
+  acceptableConflicts,
   blockBuckets,
   bucketSummary,
   fileStatus,
@@ -745,17 +746,25 @@ export function ConflictWorkspace({
     contents: string,
     resolved: boolean,
     own: { picks?: ConflictFile['picks']; edits?: ConflictFile['edits'] } = {}
-  ): ConflictRequest => ({
-    kind: 'save',
-    id: session.id,
-    version: session.version,
-    path: file.path,
-    contents,
-    resolved,
-    // What your text came from, never a newer revision: a view another view overtook is refused, whatever saves it.
-    ...(loaded.current.get(file.path)?.revision ? { base: loaded.current.get(file.path)?.revision } : {}),
-    ...own,
-  });
+  ): ConflictRequest => {
+    // Your Reset file or Start from Git's conflict, saved as you left it: it ends a whole-file edit (#533). Once.
+    const reset = resets.current.get(file.path) === contents;
+    resets.current.delete(file.path);
+    return {
+      kind: 'save',
+      id: session.id,
+      version: session.version,
+      path: file.path,
+      contents,
+      resolved,
+      // What your text came from, never a newer revision: a view another view overtook is refused, whatever saves it.
+      ...(loaded.current.get(file.path)?.revision ? { base: loaded.current.get(file.path)?.revision } : {}),
+      ...own,
+      ...(reset ? { reset } : {}),
+    };
+  };
+  /** The draft your Reset file or Start from Git's conflict left, per file, until it is saved. */
+  const resets = useRef(new Map<string, string>());
   /** Your unsaved choices and edits for these files go: the saved ones show and save from now on. */
   const forgetOwn = (paths: readonly string[]) => {
     if (!paths.length) return;
@@ -1038,6 +1047,8 @@ export function ConflictWorkspace({
   // step. The push confirmation shows the whole update once more before anything is pushed.
   // Conflicts in Check with no choice of yours: nothing is accepted by default, so Mark reviewed waits for them.
   const unchosen = file ? unchosenConflicts(file, contents, verdictOf(file), picksOf(file), editsOf(file)) : [];
+  // Accept my edit (#533): the proposals a whole-file edit left in Check where the draft can't be split.
+  const acceptable = file ? acceptableConflicts(file, contents, verdictOf(file)) : [];
   const action = conflictFileAction({
     stage: fileStage,
     otherFilesPending: !!nextPending(selected),
@@ -1216,7 +1227,8 @@ export function ConflictWorkspace({
           request.kind === 'resolve' ||
           request.kind === 'model' ||
           request.kind === 'edit-file' ||
-          request.kind === 'undo-edit-file'
+          request.kind === 'undo-edit-file' ||
+          request.kind === 'accept-edit-file'
           ? [request.path]
           : 'all'
       );
@@ -1525,6 +1537,22 @@ export function ConflictWorkspace({
       holdWhole(path, text, 'edit')
     );
   }
+  /**
+   * Accept my edit (#533): the proposals your whole-file edit left in Check, in a draft that can't be split into its
+   * conflicts, become your decision as they are. Your choice alone; the draft doesn't change.
+   */
+  function acceptFileEdit() {
+    if (!file?.wholeEdit || editHeld() || !acceptable.length) return;
+    const path = file.path;
+    void run(
+      (s) => ({ kind: 'accept-edit-file', id: s.id, version: s.version, path, ...baseOf(loaded.current.get(path)?.revision) }),
+      (reply) => {
+        apply(reply, path);
+        setHint('');
+        setOutcome('The whole file is your decision now. Review it before you mark it reviewed.');
+      }
+    );
+  }
   // Undo of a whole-file edit that changed again after the first one asks once: it discards those changes too. The
   // service says so (UNDO_LATER) from the saved file, and takes the second Undo only with `confirmed`.
   const undoArmed = useRef('');
@@ -1563,6 +1591,7 @@ export function ConflictWorkspace({
   function resetTo(text: string) {
     if (editHeld()) return;
     if (file) dropPicks(file.path);
+    if (file) resets.current.set(file.path, text);
     // The footer speaks of the draft on screen: a suggestion's note goes with it.
     setOutcome('');
     setContents(text);
@@ -2579,13 +2608,17 @@ export function ConflictWorkspace({
                               )
                             }
                             note={
-                              wholeEdited(file, contents) && (
+                              wholeEdited(file) &&
+                              resets.current.get(file.path) !== contents && (
                                 <FileEditNote
                                   conflicts={conflictCount(file.original)}
                                   markers={markersRemain}
+                                  accept={acceptable.length}
+                                  waiting={unchosen.length}
                                   disabled={!canEdit}
                                   onEdit={editFile}
                                   onUndo={undoFileEdit}
+                                  onAccept={acceptFileEdit}
                                 />
                               )
                             }
