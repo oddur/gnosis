@@ -31,6 +31,10 @@ import {
   type SlideFileGroup,
 } from '@/lib/slide-file-groups';
 import { ReviewFileHeader } from './ReviewFileHeader';
+import { MovedSliceNote } from './MovedSliceNote';
+import { rangeBlockHunks, sliceOwners } from '@/lib/explanation-ranges';
+import type { HiddenChange, HiddenTarget } from '@/lib/diff-gaps';
+import type { ChangesFileTarget } from '../src/pages/ReviewPage';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FileTypeIcon } from './FileTypeIcon';
 import { FilePathLink } from '@/components/FilePathLink';
@@ -48,7 +52,7 @@ import {
 import { useCopyToClipboard } from '@/lib/use-copy';
 import { countRender } from '@/lib/render-count';
 import { extractShikiStyles, type CommentCallbacks } from '@/components/shared-diff-utils';
-import type { Slide, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
+import type { DiffHunk, Slide, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
 export interface SlideViewProps {
   presentation?: 'narrative' | 'code';
@@ -86,8 +90,10 @@ export interface SlideViewProps {
   showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
-  /** Jumps to a file's block in another section: the Explanation's section navigation (#560). */
-  onOpenSection?: (section: number, filePath: string) => void;
+  /** Jumps to a file's block in another section, at a line when given: the Explanation's section navigation (#560). */
+  onOpenSection?: (section: number, filePath: string, line?: number) => void;
+  /** Opens lines in Changes: the code a section leaves out that no section shows (#563). */
+  onOpenChangesFile?: (target: ChangesFileTarget) => void;
 }
 
 /** Mount expensive diagram frames before they enter the reading viewport, once per section. */
@@ -445,6 +451,7 @@ export function SlideView({
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
   onOpenSection,
+  onOpenChangesFile,
 }: SlideViewProps) {
   countRender('SlideView');
   const [diagramOpen, setDiagramOpen] = useState(false);
@@ -454,15 +461,28 @@ export function SlideView({
   const focusScroll = useSessionScroll(`${slide.id}:focus`);
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
-  // Hunks keep their reading order: a file the order returns to gets another block (lib/slide-file-groups.ts).
+  const contextLines = diffContextLines(diffAppearance);
+  // This section's number in the reader, and where every slice of the explanation shows (#563).
+  const sectionNumber = useMemo(() => {
+    const index = review?.slides.findIndex((s) => s.id === slide.id) ?? -1;
+    return index >= 0 ? index + 1 : slideNumber;
+  }, [review?.slides, slide.id, slideNumber]);
+  const owners = useMemo(() => (review ? sliceOwners(review.slides) : undefined), [review?.slides]);
+  // Hunks keep their reading order: a file the order returns to gets another block (lib/slide-file-groups.ts). A
+  // block's slices show only their ranges (#563), with the changes left out between them hidden in labelled gaps.
   const groupedHunks = useMemo(() => {
-    const groups: SlideFileGroup[] = groupSlideHunks(slide.diffHunks);
+    const groups: (SlideFileGroup & { entries: DiffHunk[]; hidden: HiddenChange[] })[] = groupSlideHunks(
+      slide.diffHunks
+    ).map((group) => {
+      const ranged = rangeBlockHunks(group.hunks, { context: contextLines, owners, section: sectionNumber });
+      return { ...group, hunks: ranged.hunks, entries: group.hunks, hidden: ranged.hidden };
+    });
     for (const filePath of slide.affectedFiles) {
       if (imageMimeType(filePath) && !groups.some((group) => group.filePath === filePath))
-        groups.push({ filePath, hunks: [], run: 0, key: filePath });
+        groups.push({ filePath, hunks: [], run: 0, key: filePath, entries: [], hidden: [] });
     }
     return groups;
-  }, [slide.diffHunks, slide.affectedFiles]);
+  }, [slide.diffHunks, slide.affectedFiles, contextLines, owners, sectionNumber]);
   // Per file: its blocks' keys and all of its hunks; per block: the changes its file's other blocks show.
   const files = useMemo(() => slideFiles(groupedHunks), [groupedHunks]);
   const elsewhere = useMemo(
@@ -473,7 +493,6 @@ export function SlideView({
   const otherSections = useMemo(() => otherFileSections(review?.slides ?? [], slide.id), [review?.slides, slide.id]);
   const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
-  const contextLines = diffContextLines(diffAppearance);
   const fileEstimates = useMemo(
     () =>
       new Map(
@@ -885,7 +904,7 @@ export function SlideView({
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
-      {groupedHunks.map(({ filePath, hunks, run, key }, index) => {
+      {groupedHunks.map(({ filePath, hunks, run, key, entries, hidden }, index) => {
         const origin = review ? sourceForPath(review, filePath) : undefined;
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
@@ -916,6 +935,20 @@ export function SlideView({
           };
           requestAnimationFrame(land);
         };
+        // A gap over changes the section leaves out opens where they went: another section, or Changes (#563).
+        const openHidden = (target: HiddenTarget) => {
+          if (target.kind === 'section') return onOpenSection?.(target.section, filePath, target.line);
+          const { member, path } = review ? sourceForPath(review, filePath) : { member: undefined, path: filePath };
+          onOpenChangesFile?.({
+            url: member?.url ?? prUrl,
+            headSha: member?.headSha ?? review?.headSha,
+            path,
+            line: target.start,
+            endLine: target.end,
+            side: target.side,
+          });
+        };
+        const moves = [...new Map(entries.filter((e) => e.movedFrom).map((e) => [e.sliceId ?? e.hunkHeader, e])).values()];
         const setFileGroupsExpanded = (value: boolean) =>
           setFileExpansion((current) => ({
             ...current,
@@ -948,6 +981,8 @@ export function SlideView({
             firstBlock={run === 0}
             elsewhere={elsewhere.get(key)}
             onShowElsewhere={split ? showElsewhere : undefined}
+            hidden={hidden.length ? hidden : undefined}
+            onOpenHidden={onOpenSection || onOpenChangesFile ? openHidden : undefined}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
             fileViewed={viewed}
@@ -1015,6 +1050,16 @@ export function SlideView({
               }
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
+              {moves.map((entry) => (
+                <MovedSliceNote
+                  key={entry.sliceId ?? entry.hunkHeader}
+                  entry={entry}
+                  review={review}
+                  diffLayout={diffLayout}
+                  appearance={diffAppearance}
+                  slideIndex={slideNumber}
+                />
+              ))}
               {(imageMimeType(filePath) || lfsResource) && (
                 <ReviewImageDiff
                   key={`${review?.reviewId}:${filePath}`}

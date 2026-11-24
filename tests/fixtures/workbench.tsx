@@ -267,6 +267,104 @@ if (parityScenario) {
     mermaidDiagram: undefined,
     d2Diagram: undefined,
   };
+  // Focused sections (#563): scope.ts as one hunk of the whole file, sliced. The fourth topic shows the resolvePaths
+  // change and the test change, listed apart around imports.ts; the fifth shows the flush change, moved from another
+  // file unchanged; the migrate change is in no section, listed as code outside the explanation.
+  const whole = wholeFileHunk(path, patch, scopeAfter);
+  const rows = whole.content.split('\n');
+  const changeAt = (first: string, count: number) => {
+    const start = rows.indexOf(first);
+    if (start < 0) throw Error(`No row ${first}`);
+    return [{ start, end: start + count - 1 }];
+  };
+  const paths = changeAt('-    result.push(join(root, name));', 2);
+  const test = changeAt("-    expect(resolvePaths('/r', ['a'])).toEqual(['/r/a']);", 2);
+  const flushSlice = changeAt('-    total += 30;', 2);
+  const migrate = changeAt('-  version = version + 120;', 3);
+  const lineOf = (index: number, side: 'old' | 'new') => {
+    let old = 1,
+      now = 1;
+    for (let i = 0; i < index; i++) {
+      if (rows[i][0] !== '+') old++;
+      if (rows[i][0] !== '-') now++;
+    }
+    return side === 'old' ? old : now;
+  };
+  const sliceOf = (ranges: { start: number; end: number }[], label: string) => ({
+    ...whole,
+    lineRanges: ranges,
+    sliceId: `scope:${label}`,
+    label,
+  });
+  const removed = lineOf(migrate[0].start, 'old');
+  const added = lineOf(migrate[0].end, 'new');
+  review.focusedSections = {
+    outside: [
+      {
+        filePath: path,
+        id: 'scope:migrate',
+        label: 'function migrate',
+        oldLines: [{ start: removed, end: removed + 1 }],
+        newLines: [{ start: added - 1, end: added }],
+        additions: 1,
+        deletions: 1,
+      },
+    ],
+  };
+  (window as unknown as { parityRanges: unknown }).parityRanges = {
+    shown: [
+      [lineOf(paths[0].start, 'old'), lineOf(paths[0].end, 'new')],
+      [lineOf(test[0].start, 'old'), lineOf(test[0].end, 'new')],
+    ],
+    migrate: [removed, added],
+  };
+  review.slides[3] = {
+    ...review.slides[2],
+    id: 'slide-4',
+    slideNumber: 4,
+    title: 'Trim names, and test it',
+    narrative: 'Only the path change and its test, from the sliced file.',
+    affectedFiles: [path, importsPath],
+    diffHunks: [sliceOf(paths, 'function resolvePaths'), imports[0], sliceOf(test, "describe('resolvePaths')")],
+  };
+  review.slides[4] = {
+    ...review.slides[2],
+    id: 'slide-5',
+    slideNumber: 5,
+    title: 'Double the flush step',
+    narrative: 'The flush method, moved here unchanged.',
+    affectedFiles: [path],
+    diffHunks: [
+      {
+        ...sliceOf(flushSlice, 'method flush (class StoreBridge)'),
+        movedFrom: { filePath: prefix + 'src/legacy-scope.ts', startLine: 10, endLine: 40, body: 'identical' as const },
+      },
+    ],
+  };
+}
+/** One hunk of a whole file from its patch: the lines between the patch's hunks are context from the after text. */
+function wholeFileHunk(filePath: string, patch: string, after: string[]) {
+  const rows: string[] = [];
+  let line = 1;
+  for (const part of patch.split(/\n(?=@@)/)) {
+    const [header, ...body] = part.split('\n');
+    const start = Number(/\+(\d+)/.exec(header)?.[1] ?? 1);
+    while (line < start) rows.push(` ${after[line++ - 1]}`);
+    for (const row of body) {
+      if (row === '') continue;
+      rows.push(row);
+      if (!row.startsWith('-')) line++;
+    }
+  }
+  while (line <= after.length) rows.push(` ${after[line++ - 1]}`);
+  const olds = rows.filter((row) => !row.startsWith('+')).length;
+  return {
+    filePath,
+    language: 'typescript',
+    renderedHtml: '',
+    hunkHeader: `@@ -1,${olds} +1,${after.length} @@`,
+    content: rows.join('\n'),
+  };
 }
 /** The new line number of a saved hunk's first added line. */
 function addedLine(hunk: { hunkHeader: string; content: string }) {

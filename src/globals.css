@@ -5552,6 +5552,21 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-left-out li button:focus-visible { outline:2px solid var(--ring);outline-offset:1px; }
 .explanation-left-out-location { font-family:var(--font-mono);color:var(--foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
 .explanation-left-out-reason { margin-inline-start:auto;flex:none;color:var(--muted-foreground); }
+.explanation-outside-code > ul { display:grid;gap:8px;margin:8px 0 0;padding:0;list-style:none; }
+.explanation-outside-code ul ul { display:grid;gap:2px;margin:2px 0 0;padding:0;list-style:none; }
+.explanation-outside-file { font-family:var(--font-mono);font-size:var(--type-caption);color:var(--foreground); }
+.explanation-outside-code li button { display:flex;align-items:baseline;gap:10px;width:100%;min-width:0;padding:4px 8px;border-radius:4px;text-align:left;font-size:var(--type-caption); }
+.explanation-outside-code li button:hover { background:var(--accent); }
+.explanation-outside-code li button:focus-visible { outline:2px solid var(--ring);outline-offset:1px; }
+.explanation-outside-counts { flex:none;font-family:var(--font-mono);color:var(--muted-foreground); }
+/* A moved slice's note on its block (#563), above its code. */
+.review-move-note { padding:6px 12px;font-size:var(--type-caption);color:var(--muted-foreground);border-bottom:1px solid var(--border); }
+.review-move-note-text { display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0; }
+.review-move-note code { color:var(--foreground); }
+.review-move-diff { margin-top:4px; }
+.review-move-diff > summary { cursor:pointer;width:fit-content; }
+.review-move-diff > summary:focus-visible { outline:2px solid var(--ring);outline-offset:1px; }
+.review-move-diff-error { margin:4px 0 0; }
 .explanation-setup-dialog input[type=checkbox],.explanation-setup-dialog input[type=radio],.explanation-preferences-fields input { accent-color:var(--ring); }
 .explanation-custom-label { display:grid;gap:8px;font-size:var(--type-control); }
 .explanation-custom-label textarea,.explanation-custom-label>input { border:1px solid var(--border);border-radius:6px;padding:8px 12px;background:var(--background);width:100%;min-width:0;resize:vertical; }

@@ -256,6 +256,8 @@ void app.whenReady().then(async () => {
     const changes = await js<Header[]>(`window.headers(document.querySelector(${JSON.stringify(changesRow)}))`);
     const changesPalette = await js<Palette>(`window.palette(document.querySelector(${JSON.stringify(changesRow)}))`);
     console.log('Changes headers:', JSON.stringify(changes));
+    // Changes' rows of src/scope.ts, `type:line:text`, for the focused section's ranges below (#563).
+    const changesRows = await js<string[]>(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(changesRow)})).map(e=>e.dataset.lineType+':'+e.dataset.line+':'+e.textContent)`);
     await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const h=document.querySelector(${JSON.stringify(changesRow)}+' [data-show-definition]').closest('.diff-gap');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
     await capture('changes-unpinned', region('.commit-diff-stream', 0, 420));
     if (shots) {
@@ -515,6 +517,102 @@ void app.whenReady().then(async () => {
     await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');const s=document.querySelector('.explanation-document').getBoundingClientRect();const r=g?.getBoundingClientRect();
       return a?.closest('[data-explanation-section]')?.dataset.explanationSection==='3'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')&&!!r&&r.top<s.bottom&&r.bottom>s.top})()`, 500);
     await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
+
+    // ── Focused sections (#563): slices render as ranges in Changes' renderer, with labelled gaps ──
+    // Section 4 lists two slices of scope.ts's one whole-file hunk apart, around imports.ts: one block of scope.ts
+    // shows the two changes, as Changes shows them, and the gap between them names the flush change (section 5) and
+    // the migrate change (left out).
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    const focused = '[data-explanation-section="4"] .review-file-group';
+    const focusedScope = `document.querySelector('${focused}:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"])')`;
+    await wait(`(()=>{const g=${focusedScope};return !!g&&window.deepAll('[data-line]',g).length>0&&!!g.querySelector('.diff-gap[data-hidden-in] button[data-hidden-target]')})()`, 500);
+    const ranged = await js<{
+      paths: string[];
+      rows: string[];
+      headers: Header[];
+      counts: string;
+      gaps: { label: string; buttons: { kind: string; text: string; name: string; section: string | null; tab: number }[] }[];
+    }>(`(()=>{const g=${focusedScope};
+      return {paths:[...document.querySelectorAll(${JSON.stringify(focused)})].map(e=>e.dataset.filePath.replace(/^.*?src\\//,'src/')),
+        rows:window.deepAll('[data-line]',g).map(e=>e.dataset.lineType+':'+e.dataset.line+':'+e.textContent),
+        headers:window.headers(g),counts:g.querySelector('.changes-file-header .changes-file-counts')?.textContent??'',
+        gaps:[...g.querySelectorAll('.diff-gap[data-hidden-in]')].map(e=>({label:e.getAttribute('aria-label'),
+          buttons:[...e.querySelectorAll('button[data-hidden-target]')].map(b=>({kind:b.dataset.hiddenTarget,text:b.textContent,name:b.getAttribute('aria-label'),section:b.dataset.section??null,tab:b.tabIndex}))}))}})()`);
+    console.log('Focused section:', JSON.stringify({ ...ranged, rows: ranged.rows.length }));
+    assert.deepEqual(ranged.paths, ['src/scope.ts', 'src/imports.ts'], 'The slices of one hunk share one block');
+    // Diff parity: the changed lines and their numbers are Changes' for the same changes, and no other change shows.
+    const changed = (rows: string[]) => rows.filter((r) => /^change-/.test(r)).sort();
+    const expected = changed(changesRows).filter((r) => r.includes('result.push(join') || r.includes('expect(resolvePaths'));
+    assert.equal(expected.length, 4, `Changes shows both changes: ${JSON.stringify(changed(changesRows))}`);
+    assert.deepEqual(changed(ranged.rows), expected, 'The section shows the same changed lines, with the same numbers, as Changes');
+    assert.ok(!ranged.rows.some((r) => r.includes('total += 30 * 2') || r.includes('version + 120')), 'Changes of other sections stay hidden');
+    // Every line the section shows within Changes' hunks is Changes' line, number and text.
+    const spans = changes.flatMap((h) => {
+      const m = /L(\d+)(?:–(\d+))?/.exec(h.range ?? '');
+      return m ? [[Number(m[1]), Number(m[2] ?? m[1])]] : [];
+    });
+    for (const row of ranged.rows) {
+      const line = Number(row.split(':')[1]);
+      if (row.startsWith('context') && spans.some(([a, b]) => line >= a && line <= b))
+        assert.ok(changesRows.includes(row), `Changes shows the same line: ${row}`);
+    }
+    for (const header of ranged.headers.filter((h) => h.range)) {
+      const twin = changes.find((other) => other.range === header.range);
+      assert.ok(twin, `Changes shows a hunk with the same lines: ${header.range}`);
+      assert.equal(header.counts, twin.counts, `The same counts: ${header.range}`);
+    }
+    // The header counts the section's own lines beside the file's.
+    assert.match(ranged.counts, /^\+2−2 here · file \+4−4$/, `Header counts over the ranges: ${ranged.counts}`);
+    // One labelled gap between the ranges: a button per place, keyboard reachable, and the gap is announced.
+    assert.equal(ranged.gaps.length, 1, `One gap holds left-out changes: ${JSON.stringify(ranged.gaps)}`);
+    const [gap] = ranged.gaps;
+    assert.match(gap.label, /hidden: method flush: section 5; 2 lines left out$/, `The gap is announced: ${gap.label}`);
+    assert.deepEqual(
+      gap.buttons.map((b) => [b.kind, b.text, b.section]),
+      [
+        ['section', 'method flush: section 5 ↗', '5'],
+        ['outside', '2 lines left out: open in Changes ↗', null],
+      ]
+    );
+    assert.deepEqual(gap.buttons.map((b) => b.name), ['method flush: section 5: go to section 5', '2 lines left out: open in Changes']);
+    assert.ok(gap.buttons.every((b) => b.tab >= 0), 'The gap buttons are keyboard reachable');
+    // The section link jumps through the Explanation's section navigation, to section 5's block of scope.ts.
+    await js(`${focusedScope}.querySelector('button[data-hidden-target="section"]').click()`);
+    await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');
+      return a?.closest('[data-explanation-section]')?.dataset.explanationSection==='5'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')})()`, 500);
+    // Section 5's slice moved here unchanged: its block says where from.
+    const moveNote = '[data-explanation-section="5"] .review-move-note';
+    await wait(`!!document.querySelector(${JSON.stringify(moveNote)})`, 500);
+    const move = await js<{ text: string; body: string }>(`(()=>{const n=document.querySelector(${JSON.stringify(moveNote)});return {text:n.textContent,body:n.dataset.moveBody}})()`);
+    assert.match(move.text, /^Moved from (?:.*\/)?src\/legacy-scope\.ts·unchanged$/, `The move note: ${move.text}`);
+    assert.equal(move.body, 'identical');
+    // The end of the explanation lists the code no section shows, with a link into Changes.
+    await wait("!!document.querySelector('.explanation-outside-code summary')");
+    await js("document.querySelector('.explanation-outside-code summary').click()");
+    await wait("!!document.querySelector('.explanation-outside-code li li button')");
+    const [migrateOld, migrateNew] = await js<[number, number]>('window.parityRanges.migrate');
+    const outsideEntry = await js<{ file: string; location: string; label: string; name: string }>(`(()=>{const b=document.querySelector('.explanation-outside-code li li button');
+      return {file:b.closest('[data-file-path]').querySelector('.explanation-outside-file').textContent,location:b.querySelector('.explanation-left-out-location').textContent,label:b.querySelector('.explanation-left-out-reason').textContent,name:b.getAttribute('aria-label')}})()`);
+    console.log('Code outside the explanation:', JSON.stringify(outsideEntry));
+    assert.match(outsideEntry.file, /src\/scope\.ts$/);
+    assert.equal(outsideEntry.location, `L${migrateNew - 1}–${migrateNew}`);
+    assert.equal(outsideEntry.label, 'function migrate');
+    assert.match(outsideEntry.name, /^Open function migrate at .*src\/scope\.ts:L\d+–\d+ in Changes$/);
+    // The files list stays.
+    assert.equal(await js("!!document.querySelector('.explanation-ending')"), true);
+    // The left-out gap opens Changes at those lines, and the reader comes back to the Explanation.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    await wait(`!!${focusedScope}?.querySelector('button[data-hidden-target="outside"]')`, 500);
+    await js(`${focusedScope}.querySelector('button[data-hidden-target="outside"]').click()`);
+    await wait(
+      `(()=>{const s=document.querySelector('.commit-diff-stream')?.getBoundingClientRect();const row=document.querySelector('.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])');
+        return !!s&&!!row&&window.deepAll('[data-line]',row).some(e=>{const n=Number(e.dataset.line);const r=e.getBoundingClientRect();
+          return (e.dataset.lineType==='change-deletion'?n===${migrateOld}:n===${migrateNew})&&r.height>0&&r.top>=s.top&&r.bottom<=s.bottom})})()`,
+      500
+    );
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
+    await click('Explanation');
+    await wait("!!document.querySelector('[aria-label=\"Explanation section\"]')", 500);
 
     // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──
     await js(`window.selectOption('[aria-label="Explanation section"]', '0')`);

@@ -8,7 +8,7 @@ import { CODE_THEMES } from '@/lib/constants';
 import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { useNoiseFilter } from '@/lib/use-semantic-noise';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
-import type { ElsewhereChange } from '@/lib/diff-gaps';
+import type { ElsewhereChange, HiddenChange, HiddenTarget } from '@/lib/diff-gaps';
 import { resolveBlock } from '@/lib/slide-file-groups';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
@@ -48,6 +48,10 @@ interface Props {
   /** Changes other blocks of the file show: gaps over them reveal nothing, and offer a jump to the block. */
   elsewhere?: readonly ElsewhereChange[];
   onShowElsewhere?: (run: number, line?: number) => void;
+  /** Changes the section leaves out between its slices (#563): their gaps say where each went. */
+  hidden?: readonly HiddenChange[];
+  /** Opens where a hidden change went: another section, or Changes. */
+  onOpenHidden?: (target: HiddenTarget) => void;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
@@ -99,6 +103,8 @@ export function ReviewDiff({
   commentScope,
   elsewhere,
   onShowElsewhere,
+  hidden,
+  onOpenHidden,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -184,6 +190,7 @@ export function ReviewDiff({
     known: saved.known,
     partial: true,
     elsewhere,
+    hidden,
     request,
     expandable: fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
     active,
@@ -357,6 +364,7 @@ export function ReviewDiff({
           lineCount={model.lineCount}
           plainGaps={plainGaps}
           onShowElsewhere={onShowElsewhere}
+          onOpenHidden={onOpenHidden}
         />
       )}
       {saved.unreadable.map((hunk) => (

@@ -567,7 +567,16 @@ function ReviewPageContent({
           clearInterval(timer);
         }
       }
-      if (++tries > 40) clearInterval(timer);
+      if (++tries > 40) {
+        clearInterval(timer);
+        // A line that never showed (a jump from a gap, #563): land on its block.
+        if (file && codeTarget.line && inspectedTarget.current !== codeTarget.nonce) {
+          inspectedTarget.current = codeTarget.nonce;
+          file.scrollIntoView({ block: 'start' });
+          file.tabIndex = -1;
+          file.focus({ preventScroll: true });
+        }
+      }
     }, 50);
     return () => clearInterval(timer);
   }, [codeTarget]);
@@ -930,7 +939,8 @@ function ReviewPageContent({
     fileMetadataMap,
     gitFileUrlBase,
     excludedFiles: excludedFilesSet,
-    onOpenSection: (section: number, filePath: string) => inspectCode(section, filePath),
+    onOpenSection: (section: number, filePath: string, line?: number) => inspectCode(section, filePath, line),
+    onOpenChangesFile,
   };
   const readerActions = (
     <div className="review-toolbar">

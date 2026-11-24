@@ -2,6 +2,7 @@ import { SLICE_CHROME, estimateSliceHeight, type DiffRow, type GapHunk } from '.
 import { CODE_LINE_HEIGHT, HUNK_SLICE_LIMIT, HUNK_SLICE_SIZE, prepareReviewHunk } from './review-diff';
 import type { DiffHunk, DiffSide, FileMetadata } from './types';
 import { groupSlideHunks } from './slide-file-groups';
+import { rangeBlockHunks } from './explanation-ranges';
 
 /** A line that stays in view: a review check (either side), a thread, a note or a draft comment. */
 export interface ReviewPin {
@@ -214,8 +215,10 @@ export function estimateCodeColumnHeight(
   }: { status?: (filePath: string) => FileMetadata['status'] | undefined; viewed?: (filePath: string) => boolean } = {}
 ) {
   let height = 80;
-  // One block per run of a file, as SlideView renders the reading order.
+  // One block per run of a file, as SlideView renders the reading order; slices show only their ranges (#563).
   for (const { filePath, hunks: fileHunks } of groupSlideHunks(hunks))
-    height += 20 + estimateFileBlockHeight(fileHunks, { status: status?.(filePath), expanded: !viewed?.(filePath) });
+    height +=
+      20 +
+      estimateFileBlockHeight(rangeBlockHunks(fileHunks).hunks, { status: status?.(filePath), expanded: !viewed?.(filePath) });
   return Math.round(height);
 }

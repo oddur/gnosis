@@ -4,6 +4,8 @@ import {
   diffGaps,
   firstMismatch,
   markElsewhere,
+  markHidden,
+  sealedGaps,
   gapSize,
   lineEndings,
   knownLines,
@@ -17,6 +19,7 @@ import {
   withPins,
   type DiffGap,
   type ElsewhereChange,
+  type HiddenChange,
   type GapDirection,
   type GapHunk,
   type GapPart,
@@ -117,6 +120,7 @@ export function useDiffFileModel({
   known,
   partial = false,
   elsewhere,
+  hidden: hiddenChanges,
   request,
   contents,
   expandable,
@@ -144,6 +148,8 @@ export function useDiffFileModel({
   partial?: boolean;
   /** Changes other blocks of the topic show: gaps over them reveal nothing (`markElsewhere`). */
   elsewhere?: readonly ElsewhereChange[];
+  /** Changes an Explanation section leaves out between its slices (#563): gaps over them say where they went. */
+  hidden?: readonly HiddenChange[];
   /** Where the after side is read from; undefined when it cannot be read (a local review). */
   request?: PrFileRequest;
   /** Both sides, when the view has loaded them already. */
@@ -227,7 +233,12 @@ export function useDiffFileModel({
     [baseHunks, after, afterMatches, pins]
   );
   const gaps = useMemo(() => {
-    const all = expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined, { partial }) : undefined;
+    // A file that reveals nothing has no gaps, unless its section leaves changes out between slices: those say so.
+    if (!expandable) {
+      const sealed = hunks && hiddenChanges?.length ? sealedGaps(hunks) : undefined;
+      return sealed && hunks ? markHidden(sealed, hunks, hiddenChanges) : undefined;
+    }
+    const all = hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined, { partial }) : undefined;
     if (!all || !partial) return all;
     // A topic's gap is unchanged code only where it saved those lines, or where both sides agree on every line.
     const topic = all.map((gap) => {
@@ -246,8 +257,8 @@ export function useDiffFileModel({
       while (revealUp < size - revealDown && known?.[gap.newStart + size - revealUp - 2] !== undefined) revealUp++;
       return { ...gap, revealDown, revealUp };
     });
-    return markElsewhere(topic, elsewhere);
-  }, [expandable, hunks, afterMatches, after, before, partial, known, elsewhere]);
+    return markHidden(markElsewhere(topic, elsewhere), hunks ?? [], hiddenChanges);
+  }, [expandable, hunks, afterMatches, after, before, partial, known, elsewhere, hiddenChanges]);
   // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
   // side when it is loaded. A file without a grammar, or with a stale after side, shows as before.
   // The old side is parsed when the file deletes lines: hunks that only delete are named by it, and the outline finds
