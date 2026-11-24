@@ -22,6 +22,7 @@ import {
 import { explanationFiles as setupFiles, explanationRepository, loadExplanationSetup, type SourceIdentity } from './explanation-setup';
 import { applyNoise, classifiedNoise, contextOnlyHunks, noiseRequests, normalizeNoiseReduction, ruleNoise, type NoiseReduction } from '../lib/explanation-noise';
 import { plannerEvidence } from '../lib/review-planning';
+import { hunkOwners, ownedHunkIds, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader, warmWorkflowGraph } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -209,7 +210,6 @@ import { createHeadInvalidation, setPrHeadReporter, type HeadChange, type HeadOb
 import { prRef, prUrl as deepLinkPrUrl } from '../lib/deep-link';
 import type {
   ChangedFile,
-  DiffHunk,
   GenerateReviewRequest,
   ModelId,
   Preferences,
@@ -2596,27 +2596,6 @@ ipcMain.handle(
 
 // ── Background review generation ────────────────────────────────
 
-/** Resolve hunk IDs to DiffHunk objects, skipping already-assigned ones. */
-function resolveDiffHunks(
-  ids: string[],
-  hunkMap: Map<string, import('../lib/diff-parse').IndexedHunk>,
-  assignedIds: Set<string>,
-): DiffHunk[] {
-  return ids
-    .filter((id) => hunkMap.has(id) && !assignedIds.has(id))
-    .map((id) => {
-      assignedIds.add(id);
-      const h = hunkMap.get(id)!;
-      return {
-        filePath: h.filePath,
-        hunkHeader: h.expandedHunkHeader,
-        content: h.expandedContent,
-        language: h.language,
-        renderedHtml: '',
-      };
-    });
-}
-
 function explanationDefaults(source: SourceIdentity): ExplanationOptions {
   const prefs = loadPreferences(),
     repo = explanationRepository(source);
@@ -2936,6 +2915,9 @@ async function runBackgroundGeneration(
       const sortedTopics = [...noise.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
       let completedSections = 0;
+      // Each hunk is shown by the first topic that lists it, fixed before the writers start (#560).
+      const owners = hunkOwners(sortedTopics.map((topic) => topic.hunkIds), hunkMap, noise.cut);
+      for (const id of owners.keys()) assignedIds.add(id);
       explanationBuilds.event(reviewId, { type: 'plan', topics: sortedTopics.map((topic, idx) => ({ id: `slide-${idx + 1}`, title: topic.title })) });
       explanationBuilds.draftBase(reviewId, {
         snapshot: reviewSnapshot,
@@ -2970,9 +2952,10 @@ async function runBackgroundGeneration(
               topic, hunkMap, fileContents, headFileContents, neighborFiles,
               prData.title, prData.description, storyArc, sortedTopics,
               projectClaudeContext, contextOnlyHunks(topic.hunkIds, indexedHunks, noise.cut),
+              shownElsewhere(topic.hunkIds, owners, idx),
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 8 });
+            const topicKey = reviewFingerprint({ topicCtx, topic, version: 9 });
             const topicId = `slide-${slideNum}`;
             const saved = checkpoint!.get(topicKey);
             if (!saved) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'writing' });
@@ -3001,7 +2984,7 @@ async function runBackgroundGeneration(
 
             await checkpoint!.set(topicKey, writerOutput);
             completedSections++;
-            const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
+            const diffHunks = resolveDiffHunks(ownedHunkIds(topic.hunkIds, owners, idx), hunkMap);
 
             const slide = {
               id: `slide-${slideNum}`,
@@ -3104,10 +3087,13 @@ async function runBackgroundGeneration(
         if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
       }
 
-      resolvedSlides = aiResult.slides.map((aiSlide) => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        const diffHunks = resolveDiffHunks(aiSlide.diffHunkIds ?? [], hunkMap, assignedIds);
+      // The same ownership as the parallel path: the first slide that lists a hunk shows it.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+      const slideHunkIds = aiResult.slides.map((aiSlide) => aiSlide.diffHunkIds ?? []);
+      const owners = hunkOwners(slideHunkIds, hunkMap, noise.cut);
+      for (const id of owners.keys()) assignedIds.add(id);
+      resolvedSlides = aiResult.slides.map((aiSlide, index) => {
+        const diffHunks = resolveDiffHunks(ownedHunkIds(slideHunkIds[index], owners, index), hunkMap);
 
         return {
           id: aiSlide.id,
@@ -3191,7 +3177,7 @@ async function runBackgroundGeneration(
     // Catch-all slide for unassigned hunks
     const unassigned = indexedHunks.filter((h) => !assignedIds.has(h.id));
     if (unassigned.length > 0) {
-      const otherHunks = resolveDiffHunks(unassigned.map((h) => h.id), hunkMap, assignedIds);
+      const otherHunks = resolveDiffHunks(unassigned.map((h) => h.id), hunkMap);
 
       resolvedSlides.push({
         id: 'other-changes',

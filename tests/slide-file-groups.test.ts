@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { elsewhereChanges, groupSlideHunks, resolveBlock, slideFiles } from '../lib/slide-file-groups';
+import {
+  elsewhereChanges,
+  groupSlideHunks,
+  otherFileSections,
+  resolveBlock,
+  sectionFileCounts,
+  slideFiles,
+} from '../lib/slide-file-groups';
+import { hunkOwners, ownedHunkIds, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
+import { collectReviewTopics } from '../src/review-checkpoint';
 import { diffGaps, markElsewhere, revealedParts } from '../lib/diff-gaps';
 import { reviewGapHunks } from '../lib/review-gap-hunks';
 import { estimateCodeColumnHeight, estimateFileBlockHeight } from '../lib/review-gap-hunks';
@@ -317,4 +326,101 @@ void test('the writer sees its hunks in the planned order and is told to follow 
   await generateSlide({ providerName: 'claude', model: 'claude-sonnet-5-5' as never, topicContext: context });
   assert.match(prompts[0], /The <diff_hunks> arrive in reading order/);
   assert.match(prompts[0], /Follow the same order in the narrative/);
+});
+
+const ownedHunk = (id: string, filePath: string) =>
+  ({
+    id,
+    filePath,
+    fileStatus: 'modified',
+    hunkHeader: `@@ ${id} @@`,
+    content: `+${id}`,
+    expandedHunkHeader: `@@ ${id} @@`,
+    expandedContent: `+${id}`,
+    language: 'typescript',
+  }) as unknown as IndexedHunk;
+
+void test('a hunk two topics list belongs to the earlier one, whichever writer finishes first (#560)', async () => {
+  const map = new Map(['h0', 'h1', 'h2', 'h3', 'noise'].map((id) => [id, ownedHunk(id, 'queue.rs')]));
+  const topics = [['h0', 'h1'], ['h1', 'h2', 'h2', 'gone']];
+  const owners = hunkOwners(topics, map, new Set(['noise']));
+  assert.deepEqual([...owners], [['h0', 0], ['h1', 0], ['h2', 1]]);
+  // The writers finish in reverse order: the first waits until the second has finished.
+  let secondDone = () => {};
+  const second = new Promise<void>((resolve) => (secondDone = resolve));
+  const finished: number[] = [];
+  const results = await collectReviewTopics(
+    topics.map((ids, index) => async () => {
+      if (index === 0) await second;
+      finished.push(index);
+      if (index === 1) secondDone();
+      return resolveDiffHunks(ownedHunkIds(ids, owners, index), map).map((h) => h.content);
+    }),
+    new AbortController().signal
+  );
+  assert.deepEqual(results, [['+h0', '+h1'], ['+h2']]);
+  assert.deepEqual(finished, [1, 0]);
+  // The second writer reads h1 as context shown in section 1.
+  assert.deepEqual([...shownElsewhere(topics[1], owners, 1)], [['h1', 1]]);
+  // The single-shot path uses the same ownership, and "Other changes" gets only hunks no topic owns.
+  const single = topics.map((ids, index) => ownedHunkIds(ids, owners, index));
+  assert.deepEqual(single, [['h0', 'h1'], ['h2']]);
+  const other = [...map.keys()].filter((id) => !owners.has(id) && id !== 'noise');
+  assert.deepEqual(other, ['h3']);
+  // No hunk shows twice.
+  const shown = [...single.flat(), ...other];
+  assert.equal(new Set(shown).size, shown.length);
+});
+
+void test("a writer is told which hunks its section shows, and reads the earlier section's as context (#560)", () => {
+  const map = new Map(['h0', 'h1'].map((id) => [id, ownedHunk(id, 'a.ts')]));
+  const topic = {
+    title: 'T',
+    slideType: 'feature',
+    importance: 'important',
+    hunkIds: ['h0', 'h1'],
+    dependsOn: [],
+    order: 2,
+    narrativeBrief: '',
+  } as unknown as TopicPlan;
+  const context = buildTopicContext(topic, map, {}, {}, {}, 'PR', '', 'arc', [topic], null, [], new Map([['h1', 1]]));
+  const shows = /<diff_hunks>([\s\S]*?)<\/diff_hunks>/.exec(context)?.[1] ?? '';
+  assert.match(shows, /\[h0\]/);
+  assert.doesNotMatch(shows, /\[h1\]/);
+  assert.match(context, /<shown_in_other_sections>[\s\S]*\[h1\] \(shown in section 1\)[\s\S]*<\/shown_in_other_sections>/);
+  // A topic that owns all of its hunks gets the same context as before.
+  const plain = buildTopicContext(topic, map, {}, {}, {}, 'PR', '', 'arc', [topic]);
+  assert.doesNotMatch(plain, /shown_in_other_sections/);
+});
+
+void test("a section's file header counts its own lines when it shows part of the file (#560)", () => {
+  const part: DiffHunk = {
+    filePath: 'queue.rs',
+    hunkHeader: '@@ -1,4 +1,3 @@',
+    content: ' a\n-b\n-c\n+d\n e',
+    language: 'rust',
+    renderedHtml: '',
+  };
+  assert.deepEqual(sectionFileCounts([part], { additions: 14, deletions: 1947 }), {
+    additions: 1,
+    deletions: 2,
+    file: { additions: 14, deletions: 1947 },
+  });
+  // A section that shows every change of the file keeps the file's counts alone.
+  assert.deepEqual(sectionFileCounts([part], { additions: 1, deletions: 2 }), { additions: 1, deletions: 2 });
+  // Without the file's metadata, the section's own counts.
+  assert.deepEqual(sectionFileCounts([part]), { additions: 1, deletions: 2 });
+});
+
+void test('a file block lists the other sections that show parts of its file (#560)', () => {
+  const slides = [
+    { id: 's1', diffHunks: [hunk('queue.rs', 1), hunk('a.ts', 1)] },
+    { id: 's2', diffHunks: [hunk('queue.rs', 40), hunk('queue.rs', 80)] },
+    { id: 's3', diffHunks: [hunk('b.ts', 1)] },
+    { id: 'other-changes', diffHunks: [hunk('queue.rs', 200)] },
+  ];
+  const others = otherFileSections(slides, 's2');
+  assert.deepEqual(others.get('queue.rs'), [1, 4]);
+  assert.deepEqual(others.get('a.ts'), [1]);
+  assert.equal(otherFileSections(slides, 's3').get('b.ts'), undefined);
 });

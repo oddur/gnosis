@@ -25,6 +25,7 @@ import {
   blockRanges,
   elsewhereChanges,
   groupSlideHunks,
+  otherFileSections,
   slideFileGroupKey,
   slideFiles,
   type SlideFileGroup,
@@ -85,6 +86,8 @@ export interface SlideViewProps {
   showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
+  /** Jumps to a file's block in another section: the Explanation's section navigation (#560). */
+  onOpenSection?: (section: number, filePath: string) => void;
 }
 
 /** Mount expensive diagram frames before they enter the reading viewport, once per section. */
@@ -441,6 +444,7 @@ export function SlideView({
   showReviewSuggestions = true,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
+  onOpenSection,
 }: SlideViewProps) {
   countRender('SlideView');
   const [diagramOpen, setDiagramOpen] = useState(false);
@@ -465,6 +469,8 @@ export function SlideView({
     () => elsewhereChanges(groupedHunks, (filePath) => fileMetadataMap?.get(filePath)?.status),
     [groupedHunks, fileMetadataMap]
   );
+  // Other sections that show parts of this section's files (#560).
+  const otherSections = useMemo(() => otherFileSections(review?.slides ?? [], slide.id), [review?.slides, slide.id]);
   const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
   const contextLines = diffContextLines(diffAppearance);
@@ -973,6 +979,15 @@ export function SlideView({
               source={review?.snapshot?.subject.kind === 'stack' ? origin?.member : undefined}
               commentCount={run === 0 ? (pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) : 0}
               age={ageBadge}
+              sectionHunks={file?.hunks}
+              otherSections={
+                run === 0 && otherSections.has(filePath)
+                  ? {
+                      sections: otherSections.get(filePath) ?? [],
+                      onOpen: onOpenSection && ((section) => onOpenSection(section, filePath)),
+                    }
+                  : undefined
+              }
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
               {(imageMimeType(filePath) || lfsResource) && (
