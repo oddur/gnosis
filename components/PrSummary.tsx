@@ -22,7 +22,7 @@ import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions, isShortcut, shortcutLabel } from './PrActions';
 import type { EntryActionGroups } from './EntryActions';
-import { PrHeaderReviewContext, type HeaderReview } from '../lib/pr-header-review';
+import { PrHeaderReviewContext, useChangesHeaderReview, type HeaderReview } from '../lib/pr-header-review';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
@@ -568,7 +568,7 @@ function PrSummaryContent({
   const [overflow, setOverflow] = useState<EntryActionGroups>([]);
   const [actionsRefresh, setActionsRefresh] = useState(0);
   const [notes, setNotes] = useState<HTMLDivElement | null>(null);
-  const [changesReview, setChangesReview] = useState<HeaderReview>();
+  const [changesReview, setChangesReview] = useChangesHeaderReview(tab === 'changes');
   const headerReview: HeaderReview = tab === 'changes' && changesReview ? changesReview : summaryReview.header;
   const navigationRow = useRef<HTMLDivElement>(null);
   // Measured again only when the row's contents change; a tab switch never forces a layout read here.
