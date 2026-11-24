@@ -42,7 +42,8 @@ void app.whenReady().then(async () => {
       const items=Array.from({length:60},(_,i)=>{
         const item=structuredClone(queue.items[i%queue.items.length]);
         item.subject.id='stable-'+i;
-        item.subject.members=item.subject.members.map((m,j)=>({...m,url:'https://github.com/fixture/stable/pull/'+(100+i*4+j),number:100+i*4+j,headSha:'stablesha-'+i+'-'+j}));
+        // The reader's own PRs: their Action group follows their checks and reviews, so sync moves them between groups.
+        item.subject.members=item.subject.members.map((m,j)=>({...m,author:'oddur',url:'https://github.com/fixture/stable/pull/'+(100+i*4+j),number:100+i*4+j,headSha:'stablesha-'+i+'-'+j}));
         return item;
       });
       window.__stableItems=items;
@@ -79,7 +80,12 @@ void app.whenReady().then(async () => {
     };
     // Every visible row gets the sync answer for `mode`; sent again while waiting, since a row that comes into view
     // subscribes after the first send. Waits until each row shows it and the list has settled.
+    // Where the pointer rests. Each sync nudges it by a pixel first, as a resting hand does: a pointer that has not
+    // moved for 5 s no longer holds the order (components/VirtualReviewQueue.tsx), and a slow runner can take that long.
+    let resting: { x: number; y: number } | null = null;
+    let nudge = 0;
     const sync = async (mode: 'plain' | 'busy', also = 'true') => {
+      if (resting) win.webContents.sendInputEvent({ type: 'mouseMove', x: resting.x + (nudge++ % 2), y: resting.y });
       await js(`(()=>{window.__stableMode=${JSON.stringify(mode)};window.__stableEmit=()=>{
         for(const interest of window.syncFixture.subscriptions.values())if(interest.kind==='signals')
           for(const t of interest.targets)window.syncFixture.emit({kind:'signals',url:t.url,value:window.__stableState({url:t.url,headSha:t.headSha??''})[window.__stableMode]});
@@ -101,6 +107,7 @@ void app.whenReady().then(async () => {
     for (const [width, height] of [[1280, 800], [1024, 677], [860, 760], [720, 760]] as const) {
       win.setSize(width, height);
       await wait(`innerWidth===${win.getContentSize()[0]}`);
+      resting = null;
       win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
       await sync('plain');
       await js("document.querySelector('.queue-list').scrollTop=0");
@@ -108,6 +115,7 @@ void app.whenReady().then(async () => {
       // The pointer rests on the second row's status line.
       const at = await js<{ x: number; y: number }>(`(()=>{const r=${rows}[1].querySelector('.queue-status-line').getBoundingClientRect();return {x:Math.round(r.left+8),y:Math.round(r.top+r.height/2)}})()`);
       win.webContents.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
+      resting = at;
       const under = `document.elementFromPoint(${at.x},${at.y})?.closest('[data-queue-id]')?.dataset.queueId`;
       await wait(`${under}===${rows}[1].dataset.queueId`);
       const plain = await geometry();
@@ -131,11 +139,50 @@ void app.whenReady().then(async () => {
       await sync('plain');
       compare(`${width}px, badges removed`, busy, await geometry());
       // Once the pointer leaves the list, the held order applies: the updated row moves up.
+      resting = null;
       win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
       await wait(`Number(document.querySelector('[data-queue-id="${moved.id}"]')?.getAttribute('aria-posinset'))<${moved.position}`);
       console.log(`Rows stay in place at ${width}px: ${plain.length} rows, heights ${[...new Set(plain.map((row) => Math.round(row.height)))].join('/')} px.`);
     }
     win.setSize(1280, 800);
+    await wait(`innerWidth===${win.getContentSize()[0]}`);
+
+    // Grouped by Action: sync moves PRs between groups, which fills, empties, adds and removes group headings. While
+    // the pointer rests on the list, groups and headings hold too, and j walks the rows as they are drawn.
+    await js("document.querySelector('[data-queue-group-by]').click()");
+    await wait(`!!document.querySelector('.queue-group-popover input[value="action"]')`);
+    await js(`document.querySelector('.queue-group-popover input[value="action"]').click()`);
+    await wait(`document.querySelector('[data-queue-group-by]')?.dataset.queueGroupBy==='action'&&!document.querySelector('.queue-group-popover')&&!!document.querySelector('.queue-group-heading')`);
+    // The first lines of the list: group headings with their counts, and entries.
+    const layoutNow = `JSON.stringify([...document.querySelectorAll('.queue-list [data-queue-group], .queue-list [data-queue-id]')].map(e=>e.dataset.queueGroup ? e.dataset.queueGroup+':'+e.querySelector('.queue-group-count')?.textContent : e.dataset.queueId).slice(0,14))`;
+    const layout = () => js<string>(layoutNow);
+    resting = null;
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+    await sync('plain');
+    await js("document.querySelector('.queue-list').scrollTop=0");
+    await waitSettled(win.webContents, 'queue-list');
+    const at = await js<{ x: number; y: number }>(`(()=>{const r=${rows}[1].querySelector('.queue-status-line').getBoundingClientRect();return {x:Math.round(r.left+8),y:Math.round(r.top+r.height/2)}})()`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
+    resting = at;
+    const under = `document.elementFromPoint(${at.x},${at.y})?.closest('[data-queue-id]')?.dataset.queueId`;
+    await wait(`${under}===${rows}[1].dataset.queueId`);
+    const heldLayout = await layout();
+    const before = await geometry();
+    await sync('busy');
+    compare('Grouped by Action, PRs change groups', before, await geometry());
+    assert.equal(await layout(), heldLayout, 'Groups and headings hold while the pointer rests on the list');
+    // Down from the row under the pointer, once selected, goes to the next row drawn.
+    const from = await js<string>(`${rows}[1].dataset.queueId`);
+    await js(`${rows}[1].querySelector('.queue-row-main').click()`);
+    await wait(`document.querySelector('[data-queue-id="${from}"] .queue-row-main')?.getAttribute('aria-pressed')==='true'`);
+    const next = await js<string>(`(()=>{const ids=[...document.querySelectorAll('.queue-list [data-queue-id]')].sort((a,b)=>Number(a.getAttribute('aria-posinset'))-Number(b.getAttribute('aria-posinset'))).map(e=>e.dataset.queueId);return ids[ids.indexOf(${JSON.stringify(from)})+1]})()`);
+    await js(`(()=>{const b=document.querySelector('[data-queue-id="${from}"] .queue-row-main');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))})()`);
+    await wait(`document.activeElement?.closest('[data-queue-id]')?.dataset.queueId===${JSON.stringify(next)}`);
+    // Not vacuous: once the pointer leaves, the groups sync reported apply.
+    resting = null;
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+    await wait(`${layoutNow}!==${JSON.stringify(heldLayout)}`);
+    console.log(`Grouped rows stay in place: ${before.length} rows; held groups ${heldLayout.slice(0, 160)}`);
   };
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;

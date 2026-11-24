@@ -27,6 +27,7 @@ import { freshPr, itemWithLifecycle, lifecycleOf } from '../../lib/pr-lifecycle'
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
+import { useHeldQueueLayout } from '../../lib/held-queue-layout';
 import { useCachedQueueSignals, useMergeFilter } from '../../lib/use-queue-signals';
 import { MergeFilterStatus } from '../../components/MergeFilterStatus';
 import { conflictStateFor, countUnsettled } from '../../lib/merge-conflicts';
@@ -321,6 +322,8 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const muteBusyRef = useRef(false);
   const [savedView, setSavedView] = useSessionDraft('queue-saved-view', false);
   const [starBusy, setStarBusy] = useState(false);
+  /** Counts the reader's own star changes: those reorder the queue at once, while sync's are held (#549). */
+  const [readerStars, setReaderStars] = useState(0);
   const [starError, setStarError] = useState('');
   const starBusyRef = useRef(false);
   const starredUrls = useMemo(
@@ -336,6 +339,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     try {
       const next = await enqueueWrite(() => window.electronAPI.workbenchStarPrs({ members, starred }));
       workbenchStore.apply(next);
+      setReaderStars((count) => count + 1);
       setError('');
     } catch (error) {
       const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star action again.`;
@@ -1157,12 +1161,13 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const queueGrouping = useMemo(() => section === 'saved' ? undefined : groupQueueItems(sortedItems, filters.groupBy, { actionGroups, collapsed: collapsedSet }),
     [section, sortedItems, filters.groupBy, actionGroups, collapsedSet]);
   const toggleGroup = useCallback((key: string) => setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, groupViewKey, key))), [groupViewKey]);
-  // While the pointer rests on the queue, sync does not reorder it (#549); the new order applies when it leaves. What
-  // the reader changes (sort, filters, grouping, stars, the view) applies at once.
+  // While the pointer rests on the queue, sync does not move its rows (#549): order, groups and headings apply when it
+  // leaves. What the reader changes (sort, filters, grouping, collapsed groups, the view, their own stars) applies at once.
   const [pointerInQueue, setPointerInQueue] = useState(false);
-  const orderScope = useMemo(() => JSON.stringify([section, activeQueueView?.id, filters, collapsedGroups[groupViewKey], [...starredUrls].sort()]),
-    [section, activeQueueView?.id, filters, collapsedGroups, groupViewKey, starredUrls]);
-  const orderedItems = useListOrder(queueGrouping ? queueGrouping.items : sortedItems, item => item.subject.id, pointerInQueue, orderScope);
+  const orderScope = useMemo(() => JSON.stringify([section, activeQueueView?.id, filters, collapsedGroups[groupViewKey], readerStars]),
+    [section, activeQueueView?.id, filters, collapsedGroups, groupViewKey, readerStars]);
+  const queueLayout = useHeldQueueLayout(sortedItems, queueGrouping, filters.sort.starredFirst, pointerInQueue, orderScope);
+  const orderedItems = queueLayout.items;
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
   // Switching to a view reads its first screenful again; resting on one in the sidebar prepares it (#saved-view-sync).
   const shownUrls = useMemo(() => orderedItems.flatMap(item => item.subject.members.map(member => member.url)).slice(0, 15), [orderedItems]);
@@ -2470,7 +2475,8 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                   <VirtualReviewQueue
                     items={orderedItems}
                     grouped={filters.sort.key === 'priority'}
-                    groups={queueGrouping}
+                    groups={queueLayout.grouping}
+                    sections={queueLayout.sections}
                     onToggleGroup={toggleGroup}
                     reveal={revealGroup}
                     starredFirst={filters.sort.starredFirst}
