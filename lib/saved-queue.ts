@@ -148,7 +148,21 @@ export function savedQueueFor(queue: WorkbenchQueue, account: string, now = Date
 interface Storage {
   read: (key: string) => unknown;
   write: (key: string, value: unknown) => Promise<void>;
+  /**
+   * Runs a debounced save later and returns a function that drops it. Review state's scheduler also runs it, and
+   * waits for the promise it returns, when the app quits, so a queue that changed just before quit is saved.
+   */
+  schedule?: (save: () => Promise<void>, delayMs: number) => () => void;
+  /**
+   * True once the app is quitting. A save then stops pausing between slices, even one that was already running:
+   * its pauses wait on timers, which background windows throttle, and quit waits only a short time.
+   */
+  quitting?: () => boolean;
 }
+const scheduleTimer = (save: () => Promise<void>, delayMs: number) => {
+  const timer = setTimeout(() => void save(), delayMs);
+  return () => clearTimeout(timer);
+};
 
 /**
  * Seeds the store from the saved copy, then keeps the copy current. Only queues main answered with are saved, never
@@ -171,8 +185,11 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
   /** The account, content revision and status stamp of the copy last saved. */
   let lastKey: string | undefined;
   let lastStamp: string | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let saving = false;
+  const scheduleSave = storage.schedule ?? scheduleTimer;
+  /** Drops the scheduled save, if one is waiting. */
+  let cancel: (() => void) | undefined;
+  /** The save in progress, which ends by checking again. */
+  let saving: Promise<void> | undefined;
   const due = () => {
     const account = store.getAccount();
     const status = store.getStatus();
@@ -198,26 +215,27 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
       lastKey = undefined;
     });
   };
-  const save = async () => {
-    timer = undefined;
-    if (saving) {
-      // The save in progress ends by checking again.
-      return;
-    }
+  const pause = () => (storage.quitting?.() ? Promise.resolve() : yieldToInput());
+  // Returns the save in progress, so quit can wait for the queue it is still preparing.
+  const save = (): Promise<void> => {
+    cancel = undefined;
+    if (saving) return saving;
     const next = due();
-    if (!next) return;
-    saving = true;
-    try {
-      const json = await serializeSavedQueueInSlices(next.queue, next.account, now(), undefined, options.signals?.read);
-      // A newer queue that arrived meanwhile is saved by the next pass.
-      if (store.getQueue() === next.queue) await write(next, json);
-    } finally {
-      saving = false;
-    }
-    if (due()) timer ??= setTimeout(() => void save(), options.delay ?? WRITE_DELAY_MS);
+    if (!next) return Promise.resolve();
+    saving = (async () => {
+      try {
+        const json = await serializeSavedQueueInSlices(next.queue, next.account, now(), pause, options.signals?.read);
+        // A newer queue that arrived meanwhile is saved by the next pass.
+        if (store.getQueue() === next.queue) await write(next, json);
+      } finally {
+        saving = undefined;
+      }
+      if (due()) schedule();
+    })();
+    return saving;
   };
   const schedule = () => {
-    timer ??= setTimeout(() => void save(), options.delay ?? WRITE_DELAY_MS);
+    cancel ??= scheduleSave(save, options.delay ?? WRITE_DELAY_MS);
   };
   let statusAccount: string | undefined;
   let stopStatus: (() => void) | undefined;
@@ -232,8 +250,8 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
   });
   /** The window is going away: save what is shown now, in one piece. */
   const flush = () => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
+    cancel?.();
+    cancel = undefined;
     const next = due();
     if (next) void write(next, serializeSavedQueue(next.queue, next.account, now(), options.signals?.read));
   };
@@ -245,7 +263,8 @@ export function keepSavedQueue(store: WorkbenchStore, storage: Storage,
       unsubscribe();
       stopStatus?.();
       page?.removeEventListener('pagehide', flush);
-      if (timer) clearTimeout(timer);
+      cancel?.();
+      cancel = undefined;
     },
   };
 }

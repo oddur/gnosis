@@ -62,7 +62,7 @@ function setup() {
   return { render, pages, calls, unmount: () => React.act(() => root.unmount()) };
 }
 
-void test('leaving Changes and coming back renders the page once for each switch', () => {
+void test('leaving Changes renders nothing more, and coming back shows its drafts after one hand-off', () => {
   const { render, pages, unmount } = setup();
   const drafts = { count: 2 };
   render('changes', drafts);
@@ -71,8 +71,38 @@ void test('leaving Changes and coming back renders the page once for each switch
   render('checks', drafts);
   assert.equal(pages.length, shown + 1, 'hiding Changes takes its drafts back without another render');
   render('changes', drafts);
-  assert.equal(pages.length, shown + 2, 'showing it again hands the same drafts over without another render');
-  assert.equal(pages.at(-1)?.draftCount, 2, 'and the header shows them at once');
+  assert.equal(pages[shown + 1], undefined, 'the first render of the visit never shows the last visit’s drafts');
+  assert.equal(pages.length, shown + 3, 'Changes hands its drafts over again with one render');
+  assert.equal(pages.at(-1)?.draftCount, 2);
+  unmount();
+});
+
+void test('drafts that change while Changes is hidden show when it comes back', () => {
+  const { render, pages, calls, unmount } = setup();
+  render('changes', { count: 2 });
+  render('checks', { count: 2 });
+  render('checks', { count: 3, blocked: 'Sign in to review' });
+  const before = pages.length;
+  render('changes', { count: 3, blocked: 'Sign in to review' });
+  assert.equal(pages[before], undefined, 'the stale count of 2 never shows');
+  assert.equal(pages.at(-1)?.draftCount, 3);
+  assert.equal(pages.at(-1)?.reviewBlocked, 'Sign in to review');
+  pages.at(-1)?.openReview();
+  assert.deepEqual(calls, ['open 3']);
+  unmount();
+});
+
+void test('Changes dropped while hidden and mounted again never shows the dropped view’s drafts', () => {
+  const { render, pages, calls, unmount } = setup();
+  render('changes', { count: 2 });
+  render('checks', { count: 2 });
+  render('checks', { count: 2 }, false);
+  const before = pages.length;
+  render('changes', { count: 5 });
+  assert.equal(pages[before], undefined, 'the return shows no drafts until the new view hands its own over');
+  assert.equal(pages.at(-1)?.draftCount, 5);
+  pages.at(-1)?.toggleDrafts();
+  assert.deepEqual(calls, ['toggle 5'], 'the buttons act on the new view');
   unmount();
 });
 

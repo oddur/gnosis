@@ -48,7 +48,7 @@ const budgets: Record<string, number> = {
   // more, for the header's drafts and for the checks' busy state, a GitHub read that only this fixture's missing
   // background sync caused (it has `github-sync` now). Now it renders once, and the shell's tab label follows in a
   // transition: 40-128 ms, Checks 40-56 and Summary 80-128. Coming back takes 80-200 ms with background sync, as before.
-  'tab away from large diff': 120,
+  'tab away from large diff': 140,
   'tab back to large diff': 160,
   'queue j/k': 200,
   'queue filter keystroke': 200,

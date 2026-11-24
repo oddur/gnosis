@@ -5,7 +5,8 @@ export interface FlushTarget {
   send(channel: string, ...args: unknown[]): void;
 }
 
-export const RENDERER_FLUSH_TIMEOUT_MS = 500;
+/** Long enough for a window to prepare and send a saved queue; a hung window delays quit by this at most. */
+export const RENDERER_FLUSH_TIMEOUT_MS = 1_500;
 
 /**
  * At quit, each window may still hold debounced saves (scroll positions, open tabs) or have saves in

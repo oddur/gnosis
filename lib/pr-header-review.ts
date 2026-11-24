@@ -21,30 +21,37 @@ const sameHeaderReview = (a?: HeaderReviewState, b?: HeaderReviewState) =>
 
 /**
  * The PR page's end of PrHeaderReviewContext: Changes' drafts for the header while `shown`. Changes hands them over
- * from an effect, which Activity disconnects when another tab shows and connects again when Changes shows. Only
- * Changes' header reads them, so taking them back while another tab shows keeps the last ones for the next visit, and
- * a hand-off that shows the same state as the header renders nothing. Before, each switch away from Changes and back
- * rendered the whole PR page once more (#352). The header's buttons call the latest hand-off.
+ * from an effect, which Activity disconnects when another tab shows and connects again when Changes shows. Taking
+ * them back while another tab shows renders nothing, since only Changes' header reads them: before, each switch away
+ * from Changes rendered the whole PR page once more (#352). The view may change, or be dropped, while hidden, so a
+ * visit never shows the last visit's drafts: until Changes hands them over again, the header falls back. A hand-off
+ * that shows the same state as the header renders nothing. The header's buttons call the latest hand-off.
  */
 export function useChangesHeaderReview(shown: boolean) {
   const showing = useRef(shown);
+  // Each time Changes shows is a new visit. Drafts handed over on an earlier visit are not shown on this one.
+  const visit = useRef(0);
+  if (shown && !showing.current) visit.current++;
   showing.current = shown;
   const latest = useRef<HeaderReview | undefined>(undefined);
-  const rendered = useRef<HeaderReviewState | undefined>(undefined);
-  const [state, setState] = useState<HeaderReviewState>();
+  const rendered = useRef<{ visit: number; review?: HeaderReviewState }>({ visit: 0 });
+  const [state, setState] = useState<{ visit: number; review?: HeaderReviewState }>({ visit: 0 });
   const receive = useCallback((review: HeaderReview | undefined) => {
-    if (review) latest.current = review;
-    // Hidden, not gone: Changes hands its drafts over again when it shows. If it unmounts while hidden, its next
-    // mount hands over its own.
-    else if (!showing.current) return;
-    const next = review && { draftCount: review.draftCount, draftsDisabled: review.draftsDisabled, reviewBlocked: review.reviewBlocked };
-    if (sameHeaderReview(rendered.current, next)) return;
+    // Hidden: drop the hand-off, so a view that is gone is not kept alive. Changes hands over again when it shows.
+    latest.current = review;
+    if (!review && !showing.current) return;
+    const next = {
+      visit: visit.current,
+      review: review && { draftCount: review.draftCount, draftsDisabled: review.draftsDisabled, reviewBlocked: review.reviewBlocked },
+    };
+    if (rendered.current.visit === next.visit && sameHeaderReview(rendered.current.review, next.review)) return;
     rendered.current = next;
     setState(next);
   }, []);
+  const current = shown && state.visit === visit.current ? state.review : undefined;
   const review = useMemo<HeaderReview | undefined>(
-    () => state && { ...state, toggleDrafts: () => latest.current?.toggleDrafts(), openReview: () => latest.current?.openReview() },
-    [state]
+    () => current && { ...current, toggleDrafts: () => latest.current?.toggleDrafts(), openReview: () => latest.current?.openReview() },
+    [current]
   );
   return [review, receive] as const;
 }
