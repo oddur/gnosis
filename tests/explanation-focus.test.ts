@@ -70,10 +70,14 @@ function slice(id: string, label: string, start: number, end: number, extra: Par
   return {
     id,
     label,
-    symbols: [{ side: 'after', kind: 'function', name: label.slice(3), label, start: start + 1, end: end + 1 }],
+    symbols: [
+      { side: 'after', kind: 'function', name: label.slice(3), label, start: start + 1, end: end + 1, span: { start: start + 1, end: end + 1 } },
+    ],
     lines: [{ start, end }],
     oldLines: [],
     newLines: [{ start: start + 1, end: end + 1 }],
+    removed: [],
+    added: [{ start: start + 1, end: end + 1 }],
     additions: end - start + 1,
     deletions: 0,
     ...extra,
@@ -94,7 +98,7 @@ function sliced(moves = true): HunkSlices[] {
       hunkId: 'hunk-1',
       filePath: 'src/small.ts',
       whole: 'small',
-      slices: [{ ...slice('hunk-1:w', 'small.ts', 0, 2), symbols: [], additions: 1, deletions: 1, oldLines: [{ start: 2, end: 2 }], newLines: [{ start: 2, end: 2 }] }],
+      slices: [{ ...slice('hunk-1:w', 'small.ts', 0, 2), symbols: [], additions: 1, deletions: 1, oldLines: [{ start: 2, end: 2 }], newLines: [{ start: 2, end: 2 }], removed: [{ start: 2, end: 2 }], added: [{ start: 2, end: 2 }] }],
     },
     {
       hunkId: 'hunk-2',
@@ -103,10 +107,12 @@ function sliced(moves = true): HunkSlices[] {
         {
           id: 'hunk-2:m',
           label: 'fn beta',
-          symbols: [{ side: 'before', kind: 'function', name: 'beta', label: 'fn beta', start: 2, end: 11 }],
+          symbols: [{ side: 'before', kind: 'function', name: 'beta', label: 'fn beta', start: 2, end: 11, span: { start: 2, end: 11 } }],
           lines: [{ start: 1, end: 10 }],
           oldLines: [{ start: 2, end: 11 }],
           newLines: [],
+          removed: [{ start: 2, end: 11 }],
+          added: [],
           additions: 0,
           deletions: 10,
           ...(moves ? { movedTo: 'hunk-0:b', moveBody: 'edited' as const } : {}),
@@ -223,6 +229,16 @@ void describe('focused sections', () => {
     // A deletion that adds lines is never treated as moved (fail closed).
     const adds = sliced().map((h) => (h.hunkId === 'hunk-2' ? { ...h, slices: [{ ...h.slices[0], additions: 1 }] } : h));
     assert.equal(focusIndex(HUNKS, adds).movedAway.size, 0);
+    // Nor is the "(part)" of a larger definition, at either end.
+    const part = sliced().map((h) =>
+      h.hunkId === 'hunk-0' ? { ...h, slices: h.slices.map((s) => (s.movedFrom ? { ...s, symbols: s.symbols.map((y) => ({ ...y, part: true as const })) } : s)) } : h
+    );
+    assert.equal(focusIndex(HUNKS, part).movedAway.size, 0);
+    // A move that renamed the definition carries the names into movedFrom and the writer block.
+    const renamed = sliced().map((h) => ({ ...h, slices: h.slices.map((s) => (s.moveBody ? { ...s, renamed: { from: 'beta', to: 'betaNext' } } : s)) }));
+    const renamedIndex = focusIndex(HUNKS, renamed);
+    assert.deepEqual(focusDiffHunks(['hunk-0:b'], renamedIndex, hunkMap)[0].movedFrom?.renamed, { from: 'beta', to: 'betaNext' });
+    assert.match(focusedTopicDiff(['hunk-0:b'], new Map(), renamedIndex, hunkMap, BASE, HEAD), /renamed from beta to betaNext/);
   });
 
   void test('left out: units no section lists, unless under 20 changed lines together, which go to Other changes', () => {

@@ -2859,7 +2859,7 @@ async function runBackgroundGeneration(
       signal.addEventListener('abort', stop, { once: true });
       try {
         const off = disabledLanguages(codeIntelligenceSettings(loadPreferences()));
-        focus = focusIndex(planningHunks, await sliceWorker.slices(sliceRequests(planningHunks, fileContents, headFileContents), off, signal));
+        focus = focusIndex(planningHunks, await sliceWorker.slices(sliceRequests(allChangedFiles, planningHunks, fileContents, headFileContents), off, signal));
       } catch (error) {
         if (!signal.aborted) console.warn('[main] Slicing failed; hunks stay whole:', error);
         focus = focusIndex(planningHunks, []);

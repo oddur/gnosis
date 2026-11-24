@@ -47,6 +47,8 @@ export interface SliceMoveSource {
   startLine: number;
   endLine: number;
   body: 'identical' | 'edited';
+  /** The definition's old and new names, when the move renamed it. */
+  renamed?: { from: string; to: string };
 }
 
 /** Code no section shows (#562), for "Code outside the explanation" (#563). */
@@ -74,7 +76,8 @@ const sliceHunk = (hunk: IndexedHunk) => ({ id: hunk.id, header: hunk.expandedHu
 
 /**
  * The units of the planning hunks. A hunk the slicer kept whole, or didn't answer for, is one unit with its hunk ID.
- * A move links two units only when the deleted one adds nothing (fail closed: anything else stays ordinary).
+ * A move links two units only when the deleted one adds nothing and neither end is the "(part)" of a larger
+ * definition (fail closed: anything else stays ordinary).
  */
 export function focusIndex(hunks: readonly IndexedHunk[], sliced: readonly HunkSlices[]): FocusIndex {
   const byHunk = new Map(sliced.map((entry) => [entry.hunkId, entry]));
@@ -96,7 +99,9 @@ export function focusIndex(hunks: readonly IndexedHunk[], sliced: readonly HunkS
   const movedAway = new Map<string, string>();
   for (const unit of units.values()) {
     const to = unit.slice.movedTo && unitOf.get(unit.slice.movedTo);
-    if (to && to !== unit.id && units.has(to) && unit.slice.additions === 0) movedAway.set(unit.id, to);
+    const target = to ? units.get(to) : undefined;
+    const part = (u: FocusUnit) => u.slice.symbols.some((s) => s.part);
+    if (to && target && to !== unit.id && unit.slice.additions === 0 && !part(unit) && !part(target)) movedAway.set(unit.id, to);
   }
   const hash = createHash('sha256')
     .update(
@@ -144,6 +149,7 @@ function moveSource(index: FocusIndex, unitId: string): (SliceMoveSource & { uni
     const unit = index.units.get(from);
     if (!unit) continue;
     const symbol = unit.slice.symbols.find((s) => s.side === 'before');
+    const renamed = unit.slice.renamed ?? index.units.get(to)?.slice.renamed;
     const lines = unit.slice.oldLines;
     return {
       unit,
@@ -151,6 +157,7 @@ function moveSource(index: FocusIndex, unitId: string): (SliceMoveSource & { uni
       startLine: symbol?.start ?? lines.at(0)?.start ?? 1,
       endLine: symbol?.end ?? lines.at(-1)?.end ?? 1,
       body: unit.slice.moveBody ?? index.units.get(to)?.slice.moveBody ?? 'edited',
+      ...(renamed ? { renamed: { ...renamed } } : {}),
     };
   }
   return undefined;
@@ -339,7 +346,7 @@ Your section displays exactly the code below, and nothing else from these files.
     ctx += `${unitCode(unit, hunk, true)}\n`;
     const moved = moveSource(index, unit.id);
     if (moved) {
-      ctx += `Moved from ${moved.filePath} (old lines ${moved.startLine}-${moved.endLine}). Explain it as a move, on this new copy; the old copy is not shown.`;
+      ctx += `Moved from ${moved.filePath} (old lines ${moved.startLine}-${moved.endLine})${moved.renamed ? `, renamed from ${moved.renamed.from} to ${moved.renamed.to}` : ''}. Explain it as a move, on this new copy; the old copy is not shown.`;
       if (moved.body === 'identical') ctx += ' Its body is unchanged.\n';
       else {
         const newSymbol = unit.slice.symbols.find((s) => s.side === 'after');
@@ -399,7 +406,15 @@ export function focusDiffHunks(
         ...entry,
         ...(unit.whole ? {} : { lineRanges: unit.slice.lines.map((r) => ({ ...r })), sliceId: unit.id, label: unit.slice.label }),
         ...(moved
-          ? { movedFrom: { filePath: moved.filePath, startLine: moved.startLine, endLine: moved.endLine, body: moved.body } }
+          ? {
+              movedFrom: {
+                filePath: moved.filePath,
+                startLine: moved.startLine,
+                endLine: moved.endLine,
+                body: moved.body,
+                ...(moved.renamed ? { renamed: moved.renamed } : {}),
+              },
+            }
           : {}),
       },
     ];
