@@ -73,9 +73,13 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
     await click('Open PR overview');
+    // The header measures its room as the window changes: narrow, the toggles go to ⋯; widened, they come back.
+    const A = '.pr-header-actions';
+    await setViewport(win, 1280, 800);
+    await wait(`document.querySelector('${A}')?.dataset.collapse==='1' || document.querySelector('${A}')?.dataset.collapse==='2'`);
     // Wide enough for every header action (#542); narrower windows are checked below.
     await setViewport(win, 1600, 900);
-    const A = '.pr-header-actions';
+    await wait(`document.querySelector('${A}')?.dataset.collapse==='0'`);
     const merge = `document.querySelector('${A} [data-merge-action]')`;
     const toggle = (label: string) => `[...document.querySelectorAll('${A} [role=switch]')].find(b=>b.textContent.startsWith(${JSON.stringify(label)}))`;
     /** Clicks a toggle once its last change has finished sending. */
@@ -92,7 +96,8 @@ void app.whenReady().then(async () => {
       await wait(`!!${find}`);
       await js(`${find}.click()`);
     };
-    await wait(`!!${merge} && ${available(merge)}`);
+    // Loading GitHub's state changes the actions' labels; the header measures its room again and keeps them all.
+    await wait(`!!${merge} && ${available(merge)} && document.querySelector('${A}')?.dataset.collapse==='0'`);
     // Every action is in the tab row, on the right, without opening a menu.
     assert.deepEqual(
       await js(`[...document.querySelectorAll('${A} [data-slot=button]')].filter(b=>b.getBoundingClientRect().width>0).map(b=>b.textContent.trim()||b.getAttribute('aria-label'))`),
