@@ -46,8 +46,9 @@ const budgets: Record<string, number> = {
   // Leaving later crept back to 88-176 ms. One switch rendered four times before its paint: the home page for the
   // tab; the app shell, whose new repository-settings value rendered the whole home page again; and the PR page twice
   // more, for the header's drafts and for the checks' busy state, a GitHub read that only this fixture's missing
-  // background sync caused (it has `github-sync` now). Now it renders once, and the shell's tab label follows in a
-  // transition: 40-128 ms, Checks 40-56 and Summary 80-128. Coming back takes 80-200 ms with background sync, as before.
+  // background sync caused (it has `github-sync` now). Now the home page renders once and the shell renders alone:
+  // Checks about 40-56 ms and Summary 80-128 ms. The shell keeps recording the location at once, since a deep link
+  // right after looks for the workspace that shows its PR. Coming back takes 80-200 ms with background sync, as before.
   'tab away from large diff': 140,
   'tab back to large diff': 160,
   'queue j/k': 200,

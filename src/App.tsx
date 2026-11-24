@@ -1,4 +1,4 @@
-import { Activity, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
 import { ActivityDrawer, ACTIVITY_SHORTCUT } from '../components/ActivityDrawer';
@@ -268,10 +268,8 @@ export function App() {
       if (controllers.current.get(id) === controller) controllers.current.delete(id);
     };
   }, []);
-  // A workspace records where it is after every move, a PR tab switch among them. The tab strip's label can follow in
-  // a transition: rendering the app shell in the same frame held the switch's paint back (#352).
   const record = useCallback(
-    (id: string, location: AppLocation, title?: string) => startTransition(() => change({ type: 'record', id, location, title })),
+    (id: string, location: AppLocation, title?: string) => change({ type: 'record', id, location, title }),
     [change]
   );
   useEffect(() => {
