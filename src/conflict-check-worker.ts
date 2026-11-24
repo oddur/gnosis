@@ -4,6 +4,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import * as TreeSitter from 'web-tree-sitter';
 import { createSyntaxEngine } from '../lib/syntax-scope';
 import { TAGS } from '../lib/syntax-tags';
+import { sliceFile, sliceMoves } from '../lib/explanation-slices';
 import {
   conflictChecker,
   definitionsOf,
@@ -35,6 +36,22 @@ port.on('message', (message: CheckRequest) => {
       for (const file of message.files) noise.push(await noiseAnswer(engine, file));
       port.postMessage({ id: message.id, noise } satisfies CheckResponse);
     })();
+    return;
+  }
+  if (message.kind === 'slices' || message.kind === 'slice-moves') {
+    // Focused explanation sections (lib/explanation-slices.ts): one file's slices, or the PR's moves among them.
+    const answer: Promise<CheckResponse> =
+      message.kind === 'slices'
+        ? sliceFile(engine, message.file, message.disabled).then((slices) => ({ id: message.id, slices }))
+        : Promise.resolve().then(() => ({ id: message.id, moves: sliceMoves(message.files) }));
+    answer.then(
+      (response) => port.postMessage(response satisfies CheckResponse),
+      (error: unknown) =>
+        port.postMessage({
+          id: message.id,
+          error: error instanceof Error ? error.message : String(error),
+        } satisfies CheckResponse)
+    );
     return;
   }
   if (message.kind === 'definitions') {
