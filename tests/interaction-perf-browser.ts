@@ -602,8 +602,10 @@ void app.whenReady().then(async () => {
     // ── Queue rows under background sync ──
     const row = (i: number) =>
       `document.querySelector('[data-workspace-active=true] .queue-list').querySelectorAll('.queue-row-main')[${i}]`;
+    // A row's status line: its review and readiness badges. Not the whole metadata block, whose middle can be the
+    // row's Checks button, which opens the PR and leaves no queue for the next click (main's Windows run, and #436).
     const badge = (i: number) =>
-      `[...document.querySelectorAll('[data-workspace-active=true] .queue-metadata .merge-readiness-badge, [data-workspace-active=true] .queue-metadata')].filter(e=>e.checkVisibility())[${i}]`;
+      `[...document.querySelectorAll('[data-workspace-active=true] .queue-metadata .merge-readiness-badge, [data-workspace-active=true] .queue-metadata .queue-status-line')].filter(e=>e.checkVisibility())[${i}]`;
     // The same inputs with no sync event in flight: what this machine takes anyway.
     const idle = (prepare: () => Promise<() => void>) => async () => (await prepare())();
     for (let i = 0; i < 8; i++) {

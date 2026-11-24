@@ -740,6 +740,9 @@ export function PrActions({
         <Popover.Content ref={confirmContent} className="pr-merge-confirm" align="end" sideOffset={6} collisionPadding={12} aria-label={heading} tabIndex={-1}
           onOpenAutoFocus={(event) => { event.preventDefault(); (event.currentTarget as HTMLElement).focus(); }}
           onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
+          // Focus moving elsewhere, as when the window comes back to the front, is not the reader closing it: a refusal
+          // would vanish with it (main's macOS readiness run). A click outside or Escape still closes it.
+          onFocusOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => {
             // The method list and other pickers open in their own layer; using them keeps the confirmation open.
             const target = event.target instanceof Element ? event.target : null;

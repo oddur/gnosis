@@ -137,6 +137,10 @@ void app.whenReady().then(async () => {
     await js("window.dispatchEvent(new Event('blur'))");
     await js('new Promise(r=>setTimeout(r,0))');
     assert.ok(await js("document.querySelector('.pr-merge-confirm .pr-action-error')?.checkVisibility()"), 'GitHub’s refusal stays after the window loses focus');
+    // Focus moving elsewhere, as when the window comes back to the front, keeps it too.
+    await js("document.querySelector('.pr-overview-heading h1').focus()");
+    await js('new Promise(r=>setTimeout(r,0))');
+    assert.ok(await js("document.querySelector('.pr-merge-confirm .pr-action-error')?.checkVisibility()"), 'GitHub’s refusal stays when focus moves elsewhere');
     await capture('github-blocked-refused');
     await click('Cancel');
     await wait("!document.querySelector('.pr-merge-confirm')");

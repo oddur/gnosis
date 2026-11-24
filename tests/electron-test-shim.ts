@@ -58,9 +58,23 @@ export * from 'electron';
 // and a later request succeeds. Screenshots are evidence, not assertions, so retry those failures.
 const transientCapture = /UnknownVizError|VizSentEmptyBitmap|EmbeddingTokenChanged|Frame Gone|Timeout/;
 
+// GNOSIS_TEST_WORK_AREA=1024x677 opens every test window no larger than that work area, as the macOS and Windows CI
+// runners' screens do, so their layouts can be reproduced on a larger display. Like the runners, a later setSize or
+// setContentSize is not clamped. A content size leaves room for a 35px title bar (the macOS runner's content is 642px).
+const workArea = /^(\d+)x(\d+)$/.exec(process.env.GNOSIS_TEST_WORK_AREA ?? '');
+
+function openingSize(options: Electron.BrowserWindowConstructorOptions) {
+  if (!workArea) return {};
+  const frame = options.useContentSize ? 35 : 0;
+  return {
+    width: Math.min(options.width ?? 800, Number(workArea[1])),
+    height: Math.min(options.height ?? 600, Number(workArea[2]) - frame),
+  };
+}
+
 export class BrowserWindow extends electron.BrowserWindow {
   constructor(options: Electron.BrowserWindowConstructorOptions = {}) {
-    super({ enableLargerThanScreen: true, ...options });
+    super({ enableLargerThanScreen: true, ...options, ...openingSize(options) });
     const contents = this.webContents;
     const capturePage = contents.capturePage.bind(contents) as (...args: unknown[]) => Promise<Electron.NativeImage>;
     contents.capturePage = (async (...args: unknown[]) => {
