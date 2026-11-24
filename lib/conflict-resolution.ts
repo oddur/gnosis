@@ -88,6 +88,12 @@ export interface WholeFileEdit {
   edits?: ConflictFile['edits'];
   /** The file changed again after the first whole-file edit: Undo discards that too, so the view asks first. */
   later?: boolean;
+  /**
+   * The conflicts whose proposal your edit left in place and that you chose to keep as edited (`accept-edit-file`), in
+   * a draft that can't be split into its conflicts (#533). Only for the draft you chose it on: any change to the draft
+   * drops it, and they are in Check again until you choose.
+   */
+  accepted?: number[];
 }
 /** The file as it is now, for Undo of a whole-file edit (ConflictFile.wholeEdit). */
 export function wholeEditSnapshot(file: ConflictFile): WholeFileEdit {
@@ -284,6 +290,11 @@ export type ConflictRequest =
    * service keeps the file as it was before your first whole-file edit, for `undo-edit-file`.
    */
   | { kind: 'edit-file'; id: string; version: number; path: string; contents: string; base?: string }
+  /**
+   * Accept my edit (#533): the proposals your whole-file edit left in place, in a draft that can't be split into its
+   * conflicts, become your decision as they are. Only your explicit choice does that; the draft doesn't change.
+   */
+  | { kind: 'accept-edit-file'; id: string; version: number; path: string; base?: string }
   /** Undo of Edit whole file: the file as it was before your first whole-file edit, your Keeps and edits included. */
   | {
       kind: 'undo-edit-file';
@@ -403,7 +414,14 @@ export function draftProblem(value: unknown, account: string, id: string): strin
     // Undo of a whole-file edit (#503) restores it: it needs the draft and review flag it puts back.
     if (
       file.wholeEdit !== undefined &&
-      !(record(file.wholeEdit) && typeof file.wholeEdit.result === 'string' && typeof file.wholeEdit.resolved === 'boolean')
+      !(
+        record(file.wholeEdit) &&
+        typeof file.wholeEdit.result === 'string' &&
+        typeof file.wholeEdit.resolved === 'boolean' &&
+        (file.wholeEdit.accepted === undefined ||
+          (Array.isArray(file.wholeEdit.accepted) &&
+            file.wholeEdit.accepted.every((index) => Number.isSafeInteger(index) && Number(index) >= 0)))
+      )
     )
       return `files[${index}].wholeEdit`;
   }
@@ -529,6 +547,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
   // Edit whole file (#503) names the file's revision its editor started from (`base`), as a save does.
   const based = r.base === undefined || text('base', 64);
   if (r.kind === 'edit-file' && text('path', 4096) && text('contents', CONFLICT_FILE_LIMIT) && based) return;
+  if (r.kind === 'accept-edit-file' && text('path', 4096) && based) return;
   if (
     r.kind === 'undo-edit-file' &&
     text('path', 4096) &&

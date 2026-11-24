@@ -120,21 +120,28 @@ export function FileEditor({
 
 /**
  * A file you edited whole (#503): one line over its diff that says the file is yours, with Edit again and Undo. Undo
- * returns the file to what it was before your first whole-file edit, your choices per conflict included.
+ * returns the file to what it was before your first whole-file edit, your choices per conflict included. When the edit
+ * left proposals in Check in a draft that can't be split into its conflicts, Accept my edit makes them yours (#533):
+ * only your choice does, never Gnosis.
  */
 export function FileEditNote({
   conflicts,
   markers,
+  accept,
   disabled,
   onEdit,
   onUndo,
+  onAccept,
 }: {
   conflicts: number;
   /** A conflict marker is left in the draft: the file stays conflicted until you edit it again. */
   markers: boolean;
+  /** The proposals in Check that Accept my edit would make yours (acceptableConflicts); 0 hides it. */
+  accept: number;
   disabled: boolean;
   onEdit: () => void;
   onUndo: () => void;
+  onAccept: () => void;
 }) {
   return (
     <div className="conflict-file-edited" data-conflict-file-edited="">
@@ -143,8 +150,15 @@ export function FileEditNote({
         <strong>Edited by you</strong> ·{' '}
         {markers
           ? 'A conflict marker is left. Edit the file again to finish it.'
-          : `The whole file is your decision, its ${conflicts === 1 ? 'conflict' : `${conflicts} conflicts`} included.`}
+          : accept
+            ? `Your edit left ${accept === 1 ? 'a proposal' : `${accept} proposals`} in Check as ${accept === 1 ? 'it was' : 'they were'}.`
+            : `The whole file is your decision, its ${conflicts === 1 ? 'conflict' : `${conflicts} conflicts`} included.`}
       </span>
+      {accept > 0 && (
+        <Button size="sm" variant="ghost" disabled={disabled} data-conflict-file-accept="" onClick={onAccept}>
+          Accept my edit
+        </Button>
+      )}
       <Button size="sm" variant="ghost" disabled={disabled} data-conflict-file-edit-again="" onClick={onEdit}>
         Edit again
       </Button>

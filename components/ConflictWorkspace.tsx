@@ -98,6 +98,7 @@ import {
 } from '../lib/github-access';
 import { useGitHubAccess } from '../lib/use-github-access';
 import {
+  acceptableConflicts,
   blockBuckets,
   bucketSummary,
   fileStatus,
@@ -1038,6 +1039,8 @@ export function ConflictWorkspace({
   // step. The push confirmation shows the whole update once more before anything is pushed.
   // Conflicts in Check with no choice of yours: nothing is accepted by default, so Mark reviewed waits for them.
   const unchosen = file ? unchosenConflicts(file, contents, verdictOf(file), picksOf(file), editsOf(file)) : [];
+  // Accept my edit (#533): the proposals a whole-file edit left in Check where the draft can't be split.
+  const acceptable = file ? acceptableConflicts(file, contents, verdictOf(file)) : [];
   const action = conflictFileAction({
     stage: fileStage,
     otherFilesPending: !!nextPending(selected),
@@ -1216,7 +1219,8 @@ export function ConflictWorkspace({
           request.kind === 'resolve' ||
           request.kind === 'model' ||
           request.kind === 'edit-file' ||
-          request.kind === 'undo-edit-file'
+          request.kind === 'undo-edit-file' ||
+          request.kind === 'accept-edit-file'
           ? [request.path]
           : 'all'
       );
@@ -1523,6 +1527,22 @@ export function ConflictWorkspace({
         );
       },
       holdWhole(path, text, 'edit')
+    );
+  }
+  /**
+   * Accept my edit (#533): the proposals your whole-file edit left in Check, in a draft that can't be split into its
+   * conflicts, become your decision as they are. Your choice alone; the draft doesn't change.
+   */
+  function acceptFileEdit() {
+    if (!file?.wholeEdit || editHeld() || !acceptable.length) return;
+    const path = file.path;
+    void run(
+      (s) => ({ kind: 'accept-edit-file', id: s.id, version: s.version, path, ...baseOf(loaded.current.get(path)?.revision) }),
+      (reply) => {
+        apply(reply, path);
+        setHint('');
+        setOutcome('The whole file is your decision now. Review it before you mark it reviewed.');
+      }
     );
   }
   // Undo of a whole-file edit that changed again after the first one asks once: it discards those changes too. The
@@ -2583,9 +2603,11 @@ export function ConflictWorkspace({
                                 <FileEditNote
                                   conflicts={conflictCount(file.original)}
                                   markers={markersRemain}
+                                  accept={acceptable.length}
                                   disabled={!canEdit}
                                   onEdit={editFile}
                                   onUndo={undoFileEdit}
+                                  onAccept={acceptFileEdit}
                                 />
                               )
                             }

@@ -1172,15 +1172,30 @@ export const needsNoChoice = (proposal: ConflictProposal, verdict: Verdict | und
 
 /**
  * The file is your whole-file edit (#503) in `contents`: the draft you saved with Edit whole file, or one that changes it
- * and still can't be split into the file's conflicts (a Keep on a conflict your edit left open). Reset file, Start from
- * Git's conflict and Undo return to a draft that splits, and the conflicts are told apart again.
+ * (a Keep on a conflict your edit left open, #533). Only a draft that starts the conflicts over ends it (startsOver):
+ * Reset file and Start from Git's conflict. Undo ends it too, and the conflicts are told apart again.
  */
 export function wholeEdited(
-  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
+  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit' | 'proposals'>>,
   contents: string
 ) {
   if (!file.wholeEdit || file.result === undefined) return false;
-  return contents === file.result || !blockResolutions(parseConflicts(file.original), contents);
+  return contents === file.result || !startsOver(file, contents);
+}
+
+/**
+ * The draft starts the file's conflicts over: it splits into them, nothing around them changed, and each one shows Git's
+ * conflict markers or holds its proposal as it was. Reset file and Start from Git's conflict leave such a draft.
+ */
+function startsOver(file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'proposals'>>, contents: string) {
+  const segments = parseConflicts(file.original);
+  const texts = blockResolutions(segments, contents);
+  return (
+    !!texts &&
+    segments.every(
+      (s) => s.kind !== 'conflict' || texts[s.index] === undefined || texts[s.index] === file.proposals?.[s.index]?.text
+    )
+  );
 }
 
 /**
@@ -1204,21 +1219,28 @@ function conflictsLeft(blocks: readonly Conflict[], contents: string) {
 /**
  * The conflicts of a whole-file edit (#503) whose proposal still needs a choice and is still in the draft as it was:
  * its own text where the draft splits into its conflicts, else anywhere in the draft (an empty proposal always counts).
- * A conflict you chose or edited before the whole-file edit is yours already.
+ * A conflict you chose or edited before the whole-file edit is yours already, and so is one you chose after it (a Keep,
+ * Use the proposal or an edit: `picks`, `edits`), or one you accepted as edited in this draft (Accept my edit, #533).
  */
 function untouchedProposals(
-  file: Pick<ConflictFile, 'proposals'> & Partial<Pick<ConflictFile, 'wholeEdit'>>,
+  file: Pick<ConflictFile, 'proposals'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
   segments: ConflictSegment[],
   contents: string,
-  verdict: Verdict | undefined
+  verdict: Verdict | undefined,
+  picks: BlockPicks | undefined,
+  edits: BlockEdits | undefined
 ) {
   const texts = blockResolutions(segments, contents);
+  const accepted = contents === file.result ? file.wholeEdit?.accepted : undefined;
   const indexes = new Set<number>();
   for (const s of segments) {
     if (s.kind !== 'conflict') continue;
     const proposal = file.proposals?.[s.index];
     if (!proposal || needsNoChoice(proposal, verdict, s.index)) continue;
     if (file.wholeEdit?.picks?.[s.index] || file.wholeEdit?.edits?.[s.index]) continue;
+    if (accepted?.includes(s.index)) continue;
+    // A choice made after the edit counts only where the draft splits: it names the conflict's text there.
+    if (texts && (picks?.[s.index] || edits?.[s.index])) continue;
     const kept = texts ? texts[s.index] === proposal.text : !proposal.text || contents.includes(proposal.text);
     if (kept) indexes.add(s.index);
   }
@@ -1247,7 +1269,7 @@ export function blockBuckets(
   // that still needs a choice (Check, a type-check demotion included) and whose text your edit left in place stays Check:
   // only text you changed, or a choice you made before the edit, is your decision.
   if (wholeEdited(file, contents)) {
-    const unchanged = untouchedProposals(file, segments, contents, verdict);
+    const unchanged = untouchedProposals(file, segments, contents, verdict, ownPicks(saved), edits);
     const open = conflictsLeft(blocks, contents);
     return blocks.map((s) => (unchanged.has(s.index) ? 'check' : open.has(s.index) ? 'decide' : 'decided'));
   }
@@ -1329,18 +1351,35 @@ export const UNSPLIT_HINT =
   'Gnosis can’t match your edits to this file’s conflicts, so it can’t tell which proposals you chose. Select Reset file to choose each conflict again; it removes your edits to this file.';
 /** The wording for conflicts that wait for a choice in `contents`: chooseFirst, or UNSPLIT_HINT for a draft that can't be split. */
 export const waitingHint = (
-  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
+  file: Pick<ConflictFile, 'original'> & Partial<Pick<ConflictFile, 'result' | 'wholeEdit' | 'proposals'>>,
   contents: string,
   count: number
-) =>
-  wholeEdited(file, contents)
-    ? wholeEditHint(count)
-    : blockResolutions(parseConflicts(file.original), contents)
-      ? chooseFirst(count)
-      : UNSPLIT_HINT;
-/** Why a whole-file edit (#503) waits: it left a proposal in Check as it was, and nobody chose it. */
+) => {
+  const splits = !!blockResolutions(parseConflicts(file.original), contents);
+  if (wholeEdited(file, contents)) return splits ? chooseFirst(count) : wholeEditHint(count);
+  return splits ? chooseFirst(count) : UNSPLIT_HINT;
+};
+/**
+ * Why a whole-file edit (#503) that can't be split into its conflicts waits: it left a proposal in Check as it was, and
+ * nobody chose it. Accept my edit is the way out you choose (#533); Gnosis never takes the proposal for you.
+ */
 export const wholeEditHint = (count: number) =>
-  `Your edit left the proposal for ${count === 1 ? 'a conflict' : `${count} conflicts`} in Check as it was. Change those lines in the editor, or select Undo and choose for ${count === 1 ? 'it' : 'them'} first.`;
+  `Your edit left the proposal for ${count === 1 ? 'a conflict' : `${count} conflicts`} in Check as it was. Select Accept my edit to make ${count === 1 ? 'it' : 'them'} your decision, change those lines in the editor, or select Undo and choose first.`;
+/**
+ * The conflicts Accept my edit (#533) would make yours: a whole-file edit that can't be split into its conflicts, saved
+ * as it is on screen, with a proposal it left in Check. Empty otherwise: where the draft splits, each conflict has its own
+ * choices.
+ */
+export function acceptableConflicts(
+  file: Pick<ConflictFile, 'original' | 'proposals' | 'unsupported' | 'wholeFile'> &
+    Partial<Pick<ConflictFile, 'result' | 'wholeEdit'>>,
+  contents: string,
+  verdict: Verdict | undefined
+): number[] {
+  if (contents !== file.result || !wholeEdited(file, contents)) return [];
+  if (blockResolutions(parseConflicts(file.original), contents)) return [];
+  return unchosenConflicts(file, contents, verdict);
+}
 
 /**
  * The draft as preparation leaves it, and the target of Reset file: the original conflict with only the proposals that
