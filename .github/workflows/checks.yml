@@ -38,7 +38,9 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          set -uo pipefail
+          # Actions runs this with bash -e. A grep that matches nothing must not end the step, so -e is off;
+          # every failure path below decides on its own, and fails open to running the native suites.
+          set +e -uo pipefail
           run_native() {
             echo "$1"
             echo native=true >> "$GITHUB_OUTPUT"
@@ -58,7 +60,7 @@ jobs:
           safe='^(docs/|site/|\.github/ISSUE_TEMPLATE/)|\.md$|(^|/)(LICENSE|LICENCE|COPYING|NOTICE)([.-][^/]*)?$'
           # Markdown under the code and test folders can be test data (tests/fixtures/conflicts), so it is not safe.
           code='^(tests|src|lib|components|scripts|resources|extensions)/'
-          others=$( (printf '%s\n' "$files" | grep -Ev "$safe"; printf '%s\n' "$files" | grep -E "$code") | sort -u)
+          others=$( { printf '%s\n' "$files" | grep -Ev "$safe"; printf '%s\n' "$files" | grep -E "$code"; } | sort -u || true)
           if [ -n "$others" ]; then
             echo "These files are not on the list that skips the native suites:"
             printf '%s\n' "$others" | sed -n '1,20p'
