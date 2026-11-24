@@ -2,15 +2,30 @@
 
 The Checks workflow uses different browser coverage for pull requests and pushes to `main`.
 
-| Check                                       | PR: Linux         | PR: macOS / Windows | Every push to `main`: all platforms |
-| ------------------------------------------- | ----------------- | ------------------- | ----------------------------------- |
-| TypeScript and unit tests                   | Full              | Full                | Full                                |
-| Startup bundle                              | Yes               | No                  | Linux only                          |
-| Electron integration smoke                  | Yes               | Yes                 | Yes                                 |
-| Explainer, workbench, and D2 browser suites | Full, in 6 shards | Targeted smoke      | Full                                |
-| Unsigned app and installers                 | Yes               | Yes                 | Yes                                 |
+| Check                                       | PR: Linux         | PR: macOS / Windows                           | Every push to `main`: all platforms |
+| ------------------------------------------- | ----------------- | --------------------------------------------- | ----------------------------------- |
+| TypeScript and unit tests                   | Full              | Full (Windows unit tests in 2 shards)         | Full                                |
+| Startup bundle                              | Yes               | No                                            | Linux only                          |
+| Electron integration smoke                  | Yes               | Yes                                           | Yes                                 |
+| Explainer, workbench, and D2 browser suites | Full, in 6 shards | Targeted smoke; full on UI PRs (4 / 5 shards) | Full                                |
+| Unsigned app and installers                 | Yes               | Yes                                           | Yes                                 |
 
 A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` gets a unique concurrency group: a later push does not cancel or replace an earlier full run. There are no path filters on the workflow.
+
+## Native browser suites on pull requests
+
+The `Native suites needed` job decides whether a run gets the full macOS and Windows browser suites (`Browser (macos-latest n/4)` and `Browser (windows-latest n/5)`). They run on every push to `main`. On a pull request they run when it changes a path they cover: `components/`, `lib/`, `src/renderer*`, CSS under `src/`, `tests/*-browser.ts`, `tests/fixtures/`, the browser test harness (`scripts/test-workbench.mjs`, `scripts/run-browser-suites.mjs`, `tests/electron-test-shim.ts`, `tests/workbench-ready.ts`), the native duration files, or `.github/workflows/checks.yml`. To run them on any other PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, not from the event.
+
+On other PRs the native jobs show as skipped. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.
+
+Before you open a PR that changes UI, run the same suites on your own Mac or Windows machine:
+
+```sh
+npm run test:native-local -- --list --shard 1/4   # the suites of Browser (macos-latest 1/4)
+npm run test:native-local -- --shard 1/4          # run them, natively
+```
+
+It uses the CI shards for this platform, opens the test windows no larger than the runner's work area on macOS (1024x677, `GNOSIS_TEST_WORK_AREA`), keeps timing budgets report-only as on CI, and ends with a summary of every suite. The windows take focus. A suite that also fails on an untouched `main` checkout here is a host difference: say so in the PR.
 
 ## Smoke coverage
 
@@ -28,7 +43,13 @@ On Linux, six `Browser (shard n/6)` jobs run the full explainer, workbench and D
 
 `scripts/run-browser-suites.mjs` reads the suite list from the `test:explainer`, `test:workbench` and `test:diagrams` scripts in `package.json`, so a new suite needs no other change. It balances shards by the measured durations in `scripts/browser-suite-durations.json`. A suite without a measurement gets the median duration. Each shard runs all of its suites after a failure and lists every failed suite at the end.
 
-`Check (ubuntu-latest)` runs `--verify 6`, which fails if a suite is missing from the shards or appears in more than one. Each shard uploads its measured durations as an artifact. Copy them into `scripts/browser-suite-durations.json` when shards drift out of balance.
+The macOS and Windows jobs balance with their own measurements, `scripts/browser-suite-durations-macos.json` and `scripts/browser-suite-durations-windows.json` (`--weights`). A suite's share of the time differs a lot between the platforms. These files were seeded with the median of each suite's `✔ name (Ns)` lines in the native job logs of five `main` runs on 2026-11-23 and 2026-11-24.
+
+`Check (ubuntu-latest)` runs `--verify` for the Linux, macOS and Windows shards, which fails if a suite is missing from the shards or appears in more than one. Each Linux and native shard uploads its measured durations as an artifact (`browser-suite-durations-<n>`, `browser-suite-durations-<platform>-<n>`). Copy them into the matching file when shards drift out of balance. If you change the number of native shards, change `NATIVE_SHARDS` in `scripts/run-browser-suites.mjs` too; `tests/unit-shards.test.ts` checks that they match.
+
+## Windows unit tests
+
+On Windows, `npm test` runs in two `Unit tests (windows-latest n/2)` jobs instead of in `Check (windows-latest)`. Spawning git is several times slower there, and the conflict-resolution tests, which run twice (full history and shallow), took about 16 minutes in one file. `scripts/run-unit-tests.mjs --shard i/n` gives each job a share of the files. A file that takes `test` from `tests/support/test-part.ts` runs in every job, and each job runs every n-th of its tests (`GNOSIS_TEST_PART`). Use it for any other unit test file that grows that long.
 
 ```sh
 node scripts/run-browser-suites.mjs --list --shard 2/6    # suites in one shard, with weights

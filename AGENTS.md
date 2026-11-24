@@ -14,6 +14,12 @@ npm run test:browser:docker                             # full suite, as on Linu
 - Run only the checks that cover your change. The full suite takes about 15 minutes.
 - Never set `GNOSIS_BROWSER_ON_HOST=1` unless the user asks for a check on the host, such as the macOS-only `--navigation-swipe` check.
 - If Docker isn't running, tell the user. Don't fall back to running the checks on the host.
+- **Before you open a PR that changes UI, run the native pre-flight.** That is any PR the `Native suites needed` job picks up: `components/`, `lib/`, `src/renderer*`, CSS, browser tests, fixtures or the browser test harness ([list](docs/continuous-integration.md#native-browser-suites-on-pull-requests)). `npm run test:native-local` runs the suites of the macOS and Windows CI jobs natively on this machine, in the same shards, with test windows at the runner's work area (1024x677 on macOS), and prints a summary. Run every shard (`-- --shard 1/4` to `4/4` on macOS), and put the summary's failures in the PR description. It opens windows that take focus, and it is the one host run that needs no request from the user. A suite that also fails on an untouched `main` checkout on this machine is a host difference; say so in the PR.
+
+```bash
+npm run test:native-local -- --list --shard 1/4   # the suites of Browser (macos-latest 1/4)
+npm run test:native-local -- --shard 1/4          # run them
+```
 
 **Browser checks wait for the screen to settle.** After an action, a check waits for a settled signal or for a condition the page reports, then reads layout or the DOM. Never read after a fixed sleep or a number of animation frames: a slow CI runner needs more of both, and the check fails at random. Wait on `waitSettled(contents, key)` from `tests/workbench-ready.ts` for a part that registers with `lib/test-settled.ts` (a virtualized list registers with `useVirtualizerSettled`), and add a key there when a check needs one. After `win.setSize`, wait until `innerWidth` shows the new size. Assert ordering on the order itself, such as the order the worker started its jobs in, never on milliseconds; report the milliseconds with `assertPerf`.
 

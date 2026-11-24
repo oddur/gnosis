@@ -57,3 +57,6 @@ yarn-error.log*
 
 # browser extension build output
 /dist-extension/
+
+# npm run test:native-local
+/browser-suite-durations-local.json

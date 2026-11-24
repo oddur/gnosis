@@ -16,6 +16,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Whether this run needs the full macOS and Windows browser suites: on every push to main, and on a pull request
+    # that changes a path the suites cover or has the `native-ci` label. The labels are read from the API, not the event,
+    # so re-running the workflow after adding the label runs the suites.
+    name: Native suites needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      native: ${{ steps.decide.outputs.native }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "A push: the native suites run."
+            echo native=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          if printf '%s\n' "$labels" | grep -qx native-ci; then
+            echo "The PR has the native-ci label: the native suites run."
+            echo native=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs them.
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
+          ui='^(components/|lib/|tests/fixtures/|src/renderer|src/.*\.css$|tests/[^/]*-browser\.ts$|tests/electron-test-shim\.ts$|tests/workbench-ready\.ts$|scripts/test-workbench\.mjs$|scripts/run-browser-suites\.mjs$|scripts/browser-suite-durations-(macos|windows)\.json$|\.github/workflows/checks\.yml$)'
+          matched=$(printf '%s\n' "$files" | grep -E "$ui" || true)
+          if [ -n "$matched" ] || [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
+            echo "The PR changes paths the native suites cover:"
+            printf '%s\n' "$matched" | sed -n '1,20p'
+            echo native=true >> "$GITHUB_OUTPUT"
+          else
+            echo "No UI-affecting paths changed: the native suites are skipped. Add the native-ci label to run them."
+            echo native=false >> "$GITHUB_OUTPUT"
+          fi
+
   check:
     # Preserve the existing required-check names.
     name: Check (${{ matrix.os }})
@@ -49,7 +94,10 @@ jobs:
       - run: npm ci
       - run: npm run prepare:mergiraf
       - run: npx tsc --noEmit
-      - run: npm test
+      # Windows runs the unit tests in the two `Unit tests (windows-latest n/2)` jobs instead.
+      - name: Unit tests
+        if: runner.os != 'Windows'
+        run: npm test
       - name: Startup bundle
         if: runner.os == 'Linux'
         run: npm run check:startup-bundle
@@ -68,7 +116,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           node scripts/run-browser-suites.mjs --verify 6
-          node scripts/run-browser-suites.mjs --verify 3
+          node scripts/run-browser-suites.mjs --verify 4 --weights scripts/browser-suite-durations-macos.json
+          node scripts/run-browser-suites.mjs --verify 5 --weights scripts/browser-suite-durations-windows.json
       - name: Browser smoke (PR, macOS / Windows)
         if: github.event_name == 'pull_request' && runner.os != 'Linux'
         run: npm run test:browser-smoke
@@ -124,19 +173,64 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  native-browser:
-    # The full browser suite on macOS and Windows, on pushes to main only (pull requests run the smoke
-    # suite in Check). Run serially it outgrew the 45-minute job limit, so it is split like Linux. On 2026-11-23 a Windows
-    # shard still ran past 35 minutes and was cancelled mid-suite, so each shard gets 45.
-    name: Browser (${{ matrix.os }} ${{ matrix.shard }}/3)
-    if: github.event_name == 'push'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+  unit-windows:
+    # npm test on Windows, in two halves. Spawning git is slow there: the conflict-resolution tests alone ran for 16
+    # minutes when Check ran npm test. scripts/run-unit-tests.mjs gives each half half of the other files, and half of
+    # the tests of each file that uses tests/support/test-part.ts.
+    name: Unit tests (windows-latest ${{ matrix.shard }}/2)
+    runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
-        shard: [1, 2, 3]
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
+      - run: npm ci
+      - run: npm run prepare:mergiraf
+      - name: Unit tests
+        run: node scripts/run-unit-tests.mjs --shard ${{ matrix.shard }}/2
+
+  native-browser:
+    # The full browser suite on macOS and Windows: on pushes to main, and on pull requests that change UI-affecting
+    # paths or have the `native-ci` label (see `changes`). Other pull requests run the smoke suite in Check. The shards
+    # are balanced by each platform's measured durations (scripts/browser-suite-durations-<platform>.json); their
+    # counts must match NATIVE_SHARDS in scripts/run-browser-suites.mjs. macOS gets 4 shards: the account runs at most
+    # 5 macOS jobs at once, and Check and Package take one each.
+    name: Browser (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }})
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, platform: macos, shards: 4, shard: 1 }
+          - { os: macos-latest, platform: macos, shards: 4, shard: 2 }
+          - { os: macos-latest, platform: macos, shards: 4, shard: 3 }
+          - { os: macos-latest, platform: macos, shards: 4, shard: 4 }
+          - { os: windows-latest, platform: windows, shards: 5, shard: 1 }
+          - { os: windows-latest, platform: windows, shards: 5, shard: 2 }
+          - { os: windows-latest, platform: windows, shards: 5, shard: 3 }
+          - { os: windows-latest, platform: windows, shards: 5, shard: 4 }
+          - { os: windows-latest, platform: windows, shards: 5, shard: 5 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -164,7 +258,18 @@ jobs:
         # vary much more from run to run, so they get more room; the Linux shards on every PR guard the exact budgets.
         env:
           GNOSIS_PERF_BUDGET_SCALE: ${{ matrix.os == 'macos-latest' && '3' || '2' }}
-        run: node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/3
+        run: >-
+          node scripts/run-browser-suites.mjs --shard ${{ matrix.shard }}/${{ matrix.shards }}
+          --weights scripts/browser-suite-durations-${{ matrix.platform }}.json
+          --durations browser-suite-durations-${{ matrix.platform }}-${{ matrix.shard }}.json
+      - name: Upload suite durations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-suite-durations-${{ matrix.platform }}-${{ matrix.shard }}
+          path: browser-suite-durations-${{ matrix.platform }}-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   extension:
     # Builds the "Open in Gnosis" browser extension (extensions/browser) and uploads the unsigned packages.
