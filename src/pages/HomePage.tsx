@@ -1157,7 +1157,12 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const queueGrouping = useMemo(() => section === 'saved' ? undefined : groupQueueItems(sortedItems, filters.groupBy, { actionGroups, collapsed: collapsedSet }),
     [section, sortedItems, filters.groupBy, actionGroups, collapsedSet]);
   const toggleGroup = useCallback((key: string) => setCollapsedGroups(current => persistCollapsedGroups(toggleCollapsedGroup(current, groupViewKey, key))), [groupViewKey]);
-  const orderedItems = useListOrder(queueGrouping ? queueGrouping.items : sortedItems, item => item.subject.id);
+  // While the pointer rests on the queue, sync does not reorder it (#549); the new order applies when it leaves. What
+  // the reader changes (sort, filters, grouping, stars, the view) applies at once.
+  const [pointerInQueue, setPointerInQueue] = useState(false);
+  const orderScope = useMemo(() => JSON.stringify([section, activeQueueView?.id, filters, collapsedGroups[groupViewKey], [...starredUrls].sort()]),
+    [section, activeQueueView?.id, filters, collapsedGroups, groupViewKey, starredUrls]);
+  const orderedItems = useListOrder(queueGrouping ? queueGrouping.items : sortedItems, item => item.subject.id, pointerInQueue, orderScope);
   const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
   // Switching to a view reads its first screenful again; resting on one in the sidebar prepares it (#saved-view-sync).
   const shownUrls = useMemo(() => orderedItems.flatMap(item => item.subject.members.map(member => member.url)).slice(0, 15), [orderedItems]);
@@ -2474,6 +2479,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                     scrollElement={queueScrollElement}
                     onVisibleItemsChange={updateVisibleQueueIds}
                     onIntent={onQueueIntent}
+                    onPointerInside={setPointerInQueue}
                     measurements={queueMeasurements}
                     initialOffset={queueScrollOffset.current}
                     renderRow={row}

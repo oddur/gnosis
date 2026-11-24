@@ -84,6 +84,10 @@ void app.whenReady().then(async () => {
     await click('Done');
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.sort.key==='title')");
     const selectedOffset = await js<number>("document.querySelector('[data-queue-id=\"synthetic-525\"]').getBoundingClientRect().top-document.querySelector('.queue-list').getBoundingClientRect().top");
+    // The pointer goes to the toolbar's refresh button first: while it rests on the list, sync keeps the order (#549).
+    const refresh = await js<{ x: number; y: number }>("(()=>{const r=document.querySelector('.queue-toolbar button[aria-label]').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...refresh });
+    await wait("!!document.querySelector('.queue-toolbar button[aria-label]:hover')");
     await js("window.syntheticQueue[525].subject.members[0].title='Synthetic PR 50.5';document.querySelector('.queue-toolbar button[aria-label]').click()");
     await wait("document.querySelector('[data-queue-id=\"synthetic-525\"]').dataset.index==='51'");
     await new Promise(resolve => setTimeout(resolve, 700));

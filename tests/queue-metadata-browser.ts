@@ -1,4 +1,4 @@
-import { loadWorkbenchPage } from './workbench-ready';
+import { loadWorkbenchPage, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -26,9 +26,121 @@ void app.whenReady().then(async () => {
       (await win.webContents.capturePage()).toPNG()
     );
   };
+  /**
+   * Rows stay put under the pointer when sync changes them (#549). Background sync adds and removes readiness, review
+   * and comment badges, changes the checks label, and moves a PR it saw updated up the list. If a row's height or
+   * place changed under the pointer, a click aimed at one row could land on another row's control, such as its Checks
+   * button. Rows keep one height whatever their badges say, and the list keeps its order while the pointer is on it.
+   */
+  const stableRows = async () => {
+    const url = process.env.GNOSIS_WORKBENCH_URL;
+    // A list long enough to be virtualized, as a real queue is: rows there are placed from their measured heights.
+    await loadWorkbenchPage(win, `${url}?github-sync`);
+    await wait("document.querySelectorAll('.queue-item').length > 0");
+    await js(`(async()=>{
+      const queue=await window.electronAPI.workbenchQueue();
+      const items=Array.from({length:60},(_,i)=>{
+        const item=structuredClone(queue.items[i%queue.items.length]);
+        item.subject.id='stable-'+i;
+        item.subject.members=item.subject.members.map((m,j)=>({...m,url:'https://github.com/fixture/stable/pull/'+(100+i*4+j),number:100+i*4+j,headSha:'stablesha-'+i+'-'+j}));
+        return item;
+      });
+      window.__stableItems=items;
+      // One sync answer per state. 'plain' has few, short badges; 'busy' has more and longer ones, and comments.
+      const readiness={state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'CHANGES_REQUESTED',baseBranch:'main',baseSha:'base',behindBy:0,mergeQueue:false,queueState:null};
+      window.__stableState=r=>{const n=Number(r.url.split('/').pop());return {
+        plain:{...r,checkedAt:Date.now(),comments:0,readiness,checks:{state:'success',passed:2,total:2}},
+        busy:{...r,checkedAt:Date.now(),comments:1284,readiness:{...readiness,reviewDecision:['APPROVED','CHANGES_REQUESTED','REVIEW_REQUIRED'][n%3],mergeState:'BLOCKED',behindBy:12},
+          checks:n%2?{state:'success',passed:140,total:140}:{state:'failure',passed:120,failed:17,skipped:3,total:140}},
+      }};
+      window.__stableMode='plain';
+      window.electronAPI.getQueueSignals=async requests=>requests.map(r=>window.__stableState(r)[window.__stableMode]);
+      window.electronAPI.workbenchQueue=async()=>({...queue,items:structuredClone(items)});
+      window.electronAPI.workbenchSnapshot=window.electronAPI.workbenchQueue;
+      document.querySelector('.queue-toolbar button[aria-label]').click();
+    })()`);
+    await wait("!!document.querySelector('[data-queue-total=\"60\"]') && !!document.querySelector('.queue-list [data-queue-id] .queue-checks.is-success')");
+    // Rows whose status is on screen: those are the ones that watch sync.
+    const rows = `[...document.querySelectorAll('.queue-list [data-queue-id]')].filter(row=>{const r=(row.querySelector('.queue-metadata')??row).getBoundingClientRect(),list=document.querySelector('.queue-list').getBoundingClientRect();return r.bottom>Math.max(0,list.top)&&r.top<Math.min(innerHeight,list.bottom)})`;
+    type Row = { id: string; top: number; height: number; status: string };
+    const geometry = () =>
+      js<Row[]>(`${rows}.map(row=>{const r=row.getBoundingClientRect();return {id:row.dataset.queueId,top:r.top,height:r.height,status:row.querySelector('.queue-metadata')?.textContent??''}})`);
+    // GNOSIS_QUEUE_ROW_SHOTS=1 prints the top rows as `QRSHOT <name> <part>/<parts> <base64 PNG part>` lines, for
+    // review. Short lines keep other output from splitting them.
+    const shot = async (name: string) => {
+      if (!process.env.GNOSIS_QUEUE_ROW_SHOTS) return;
+      await js('document.fonts.ready');
+      const rect = await js<{ x: number; y: number; width: number; height: number }>(
+        `(()=>{const r=${rows}.slice(0,3).map(row=>row.getBoundingClientRect());return {x:Math.floor(r[0].left),y:Math.floor(r[0].top),width:Math.ceil(r[0].width),height:Math.ceil(Math.min(innerHeight,r.at(-1).bottom)-r[0].top)}})()`
+      );
+      const png = (await win.webContents.capturePage(rect)).toPNG().toString('base64');
+      const parts = Math.ceil(png.length / 4000);
+      for (let i = 0; i < parts; i++) console.log(`QRSHOT ${name} ${i + 1}/${parts} ${png.slice(i * 4000, (i + 1) * 4000)}`);
+    };
+    // Every visible row gets the sync answer for `mode`; sent again while waiting, since a row that comes into view
+    // subscribes after the first send. Waits until each row shows it and the list has settled.
+    const sync = async (mode: 'plain' | 'busy', also = 'true') => {
+      await js(`(()=>{window.__stableMode=${JSON.stringify(mode)};window.__stableEmit=()=>{
+        for(const interest of window.syncFixture.subscriptions.values())if(interest.kind==='signals')
+          for(const t of interest.targets)window.syncFixture.emit({kind:'signals',url:t.url,value:window.__stableState({url:t.url,headSha:t.headSha??''})[window.__stableMode]});
+      }})()`);
+      await wait(`(window.__stableEmit(),${rows}.every(row=>${mode === 'busy' ? '' : '!'}row.querySelector('.queue-comments'))&&(${also}))`);
+      await waitSettled(win.webContents, 'queue-list');
+    };
+    const compare = (label: string, before: Row[], after: Row[]) => {
+      assert.ok(before.length >= 3, `${label}: several rows on screen (${before.length})`);
+      assert.ok(after.some((row, i) => row.status !== before.at(i)?.status), `${label}: sync changed the rows' badges`);
+      const moved = after.flatMap((row, i) => {
+        const was = before.at(i);
+        return !was || was.id !== row.id || Math.abs(was.top - row.top) >= 0.5 || Math.abs(was.height - row.height) >= 0.5
+          ? [`${was?.id}@${Math.round(was?.top ?? -1)}+${Math.round(was?.height ?? -1)} -> ${row.id}@${Math.round(row.top)}+${Math.round(row.height)}`]
+          : [];
+      });
+      assert.deepEqual(moved, [], `${label}: rows keep their place and height`);
+    };
+    for (const [width, height] of [[1280, 800], [1024, 677], [860, 760], [720, 760]] as const) {
+      win.setSize(width, height);
+      await wait(`innerWidth===${win.getContentSize()[0]}`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      await sync('plain');
+      await js("document.querySelector('.queue-list').scrollTop=0");
+      await waitSettled(win.webContents, 'queue-list');
+      // The pointer rests on the second row's status line.
+      const at = await js<{ x: number; y: number }>(`(()=>{const r=${rows}[1].querySelector('.queue-status-line').getBoundingClientRect();return {x:Math.round(r.left+8),y:Math.round(r.top+r.height/2)}})()`);
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y });
+      const under = `document.elementFromPoint(${at.x},${at.y})?.closest('[data-queue-id]')?.dataset.queueId`;
+      await wait(`${under}===${rows}[1].dataset.queueId`);
+      const plain = await geometry();
+      await shot(`plain-${width}`);
+      // The same sync labels the rows on screen and reports the last one updated, which sorts it to the top of its
+      // group. It also renames the first row: once the new name shows, the queue has rendered that snapshot.
+      const moved = await js<{ id: string; position: number; renamed: string }>(`(()=>{const shown=${rows};const last=shown.at(-1);
+        for(const row of shown){const item=window.__stableItems.find(i=>i.subject.id===row.dataset.queueId);
+          item.subject.members=item.subject.members.map(m=>({...m,labels:['needs backport to release branches','performance regression','area: transport layer']}));}
+        const item=window.__stableItems.find(i=>i.subject.id===last.dataset.queueId);
+        item.subject.members=item.subject.members.map(m=>({...m,updatedAt:new Date(Date.now()+60_000).toISOString()}));
+        const first=window.__stableItems.find(i=>i.subject.id===shown[0].dataset.queueId);
+        first.subject.title=first.subject.members[0].title='Renamed by sync ${width}: keep pending commands in order when the worker restarts';
+        window.syncFixture.changed();
+        return {id:last.dataset.queueId,position:Number(last.getAttribute('aria-posinset')),renamed:first.subject.id}})()`);
+      await sync('busy', `!!document.querySelector('[data-queue-id="${moved.renamed}"]')?.textContent.includes('Renamed by sync ${width}')`);
+      const busy = await geometry();
+      await shot(`busy-${width}`);
+      compare(`${width}px, badges added and a row moved up`, plain, busy);
+      assert.equal(await js(under), plain[1].id, 'The row under the pointer is still the one there');
+      await sync('plain');
+      compare(`${width}px, badges removed`, busy, await geometry());
+      // Once the pointer leaves the list, the held order applies: the updated row moves up.
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      await wait(`Number(document.querySelector('[data-queue-id="${moved.id}"]')?.getAttribute('aria-posinset'))<${moved.position}`);
+      console.log(`Rows stay in place at ${width}px: ${plain.length} rows, heights ${[...new Set(plain.map((row) => Math.round(row.height)))].join('/')} px.`);
+    }
+    win.setSize(1280, 800);
+  };
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
+    await stableRows();
     // Saved status arrives with the first snapshot, so the first commit with rows has its badges.
     await loadWorkbenchPage(win, url + '?saved-signals');
     await wait('!!window.firstQueueFrame');

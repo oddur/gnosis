@@ -1,12 +1,22 @@
 import { useLayoutEffect, useRef } from 'react';
 import { useEntryMenusOpen } from './entry-menu-state';
 
-/** Keep menu targets in place while still applying refreshed row content. */
-export function useListOrder<T>(sorted: T[], key: (item: T) => string): T[] {
-  const menusOpen = useEntryMenusOpen();
+/**
+ * Keep menu targets in place while still applying refreshed row content. `hold` keeps the order too, such as while the
+ * pointer rests on the list (#549): a row that sync moved would otherwise slide under a click aimed at another row.
+ * New entries go to the end until the hold ends. A change of `scope`, such as the reader choosing another sort or
+ * starring a PR, applies at once: `hold` only keeps changes the reader did not make.
+ */
+export function useListOrder<T>(sorted: T[], key: (item: T) => string, hold = false, scope = ''): T[] {
   const order = useRef<string[]>([]);
-  useLayoutEffect(() => { if (!menusOpen) order.current = sorted.map(key); });
-  if (!menusOpen || !order.current.length) return sorted;
+  const orderScope = useRef(scope);
+  const held = useEntryMenusOpen() || (hold && orderScope.current === scope);
+  useLayoutEffect(() => {
+    if (held) return;
+    order.current = sorted.map(key);
+    orderScope.current = scope;
+  });
+  if (!held || !order.current.length) return sorted;
   const positions = new Map(order.current.map((id, index) => [id, index]));
   return [...sorted].sort((a, b) => (positions.get(key(a)) ?? Infinity) - (positions.get(key(b)) ?? Infinity));
 }

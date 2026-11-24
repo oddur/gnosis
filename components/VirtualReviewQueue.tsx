@@ -1,4 +1,5 @@
 import { useListScrollAnchor } from '../lib/use-list-order';
+import { useVirtualizerSettled } from '../lib/test-settled';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrStarMarker } from './PrEntryActions';
@@ -56,6 +57,8 @@ interface Props {
   onVisibleItemsChange?: (ids: string[]) => void;
   /** The row under the pointer or keyboard focus, or null when neither rests on a row. */
   onIntent?: (id: string | null) => void;
+  /** Whether the pointer is over the list. Called with false when the list unmounts. */
+  onPointerInside?: (inside: boolean) => void;
   /** Group by Action or Repository: a sticky, collapsible heading before each group. `items` are in group order. */
   groups?: QueueGrouping;
   onToggleGroup?: (key: string) => void;
@@ -80,7 +83,7 @@ function GroupHeading({ group, onToggle }: { group: QueueGroup; onToggle?: (key:
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, grouped = true, starredFirst = true, groups, onToggleGroup, reveal }: Props) {
+export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, onPointerInside, grouped = true, starredFirst = true, groups, onToggleGroup, reveal }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<string | null>(null);
   // Without groups, one line per entry, as before. Grouped, a heading line before each group's entries.
@@ -149,6 +152,27 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
       ])].sort((a, b) => a - b);
     },
   });
+  useVirtualizerSettled('queue-list', virtualizer, virtual);
+  // Whether the pointer is over the list, from the element it enters, not from leave events: when sync replaces the
+  // element under the pointer, the browser sends no leave event for the list once the pointer goes.
+  useEffect(() => {
+    const list = container.current;
+    if (!list || !onPointerInside) return;
+    let inside = false;
+    const set = (next: boolean) => {
+      if (next !== inside) onPointerInside((inside = next));
+    };
+    const over = (event: PointerEvent) => set(event.target instanceof Node && list.contains(event.target));
+    // Leaving the window.
+    const out = (event: PointerEvent) => { if (!event.relatedTarget) set(false); };
+    document.addEventListener('pointerover', over, true);
+    document.addEventListener('pointerout', out, true);
+    return () => {
+      document.removeEventListener('pointerover', over, true);
+      document.removeEventListener('pointerout', out, true);
+      set(false);
+    };
+  }, [onPointerInside]);
   useListScrollAnchor(scrollElement, ids, selected, index => {
     const line = index >= 0 ? indexes.get(ids[index]) ?? -1 : -1;
     if (virtual && line >= 0) virtualizer.scrollToIndex(line, { align: 'start' });
