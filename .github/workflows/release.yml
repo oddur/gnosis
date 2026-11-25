@@ -57,7 +57,7 @@ jobs:
             echo "$TAG ($sha) passed Checks on main."
             exit 0
           fi
-          echo "::error::$TAG ($sha) has no passing Checks run on main. Wait for it, or re-run this workflow by hand with skip_checks for a known flaky failure."
+          echo "::error::$TAG ($sha) has no passing Checks run on main. If its Checks run was cancelled or is still running, re-run or wait for it. For a failure known to be a flaky test only, re-run this workflow by hand with skip_checks."
           exit 1
 
   # The account runs at most 5 macOS jobs at once, and a push to main uses all of them. Cancel Checks runs
