@@ -1,8 +1,16 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readReviewState, scheduleReviewStateWrite, writeReviewState } from './renderer-review-state';
 import { subjectForReview } from './workbench';
 import type { ReviewGuide } from './types';
-import { explanationFileParts, partCheckbox, readViewedParts, togglePart, viewedPartsKey } from './viewed-parts';
+import {
+  clearUnviewed,
+  explanationFileParts,
+  partCheckbox,
+  readViewedParts,
+  sectionPartSeen,
+  togglePart,
+  viewedPartsKey,
+} from './viewed-parts';
 
 /**
  * Viewed by parts (#564) for an explanation: its files' parts, the parts seen, and a section checkbox's state and
@@ -14,7 +22,7 @@ export function useViewedParts(
   viewedFiles: ReadonlySet<string>,
   setFileViewed: (path: string, viewed: boolean) => unknown
 ) {
-  const parts = useMemo(() => explanationFileParts(review), [review.slides, review.focusedSections]);
+  const parts = useMemo(() => explanationFileParts(review), [review.slides, review.focusedSections, review.noiseReduction]);
   const revision = review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId ?? '';
   const key = viewedPartsKey(subjectForReview(review), revision);
   const read = () => {
@@ -47,13 +55,31 @@ export function useViewedParts(
     (filePath: string, section: number) => partCheckbox(parts?.get(filePath), section, seen, viewedFiles.has(filePath)),
     [parts, seen, viewedFiles]
   );
+  const partSeen = useCallback(
+    (filePath: string, section: number) => sectionPartSeen(parts?.get(filePath), section, seen, viewedFiles.has(filePath)),
+    [parts, seen, viewedFiles]
+  );
+  // Files a section's checkbox un-views keep their other parts seen; files un-viewed elsewhere lose them (#564).
+  const ownUnview = useRef(new Set<string>());
   const change = useCallback(
     (filePath: string, section: number, next: boolean) => {
-      const result = togglePart(parts?.get(filePath), section, next, seen, viewedFiles.has(filePath));
+      const result = togglePart(parts, filePath, section, next, seen, (path) => viewedFiles.has(path));
       if (parts) save(result.seen);
-      if (result.viewed !== undefined) void setFileViewed(filePath, result.viewed);
+      for (const [path, value] of result.viewed) {
+        if (!value) ownUnview.current.add(path);
+        void setFileViewed(path, value);
+      }
     },
     [parts, seen, viewedFiles, setFileViewed, save]
   );
-  return { parts, checkbox, change };
+  const before = useRef<ReadonlySet<string>>(viewedFiles);
+  useEffect(() => {
+    const previous = before.current;
+    before.current = viewedFiles;
+    if (!parts) return;
+    const unviewed = [...previous].filter((path) => !viewedFiles.has(path) && !ownUnview.current.delete(path));
+    const next = unviewed.length ? clearUnviewed(parts, seen, unviewed) : seen;
+    if (next.size !== seen.size) save(next);
+  });
+  return { parts, checkbox, partSeen, change };
 }

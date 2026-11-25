@@ -29,6 +29,8 @@ interface Props {
    * `aria-checked="mixed"`), and the label that replaces "Viewed", such as "2 of 4 parts seen".
    */
   viewedParts?: { mixed: boolean; label: string; outside?: boolean };
+  /** Viewed by parts (#564): this section owns no part of the file, so its Viewed mark shows read-only. */
+  viewedReadOnly?: boolean;
   headerRef?: RefObject<HTMLElement | null>;
   /** The diff's Pierre theme: the header takes its palette, as Changes' does (lib/code-palette.ts). */
   codeTheme?: string;
@@ -61,6 +63,7 @@ export function ReviewFileHeader({
   viewed = false,
   onViewedChange,
   viewedParts,
+  viewedReadOnly,
   headerRef,
   codeTheme,
   sectionHunks,
@@ -126,7 +129,13 @@ export function ReviewFileHeader({
                 <span className="sr-only"> pending {commentCount === 1 ? 'comment' : 'comments'}</span>
               </span>
             )}
-            {onViewedChange && (
+            {viewedReadOnly && (
+              <label className="review-file-viewed" data-parts="read-only" title="Mark this file in a section that shows its parts, or in Changes">
+                <input type="checkbox" checked={viewed} disabled readOnly aria-label={`Viewed ${displayPath}`} />
+                Viewed
+              </label>
+            )}
+            {onViewedChange && !viewedReadOnly && (
               <label
                 className="review-file-viewed"
                 data-parts={viewedParts ? (viewedParts.mixed ? 'mixed' : 'unseen') : undefined}

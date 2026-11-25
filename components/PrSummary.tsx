@@ -328,17 +328,19 @@ function PrSummaryContent({
   const currentExplanation =
     explanations.find((e) => !e.status || e.status === 'completed') ?? (item.review?.status === 'completed' ? item.review : undefined);
   const currentExplanationId = currentExplanation?.id;
-  const readExplanation = tab === 'changes' && !!currentExplanationId && !!currentExplanation?.explanationOptions?.focusedSections;
-  const [loadedExplanation, setLoadedExplanation] = useState<ReviewGuide>();
+  const readExplanation = tab === 'changes' && !!currentExplanationId && !!currentExplanation.explanationOptions?.focusedSections;
+  // The explanation Changes marks from is held here, so the markers stay when the explanation cache drops it.
+  const [heldExplanation, setHeldExplanation] = useState<ReviewGuide>();
+  const peeked = peekExplanation(currentExplanationId);
+  if (peeked && peeked !== heldExplanation) setHeldExplanation(peeked);
+  const held = heldExplanation?.reviewId === currentExplanationId ? heldExplanation : undefined;
   useEffect(() => {
-    if (!readExplanation || !currentExplanationId || peekExplanation(currentExplanationId)) return;
+    if (!readExplanation || !currentExplanationId || held) return;
     let live = true;
-    void loadExplanation(currentExplanationId).then((next) => { if (live) setLoadedExplanation(next); }).catch(() => {});
+    void loadExplanation(currentExplanationId).then((next) => { if (live) setHeldExplanation(next); }).catch(() => {});
     return () => { live = false; };
-  }, [readExplanation, currentExplanationId]);
-  const changesExplanation = currentExplanationId
-    ? (peekExplanation(currentExplanationId) ?? (loadedExplanation?.reviewId === currentExplanationId ? loadedExplanation : undefined))
-    : undefined;
+  }, [readExplanation, currentExplanationId, held]);
+  const changesExplanation = currentExplanationId ? (peeked ?? held) : undefined;
   const [explanationJump, setExplanationJump] = useState<ExplanationDestination>();
   // A destination from outside the PR replaces a marker's jump.
   useEffect(() => setExplanationJump(undefined), [explanationDestination]);

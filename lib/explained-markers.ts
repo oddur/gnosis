@@ -5,7 +5,8 @@ import type { DiffHunk, ReviewGuide } from './types';
  * Focused sections (#564): where Changes says which section explains each part of a file. Changes still shows every
  * line; a marker is a slim note at the first changed line of a unit (a slice, or a whole hunk):
  * - `section`: "Explained in section N ↗", for code a section shows;
- * - `outside`: "Left out of the explanation", for code no section shows (`focusedSections.outside`);
+ * - `outside`: "Left out of the explanation", for code no section shows (`focusedSections.outside`), or "Left out of the
+ *   explanation (noise)" for a hunk cut as noise (`noiseReduction.leftOut`);
  * - `moved`: "Moved: explained with X ↗", on a moved definition's old copy, whose new copy a section shows.
  *
  * Only an explanation made with Focused sections applied has markers. Everything here is pure, and computed once per
@@ -13,6 +14,8 @@ import type { DiffHunk, ReviewGuide } from './types';
  */
 export interface ExplainedMarker {
   kind: 'section' | 'outside' | 'moved';
+  /** An `outside` marker for a hunk cut as noise, with its reason as its name. */
+  noise?: boolean;
   /** The unit's first changed line, on its side, in that side's numbers from 1. */
   side: 'before' | 'after';
   start: number;
@@ -25,7 +28,7 @@ export interface ExplainedMarker {
   target?: { filePath: string; line: number; side: 'LEFT' | 'RIGHT' };
 }
 
-type Focused = Pick<ReviewGuide, 'slides' | 'focusedSections'>;
+type Focused = Pick<ReviewGuide, 'slides' | 'focusedSections'> & Partial<Pick<ReviewGuide, 'noiseReduction'>>;
 
 /** True when the explanation was made with Focused sections, and slicing ran (not the single-shot path). */
 export const focusedApplied = (review: Focused | undefined): boolean =>
@@ -109,6 +112,13 @@ export function explainedMarkers(review: Focused | undefined): Map<string, Expla
     const { side, start } = old ? { side: 'before' as const, start: old.start } : outsideLines(code);
     add(focused, code.filePath, { kind: 'outside', side, start, names: shortSliceNames(code.label) });
   }
+  // Hunks cut as noise (moved old copies cut with their new copy among them): left out too, unless a marker above
+  // already says where that code is.
+  for (const hunk of review.noiseReduction?.leftOut ?? []) {
+    const marked = (focused.get(hunk.filePath) ?? []).some((m) => m.start >= hunk.startLine && m.start <= hunk.endLine);
+    if (!marked)
+      add(focused, hunk.filePath, { kind: 'outside', noise: true, side: hunk.side, start: hunk.startLine, names: hunk.reason ? [hunk.reason] : [] });
+  }
   const markers = new Map<string, ExplainedMarker[]>();
   for (const [filePath, list] of focused) markers.set(filePath, [...list]);
   for (const { entry, rows, section, slideId } of wholes) {
@@ -141,8 +151,10 @@ export function explainedMarkers(review: Focused | undefined): Map<string, Expla
 /** A marker's words: its visible text, and the name a screen reader reads for its button. */
 export function markerWords(marker: ExplainedMarker): { text: string; name: string; detail?: string } {
   const what = marker.names.join(', ');
-  if (marker.kind === 'outside')
-    return { text: 'Left out of the explanation', name: `Left out of the explanation${what ? `: ${what}` : ''}`, detail: what || undefined };
+  if (marker.kind === 'outside') {
+    const text = marker.noise ? 'Left out of the explanation (noise)' : 'Left out of the explanation';
+    return { text, name: `${text}${what ? `: ${what}` : ''}`, detail: what || undefined };
+  }
   // Only a marker with a place to go shows the arrow of a link.
   const arrow = marker.target ? ' ↗' : '';
   if (marker.kind === 'moved') {

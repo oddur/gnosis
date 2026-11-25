@@ -79,6 +79,8 @@ interface Props {
   fileViewed?: boolean;
   /** Marks the file Viewed, offered once every symbol of its outline is ticked. */
   onMarkFileViewed?: () => void;
+  /** The outline's mark button's words, when it marks a part (#564). */
+  markFileLabel?: string;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -123,6 +125,7 @@ export function ReviewDiff({
   plainGaps,
   fileViewed,
   onMarkFileViewed,
+  markFileLabel,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -371,6 +374,7 @@ export function ReviewDiff({
             fileName: path.slice(path.lastIndexOf('/') + 1),
             fileViewed,
             onMarkFileViewed,
+            markFileLabel,
           }}
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}

@@ -90,7 +90,12 @@ export interface SlideViewProps {
    * seen. Unset: the checkbox marks the whole file, as before.
    */
   viewedParts?: {
-    checkbox: (filePath: string, section: number) => { checked: boolean; mixed: boolean; label?: string; outside?: boolean };
+    checkbox: (
+      filePath: string,
+      section: number
+    ) => { checked: boolean; mixed: boolean; label?: string; outside?: boolean; readOnly?: boolean };
+    /** The file is Viewed, or this section's part of it is seen. */
+    partSeen: (filePath: string, section: number) => boolean;
     onChange: (filePath: string, section: number, next: boolean) => void;
   };
   onContinue?: () => void;
@@ -512,7 +517,13 @@ export function SlideView({
       ),
     [groupedHunks, fileMetadataMap, contextLines]
   );
-  const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
+  // With parts (#564), a section is done when every part of its files it owns is seen.
+  const allFilesViewed =
+    groupedHunks.length > 0 &&
+    groupedHunks.every(({ filePath }) =>
+      viewedParts ? viewedParts.partSeen(filePath, sectionNumber) : viewedFiles?.has(filePath)
+    );
+  const onlyParts = allFilesViewed && groupedHunks.some(({ filePath }) => !viewedFiles?.has(filePath));
   const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
   // Each file's header, for its hunk headers to pin under (ChangesDiff).
@@ -923,7 +934,7 @@ export function SlideView({
         const part = viewedParts?.checkbox(filePath, sectionNumber);
         const partLabel = part?.label;
         const expanded = fileExpansion[key] ?? !(viewed || !!part?.mixed);
-        const changeViewed = onFileViewedChange
+        const changeViewed = onFileViewedChange && !part?.readOnly
           ? (next: boolean) => {
               if (viewedParts) viewedParts.onChange(filePath, sectionNumber, next);
               else onFileViewedChange(filePath, next);
@@ -1009,7 +1020,8 @@ export function SlideView({
             onOpenHidden={openHidden}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
-            fileViewed={viewed}
+            fileViewed={viewed || !!part?.mixed}
+            markFileLabel={partLabel === undefined ? undefined : 'Mark this part seen'}
             onMarkFileViewed={
               changeViewed
                 ? () => {
@@ -1044,6 +1056,7 @@ export function SlideView({
                 setFileExpansion((current) => ({ ...current, [key]: !expanded }));
               }}
               viewed={viewed}
+              viewedReadOnly={!!part?.readOnly}
               viewedParts={
                 partLabel === undefined
                   ? undefined
@@ -1121,7 +1134,7 @@ export function SlideView({
       {presentation === 'code' && allFilesViewed && groupedHunks.every(({ key }) => !fileExpansion[key]) && (
         <div className="explanation-viewed-code">
           <span>
-            <Check size={14} /> These files are marked Viewed.
+            <Check size={14} /> {onlyParts ? 'Your parts of these files are seen.' : 'These files are marked Viewed.'}
           </span>
           <button
             onClick={() =>
@@ -1140,7 +1153,7 @@ export function SlideView({
           <div className="space-y-1" role="status">
             <p className="flex items-center gap-2 text-sm font-medium">
               <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              All files in this topic viewed
+              {onlyParts ? 'Your parts of these files are seen' : 'All files in this topic viewed'}
             </p>
             <p className="text-sm text-muted-foreground break-words">
               {isLastTopic

@@ -108,6 +108,31 @@ void test('several sections and whole hunks: one marker per place, slices first'
   assert.deepEqual(brief(explainedMarkers(review([[A], [A]]))), [['section', 'before', 12, 1, 'fn a']]);
 });
 
+void test('a hunk cut as noise is marked as left out, unless a marker already names that code', () => {
+  const r = {
+    ...review([[A], [B]]),
+    noiseReduction: {
+      level: 'conservative' as const,
+      leftOut: [
+        { filePath: 'a.ts', side: 'before' as const, startLine: 31, endLine: 31, reason: 'comments only', source: 'rules' as const },
+        { filePath: 'a.ts', side: 'after' as const, startLine: 18, endLine: 18, reason: 'formatting', source: 'rules' as const },
+      ],
+    },
+  };
+  const markers = explainedMarkers(r);
+  assert.deepEqual(brief(markers), [
+    ['section', 'before', 12, 1, 'fn a'],
+    ['section', 'before', 18, 2, 'fn b'],
+    ['outside', 'before', 31, null, 'comments only'],
+  ]);
+  const noise = must(markers?.get('a.ts')?.find((m) => m.noise));
+  assert.deepEqual(markerWords(noise), {
+    text: 'Left out of the explanation (noise)',
+    name: 'Left out of the explanation (noise): comments only',
+    detail: 'comments only',
+  });
+});
+
 void test('no Focused sections, or not applied: no markers', () => {
   assert.equal(explainedMarkers(review([[A]], null)), undefined);
   assert.equal(explainedMarkers(review([[A]], { outside: [], applied: false })), undefined);

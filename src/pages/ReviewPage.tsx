@@ -926,7 +926,9 @@ function ReviewPageContent({
     showDiffControls: false,
     viewedFiles,
     onFileViewedChange: setFileViewed,
-    viewedParts: viewedParts.parts ? { checkbox: viewedParts.checkbox, onChange: viewedParts.change } : undefined,
+    viewedParts: viewedParts.parts
+      ? { checkbox: viewedParts.checkbox, partSeen: viewedParts.partSeen, onChange: viewedParts.change }
+      : undefined,
     showReviewSuggestions: prefs?.reviewSuggestions !== false,
     showInlineExplanations: prefs?.showInlineExplanations !== false,
     onShowInlineExplanationsChange: handleShowInlineExplanationsChange,
