@@ -154,13 +154,14 @@ void app.whenReady().then(async () => {
       `window.electronAPI.workbenchQueue().then(q=>({revision:q.revision,historyRevision:q.historyRevision}))`
     );
     await js('window.resetCounts()');
-    for (let i = 0; i < 5; i++)
-      await js(`window.dispatchEvent(new CustomEvent('fixture-workbench-change',{detail:${JSON.stringify(revisions)}}))`);
+    // One call sends all five, so they land inside the store's 50 ms grouping window on a slow runner too: five separate
+    // round trips could straddle it and read twice (macOS, run 45639307684).
+    await js(`for(let i=0;i<5;i++)window.dispatchEvent(new CustomEvent('fixture-workbench-change',{detail:${JSON.stringify(revisions)}}))`);
     await settle();
     const withRevisions = await counts();
     assert.deepEqual(withRevisions, { snapshots: 0, reviews: 0, rows: 0 }, 'An unchanged push with revisions reads and renders nothing');
     await js('window.resetCounts()');
-    for (let i = 0; i < 5; i++) await js("window.dispatchEvent(new Event('fixture-workbench-change'))");
+    await js("for(let i=0;i<5;i++)window.dispatchEvent(new Event('fixture-workbench-change'))");
     await settle();
     const withoutRevisions = await counts();
     assert.ok(withoutRevisions.snapshots <= 1 && withoutRevisions.reviews === 0 && withoutRevisions.rows === 0,

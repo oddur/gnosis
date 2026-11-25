@@ -158,6 +158,38 @@ const SliceDiff = memo(function SliceDiff<A>({
   style: CSSProperties;
 }) => ReactNode;
 
+/**
+ * A slice of a large file that mounts its diff later. It keeps its estimated height until the diff inside has drawn
+ * (#550). Mounting attaches an empty diff host, and Pierre fills it a moment later. Without the estimate, a slice
+ * laid out in that moment remembers a near-zero size, and content-visibility then skips it at that size. The
+ * document is then one slice too short, and the reader's place jumps by that much when the slice draws again.
+ */
+function ProgressiveSlice({ sliceKey, estimate, shown, children }: { sliceKey: string; estimate: number; shown: boolean; children: ReactNode }) {
+  const holder = useRef<HTMLDivElement>(null);
+  const [drawn, setDrawn] = useState(false);
+  useLayoutEffect(() => {
+    const host = holder.current?.firstElementChild;
+    if (!shown || drawn || !host) return;
+    // A skipped slice reports nothing until it is near the screen again, and keeps its estimate until then.
+    const observer = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.contentRect.height > 0)) setDrawn(true);
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [shown, drawn]);
+  return (
+    <div
+      ref={holder}
+      className="changes-slice"
+      data-slice={sliceKey}
+      data-mounted={shown || undefined}
+      style={{ containIntrinsicBlockSize: `auto ${estimate}px`, minHeight: shown && drawn ? undefined : estimate }}
+    >
+      {shown && children}
+    </div>
+  );
+}
+
 /** Mounting waits this long after the last key typed in a field. */
 const TYPING_PAUSE_MS = 500;
 let lastTyped = -Infinity;
@@ -2300,15 +2332,9 @@ export function ChangesDiff<A>({
       const height = estimateSliceHeight(split ? slice.splitRows : slice.unifiedRows);
       const shown = mounted.has(slice.key);
       current.children.push(
-        <div
-          key={slice.key}
-          className="changes-slice"
-          data-slice={slice.key}
-          data-mounted={shown || undefined}
-          style={{ containIntrinsicBlockSize: `auto ${height}px`, minHeight: shown ? undefined : height }}
-        >
-          {shown && diff}
-        </div>
+        <ProgressiveSlice key={slice.key} sliceKey={slice.key} estimate={height} shown={shown}>
+          {diff}
+        </ProgressiveSlice>
       );
     }
   });

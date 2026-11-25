@@ -12,12 +12,13 @@
 //
 // Performance tests run locally only; see "Performance tests" in docs/continuous-integration.md. CI runs every suite,
 // with timing assertions report-only; --perf picks the suites whose test file uses tests/perf-budget.ts.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import console from 'node:console';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { performance } from 'node:perf_hooks';
+import { setTimeout, clearTimeout } from 'node:timers';
 import { fileURLToPath } from 'node:url';
 
 const self = fileURLToPath(import.meta.url);
@@ -149,6 +150,72 @@ export function shardSuites(suites, durations, index, count) {
   return shards[index - 1].suites.sort((a, b) => a.order - b.order);
 }
 
+/** A suite may run this many times its measured duration before it counts as hung (#554). */
+export const SUITE_TIMEOUT_FACTOR = 3;
+/** No suite is stopped sooner than this: a short suite still has room for a stalled page load and its retry. */
+export const SUITE_TIMEOUT_FLOOR_SECONDS = 240;
+
+/**
+ * How long a suite may run before the runner stops it, in seconds: 3× its measured duration, and at least 4 minutes.
+ * A suite with no measurement yet gets the limit of the slowest measured suite, so a new long suite is not cut short.
+ */
+export function suiteTimeoutSeconds(key, durations) {
+  const measured = Object.values(durations).filter((value) => typeof value === 'number' && value > 0);
+  const own = durations[key];
+  const seconds = typeof own === 'number' && own > 0 ? own : Math.max(0, ...measured);
+  return Math.max(SUITE_TIMEOUT_FACTOR * seconds, SUITE_TIMEOUT_FLOOR_SECONDS);
+}
+
+/**
+ * Stops a suite and everything it started. A plain kill stops only the shell, and Electron keeps running (#554).
+ * Windows: taskkill ends the whole tree. macOS and Linux: the suite runs in its own process group, which is killed.
+ */
+function killTree(child) {
+  if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore' });
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    // The group already exited.
+  }
+}
+
+/**
+ * Runs one suite. Resolves its exit code, or 'timeout' when it ran past `limitSeconds` and its process tree was killed.
+ */
+function runSuite(command, env, limitSeconds, onChild) {
+  return new Promise((resolve) => {
+    // Detached on macOS and Linux makes the suite the leader of its own process group, so the group can be killed.
+    const child = spawn(command, { cwd: root, env, shell: true, stdio: 'inherit', detached: process.platform !== 'win32' });
+    onChild(child);
+    let timedOut = false;
+    let done = false;
+    let timer;
+    let grace;
+    const finish = (code) => {
+      // After the grace period, the late exit of the killed shell must not touch the next suite.
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      onChild(undefined);
+      resolve(timedOut ? 'timeout' : code);
+    };
+    timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+      // A killed tree exits at once. If the shell still does not report an exit, move on anyway.
+      // A shell that outlives its kill (taskkill failed on Windows) must not keep this runner alive after the last suite.
+      grace = setTimeout(() => {
+        child.unref();
+        finish(1);
+      }, 10_000);
+    }, limitSeconds * 1000);
+    child.on('exit', (status, signal) => finish(status ?? (signal ? 1 : 0)));
+    child.on('error', () => finish(1));
+  });
+}
+
 async function main() {
   const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
   const durations = JSON.parse(fs.readFileSync(path.resolve(root, argument('--weights') ?? DURATION_FILES.linux), 'utf8'));
@@ -191,18 +258,26 @@ async function main() {
   const env = { ...process.env, [pathKey]: `${path.join(root, 'node_modules/.bin')}${path.delimiter}${process.env[pathKey] ?? ''}` };
   const measured = {};
   const failed = [];
+  const timedOut = [];
   const started = performance.now();
+  // A detached suite does not get the terminal's Ctrl+C, so a stop is passed on to the suite that is running.
+  let running;
+  for (const signal of ['SIGINT', 'SIGTERM'])
+    process.on(signal, () => {
+      if (running) killTree(running);
+      process.exit(signal === 'SIGTERM' ? 143 : 130);
+    });
   for (const suite of selected) {
+    const limit = suiteTimeoutSeconds(suite.key, durations);
     console.log(`\n▶ ${suite.key}: ${suite.command}`);
     const suiteStarted = performance.now();
-    const code = await new Promise((resolve) => {
-      const child = spawn(suite.command, { cwd: root, env, shell: true, stdio: 'inherit' });
-      child.on('exit', (status, signal) => resolve(status ?? (signal ? 1 : 0)));
-      child.on('error', () => resolve(1));
-    });
+    const code = await runSuite(suite.command, env, limit, (child) => (running = child));
     const seconds = Math.round((performance.now() - suiteStarted) / 1000);
     measured[suite.key] = seconds;
-    console.log(`${code === 0 ? '✔' : '✖'} ${suite.key} (${seconds}s)`);
+    if (code === 'timeout') {
+      console.log(`✖ ${suite.key} (${seconds}s) timed out after ${limit}s; killed its process tree`);
+      timedOut.push(suite.key);
+    } else console.log(`${code === 0 ? '✔' : '✖'} ${suite.key} (${seconds}s)`);
     if (code !== 0) failed.push(suite.key);
   }
   const out = argument('--durations');
@@ -211,7 +286,9 @@ async function main() {
   const minutes = ((performance.now() - started) / 60000).toFixed(1);
   console.log(`\nSummary${shard ? ` of shard ${shard}` : ''}: ${selected.length} suites in ${minutes} min`);
   for (const [key, seconds] of Object.entries(measured).sort((a, b) => b[1] - a[1]))
-    console.log(`  ${failed.includes(key) ? '✖ failed' : '✔ passed'} ${String(seconds).padStart(5)}s  ${key}`);
+    console.log(
+      `  ${timedOut.includes(key) ? '✖ timed out' : failed.includes(key) ? '✖ failed' : '✔ passed'} ${String(seconds).padStart(5)}s  ${key}`
+    );
   console.log(
     `\n${selected.length - failed.length}/${selected.length} browser suites passed${shard ? ` in shard ${shard}` : ''}.`
   );
