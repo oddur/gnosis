@@ -56,16 +56,19 @@ export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewS
       <div className="queue-metadata-line">
         <div className="queue-meta">
           <RepositoryBadge repo={member.repo} />
+          {/* Only the plain text truncates (#549): the PR badge and the author stay whole, so nothing focusable is hidden. */}
           <span className="queue-pr-origin">
-            {stack ? `${subject.members.length} PRs in stack · updated ` : <><PrBadge url={member.url} number={member.number} title={member.title} /> opened </>}
-            <time dateTime={timestamp} title={new Date(timestamp).toLocaleString()}>
-              {timeAgo(timestamp)}
-            </time>
+            {!stack && <><PrBadge url={member.url} number={member.number} title={member.title} />{' '}</>}
+            <span className="queue-pr-when">
+              {stack ? `${subject.members.length} PRs in stack · updated ` : 'opened '}
+              <time dateTime={timestamp} title={new Date(timestamp).toLocaleString()}>
+                {timeAgo(timestamp)}
+              </time>
+            </span>
             {!stack && (
-              <>
-                {' '}
+              <>{' '}<span className="queue-pr-author">
                 by <GitHubAuthor login={member.author} />
-              </>
+              </span></>
             )}
           </span>
           <CheckControl onClick={onChecks}

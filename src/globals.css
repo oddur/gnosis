@@ -3079,7 +3079,28 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 
 /* Shared merge readiness: explicit wording, with color as a secondary signal. */
 .queue-metadata { display:flex; flex-direction:column; gap:6px; min-width:0; }
-.queue-status-line { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; min-height:26px; }
+.queue-status-line { display:flex; align-items:center; gap:12px; height:26px; min-width:0; }
+/* A queue row keeps its height whatever sync reports (#549). Badges appear and disappear and labels change length as
+   sync runs; if that changed a row's height, the rows below would move under the pointer, and a click aimed at one
+   row could land on another row's control. So the title, status and metadata lines are one line each, and what does
+   not fit ends in an ellipsis instead of wrapping. Lines with focusable badges clip (no scroll container) and keep 6px
+   for focus rings (2px outline, 3px offset). Only text with nothing focusable in it truncates: the PR, repository and
+   author badges and the checks button stay whole. */
+.queue-status-line, .queue-metadata-line .queue-meta, .queue-row-main .queue-title-line { flex-wrap:nowrap; overflow:clip; overflow-clip-margin:6px; }
+.queue-status-line > *, .queue-status-line .pr-review-statuses > * { min-width:0; flex-shrink:1; }
+.queue-status-line .pr-review-statuses { flex-wrap:nowrap; overflow:clip; overflow-clip-margin:6px; }
+.queue-status-line .pr-review-status, .queue-status-line .merge-readiness-badge { white-space:nowrap; }
+.queue-status-line .pr-review-status > span:not(.sr-only), .queue-status-line .merge-readiness-badge > span { min-width:0; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
+.queue-status-line .merge-readiness-blocked { flex-shrink:0; white-space:nowrap; }
+.queue-metadata-line .queue-meta { min-width:0; }
+.queue-metadata-line .queue-meta > * { flex-shrink:0; }
+.queue-metadata-line .queue-pr-origin { flex-wrap:nowrap; flex-shrink:1; min-width:0; overflow:clip; overflow-clip-margin:6px; overflow-wrap:normal; }
+.queue-pr-origin > * { flex-shrink:0; }
+.queue-pr-origin > .queue-pr-when { flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.queue-pr-author { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.queue-row-main .queue-title-line .pr-labels { flex:0 1 auto; flex-wrap:nowrap; min-width:0; overflow:clip; overflow-clip-margin:6px; }
+.queue-row-main .queue-title-line .pr-label { flex-shrink:1; min-width:5ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; overflow-wrap:normal; }
+.queue-row-main .queue-title-line .pr-label-more { flex-shrink:0; }
 .pr-review-statuses { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; }
 .pr-review-status { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%; padding:3px 7px; border-radius:4px; font-size:var(--type-caption); font-weight:650; line-height:20px; color:var(--muted-foreground); background:color-mix(in srgb, currentColor 9%, var(--background)); font-variant-numeric:tabular-nums; }
 .pr-review-status svg { flex-shrink:0; }
