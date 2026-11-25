@@ -75,8 +75,18 @@ export function shortSliceNames(label: string | undefined): string[] {
 export interface SliceOwners {
   /** Per hunk (file and header), the slices sections show: their section (1-based), rows and names. */
   slices: Map<string, { section: number; rows: Set<number>; names: string[] }[]>;
-  /** Moved definitions' new copies: their old file and lines, and the section that shows them. */
-  moves: { filePath: string; startLine: number; endLine: number; section: number; names: string[] }[];
+  /**
+   * Moved definitions' new copies: their old file and lines, the section that shows them, and where the new copy is
+   * (its file, and its first added line), for the jump there.
+   */
+  moves: {
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    section: number;
+    names: string[];
+    to: { filePath: string; line?: number };
+  }[];
 }
 
 const ownersCache = new WeakMap<readonly unknown[], SliceOwners>();
@@ -92,17 +102,21 @@ export function sliceOwners(slides: readonly { diffHunks: readonly DiffHunk[] }[
   slides.forEach((slide, index) => {
     for (const hunk of slide.diffHunks) {
       const names = shortSliceNames(hunk.label);
-      if (hunk.movedFrom)
+      const parsed = hunkRows(hunk);
+      // An entry without ranges, or whose ranges can't be read, shows its whole hunk: it owns all of its rows.
+      const all = parsed && new Set(parsed.rows.map((_, i) => i));
+      const rows = parsed && (hunk.lineRanges?.length ? (rangeRows(hunk.lineRanges, parsed.rows.length) ?? all) : all);
+      if (hunk.movedFrom) {
+        const first = rows && [...rows].sort((a, b) => a - b).find((i) => parsed.rows[i].marker === '+');
         moves.push({
           filePath: hunk.movedFrom.filePath,
           startLine: hunk.movedFrom.startLine,
           endLine: hunk.movedFrom.endLine,
           section: index + 1,
           names,
+          to: { filePath: hunk.filePath, ...(first !== undefined && parsed ? { line: parsed.rows[first].new } : {}) },
         });
-      if (!hunk.lineRanges?.length) continue;
-      const parsed = hunkRows(hunk);
-      const rows = parsed && rangeRows(hunk.lineRanges, parsed.rows.length);
+      }
       if (!rows) continue;
       const key = hunkKey(hunk);
       const list = slices.get(key) ?? [];
@@ -124,12 +138,22 @@ function rowTarget(
   section: number
 ): { key: string; target: HiddenTarget } {
   const shown = owners?.slices.get(hunkKey(hunk))?.find((slice) => slice.section !== section && slice.rows.has(index));
-  if (shown) return { key: `s${shown.section}`, target: { kind: 'section', section: shown.section, names: shown.names } };
+  if (shown) return { key: `s${shown.section}`, target: { kind: 'section', section: shown.section, names: [...shown.names] } };
   if (row.marker === '-') {
     const move = owners?.moves.find(
       (m) => m.section !== section && m.filePath === hunk.filePath && row.old >= m.startLine && row.old <= m.endLine
     );
-    if (move) return { key: `s${move.section}`, target: { kind: 'section', section: move.section, names: move.names } };
+    if (move)
+      return {
+        key: `m${move.section}:${move.to.filePath}`,
+        target: {
+          kind: 'section',
+          section: move.section,
+          names: [...move.names],
+          filePath: move.to.filePath,
+          ...(move.to.line !== undefined ? { line: move.to.line } : {}),
+        },
+      };
   }
   // The code no section shows (`outside`), and anything else no section claims, such as a change left out as noise:
   // it is never shown as unchanged code, and Changes shows it.
@@ -222,6 +246,10 @@ export function rangeBlockHunks(
         if (row.marker === ' ') unshown.set(row.new, lines[i].slice(1));
         if (changed(row)) {
           const { key, target } = rowTarget(base, i, row, owners, section);
+          if (current?.key === key && current.target.kind === 'section' && target.kind === 'section') {
+            // Neighbouring slices of one section: one target naming them all.
+            for (const name of target.names) if (!current.target.names.includes(name)) current.target.names.push(name);
+          }
           if (current?.key !== key) {
             flush();
             current = {
@@ -234,7 +262,7 @@ export function rangeBlockHunks(
           if (row.marker === '-') change.oldEnd = row.old;
           else change.newEnd = row.new;
           const t = current.target;
-          if (t.kind === 'section' && row.marker === '+') t.line ??= row.new;
+          if (t.kind === 'section' && row.marker === '+' && !t.filePath) t.line ??= row.new;
           if (t.kind === 'outside') {
             t.lines++;
             const line = row.marker === '+' ? row.new : row.old;

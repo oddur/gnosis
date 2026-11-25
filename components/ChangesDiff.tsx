@@ -560,7 +560,7 @@ function TrailingBar({
   part: GapBarPart;
   status: GapStatus;
   onShowElsewhere?: (run: number, line?: number) => void;
-  onOpenHidden?: (target: HiddenTarget) => void;
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Feedback's excerpt: with nothing to show and no length, the bar is left out. */
   plain?: boolean;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
@@ -684,7 +684,7 @@ function hiddenLabel(part: GapBarPart): string {
  */
 function hiddenBody(
   gap: GapBarPart['gap'],
-  onOpenHidden?: (target: HiddenTarget) => void,
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined,
   onShowElsewhere?: (run: number, line?: number) => void
 ) {
   const dot = (
@@ -697,11 +697,12 @@ function hiddenBody(
       {(gap.hiddenIn ?? []).map((target, index) => {
         const text = hiddenTargetText(target);
         const action = target.kind === 'section' ? `go to section ${target.section}` : 'open in Changes';
-        const key = target.kind === 'section' ? `section-${target.section}` : 'outside';
+        const key = target.kind === 'section' ? `section-${target.section}-${target.filePath ?? ''}` : 'outside';
+        const open = onOpenHidden?.(target);
         return (
           <Fragment key={key}>
             {index > 0 && dot}
-            {onOpenHidden ? (
+            {open ? (
               <button
                 type="button"
                 className="diff-context-button diff-gap-text diff-gap-hidden"
@@ -709,7 +710,7 @@ function hiddenBody(
                 data-section={target.kind === 'section' ? target.section : undefined}
                 aria-label={`${text}: ${action}`}
                 title={target.kind === 'section' ? `Shown in section ${target.section}` : 'Open these lines in Changes'}
-                onClick={() => onOpenHidden(target)}
+                onClick={open}
               >
                 {target.kind === 'outside' ? `${text}: open in Changes` : text}
                 <span aria-hidden="true"> ↗</span>
@@ -774,7 +775,7 @@ function GapBar({
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
   onShowElsewhere?: (run: number, line?: number) => void;
-  onOpenHidden?: (target: HiddenTarget) => void;
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Name a gap by its hidden lines only, never as changes left out of a topic (Feedback). */
   plain?: boolean;
   scope?: HunkScope;
@@ -1406,8 +1407,11 @@ export function ChangesDiff<A>({
   plainGaps?: boolean;
   /** An Explanation topic's gap over a change another block of the file shows offers a jump to that block. */
   onShowElsewhere?: (run: number, line?: number) => void;
-  /** An Explanation section's gap over changes it leaves out (#563): opens where they went. */
-  onOpenHidden?: (target: HiddenTarget) => void;
+  /**
+   * An Explanation section's gap over changes it leaves out (#563): the action that opens where a target went, or
+   * undefined when the view can't open it (the target then shows as plain text).
+   */
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
   navigator?: RefObject<DiffNavigator | null>;
   /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */

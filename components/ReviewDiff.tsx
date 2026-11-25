@@ -50,8 +50,10 @@ interface Props {
   onShowElsewhere?: (run: number, line?: number) => void;
   /** Changes the section leaves out between its slices (#563): their gaps say where each went. */
   hidden?: readonly HiddenChange[];
-  /** Opens where a hidden change went: another section, or Changes. */
-  onOpenHidden?: (target: HiddenTarget) => void;
+  /** The action that opens where a hidden change went (another section, or Changes), if the view can. */
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
+  /** False for a diff with nothing to reveal between its hunks, such as a moved definition's edits (#563). */
+  expandable?: boolean;
   /** Unchanged lines of the saved hunks the section's ranges leave out, by new line: gaps reveal from them (#563). */
   hiddenContext?: ReadonlyMap<number, string>;
   commentCallbacks?: CommentCallbacks;
@@ -108,6 +110,7 @@ export function ReviewDiff({
   hidden,
   onOpenHidden,
   hiddenContext,
+  expandable = true,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -202,7 +205,7 @@ export function ReviewDiff({
     elsewhere,
     hidden,
     request,
-    expandable: fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
+    expandable: expandable && fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
     active,
     scopeFile,
     readStructure: !!source,

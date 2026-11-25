@@ -100,8 +100,12 @@ function MoveDiff({
           setOld({ state: 'failed' });
           return;
         }
-        const lines = contents.before.content.split('\n').slice(moved.startLine - 1, moved.endLine);
-        setOld(lines.length ? { state: 'ready', text: `${lines.join('\n')}\n` } : { state: 'failed' });
+        // The old lines must all be there: a file shorter than the saved move is not its old body.
+        const all = contents.before.content.split('\n');
+        if (all.at(-1) === '') all.pop();
+        const count = moved.endLine - moved.startLine + 1;
+        const lines = moved.startLine >= 1 && count >= 1 ? all.slice(moved.startLine - 1, moved.endLine) : [];
+        setOld(lines.length === count ? { state: 'ready', text: `${lines.join('\n')}\n` } : { state: 'failed' });
       })
       .catch(() => live && setOld({ state: 'failed' }));
     return () => {
@@ -136,6 +140,7 @@ function MoveDiff({
       commentScope={`move:${entry.sliceId ?? entry.hunkHeader}`}
       keyScope={`move:${review?.prUrl ?? ''}:${entry.sliceId ?? entry.hunkHeader}`}
       plainGaps
+      expandable={false}
     />
   );
 }

@@ -140,14 +140,16 @@ void test('targets in one gap merge per section and for the left-out code', () =
 });
 
 void test('a moved definition’s old lines point to the section that shows its new copy', () => {
-  const moved = slice(0, 0, 'fn e2', {
+  // The new copy, in b.ts: its first added line is new line 12.
+  const moved = slice(2, 3, 'fn e2', {
     filePath: 'b.ts',
     movedFrom: { filePath: 'a.ts', startLine: 31, endLine: 31, body: 'identical' },
   });
   const owners = sliceOwners([{ diffHunks: [A] }, { diffHunks: [moved] }]);
   const ranged = rangeBlockHunks([A], { context: 3, owners, section: 1 });
   const e = ranged.hidden.find((h) => h.oldStart === 31);
-  assert.deepEqual(e?.target, { kind: 'section', section: 2, names: ['fn e2'] });
+  // The jump opens the new copy's file at its definition, not this file.
+  assert.deepEqual(e?.target, { kind: 'section', section: 2, names: ['fn e2'], filePath: 'b.ts', line: 12 });
   // Nothing claims b or D here: they are left out, never unchanged context.
   assert.ok(ranged.hidden.filter((h) => h !== e).every((h) => h.target.kind === 'outside'));
 });
@@ -248,4 +250,43 @@ void test('labels, left-out lines and moved bodies', () => {
     ]
   );
   assert.deepEqual(movedBody(slice(8, 12, 'fn b')), { text: 'c7\nB\nc8\nc9\n', start: 17 });
+});
+
+void test('an entry without ranges, or with ranges that can’t be read, owns all of its hunk’s rows', () => {
+  for (const other of [HUNK, slice(20, 40, 'fn broken')]) {
+    const ranged = rangeBlockHunks([A], { context: 3, owners: sliceOwners([{ diffHunks: [A] }, { diffHunks: [other] }]), section: 1 });
+    assert.ok(ranged.hidden.length > 0);
+    assert.ok(
+      ranged.hidden.every((h) => h.target.kind === 'section' && h.target.section === 2),
+      `every hidden change shows in section 2: ${JSON.stringify(ranged.hidden)}`
+    );
+  }
+});
+
+void test('neighbouring slices of one section are one target naming both', () => {
+  const D = slice(17, 17, 'fn d');
+  const ranged = rangeBlockHunks([A], {
+    context: 3,
+    owners: sliceOwners([{ diffHunks: [A] }, { diffHunks: [B, D] }]),
+    section: 1,
+  });
+  assert.deepEqual(
+    ranged.hidden.map((h) => hiddenTargetText(h.target)),
+    ['fn b, fn d: section 2', '1 line left out']
+  );
+  // The owners' names are not changed by the merge.
+  assert.deepEqual(sliceOwners([{ diffHunks: [A] }, { diffHunks: [B, D] }]).slices.size, 1);
+});
+
+void test('left-out code merged across sides opens on the new side', () => {
+  const hunks: GapHunk[] = [
+    { oldStart: 1, newStart: 1, rows: [{ type: '+', text: 'x' }], noEofOld: false, noEofNew: false },
+    { oldStart: 30, newStart: 31, rows: [{ type: ' ', text: 'y' }], noEofOld: false, noEofNew: false },
+  ];
+  const gaps = markHidden(diffGaps(hunks, undefined, { partial: true }) ?? [], hunks, [
+    { oldStart: 5, oldEnd: 6, newStart: 5, newEnd: 4, target: { kind: 'outside', lines: 2, side: 'before', start: 5, end: 6 } },
+    { oldStart: 9, oldEnd: 8, newStart: 8, newEnd: 9, target: { kind: 'outside', lines: 2, side: 'after', start: 8, end: 9 } },
+    { oldStart: 20, oldEnd: 20, newStart: 20, newEnd: 19, target: { kind: 'outside', lines: 1, side: 'before', start: 20, end: 20 } },
+  ]);
+  assert.deepEqual(gaps[1].hiddenIn, [{ kind: 'outside', lines: 5, side: 'after', start: 8, end: 9 }]);
 });
