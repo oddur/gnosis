@@ -4,6 +4,7 @@ import { HarnessEnvironmentSettings } from '../../components/HarnessEnvironmentS
 import { emptyHarnessEnvironment, type EnvironmentVariable } from '../../lib/harness-environment';
 import type { Provider } from '../../lib/models';
 import '../../src/globals.css';
+import { applyFixtureTheme } from './fixture-theme';
 const fixture = { saved: emptyHarnessEnvironment(), failLoad: false, failSave: false };
 Object.assign(window, {
   environmentFixture: fixture,
@@ -31,4 +32,5 @@ function Fixture() {
   );
 }
 const root = document.getElementById('root');
+applyFixtureTheme();
 if (root) createRoot(root).render(<Fixture />);

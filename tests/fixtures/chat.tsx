@@ -10,6 +10,7 @@ import { buildChatPrContext } from '../../lib/chat-pr-context';
 import type { ChatCitationSource } from '../../components/ChatCitation';
 import type { Preferences, ReviewGuide } from '../../lib/types';
 import '../../src/globals.css';
+import { applyFixtureTheme } from './fixture-theme';
 import { createClaudeEventHandler } from '../../lib/providers/claude-events';
 import { chatContextTrace, toolCallStep, toolResultStep, type ChatTraceStep } from '../../lib/chat-trace';
 const opened: ChatTraceStep[] = [];
@@ -277,4 +278,5 @@ function Fixture() {
   );
 }
 const container = document.getElementById('root');
+applyFixtureTheme();
 if (container) createRoot(container).render(<Fixture />);
