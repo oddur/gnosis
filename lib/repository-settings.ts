@@ -1,4 +1,4 @@
-import { normalizeExplanationPreferences, type ExplanationPreferences } from './explanation-options';
+import { modelChoice, normalizeExplanationPreferences, withoutModelChoice, type ExplanationPreferences } from './explanation-options';
 import lucideIconNames from './lucide-icon-names.json';
 import type { Preferences } from './types';
 import type { ReviewSubject } from './workbench';
@@ -204,16 +204,23 @@ export function automaticBriefingBlock(
     return `Daily automatic briefing limit reached for ${limited.join(', ')}. Resets at midnight. You can generate a briefing manually.`;
 }
 /**
- * "Remember for this repository" in Generate explanation: the preferences patch that makes these options, model and
- * effort included, the repository's explanation default. File choices are not part of it.
+ * "Remember for this repository" in Generate explanation: the preferences patch that makes these options the
+ * repository's explanation default. File choices are not part of it. The provider, model and effort are saved only when
+ * the reader chose them in the dialog (`modelChosen`); otherwise the repository keeps the override it had, or none.
  */
 export function rememberExplanationDefault(
   prefs: Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'>,
   repo: string,
-  options: ExplanationPreferences
+  options: ExplanationPreferences,
+  modelChosen: boolean
 ): Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'> {
-  const value = normalizeExplanationPreferences(options);
-  return repo.startsWith('local:')
+  const local = repo.startsWith('local:');
+  const previous = local ? prefs.localExplanationPreferences?.[repo] : prefs.repositorySettings?.[repo]?.explanation;
+  const value = normalizeExplanationPreferences({
+    ...withoutModelChoice(options),
+    ...modelChoice(modelChosen ? options : (previous ?? {})),
+  });
+  return local
     ? { localExplanationPreferences: { ...prefs.localExplanationPreferences, [repo]: value } }
     : { repositorySettings: { ...prefs.repositorySettings, [repo]: { ...prefs.repositorySettings?.[repo], explanation: value } } };
 }

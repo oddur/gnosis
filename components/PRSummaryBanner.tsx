@@ -66,7 +66,9 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
           </span>
           <span>{review.totalLinesChanged} lines</span>
           {review.generationDurationMs != null && <span>{formatDuration(review.generationDurationMs)}</span>}
-          {explanationModelLabel(review.explanationOptions) && <span>{explanationModelLabel(review.explanationOptions)}</span>}
+          {explanationModelLabel(review.generatedWith ?? review.explanationOptions) && (
+            <span>{explanationModelLabel(review.generatedWith ?? review.explanationOptions)}</span>
+          )}
           <CopyAllChecksButton review={review} variant="compact" />
           {onOpenSettings && (
             <button onClick={onOpenSettings} className="hover:text-foreground transition-colors" aria-label="Settings">

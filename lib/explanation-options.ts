@@ -1,6 +1,14 @@
 import { effectiveFileKinds, fileExtension, pathFileKinds, type FileKinds, type FileKindOverride } from './file-kinds';
 import type { ChangedFile } from './types';
-import { PROVIDER_IDS, PROVIDERS, type ModelId, type Provider } from './models';
+import {
+  PROVIDER_IDS,
+  PROVIDERS,
+  RETIRED_CLAUDE_MODELS,
+  RETIRED_CODEX_MODELS,
+  normalizeModelSelection,
+  type ModelId,
+  type Provider,
+} from './models';
 import { EFFORT_LEVELS, normalizeEffort, type Effort } from './effort';
 
 export const EXPLANATION_STYLES = [
@@ -100,26 +108,35 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
     ].slice(0, 1000),
     reduceNoise: normalizeNoiseLevel(v.reduceNoise),
     focusedSections: v.focusedSections === true,
-    ...modelChoice(v.provider, v.model),
-    ...(EFFORT_LEVELS.includes(v.effort as Effort) ? { effort: v.effort as Effort } : {}),
+    ...modelChoice(v),
   };
 }
-/** The provider that offers a model; none for an unknown model. */
-const modelProvider = (model: unknown): Provider | undefined =>
-  PROVIDER_IDS.find((provider) => PROVIDERS[provider].models.some((m) => m.id === model));
+/** A provider's model, current or retired; a retired one is offered under its successor. */
+const offers = (provider: Provider, model: unknown) =>
+  typeof model === 'string' &&
+  (PROVIDERS[provider].models.some((m) => m.id === model) ||
+    Object.hasOwn(provider === 'claude' ? RETIRED_CLAUDE_MODELS : RETIRED_CODEX_MODELS, model));
+/** The provider that offers a model, current or retired; none for an unknown model. */
+const modelProvider = (model: unknown): Provider | undefined => PROVIDER_IDS.find((provider) => offers(provider, model));
+type ModelChoice = Pick<ExplanationPreferences, 'provider' | 'model' | 'effort'>;
 /**
- * A known model with its provider. Without a provider, the model's own. An unknown provider, an unknown model, or a
- * model the provider doesn't offer is dropped, so the explanation follows the review model in Settings.
+ * The explanation's provider, model and effort, as one choice. A retired model becomes its successor with the same
+ * provider; without a provider, the model's own. An unknown provider or model, or a model the provider doesn't offer,
+ * drops all three together (never a provider without its model, or an effort meant for another model).
  */
-function modelChoice(provider: unknown, model: unknown): { provider?: Provider; model?: ModelId } {
-  const owner = modelProvider(model);
-  return owner && (provider === undefined || provider === owner) ? { provider: owner, model: model as ModelId } : {};
+export function modelChoice(value: { provider?: unknown; model?: unknown; effort?: unknown }): ModelChoice {
+  const provider = value.provider === undefined ? modelProvider(value.model) : value.provider;
+  if ((provider !== 'claude' && provider !== 'codex') || !offers(provider, value.model)) return {};
+  const selection = normalizeModelSelection(provider, value.model);
+  return {
+    ...selection,
+    ...(EFFORT_LEVELS.includes(value.effort as Effort) ? { effort: value.effort as Effort } : {}),
+  };
 }
-/** The model an explanation was written with, for its metadata line; none for one saved before the choice (#573). */
-export function explanationModelLabel(options: Pick<ExplanationPreferences, 'model'> | undefined): string | undefined {
-  return Object.values(PROVIDERS)
-    .flatMap((provider) => provider.models as readonly { id: string; label: string }[])
-    .find((model) => model.id === options?.model)?.label;
+/** The model an explanation was written with, for its metadata line; a retired model shows as its successor. */
+export function explanationModelLabel(options: { provider?: unknown; model?: unknown } | undefined): string | undefined {
+  const { provider, model } = modelChoice(options ?? {});
+  return provider && (PROVIDERS[provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label;
 }
 /** Settings' review model: the fallback for an explanation without its own choice. */
 export interface ReviewModel {
@@ -129,18 +146,33 @@ export interface ReviewModel {
   thinking?: boolean;
 }
 /**
- * The provider, model and effort an explanation is written with: its own choice when the model is known and belongs to
- * the provider, else the review provider and model in Settings (fail closed: an unknown model, or one from another
- * provider, never reaches a CLI). The effort is normalized for the model.
+ * The provider, model and effort an explanation is written with: its own choice (`modelChoice`), else the repository's
+ * default, else the review model in Settings. Fail closed: an unknown model, or one from another provider, never
+ * reaches a CLI, and the provider is never switched without the model and effort. The effort is normalized for the model.
  */
 export function explanationModel(
-  options: Pick<ExplanationPreferences, 'provider' | 'model' | 'effort'>,
-  review: ReviewModel
+  options: ModelChoice,
+  review: ReviewModel,
+  repository?: ModelChoice
 ): { provider: Provider; model: ModelId; effort: Effort } {
-  const own = modelChoice(options.provider, options.model);
-  const provider = own.provider ?? review.provider,
-    model = own.model ?? review.model;
-  return { provider, model, effort: normalizeEffort(provider, model, options.effort ?? review.effort, review.thinking ?? true) };
+  const own = modelChoice(options),
+    fallback = modelChoice(repository ?? {});
+  const chosen = own.model ? own : fallback.model ? fallback : undefined;
+  const provider = chosen?.provider ?? review.provider,
+    model = chosen?.model ?? review.model;
+  return {
+    provider,
+    model,
+    effort: normalizeEffort(provider, model, chosen ? (chosen.effort ?? review.effort) : review.effort, review.thinking ?? true),
+  };
+}
+/** Options without an explanation model choice: they follow the repository's default, then Settings. */
+export function withoutModelChoice<T extends ModelChoice>(options: T): T {
+  const rest = { ...options };
+  delete rest.provider;
+  delete rest.model;
+  delete rest.effort;
+  return rest;
 }
 export function normalizeNoiseLevel(value: unknown): NoiseLevel {
   return NOISE_LEVELS.some((level) => level.value === value) ? (value as NoiseLevel) : DEFAULT_NOISE_LEVEL;

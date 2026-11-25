@@ -85,7 +85,8 @@ export function WorkbenchOverview({
             </Button>
             <span className="text-xs text-muted-foreground">
               {review.totalFilesChanged} file changes · {review.totalLinesChanged} lines
-              {explanationModelLabel(review.explanationOptions) && ` · ${explanationModelLabel(review.explanationOptions)}`}
+              {explanationModelLabel(review.generatedWith ?? review.explanationOptions) &&
+                ` · ${explanationModelLabel(review.generatedWith ?? review.explanationOptions)}`}
             </span>
           </div>
           <div className="overview-columns">

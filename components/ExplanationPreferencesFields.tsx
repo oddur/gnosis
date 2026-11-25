@@ -3,6 +3,7 @@ import {
   EXPLANATION_STYLES,
   NOISE_LEVELS,
   explanationModel,
+  modelChoice,
   normalizeExplanationPreferences,
   type ExplanationPreferences,
   type ReviewModel,
@@ -83,7 +84,7 @@ export function ExplanationPreferencesFields({
             <label className="repository-inherit">
               <input
                 type="checkbox"
-                checked={value.model === undefined}
+                checked={!modelChoice(value).model}
                 onChange={(event) =>
                   onChange({
                     ...value,
@@ -94,7 +95,7 @@ export function ExplanationPreferencesFields({
               Use default ({modelLabel(fallback.provider, fallback.model)} · {effortLabels[fallback.effort]})
             </label>
           )}
-          {(!modelDefault || value.model !== undefined) && (
+          {(!modelDefault || !!modelChoice(value).model) && (
             <ModelEffortSelect
               label="Explanation model"
               describedBy={`${id}-model`}

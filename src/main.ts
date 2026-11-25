@@ -12,6 +12,8 @@ import {
   explanationExclusion,
   explanationInstructions,
   explanationModel,
+  modelChoice,
+  withoutModelChoice,
   normalizeLocalExplanationPreferences,
   normalizeExplanationOptions,
   type ExplanationOptions,
@@ -706,8 +708,9 @@ async function triggerProactiveReview(
       effort,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
-      // Briefings use the briefing model, not a repository's explanation model; saved with it for Regenerate.
-      explanationOptions: { ...explanationDefaults(source), ...explanationModel({}, { provider, model, effort, thinking }) },
+      // Briefings use the briefing model, which is not the explanation's choice (#573): Regenerate follows the
+      // repository's default, then Settings. `generatedWith` shows the model used.
+      explanationOptions: withoutModelChoice(explanationDefaults(source)),
       claudeContext: prefs.claudeContext,
     };
 
@@ -2652,12 +2655,9 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
   const options = normalizeExplanationOptions(previous.explanationOptions);
   // Focused sections (#562): the explanation's own choice; one saved before the choice existed follows the repository.
   if (!('focusedSections' in previous.explanationOptions)) options.focusedSections = explanationDefaults(source).focusedSections;
-  // Provider, model and effort (#573): the explanation's own; one saved before the choice follows the repository.
-  if (!('model' in previous.explanationOptions)) {
-    const { provider, model, effort } = explanationDefaults(source);
-    if (provider && model) Object.assign(options, { provider, model });
-    if (effort) options.effort = effort;
-  }
+  // Provider, model and effort (#573): the explanation's own (a retired model as its successor). Without one (a
+  // briefing, one saved before the choice, or an unknown model), the repository's default, then Settings.
+  if (!options.model) Object.assign(options, modelChoice(explanationDefaults(source)));
   // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
   if (!('reduceNoise' in previous.explanationOptions) || (previous.noiseDefault && options.reduceNoise === previous.noiseDefault))
     options.reduceNoise = explanationDefaults(source).reduceNoise;
@@ -2722,10 +2722,9 @@ async function runBackgroundGeneration(
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
   // Focused sections (#562) is chosen per explanation in Generate explanation; the repository's setting is the default.
-  const requested = request.explanationOptions ?? explanationDefaults(source);
-  // The explanation's own provider, model and effort (#573), else the review model in Settings; saved with it.
-  const { provider, model, effort } = explanationModel(requested, request);
-  const options: ExplanationOptions = { ...requested, provider, model, effort };
+  const options = request.explanationOptions ?? explanationDefaults(source);
+  // startReview resolved the explanation's provider, model and effort (#573); a briefing uses the briefing model.
+  const { provider, model, effort } = request;
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
@@ -3317,6 +3316,7 @@ async function runBackgroundGeneration(
         ? { focusedSections: focusedSections ?? { repository: explanationRepository(source), outside: [], applied: false as const } }
         : {}),
       generationDurationMs,
+      generatedWith: { provider, model },
       slides: resolvedSlides,
       headSha: prData.headSha,
       baseSha: prData.baseSha,
@@ -3922,8 +3922,8 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const requested = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)
     : explanationDefaults(source);
-  // The explanation's provider, model and effort (#573): its own choice, else the review model in Settings.
-  const { provider, model, effort } = explanationModel(requested, request);
+  // The explanation's provider, model and effort (#573): its own choice, else the repository's default, else Settings.
+  const { provider, model, effort } = explanationModel(requested, request, explanationDefaults(source));
   const options: ExplanationOptions = { ...requested, provider, model, effort };
   // Never fall back to another provider: one that isn't installed fails here, by name.
   if (!checkCliInstalled(provider, [`${os.homedir()}/.volta/bin/${provider}`]).installed)
@@ -3932,12 +3932,13 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   if (options.style === 'custom' && !options.customInstructions.trim())
     throw new Error('Add instructions for the Custom explanation style.');
   request = { ...request, provider, model, effort, explanationOptions: options, rememberExplanationOptions: false };
+  const modelChosen = request.explanationModelChosen === true;
   const inventory = await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot);
   if (!inventory.some((file) => !explanationExclusion(file, options)))
     throw new Error('Include at least one file before generating an explanation.');
   if (rememberOptions) {
     const prefs = loadPreferences();
-    Object.assign(prefs, rememberExplanationDefault(prefs, explanationRepository(source), options));
+    Object.assign(prefs, rememberExplanationDefault(prefs, explanationRepository(source), options, modelChosen));
     savePreferences(prefs);
     broadcastToAllWindows('preferences-changed', prefs);
   }
@@ -3987,6 +3988,7 @@ const explainerService = createExplainerService({
   preferences: loadPreferences,
   validate: validateExplainerInBrowser,
   activity: activities,
+  installed: (provider) => checkCliInstalled(provider, [`${os.homedir()}/.volta/bin/${provider}`]).installed,
 });
 
 ipcMain.handle('generate-explainer', async (event, req: GenerateExplainerRequest) => {

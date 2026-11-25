@@ -282,6 +282,11 @@ export interface ReviewGuide {
   neighborFileCount?: number;
   excludedFiles?: string[];
   generationDurationMs?: number;
+  /**
+   * The provider and model the explanation was written with, for display (#573). A briefing has no model choice in
+   * `explanationOptions`, so this is where its model shows.
+   */
+  generatedWith?: { provider: Provider; model: ModelId };
   slides: Slide[];
   headSha?: string;
   webSources?: WebSource[];
@@ -520,6 +525,8 @@ export interface SendSlideChatRequest {
 export interface GenerateReviewRequest {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
   rememberExplanationOptions?: boolean;
+  /** The reader chose the model in Generate explanation (#573): only then does "Remember" save it for the repository. */
+  explanationModelChosen?: boolean;
   previousReviewId?: string;
   standalone?: boolean;
   subjectId?: string;

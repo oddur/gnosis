@@ -140,6 +140,7 @@ void app.whenReady().then(async () => {
     assert.equal(attempts[0].explanationOptions.focusedSections, true, 'Focused sections is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
     assert.equal(attempts[0].explanationOptions.provider, 'codex', 'The chosen provider is part of the options');
+    assert.equal(attempts[0].explanationModelChosen, true, 'Remember saves a model chosen here');
     assert.equal(attempts[0].explanationOptions.model, 'gpt-6.1-terra', 'The chosen model is part of the options');
     assert.equal(attempts[0].explanationOptions.effort, 'low', 'The chosen effort is part of the options');
     win.setSize(1280, 850);
@@ -173,10 +174,11 @@ void app.whenReady().then(async () => {
     await capture('updated');
     await click('Generate explanation');
     await wait("!!document.querySelector('[data-closed]')");
-    const pushed = await js<{ explanationOptions: { style: string; fileOverrides: Record<string, boolean> } }[]>(
+    const pushed = await js<{ explanationModelChosen?: boolean; explanationOptions: { style: string; fileOverrides: Record<string, boolean> } }[]>(
       "JSON.parse(sessionStorage.getItem('attempts'))"
     );
     assert.equal(pushed[0].explanationOptions.style, 'educational');
+    assert.notEqual(pushed[0].explanationModelChosen, true, 'An untouched model is not pinned by Remember');
     assert.deepEqual(pushed[0].explanationOptions.fileOverrides, { 'src/queue.ts': false }, 'Choices for removed files drop');
     // A slow answer shows the loading state after a short delay.
     await open('?slow');
@@ -267,6 +269,7 @@ void app.whenReady().then(async () => {
 });
 interface GenerateRequest {
   rememberExplanationOptions: boolean;
+  explanationModelChosen?: boolean;
   explanationOptions: {
     style: string;
     hiddenExtensions: string[];
