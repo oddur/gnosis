@@ -136,7 +136,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
         >
           <span className="queue-title-line">
             {s.kind === 'stack' && (multiple ? selectionCheck : <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />)}
-            <span className="queue-title">{s.title}</span>
+            <span className="queue-title" title={s.title}>{s.title}</span>
             <PrLabels members={s.members} limit={3} />
           </span>
         </button>

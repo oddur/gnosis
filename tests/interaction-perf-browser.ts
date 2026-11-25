@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { PERF_BUDGET_SCALE, assertPerf, perfBudget, withinPerf } from './perf-budget';
 import { app, BrowserWindow } from 'electron';
@@ -522,8 +522,9 @@ void app.whenReady().then(async () => {
       send();
     };
     // Every trusted click and double-click, with the element the test aimed at, so a step that loses the queue can say
-    // what the input landed on. A sync tick can resize rows between aiming and the click (a readiness badge appears),
-    // so in the queue loops below a click can land on another row's control. One that would run a control the test
+    // what the input landed on. Before #549 a sync tick moved rows between aiming and the click (a readiness badge
+    // appeared, or an updated PR moved up), so 11-15 of the queue clicks below landed elsewhere. Rows now keep their
+    // height and the queue its order while the pointer is on it. A click that would still run a control the test
     // did not aim at, such as a row's Checks button, which opens the PR and hides the queue (main's Windows runs), is
     // held back from the app (stopPropagation on window: the input recorder, also on window, still sees it, so its
     // input is still timed). Clicks on plain row content go through.
@@ -664,9 +665,17 @@ void app.whenReady().then(async () => {
     const queueClicks = await js<{ clicks: number; onAim: number; held: string[] }>('window.__perfQueue');
     await js('window.__perfQueue=null');
     console.log(`Queue clicks: ${queueClicks.clicks}, ${queueClicks.onAim} on their target, ${queueClicks.held.length} held back from another control${queueClicks.held.length ? `: ${queueClicks.held.join('; ')}` : ''}`);
-    // Not vacuous: every input arrived as a click, and most landed where the test aimed.
+    // Not vacuous: every input arrived as a click. Rows hold still under the pointer (#549), so nearly all land where
+    // the test aimed: 48 of 48 in Docker, against 33-37 before. Three may miss on a slow runner.
     assert.equal(queueClicks.clicks, 48, 'Every queue row and badge input arrives as a click');
-    assert.ok(queueClicks.onAim >= 24, `Most queue clicks land on their target: ${queueClicks.onAim} of 48`);
+    assert.ok(queueClicks.onAim >= 45, `Queue clicks land on their target: ${queueClicks.onAim} of 48`);
+
+    // The pointer leaves the queue, so the order it held while the pointer was on it (#549) applies before the counts
+    // below: each count then reads the same rows.
+    const away = await point(`document.querySelectorAll('.workspace-tab-select')[0]`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...away });
+    await wait("!!document.querySelectorAll('.workspace-tab-select')[0].matches(':hover')");
+    await waitSettled(win.webContents, 'queue-list');
 
     // Opening and closing tabs again leaves no listeners behind.
     await closeTabs();
