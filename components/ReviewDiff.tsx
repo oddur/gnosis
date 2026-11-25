@@ -8,7 +8,7 @@ import { CODE_THEMES } from '@/lib/constants';
 import { DEFAULT_DIFF_APPEARANCE, diffContextLines, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
 import { useNoiseFilter } from '@/lib/use-semantic-noise';
 import { reviewGapHunks, type ReviewPin } from '@/lib/review-gap-hunks';
-import type { ElsewhereChange } from '@/lib/diff-gaps';
+import type { ElsewhereChange, HiddenChange, HiddenTarget } from '@/lib/diff-gaps';
 import { resolveBlock } from '@/lib/slide-file-groups';
 import { fileRevisionKey, type PrChangeFile, type PrChanges, type PrFileRequest } from '@/lib/pr-changes';
 import { currentCodeIntelligence } from '@/lib/use-syntax-contents';
@@ -48,6 +48,14 @@ interface Props {
   /** Changes other blocks of the file show: gaps over them reveal nothing, and offer a jump to the block. */
   elsewhere?: readonly ElsewhereChange[];
   onShowElsewhere?: (run: number, line?: number) => void;
+  /** Changes the section leaves out between its slices (#563): their gaps say where each went. */
+  hidden?: readonly HiddenChange[];
+  /** The action that opens where a hidden change went (another section, or Changes), if the view can. */
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
+  /** False for a diff with nothing to reveal between its hunks, such as a moved definition's edits (#563). */
+  expandable?: boolean;
+  /** Unchanged lines of the saved hunks the section's ranges leave out, by new line: gaps reveal from them (#563). */
+  hiddenContext?: ReadonlyMap<number, string>;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
@@ -71,6 +79,8 @@ interface Props {
   fileViewed?: boolean;
   /** Marks the file Viewed, offered once every symbol of its outline is ticked. */
   onMarkFileViewed?: () => void;
+  /** The outline's mark button's words, when it marks a part (#564). */
+  markFileLabel?: string;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -99,6 +109,10 @@ export function ReviewDiff({
   commentScope,
   elsewhere,
   onShowElsewhere,
+  hidden,
+  onOpenHidden,
+  hiddenContext,
+  expandable = true,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -111,6 +125,7 @@ export function ReviewDiff({
   plainGaps,
   fileViewed,
   onMarkFileViewed,
+  markFileLabel,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -139,6 +154,13 @@ export function ReviewDiff({
     () => reviewGapHunks(hunks, { status: fileStatus, context, pins }),
     [hunks, fileStatus, context, pinKey]
   );
+  // A section's ranges leave rows of their saved hunks out: those unchanged lines are known too, as a whole hunk's are.
+  const known = useMemo(() => {
+    if (!hiddenContext?.size) return saved.known;
+    const all = [...saved.known];
+    for (const [line, text] of hiddenContext) all[line - 1] ??= text;
+    return all;
+  }, [saved.known, hiddenContext]);
   const lfs = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
   const path = source?.path ?? filePath;
   const request = useMemo<PrFileRequest | undefined>(
@@ -181,11 +203,12 @@ export function ReviewDiff({
     previousPath: source?.previousPath,
     patch: saved.patch,
     hunks: saved.hunks,
-    known: saved.known,
+    known,
     partial: true,
     elsewhere,
+    hidden,
     request,
-    expandable: fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
+    expandable: expandable && fileStatus !== 'added' && fileStatus !== 'deleted' && !lfs,
     active,
     scopeFile,
     readStructure: !!source,
@@ -351,12 +374,14 @@ export function ReviewDiff({
             fileName: path.slice(path.lastIndexOf('/') + 1),
             fileViewed,
             onMarkFileViewed,
+            markFileLabel,
           }}
           stickyUnder={stickyUnder}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}
           plainGaps={plainGaps}
           onShowElsewhere={onShowElsewhere}
+          onOpenHidden={onOpenHidden}
         />
       )}
       {saved.unreadable.map((hunk) => (

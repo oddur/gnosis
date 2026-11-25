@@ -41,6 +41,7 @@ import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useViewedFiles } from '../../lib/use-viewed-files';
+import { useViewedParts } from '../../lib/use-viewed-parts';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
@@ -152,6 +153,8 @@ function ReviewPageContent({
   }, [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
+  // Viewed by parts (#564): with Focused sections, a section's checkbox marks only its part of a file.
+  const viewedParts = useViewedParts(review, viewedFiles, setFileViewed);
   const reader = useRef<ExplanationReaderHandle>(null);
   const reviewRoot = useRef<HTMLDivElement>(null);
   const [inlineExplanationNotice, setInlineExplanationNotice] = useState('');
@@ -567,7 +570,16 @@ function ReviewPageContent({
           clearInterval(timer);
         }
       }
-      if (++tries > 40) clearInterval(timer);
+      if (++tries > 40) {
+        clearInterval(timer);
+        // A line that never showed (a jump from a gap, #563): land on its block.
+        if (file && codeTarget.line && inspectedTarget.current !== codeTarget.nonce) {
+          inspectedTarget.current = codeTarget.nonce;
+          file.scrollIntoView({ block: 'start' });
+          file.tabIndex = -1;
+          file.focus({ preventScroll: true });
+        }
+      }
     }, 50);
     return () => clearInterval(timer);
   }, [codeTarget]);
@@ -914,6 +926,9 @@ function ReviewPageContent({
     showDiffControls: false,
     viewedFiles,
     onFileViewedChange: setFileViewed,
+    viewedParts: viewedParts.parts
+      ? { checkbox: viewedParts.checkbox, partSeen: viewedParts.partSeen, onChange: viewedParts.change }
+      : undefined,
     showReviewSuggestions: prefs?.reviewSuggestions !== false,
     showInlineExplanations: prefs?.showInlineExplanations !== false,
     onShowInlineExplanationsChange: handleShowInlineExplanationsChange,
@@ -930,7 +945,8 @@ function ReviewPageContent({
     fileMetadataMap,
     gitFileUrlBase,
     excludedFiles: excludedFilesSet,
-    onOpenSection: (section: number, filePath: string) => inspectCode(section, filePath),
+    onOpenSection: (section: number, filePath: string, line?: number) => inspectCode(section, filePath, line),
+    onOpenChangesFile,
   };
   const readerActions = (
     <div className="review-toolbar">

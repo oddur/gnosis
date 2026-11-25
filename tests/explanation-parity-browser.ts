@@ -256,6 +256,8 @@ void app.whenReady().then(async () => {
     const changes = await js<Header[]>(`window.headers(document.querySelector(${JSON.stringify(changesRow)}))`);
     const changesPalette = await js<Palette>(`window.palette(document.querySelector(${JSON.stringify(changesRow)}))`);
     console.log('Changes headers:', JSON.stringify(changes));
+    // Changes' rows of src/scope.ts, `type:line:text`, for the focused section's ranges below (#563).
+    const changesRows = await js<string[]>(`window.deepAll('[data-line]',document.querySelector(${JSON.stringify(changesRow)})).map(e=>e.dataset.lineType+':'+e.dataset.line+':'+e.textContent)`);
     await js(`(()=>{const s=document.querySelector('.commit-diff-stream');const h=document.querySelector(${JSON.stringify(changesRow)}+' [data-show-definition]').closest('.diff-gap');s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-140})()`);
     await capture('changes-unpinned', region('.commit-diff-stream', 0, 420));
     if (shots) {
@@ -515,6 +517,173 @@ void app.whenReady().then(async () => {
     await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');const s=document.querySelector('.explanation-document').getBoundingClientRect();const r=g?.getBoundingClientRect();
       return a?.closest('[data-explanation-section]')?.dataset.explanationSection==='3'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')&&!!r&&r.top<s.bottom&&r.bottom>s.top})()`, 500);
     await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
+
+    // ── Focused sections (#563): slices render as ranges in Changes' renderer, with labelled gaps ──
+    // Section 4 lists two slices of scope.ts's one whole-file hunk apart, around imports.ts: one block of scope.ts
+    // shows the two changes, as Changes shows them, and the gap between them names the flush change (section 5) and
+    // the migrate change (left out).
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    const focused = '[data-explanation-section="4"] .review-file-group';
+    const focusedScope = `document.querySelector('${focused}:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"])')`;
+    await wait(`(()=>{const g=${focusedScope};return !!g&&window.deepAll('[data-line]',g).length>0&&!!g.querySelector('.diff-gap[data-hidden-in] button[data-hidden-target]')})()`, 500);
+    // Show scope settles once both sides parse: wait until every hunk header's lines are a hunk's lines in Changes.
+    const changesRanges = JSON.stringify(changes.map((h) => h.range).filter(Boolean));
+    await wait(`(()=>{const h=window.headers(${focusedScope}).filter(h=>h.range);return h.length===2&&h.every(x=>${changesRanges}.includes(x.range))})()`, 500);
+    const ranged = await js<{
+      paths: string[];
+      rows: string[];
+      headers: Header[];
+      counts: string;
+      gaps: { label: string; buttons: { kind: string; text: string; name: string; section: string | null; tab: number }[] }[];
+    }>(`(()=>{const g=${focusedScope};
+      return {paths:[...document.querySelectorAll(${JSON.stringify(focused)})].map(e=>e.dataset.filePath.replace(/^.*?src\\//,'src/')),
+        rows:window.deepAll('[data-line]',g).map(e=>e.dataset.lineType+':'+e.dataset.line+':'+e.textContent),
+        headers:window.headers(g),counts:g.querySelector('.changes-file-header .changes-file-counts')?.textContent??'',
+        gaps:[...g.querySelectorAll('.diff-gap[data-hidden-in]')].map(e=>({label:e.getAttribute('aria-label'),
+          buttons:[...e.querySelectorAll('button[data-hidden-target]')].map(b=>({kind:b.dataset.hiddenTarget,text:b.textContent,name:b.getAttribute('aria-label'),section:b.dataset.section??null,tab:b.tabIndex}))}))}})()`);
+    console.log('Focused section:', JSON.stringify({ ...ranged, rows: ranged.rows.length }));
+    assert.deepEqual(ranged.paths, ['src/scope.ts', 'src/imports.ts'], 'The slices of one hunk share one block');
+    // Diff parity: the changed lines and their numbers are Changes' for the same changes, and no other change shows.
+    const changed = (rows: string[]) => rows.filter((r) => /^change-/.test(r)).sort();
+    const expected = changed(changesRows).filter((r) => r.includes('result.push(join') || r.includes('expect(resolvePaths'));
+    assert.equal(expected.length, 4, `Changes shows both changes: ${JSON.stringify(changed(changesRows))}`);
+    assert.deepEqual(changed(ranged.rows), expected, 'The section shows the same changed lines, with the same numbers, as Changes');
+    assert.ok(!ranged.rows.some((r) => r.includes('total += 30 * 2') || r.includes('version + 120')), 'Changes of other sections stay hidden');
+    // Every line the section shows within Changes' hunks is Changes' line, number and text.
+    const spans = changes.flatMap((h) => {
+      const m = h.range === undefined ? null : /L(\d+)(?:–(\d+))?/.exec(h.range);
+      const end: string | undefined = m?.[2];
+      return m ? [[Number(m[1]), Number(end ?? m[1])]] : [];
+    });
+    for (const row of ranged.rows) {
+      const line = Number(row.split(':')[1]);
+      if (row.startsWith('context') && spans.some(([a, b]) => line >= a && line <= b))
+        assert.ok(changesRows.includes(row), `Changes shows the same line: ${row}`);
+    }
+    for (const header of ranged.headers.filter((h) => h.range)) {
+      const twin = changes.find((other) => other.range === header.range);
+      assert.ok(twin, `Changes shows a hunk with the same lines: ${header.range}`);
+      assert.equal(header.counts, twin.counts, `The same counts: ${header.range}`);
+    }
+    // The header counts the section's own lines beside the file's.
+    assert.match(ranged.counts, /^\+2−2 here · file \+4−4$/, `Header counts over the ranges: ${ranged.counts}`);
+    // One labelled gap between the ranges: a button per place, keyboard reachable, and the gap is announced.
+    assert.equal(ranged.gaps.length, 1, `One gap holds left-out changes: ${JSON.stringify(ranged.gaps)}`);
+    const [gap] = ranged.gaps;
+    assert.match(gap.label, /hidden: method flush: section 5; 2 lines left out$/, `The gap is announced: ${gap.label}`);
+    assert.deepEqual(
+      gap.buttons.map((b) => [b.kind, b.text, b.section]),
+      [
+        ['section', 'method flush: section 5 ↗', '5'],
+        ['outside', '2 lines left out: open in Changes ↗', null],
+      ]
+    );
+    assert.deepEqual(gap.buttons.map((b) => b.name), ['method flush: section 5: go to section 5', '2 lines left out: open in Changes']);
+    assert.ok(gap.buttons.every((b) => b.tab >= 0), 'The gap buttons are keyboard reachable');
+    // The section link jumps through the Explanation's section navigation, to section 5's block of scope.ts.
+    await js(`${focusedScope}.querySelector('button[data-hidden-target="section"]').click()`);
+    await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');
+      return a?.closest('[data-explanation-section]')?.dataset.explanationSection==='5'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')})()`, 500);
+    // Section 5's slice moved here unchanged: its block says where from.
+    const moveNote = '[data-explanation-section="5"] .review-move-note';
+    await wait(`!!document.querySelector(${JSON.stringify(moveNote)})`, 500);
+    const move = await js<{ text: string; body: string }>(`(()=>{const n=document.querySelector(${JSON.stringify(moveNote)});return {text:n.textContent,body:n.dataset.moveBody}})()`);
+    assert.match(move.text, /^Moved from (?:.*\/)?src\/legacy-scope\.ts·unchanged$/, `The move note: ${move.text}`);
+    assert.equal(move.body, 'identical');
+    // The end of the explanation lists the code no section shows, with a link into Changes.
+    await wait("!!document.querySelector('.explanation-outside-code summary')");
+    await js("document.querySelector('.explanation-outside-code summary').click()");
+    await wait("!!document.querySelector('.explanation-outside-code li li button')");
+    const [migrateOld, migrateNew] = await js<[number, number]>('window.parityRanges.migrate');
+    const outsideEntry = await js<{ file: string; location: string; label: string; name: string }>(`(()=>{const b=document.querySelector('.explanation-outside-code li li button');
+      return {file:b.closest('[data-file-path]').querySelector('.explanation-outside-file').textContent,location:b.querySelector('.explanation-left-out-location').textContent,label:b.querySelector('.explanation-left-out-reason').textContent,name:b.getAttribute('aria-label')}})()`);
+    console.log('Code outside the explanation:', JSON.stringify(outsideEntry));
+    assert.match(outsideEntry.file, /src\/scope\.ts$/);
+    assert.equal(outsideEntry.location, `L${migrateNew - 1}–${migrateNew}`);
+    assert.equal(outsideEntry.label, 'function migrate');
+    assert.match(outsideEntry.name, /^Open function migrate at .*src\/scope\.ts:L\d+–\d+ in Changes$/);
+    // The files list stays.
+    assert.equal(await js("!!document.querySelector('.explanation-ending')"), true);
+    // The left-out gap opens Changes at those lines, and the reader comes back to the Explanation.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    await wait(`!!${focusedScope}?.querySelector('button[data-hidden-target="outside"]')`, 500);
+    await js(`${focusedScope}.querySelector('button[data-hidden-target="outside"]').click()`);
+    await wait(
+      `(()=>{const s=document.querySelector('.commit-diff-stream')?.getBoundingClientRect();const row=document.querySelector('.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])');
+        return !!s&&!!row&&window.deepAll('[data-line]',row).some(e=>{const n=Number(e.dataset.line);const r=e.getBoundingClientRect();
+          return (e.dataset.lineType==='change-deletion'?n===${migrateOld}:n===${migrateNew})&&r.height>0&&r.top>=s.top&&r.bottom<=s.bottom})})()`,
+      500
+    );
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
+    // ── Focused sections (#564): Changes marks which section explains each part of scope.ts ──
+    // Changes still shows every line; each unit gets a slim note at its first changed line. The resolvePaths and test
+    // slices are section 4's, flush is section 5's, and the migrate change is left out.
+    const markerRow = '.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])';
+    await wait(`window.deepAll('[data-explained]',document.querySelector(${JSON.stringify(markerRow)})).length>=4`, 500);
+    const markers = await js<{ kind: string; at: string; section: string | null; text: string; name: string | null; jump: string | null; tab: number | null }[]>(
+      `window.deepAll('[data-explained]',document.querySelector(${JSON.stringify(markerRow)})).map(n=>{const b=n.querySelector('button[data-explained-jump]');
+        return {kind:n.dataset.explained,at:n.dataset.explainedAt,section:n.dataset.section??null,text:n.textContent.replace(/\\s+/g,' ').trim(),name:n.getAttribute('aria-label'),jump:b?.getAttribute('aria-label')??null,tab:b?b.tabIndex:null}})`
+    );
+    console.log('Changes markers:', JSON.stringify(markers));
+    const deletedAt = (text: string) => changesRows.find((r) => r.startsWith('change-deletion:') && r.includes(text))?.split(':')[1];
+    const at = (text: string) => `old:${deletedAt(text)}`;
+    const marker = (where: string) => markers.find((m) => m.at === where);
+    assert.deepEqual(
+      [at('result.push(join(root, name));'), at('total += 30;'), `old:${migrateOld}`, at("expect(resolvePaths('/r', ['a']))")].map((where) => {
+        const m = marker(where);
+        return m && [m.kind, m.section, m.text];
+      }),
+      [
+        ['section', '4', 'Explained in section 4 ↗ · function resolvePaths'],
+        ['section', '5', 'Explained in section 5 ↗ · method flush'],
+        ['outside', null, 'Left out of the explanation · function migrate'],
+        ['section', '4', "Explained in section 4 ↗ · describe('resolvePaths')"],
+      ],
+      'Each unit is marked with where it is explained'
+    );
+    assert.equal(marker(`old:${migrateOld}`)?.jump, null, 'Left-out code has no section to go to');
+    assert.ok(markers.filter((m) => m.kind === 'section').every((m) => m.tab !== null && m.tab >= 0), 'The section links are keyboard reachable');
+    assert.equal(marker(at('total += 30;'))?.jump, 'Explained in section 5: method flush: go to section 5');
+    // Diff parity: a marker is a note between rows, never a line of the diff.
+    assert.equal(
+      await js<number>(`window.deepAll('[data-explained] [data-line]',document.querySelector(${JSON.stringify(markerRow)})).length`),
+      0,
+      'The markers add no diff lines'
+    );
+    // The flush marker opens section 5 at the flush change, through the Explanation's section navigation.
+    await js(`window.deepAll('[data-explained] button[data-explained-jump]',document.querySelector(${JSON.stringify(markerRow)})).find(b=>b.closest('[data-explained]').dataset.section==='5').click()`);
+    await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');
+      return document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Explanation'&&a?.closest('[data-explanation-section]')?.dataset.explanationSection==='5'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')})()`, 500);
+    await click('Explanation');
+    await wait("!!document.querySelector('[aria-label=\"Explanation section\"]')", 500);
+
+    // ── Viewed by parts (#564): scope.ts shows in five sections and has code left out ──
+    // Section 4's checkbox marks only its part as seen: it reads as mixed, the file stays unviewed, and every section's
+    // checkbox says how many parts are seen. Unchecking the part takes it back.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    const partBox = (section: number) =>
+      `document.querySelector('[data-explanation-section="${section}"] .review-file-group:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"]) .review-file-viewed input')`;
+    const partState = (section: number) =>
+      js<{ checked: boolean; mixed: boolean; aria: string | null; label: string; name: string | null }>(`(()=>{const i=${partBox(section)};
+        return {checked:i.checked,mixed:i.indeterminate,aria:i.getAttribute('aria-checked'),label:i.closest('label').textContent.trim(),name:i.getAttribute('aria-label')}})()`);
+    await wait(`!!${partBox(4)}`, 500);
+    const unseen = await partState(4);
+    console.log('Parts checkbox:', JSON.stringify(unseen));
+    assert.deepEqual([unseen.mixed, unseen.aria, unseen.label], [false, null, '0 of 5 parts seen, rest in Changes']);
+    await js(`${partBox(4)}.click()`);
+    await wait(`${partBox(4)}.getAttribute('aria-checked')==='mixed'`, 500);
+    const seenPart = await partState(4);
+    assert.deepEqual([seenPart.mixed, seenPart.aria, seenPart.label], [true, 'mixed', '1 of 5 parts seen, rest in Changes'], 'The seen part is announced as mixed');
+    assert.match(seenPart.name ?? '', /^1 of 5 parts seen, rest in Changes: .*src\/scope\.ts$/);
+    await js(`window.selectOption('[aria-label="Explanation section"]', '5')`);
+    await wait(`!!${partBox(5)}`, 500);
+    const otherPart = await partState(5);
+    assert.deepEqual([otherPart.checked, otherPart.mixed, otherPart.label], [false, false, '1 of 5 parts seen, rest in Changes'], 'The file stays unviewed');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    await wait(`!!${partBox(4)}`, 500);
+    await js(`${partBox(4)}.click()`);
+    await wait(`${partBox(4)}.getAttribute('aria-checked')!=='mixed'&&!${partBox(4)}.checked`, 500);
+    assert.equal((await partState(4)).label, '0 of 5 parts seen, rest in Changes');
 
     // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──
     await js(`window.selectOption('[aria-label="Explanation section"]', '0')`);

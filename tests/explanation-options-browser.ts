@@ -25,6 +25,11 @@ void app.whenReady().then(async () => {
     js(
       `(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
+  // Buttons by aria-label, with the mousedown Radix and the searchable selects listen for.
+  const press = (label: string) =>
+    js(
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+    );
   const dir = path.resolve('.impeccable/review/explanation-options');
   fs.mkdirSync(dir, { recursive: true });
   const capture = async (name: string) => {
@@ -57,6 +62,25 @@ void app.whenReady().then(async () => {
     await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
     await wait(`${noise}.find(b=>b.getAttribute('aria-checked')==='true')?.textContent==='Off'&&document.activeElement.textContent==='Off'`);
     await js(`${noise}.find(b=>b.textContent==='Aggressive').click()`);
+    // Focused sections (#562): chosen per explanation here, off by default, sent with the options.
+    const focused = "document.querySelector('.explanation-setup-dialog .explanation-focused-setting input')";
+    assert.equal(await js(`${focused}?.checked`), false, 'Focused sections shows in the dialog, off by default');
+    await js(`${focused}.click()`);
+    await wait(`${focused}.checked===true`);
+    // Model and reasoning effort (#573): Settings' review model by default, from every provider's models.
+    const picker = `document.querySelector('.explanation-setup-dialog [aria-label="Explanation model"]')`;
+    assert.match(await js<string>(`${picker}?.textContent`), /Opus 5\.5.*High/, 'The review model and effort are the default');
+    await press('Explanation model');
+    await wait("!!document.querySelector('.model-picker-popup')");
+    await press('Explanation model selection');
+    await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT-6.1 Terra'))");
+    assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Sonnet 5.5'))"), true);
+    await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('GPT-6.1 Terra')).click()");
+    await wait(`${picker}.textContent.includes('GPT-6.1 Terra')`);
+    await js("document.querySelector('.model-picker-popup input[type=radio][value=low]').click()");
+    await wait(`${picker}.textContent.includes('Low')`);
+    await click('Done');
+    await wait("!document.querySelector('.model-picker-popup')");
     await capture('compact');
     await js(
       "[...document.querySelectorAll('.explanation-file-rules label')].find(e=>e.textContent.includes('Test files')).querySelector('input').click()"
@@ -113,7 +137,12 @@ void app.whenReady().then(async () => {
     assert.equal(attempts[0].rememberExplanationOptions, true);
     assert.equal(attempts[0].explanationOptions.style, 'custom');
     assert.equal(attempts[0].explanationOptions.reduceNoise, 'aggressive', 'The level is part of the options');
+    assert.equal(attempts[0].explanationOptions.focusedSections, true, 'Focused sections is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
+    assert.equal(attempts[0].explanationOptions.provider, 'codex', 'The chosen provider is part of the options');
+    assert.equal(attempts[0].explanationModelChosen, true, 'Remember saves a model chosen here');
+    assert.equal(attempts[0].explanationOptions.model, 'gpt-6.1-terra', 'The chosen model is part of the options');
+    assert.equal(attempts[0].explanationOptions.effort, 'low', 'The chosen effort is part of the options');
     win.setSize(1280, 850);
     await open('?restore');
     await count(3);
@@ -145,10 +174,11 @@ void app.whenReady().then(async () => {
     await capture('updated');
     await click('Generate explanation');
     await wait("!!document.querySelector('[data-closed]')");
-    const pushed = await js<{ explanationOptions: { style: string; fileOverrides: Record<string, boolean> } }[]>(
+    const pushed = await js<{ explanationModelChosen?: boolean; explanationOptions: { style: string; fileOverrides: Record<string, boolean> } }[]>(
       "JSON.parse(sessionStorage.getItem('attempts'))"
     );
     assert.equal(pushed[0].explanationOptions.style, 'educational');
+    assert.notEqual(pushed[0].explanationModelChosen, true, 'An untouched model is not pinned by Remember');
     assert.deepEqual(pushed[0].explanationOptions.fileOverrides, { 'src/queue.ts': false }, 'Choices for removed files drop');
     // A slow answer shows the loading state after a short delay.
     await open('?slow');
@@ -226,7 +256,7 @@ void app.whenReady().then(async () => {
     );
     await click('Cancel');
     console.log(
-      'Explanation setup passed: scope, styles, Reduce noise, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
+      'Explanation setup passed: scope, styles, model and effort, Reduce noise, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
     );
   } catch (e) {
     console.error(e);
@@ -239,5 +269,14 @@ void app.whenReady().then(async () => {
 });
 interface GenerateRequest {
   rememberExplanationOptions: boolean;
-  explanationOptions: { style: string; hiddenExtensions: string[]; reduceNoise: string };
+  explanationModelChosen?: boolean;
+  explanationOptions: {
+    style: string;
+    hiddenExtensions: string[];
+    reduceNoise: string;
+    focusedSections: boolean;
+    provider?: string;
+    model?: string;
+    effort?: string;
+  };
 }

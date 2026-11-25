@@ -4,6 +4,8 @@ import {
   diffGaps,
   firstMismatch,
   markElsewhere,
+  markHidden,
+  sealedGaps,
   gapSize,
   lineEndings,
   knownLines,
@@ -17,6 +19,7 @@ import {
   withPins,
   type DiffGap,
   type ElsewhereChange,
+  type HiddenChange,
   type GapDirection,
   type GapHunk,
   type GapPart,
@@ -30,7 +33,7 @@ import { raiseDefinitions, raiseNoise } from '../lib/syntax-scope-client';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
-import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
+import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { changedSymbols } from '../lib/symbol-outline';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
@@ -63,6 +66,8 @@ interface KeptDiff {
   reveals?: GapReveals;
   pins?: readonly (readonly [number, number])[];
   adopted?: readonly ShownScope[];
+  /** What a focused section's adopted plan was made from (lib/show-scope.ts `scopePlanSignature`). */
+  adoptedSignature?: string;
   collapsed?: ReadonlySet<string>;
 }
 const kept = new Map<string, KeptDiff>();
@@ -117,6 +122,7 @@ export function useDiffFileModel({
   known,
   partial = false,
   elsewhere,
+  hidden: hiddenChanges,
   request,
   contents,
   expandable,
@@ -144,6 +150,8 @@ export function useDiffFileModel({
   partial?: boolean;
   /** Changes other blocks of the topic show: gaps over them reveal nothing (`markElsewhere`). */
   elsewhere?: readonly ElsewhereChange[];
+  /** Changes an Explanation section leaves out between its slices (#563): gaps over them say where they went. */
+  hidden?: readonly HiddenChange[];
   /** Where the after side is read from; undefined when it cannot be read (a local review). */
   request?: PrFileRequest;
   /** Both sides, when the view has loaded them already. */
@@ -227,7 +235,12 @@ export function useDiffFileModel({
     [baseHunks, after, afterMatches, pins]
   );
   const gaps = useMemo(() => {
-    const all = expandable && hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined, { partial }) : undefined;
+    // A file that reveals nothing has no gaps, unless its section leaves changes out between slices: those say so.
+    if (!expandable) {
+      const sealed = hunks && hiddenChanges?.length ? sealedGaps(hunks) : undefined;
+      return sealed && hunks ? markHidden(sealed, hunks, hiddenChanges) : undefined;
+    }
+    const all = hunks ? diffGaps(hunks, afterMatches && after ? after.length : undefined, { partial }) : undefined;
     if (!all || !partial) return all;
     // A topic's gap is unchanged code only where it saved those lines, or where both sides agree on every line.
     const topic = all.map((gap) => {
@@ -246,8 +259,8 @@ export function useDiffFileModel({
       while (revealUp < size - revealDown && known?.[gap.newStart + size - revealUp - 2] !== undefined) revealUp++;
       return { ...gap, revealDown, revealUp };
     });
-    return markElsewhere(topic, elsewhere);
-  }, [expandable, hunks, afterMatches, after, before, partial, known, elsewhere]);
+    return markHidden(markElsewhere(topic, elsewhere), hunks ?? [], hiddenChanges);
+  }, [expandable, hunks, afterMatches, after, before, partial, known, elsewhere, hiddenChanges]);
   // Enclosing definitions (#393), from text this view already has: the after side gaps reveal from, and the before
   // side when it is loaded. A file without a grammar, or with a stale after side, shows as before.
   // The old side is parsed when the file deletes lines: hunks that only delete are named by it, and the outline finds
@@ -383,21 +396,32 @@ export function useDiffFileModel({
         : undefined,
     [scopeOn, definitions.after, definitions.before, definitions.beforeParsing, hunks, gaps, lines]
   );
-  const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[] }>();
+  const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[]; signature?: string }>();
   const [collapsed, setCollapsed] = useState<{ key: string; value: ReadonlySet<string> }>();
   // A plan adopted by an earlier mount shows from the first render: nothing moves as the file parses again.
   const adoptedPlan = adopted?.key === revealKey ? adopted.value : seed?.adopted;
+  const adoptedSignature = adopted?.key === revealKey ? adopted.signature : seed?.adoptedSignature;
+  // A focused section's gaps over changes it leaves out decide what its plan can show (#563): when they, or the parsed
+  // structure, change, the plan is made again. Changes, and topics without such gaps, keep their first plan.
+  const planSignature = useMemo(() => scopePlanSignature(gaps, definitions), [gaps, definitions.after, definitions.before]);
   // Once the file is parsed, its short definitions show whole, keeping the line at the top of the view in place.
   useEffect(() => {
-    if (!planned || adoptedPlan) return;
-    if (planned.length) {
+    const byHand = !!(collapsed?.key === revealKey ? collapsed.value : seed?.collapsed)?.size;
+    const next = nextScopePlan(
+      adoptedPlan ? { value: adoptedPlan, signature: adoptedSignature } : undefined,
+      planned,
+      planSignature,
+      byHand
+    );
+    if (!next) return;
+    if (next.value !== adoptedPlan && next.value.length) {
       // A topic shows lines outside what it saved once both sides say they are unchanged.
       if (partial) readAfter();
       if (sectionRef.current) keepDiffLineInView(sectionRef.current);
     }
-    keep(revealKey, { adopted: planned });
-    setAdopted({ key: revealKey, value: planned });
-  }, [planned]);
+    keep(revealKey, { adopted: next.value, adoptedSignature: next.signature });
+    setAdopted({ key: revealKey, value: next.value, signature: next.signature });
+  }, [planned, planSignature]);
   // Lines kept from an earlier mount show from the side they were read from, which this mount may not have yet.
   useEffect(() => {
     if (seed?.reveals || seed?.pins || seed?.adopted?.length) readAfter();

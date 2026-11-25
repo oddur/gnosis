@@ -1,4 +1,4 @@
-import { normalizeExplanationPreferences, type ExplanationPreferences } from './explanation-options';
+import { modelChoice, normalizeExplanationPreferences, withoutModelChoice, type ExplanationPreferences } from './explanation-options';
 import lucideIconNames from './lucide-icon-names.json';
 import type { Preferences } from './types';
 import type { ReviewSubject } from './workbench';
@@ -49,7 +49,9 @@ export type RepositoryDefaults = Pick<
   | 'repositorySettings'
 > &
   /** For the default notification level: All for watched repositories, else "Other repositories". */
-  Partial<Pick<Preferences, 'watchedRepos' | 'notificationSettings'>>;
+  Partial<Pick<Preferences, 'watchedRepos' | 'notificationSettings'>> &
+  /** The review model: the default for a repository's explanation model and effort (#573). */
+  Partial<Pick<Preferences, 'provider' | 'model' | 'effort'>>;
 export const repositoryKey = (repo: string) => repo.trim().toLowerCase();
 export const validRepository = (repo: string) => /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repo);
 export function normalizeBriefingLimit(value: unknown, fallback = 10): number {
@@ -200,4 +202,25 @@ export function automaticBriefingBlock(
   const limited = repos.filter((repo) => (repositoryUsed[repo] ?? 0) >= repositorySettings(p, repo).briefingDailyLimit);
   if (limited.length)
     return `Daily automatic briefing limit reached for ${limited.join(', ')}. Resets at midnight. You can generate a briefing manually.`;
+}
+/**
+ * "Remember for this repository" in Generate explanation: the preferences patch that makes these options the
+ * repository's explanation default. File choices are not part of it. The provider, model and effort are saved only when
+ * the reader chose them in the dialog (`modelChosen`); otherwise the repository keeps the override it had, or none.
+ */
+export function rememberExplanationDefault(
+  prefs: Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'>,
+  repo: string,
+  options: ExplanationPreferences,
+  modelChosen: boolean
+): Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'> {
+  const local = repo.startsWith('local:');
+  const previous = local ? prefs.localExplanationPreferences?.[repo] : prefs.repositorySettings?.[repo]?.explanation;
+  const value = normalizeExplanationPreferences({
+    ...withoutModelChoice(options),
+    ...modelChoice(modelChosen ? options : (previous ?? {})),
+  });
+  return local
+    ? { localExplanationPreferences: { ...prefs.localExplanationPreferences, [repo]: value } }
+    : { repositorySettings: { ...prefs.repositorySettings, [repo]: { ...prefs.repositorySettings?.[repo], explanation: value } } };
 }
