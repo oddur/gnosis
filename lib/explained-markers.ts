@@ -1,4 +1,4 @@
-import { hunkRows, outsideLines, rangeRows, shortSliceNames, type Row } from './explanation-ranges';
+import { hunkRows, outsideLines, rangeRows, shortSliceNames, sliceOwners, type Row } from './explanation-ranges';
 import type { DiffHunk, ReviewGuide } from './types';
 
 /**
@@ -87,18 +87,22 @@ export function explainedMarkers(review: Focused | undefined): Map<string, Expla
       if (entry.lineRanges?.length || entry.sliceId)
         add(focused, entry.filePath, { kind: 'section', ...placeOf(rows[0]), section, slideId: slide.id, names, target });
       else wholes.push({ entry, rows, section, slideId: slide.id });
-      if (entry.movedFrom)
-        add(focused, entry.movedFrom.filePath, {
-          kind: 'moved',
-          side: 'before',
-          start: entry.movedFrom.startLine,
-          section,
-          slideId: slide.id,
-          names: names.length ? names : (entry.movedFrom.renamed ? [entry.movedFrom.renamed.to] : []),
-          target,
-        });
     }
   });
+  // A moved definition's old copy goes to its new copy: the move's own target, as the Explanation's gaps use it
+  // (lib/explanation-ranges.ts `sliceOwners`), its file and first added line.
+  for (const move of sliceOwners(review.slides).moves) {
+    const slide = review.slides[move.section - 1];
+    add(focused, move.filePath, {
+      kind: 'moved',
+      side: 'before',
+      start: move.startLine,
+      section: move.section,
+      slideId: slide.id,
+      names: move.names,
+      ...(move.to.line !== undefined ? { target: { filePath: move.to.filePath, line: move.to.line, side: 'RIGHT' as const } } : {}),
+    });
+  }
   for (const code of review.focusedSections?.outside ?? []) {
     // A change that deletes lines starts at its first deleted line, which the diff shows above its added ones.
     const old = code.deletions > 0 ? code.oldLines.at(0) : undefined;
@@ -139,15 +143,17 @@ export function markerWords(marker: ExplainedMarker): { text: string; name: stri
   const what = marker.names.join(', ');
   if (marker.kind === 'outside')
     return { text: 'Left out of the explanation', name: `Left out of the explanation${what ? `: ${what}` : ''}`, detail: what || undefined };
+  // Only a marker with a place to go shows the arrow of a link.
+  const arrow = marker.target ? ' ↗' : '';
   if (marker.kind === 'moved') {
     const name = what || `section ${marker.section}`;
     return {
-      text: `Moved: explained with ${name} ↗`,
+      text: `Moved: explained with ${name}${arrow}`,
       name: `Moved: explained with ${name}, in section ${marker.section}`,
     };
   }
   return {
-    text: `Explained in section ${marker.section} ↗`,
+    text: `Explained in section ${marker.section}${arrow}`,
     name: `Explained in section ${marker.section}${what ? `: ${what}` : ''}`,
     detail: what || undefined,
   };
