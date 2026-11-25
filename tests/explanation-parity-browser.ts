@@ -612,8 +612,75 @@ void app.whenReady().then(async () => {
       500
     );
     assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent"), 'Changes');
+    // ── Focused sections (#564): Changes marks which section explains each part of scope.ts ──
+    // Changes still shows every line; each unit gets a slim note at its first changed line. The resolvePaths and test
+    // slices are section 4's, flush is section 5's, and the migrate change is left out.
+    const markerRow = '.commit-stream-row:is([data-file="src/scope.ts"],[data-file$="/src/scope.ts"])';
+    await wait(`window.deepAll('[data-explained]',document.querySelector(${JSON.stringify(markerRow)})).length>=4`, 500);
+    const markers = await js<{ kind: string; at: string; section: string | null; text: string; name: string | null; jump: string | null; tab: number | null }[]>(
+      `window.deepAll('[data-explained]',document.querySelector(${JSON.stringify(markerRow)})).map(n=>{const b=n.querySelector('button[data-explained-jump]');
+        return {kind:n.dataset.explained,at:n.dataset.explainedAt,section:n.dataset.section??null,text:n.textContent.replace(/\\s+/g,' ').trim(),name:n.getAttribute('aria-label'),jump:b?.getAttribute('aria-label')??null,tab:b?b.tabIndex:null}})`
+    );
+    console.log('Changes markers:', JSON.stringify(markers));
+    const deletedAt = (text: string) => changesRows.find((r) => r.startsWith('change-deletion:') && r.includes(text))?.split(':')[1];
+    const at = (text: string) => `old:${deletedAt(text)}`;
+    const marker = (where: string) => markers.find((m) => m.at === where);
+    assert.deepEqual(
+      [at('result.push(join(root, name));'), at('total += 30;'), `old:${migrateOld}`, at("expect(resolvePaths('/r', ['a']))")].map((where) => {
+        const m = marker(where);
+        return m && [m.kind, m.section, m.text];
+      }),
+      [
+        ['section', '4', 'Explained in section 4 ↗ · function resolvePaths'],
+        ['section', '5', 'Explained in section 5 ↗ · method flush'],
+        ['outside', null, 'Left out of the explanation · function migrate'],
+        ['section', '4', "Explained in section 4 ↗ · describe('resolvePaths')"],
+      ],
+      'Each unit is marked with where it is explained'
+    );
+    assert.equal(marker(`old:${migrateOld}`)?.jump, null, 'Left-out code has no section to go to');
+    assert.ok(markers.filter((m) => m.kind === 'section').every((m) => m.tab !== null && m.tab >= 0), 'The section links are keyboard reachable');
+    assert.equal(marker(at('total += 30;'))?.jump, 'Explained in section 5: method flush: go to section 5');
+    // Diff parity: a marker is a note between rows, never a line of the diff.
+    assert.equal(
+      await js<number>(`window.deepAll('[data-explained] [data-line]',document.querySelector(${JSON.stringify(markerRow)})).length`),
+      0,
+      'The markers add no diff lines'
+    );
+    // The flush marker opens section 5 at the flush change, through the Explanation's section navigation.
+    await js(`window.deepAll('[data-explained] button[data-explained-jump]',document.querySelector(${JSON.stringify(markerRow)})).find(b=>b.closest('[data-explained]').dataset.section==='5').click()`);
+    await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');
+      return document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Explanation'&&a?.closest('[data-explanation-section]')?.dataset.explanationSection==='5'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')})()`, 500);
     await click('Explanation');
     await wait("!!document.querySelector('[aria-label=\"Explanation section\"]')", 500);
+
+    // ── Viewed by parts (#564): scope.ts shows in five sections and has code left out ──
+    // Section 4's checkbox marks only its part as seen: it reads as mixed, the file stays unviewed, and every section's
+    // checkbox says how many parts are seen. Unchecking the part takes it back.
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    const partBox = (section: number) =>
+      `document.querySelector('[data-explanation-section="${section}"] .review-file-group:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"]) .review-file-viewed input')`;
+    const partState = (section: number) =>
+      js<{ checked: boolean; mixed: boolean; aria: string | null; label: string; name: string | null }>(`(()=>{const i=${partBox(section)};
+        return {checked:i.checked,mixed:i.indeterminate,aria:i.getAttribute('aria-checked'),label:i.closest('label').textContent.trim(),name:i.getAttribute('aria-label')}})()`);
+    await wait(`!!${partBox(4)}`, 500);
+    const unseen = await partState(4);
+    console.log('Parts checkbox:', JSON.stringify(unseen));
+    assert.deepEqual([unseen.mixed, unseen.aria, unseen.label], [false, null, '0 of 5 parts seen, rest in Changes']);
+    await js(`${partBox(4)}.click()`);
+    await wait(`${partBox(4)}.getAttribute('aria-checked')==='mixed'`, 500);
+    const seenPart = await partState(4);
+    assert.deepEqual([seenPart.mixed, seenPart.aria, seenPart.label], [true, 'mixed', '1 of 5 parts seen, rest in Changes'], 'The seen part is announced as mixed');
+    assert.match(seenPart.name ?? '', /^1 of 5 parts seen, rest in Changes: .*src\/scope\.ts$/);
+    await js(`window.selectOption('[aria-label="Explanation section"]', '5')`);
+    await wait(`!!${partBox(5)}`, 500);
+    const otherPart = await partState(5);
+    assert.deepEqual([otherPart.checked, otherPart.mixed, otherPart.label], [false, false, '1 of 5 parts seen, rest in Changes'], 'The file stays unviewed');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '4')`);
+    await wait(`!!${partBox(4)}`, 500);
+    await js(`${partBox(4)}.click()`);
+    await wait(`${partBox(4)}.getAttribute('aria-checked')!=='mixed'&&!${partBox(4)}.checked`, 500);
+    assert.equal((await partState(4)).label, '0 of 5 parts seen, rest in Changes');
 
     // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──
     await js(`window.selectOption('[aria-label="Explanation section"]', '0')`);

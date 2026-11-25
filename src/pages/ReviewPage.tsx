@@ -41,6 +41,7 @@ import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useViewedFiles } from '../../lib/use-viewed-files';
+import { useViewedParts } from '../../lib/use-viewed-parts';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
@@ -152,6 +153,8 @@ function ReviewPageContent({
   }, [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
+  // Viewed by parts (#564): with Focused sections, a section's checkbox marks only its part of a file.
+  const viewedParts = useViewedParts(review, viewedFiles, setFileViewed);
   const reader = useRef<ExplanationReaderHandle>(null);
   const reviewRoot = useRef<HTMLDivElement>(null);
   const [inlineExplanationNotice, setInlineExplanationNotice] = useState('');
@@ -923,6 +926,7 @@ function ReviewPageContent({
     showDiffControls: false,
     viewedFiles,
     onFileViewedChange: setFileViewed,
+    viewedParts: viewedParts.parts ? { checkbox: viewedParts.checkbox, onChange: viewedParts.change } : undefined,
     showReviewSuggestions: prefs?.reviewSuggestions !== false,
     showInlineExplanations: prefs?.showInlineExplanations !== false,
     onShowInlineExplanationsChange: handleShowInlineExplanationsChange,

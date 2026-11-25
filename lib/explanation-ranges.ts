@@ -12,7 +12,7 @@ import type { DiffHunk } from './types';
  * here is pure; SlideView calls it per file block.
  */
 
-interface Row {
+export interface Row {
   marker: ' ' | '+' | '-' | '\\';
   /** The row's old line, or for an added row the old line after it. */
   old: number;
@@ -23,7 +23,7 @@ interface Row {
 const HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
 /** A hunk's rows with their lines, or undefined when its header or a row's marker can't be read. */
-function hunkRows(hunk: Pick<DiffHunk, 'hunkHeader' | 'content'>): { rows: Row[]; lines: string[]; rest: string } | undefined {
+export function hunkRows(hunk: Pick<DiffHunk, 'hunkHeader' | 'content'>): { rows: Row[]; lines: string[]; rest: string } | undefined {
   const match = HEADER.exec(hunk.hunkHeader);
   if (!match) return undefined;
   const lines = hunk.content.split('\n');
@@ -50,7 +50,7 @@ const changed = (row: Row) => row.marker === '+' || row.marker === '-';
 const hunkKey = (hunk: Pick<DiffHunk, 'filePath' | 'hunkHeader'>) => `${hunk.filePath}\u0000${hunk.hunkHeader}`;
 
 /** The rows `ranges` name, or undefined when a range is out of the hunk. */
-function rangeRows(ranges: readonly { start: number; end: number }[], count: number): Set<number> | undefined {
+export function rangeRows(ranges: readonly { start: number; end: number }[], count: number): Set<number> | undefined {
   const out = new Set<number>();
   for (const { start, end } of ranges) {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end >= count) return undefined;

@@ -31,8 +31,9 @@ import { lazyScreen } from '../lib/lazy-screen';
 import { LoadingState } from './LoadingState';
 import { PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrExplanation } from './PrExplanation';
-import type { ExplanationDestination } from '../lib/explanation-workspace';
-import type { ReviewHistoryEntry } from '../lib/types';
+import { loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
+import { ExplainedChangesContext, explainedChanges } from '../lib/explained-changes';
+import type { ReviewGuide, ReviewHistoryEntry } from '../lib/types';
 import { Tabs } from 'radix-ui';
 import { PrCommitsView } from './PrCommitsView';
 import { PrChangesView, type ChangesInitialFile } from './PrChangesView';
@@ -41,7 +42,7 @@ import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
 import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { MoveNavigation, type MoveTarget } from '../lib/use-moved-symbols';
 import { usePrMoves } from '../lib/use-pr-moves';
 import type { PrFocus } from '../lib/deep-link';
@@ -321,6 +322,33 @@ function PrSummaryContent({
   useEffect(() => {
     if (tab !== 'changes') setInitialFile(undefined);
   }, [tab]);
+  // Focused sections (#564): Changes marks which section of the PR's current explanation shows each part of a file,
+  // and a marker opens that section here. An explanation made with Focused sections is read when Changes shows; any
+  // other is used only once the Explanation has loaded it.
+  const currentExplanation =
+    explanations.find((e) => !e.status || e.status === 'completed') ?? (item.review?.status === 'completed' ? item.review : undefined);
+  const currentExplanationId = currentExplanation?.id;
+  const readExplanation = tab === 'changes' && !!currentExplanationId && !!currentExplanation?.explanationOptions?.focusedSections;
+  const [loadedExplanation, setLoadedExplanation] = useState<ReviewGuide>();
+  useEffect(() => {
+    if (!readExplanation || !currentExplanationId || peekExplanation(currentExplanationId)) return;
+    let live = true;
+    void loadExplanation(currentExplanationId).then((next) => { if (live) setLoadedExplanation(next); }).catch(() => {});
+    return () => { live = false; };
+  }, [readExplanation, currentExplanationId]);
+  const changesExplanation = currentExplanationId
+    ? (peekExplanation(currentExplanationId) ?? (loadedExplanation?.reviewId === currentExplanationId ? loadedExplanation : undefined))
+    : undefined;
+  const [explanationJump, setExplanationJump] = useState<ExplanationDestination>();
+  // A destination from outside the PR replaces a marker's jump.
+  useEffect(() => setExplanationJump(undefined), [explanationDestination]);
+  const changeTab = useRef(onTabChange);
+  changeTab.current = onTabChange;
+  // Kept per explanation, so Changes renders again only when the explanation does.
+  const explained = useMemo(
+    () => explainedChanges(changesExplanation, (destination) => { setExplanationJump(destination); changeTab.current('explanation'); }),
+    [changesExplanation]
+  );
   // Stable, so the memoized Changes view does not render again while hidden (see KeptChangesView).
   const openFeedback = useCallback((url?: string, threadId?: string) => {
     setFeedbackPr(url);
@@ -764,6 +792,7 @@ function PrSummaryContent({
           </KeptTab>
         )}
         <KeptTab value="changes" tab={tab} visited={visited} arrival={arrival('changes')} className="pr-changes-tab">
+          <ExplainedChangesContext.Provider value={explained}>
           <PrHeaderReviewContext.Provider value={stacked ? undefined : setChangesReview}>
           {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={openFeedback} onOpenPr={changeScope} onOpenBrief={openBrief} /> :
             <KeptChangesView
@@ -778,6 +807,7 @@ function PrSummaryContent({
             />
           )}
           </PrHeaderReviewContext.Provider>
+          </ExplainedChangesContext.Provider>
         </KeptTab>
         <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
@@ -805,7 +835,7 @@ function PrSummaryContent({
           <PrExplanation
             item={item}
             entries={explanations}
-            destination={explanationDestination}
+            destination={explanationJump ?? explanationDestination}
             active={tab === 'explanation' && shortcutsEnabled}
             preferences={preferences}
             starting={starting}

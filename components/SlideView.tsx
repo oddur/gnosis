@@ -85,6 +85,14 @@ export interface SlideViewProps {
   onToggleReviewed?: () => void;
   viewedFiles?: Set<string>;
   onFileViewedChange?: (filePath: string, viewed: boolean) => void;
+  /**
+   * Viewed by parts (#564), with Focused sections: a block's checkbox marks only this section's part of the file as
+   * seen. Unset: the checkbox marks the whole file, as before.
+   */
+  viewedParts?: {
+    checkbox: (filePath: string, section: number) => { checked: boolean; mixed: boolean; label?: string; outside?: boolean };
+    onChange: (filePath: string, section: number, next: boolean) => void;
+  };
   onContinue?: () => void;
   nextTopicTitle?: string | null;
   showReviewSuggestions?: boolean;
@@ -445,6 +453,7 @@ export function SlideView({
   onToggleReviewed,
   viewedFiles,
   onFileViewedChange,
+  viewedParts,
   onContinue,
   nextTopicTitle,
   showReviewSuggestions = true,
@@ -910,7 +919,16 @@ export function SlideView({
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
         const viewed = viewedFiles?.has(filePath) ?? false;
-        const expanded = fileExpansion[key] ?? !viewed;
+        // With parts (#564), a block whose part is seen folds as a viewed file does.
+        const part = viewedParts?.checkbox(filePath, sectionNumber);
+        const partLabel = part?.label;
+        const expanded = fileExpansion[key] ?? !(viewed || !!part?.mixed);
+        const changeViewed = onFileViewedChange
+          ? (next: boolean) => {
+              if (viewedParts) viewedParts.onChange(filePath, sectionNumber, next);
+              else onFileViewedChange(filePath, next);
+            }
+          : undefined;
         const contentId = `${fileContentId}-${index}`;
         const file = files.get(filePath);
         const split = (file?.blocks ?? 1) > 1;
@@ -988,10 +1006,10 @@ export function SlideView({
             stickyUnder={headerRef}
             fileViewed={viewed}
             onMarkFileViewed={
-              onFileViewedChange
+              changeViewed
                 ? () => {
                     setFileGroupsExpanded(false);
-                    onFileViewedChange(filePath, true);
+                    changeViewed(true);
                   }
                 : undefined
             }
@@ -1021,11 +1039,16 @@ export function SlideView({
                 setFileExpansion((current) => ({ ...current, [key]: !expanded }));
               }}
               viewed={viewed}
+              viewedParts={
+                partLabel === undefined
+                  ? undefined
+                  : { mixed: !!part?.mixed, label: partLabel, outside: part?.outside }
+              }
               onViewedChange={
-                onFileViewedChange
+                changeViewed
                   ? (next) => {
                       setFileGroupsExpanded(!next);
-                      onFileViewedChange(filePath, next);
+                      changeViewed(next);
                     }
                   : undefined
               }

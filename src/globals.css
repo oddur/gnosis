@@ -1999,6 +1999,10 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-move-note[data-move-lead] .diff-gap-trailing { padding-left:var(--diff-code-inset); }
 .diff-move-note code { font:inherit; color:var(--diff-header-fg); }
 .diff-move-note .diff-gap-text code { color:inherit; }
+/* Focused sections (#564): where the explanation shows a unit, in a move note's place and type; its name stays muted. */
+.diff-explained-note code { color:var(--diff-header-muted); }
+/* Viewed by parts (#564): the count of parts seen keeps its width as it changes. */
+.review-file-viewed[data-parts] { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .changes-file-noise { display:inline-flex; align-items:center; gap:4px; }
 .changes-file-noise svg { flex:none; }
 .changes-progress-quiet { color:var(--muted-foreground); }

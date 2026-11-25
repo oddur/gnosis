@@ -30,7 +30,8 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { ArrowRightLeft } from 'lucide-react';
+import { ArrowRightLeft, BookOpen } from 'lucide-react';
+import { markerWords, type ExplainedMarker } from '../lib/explained-markers';
 import { quietKindInfo } from '../lib/quiet-changes-header';
 import { blockKey, changeBlocks, hunkNoise, noiseLabel, quietKind, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
@@ -1100,6 +1101,70 @@ type MoveWords = ReturnType<typeof moveWords>;
 const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
   !!metadata && typeof metadata === 'object' && 'gnosisMove' in metadata;
 
+/** A Focused sections marker's annotation (#564): which section explains the code from this line. */
+interface ExplainedAnnotation {
+  gnosisExplained: ExplainedMarker;
+}
+const isExplainedAnnotation = (metadata: unknown): metadata is ExplainedAnnotation =>
+  !!metadata && typeof metadata === 'object' && 'gnosisExplained' in metadata;
+const NO_MARKERS: readonly ExplainedMarker[] = [];
+
+/**
+ * Where the explanation shows this code (#564), as one quiet code line right above the unit, in the same place and
+ * style as a move's note: "Explained in section 3 ↗ · fn flush", "Left out of the explanation", or "Moved: explained
+ * with fn flush ↗". A section link goes to the Explanation. It never changes which lines show.
+ */
+function ExplainedNote({
+  marker,
+  onOpen,
+  lead,
+}: {
+  marker: ExplainedMarker;
+  onOpen?: (marker: ExplainedMarker) => void;
+  lead?: 'left' | 'right';
+}) {
+  const { text, name, detail } = markerWords(marker);
+  const go = marker.kind !== 'outside' && marker.target ? onOpen : undefined;
+  return (
+    <div
+      className="diff-gap diff-move-note diff-explained-note"
+      role="note"
+      aria-label={name}
+      data-trailing=""
+      data-explained={marker.kind}
+      data-section={marker.section}
+      data-explained-at={`${marker.side === 'before' ? 'old' : 'new'}:${marker.start}`}
+      data-move-lead={lead}
+    >
+      <span className="diff-gap-trailing">
+        <BookOpen className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />
+        {go ? (
+          <button
+            type="button"
+            className="diff-context-button diff-gap-text"
+            data-explained-jump=""
+            aria-label={`${name}: go to section ${marker.section}`}
+            onClick={() => go(marker)}
+          >
+            {text}
+          </button>
+        ) : (
+          <span className="diff-noise-label">{text}</span>
+        )}
+        {detail && (
+          <>
+            {' '}
+            <span className="diff-gap-dot" aria-hidden="true">
+              ·
+            </span>{' '}
+            <code className="diff-move-place">{detail}</code>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
 /**
  * Where a moved symbol came from, or went (#398), as one quiet code line under the line above it: "Moved from
  * src/a.ts:12 · renamed from load · 2 lines edited", or "Moved up from line 22" within the file. The place is a link
@@ -1372,6 +1437,7 @@ export function ChangesDiff<A>({
   noise,
   moves,
   written = NO_WRITTEN,
+  explained,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1422,6 +1488,11 @@ export function ChangesDiff<A>({
   moves?: DiffMoves;
   /** New-side lines a conflict resolver wrote, which neither side had (#445 item 10): a steady mark on each. */
   written?: ReadonlySet<number>;
+  /**
+   * Focused sections (#564): where the explanation shows each part of the file, as a slim note at its first line, and
+   * the jump to its section. Markers only: the lines shown never change.
+   */
+  explained?: { markers: readonly ExplainedMarker[]; onOpen?: (marker: ExplainedMarker) => void };
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1470,8 +1541,13 @@ export function ChangesDiff<A>({
   };
   const latestGoToMove = useRef(goToMove);
   latestGoToMove.current = goToMove;
+  const latestExplained = useRef(explained?.onOpen);
+  latestExplained.current = explained?.onOpen;
+  const openExplained = (marker: ExplainedMarker) => latestExplained.current?.(marker);
   const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => {
     const metadata: unknown = annotation.metadata;
+    if (isExplainedAnnotation(metadata))
+      return <ExplainedNote marker={metadata.gnosisExplained} onOpen={latestExplained.current ? openExplained : undefined} />;
     if (isMoveAnnotation(metadata)) {
       const mark = metadata.gnosisMove;
       return <MoveNote mark={mark} words={metadata.words} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
@@ -1585,12 +1661,36 @@ export function ChangesDiff<A>({
     }
     return result;
   }, [noteLines, slices, parts]);
+  // Focused sections' markers (#564), placed as moves' notes are: under the row right above each unit, or heading its
+  // hunk. Placed once per file's parts; the markers themselves come computed once per explanation.
+  const markers = explained?.markers ?? NO_MARKERS;
+  const explainedLines = useMemo(() => (markers.length ? moveNoteLines(parts, markers, split) : undefined), [parts, markers, split]);
+  const explainedLeads = useMemo(() => {
+    const result = new Map<string, ExplainedMarker[]>();
+    for (const [marker, at] of explainedLines ?? []) if ('hunk' in at) result.set(at.hunk, [...(result.get(at.hunk) ?? []), marker]);
+    return result;
+  }, [explainedLines]);
+  const explainedBySlice = useMemo(() => {
+    const result = new Map<string, DiffLineAnnotation<A>[]>();
+    for (const [marker, at] of explainedLines ?? []) {
+      if ('hunk' in at) continue;
+      const side = at.side === 'after' ? ('additions' as const) : ('deletions' as const);
+      const owner = slices.find((slice) => {
+        const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
+        return at.line >= from && at.line <= to;
+      });
+      const metadata: ExplainedAnnotation = { gnosisExplained: marker };
+      if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), { side, lineNumber: at.line, metadata } as unknown as DiffLineAnnotation<A>]);
+    }
+    return result;
+  }, [explainedLines, slices]);
   const sliceAnnotations = useMemo(() => {
-    if (!moveBySlice.size) return bySlice;
+    if (!moveBySlice.size && !explainedBySlice.size) return bySlice;
     const result = new Map(bySlice);
     for (const [key, list] of moveBySlice) result.set(key, [...(result.get(key) ?? []), ...list]);
+    for (const [key, list] of explainedBySlice) result.set(key, [...(result.get(key) ?? []), ...list]);
     return result;
-  }, [bySlice, moveBySlice]);
+  }, [bySlice, moveBySlice, explainedBySlice]);
   const targetKey = useMemo(() => {
     if (!target) return undefined;
     return slices.find((slice) => {
@@ -2138,6 +2238,21 @@ export function ChangesDiff<A>({
       );
       return;
     }
+    // Markers over a hunk's first row head its code, in one row (#564).
+    const explainedLead = explainedLeads.get(block.key);
+    if (explainedLead)
+      current.children.push(
+        <div key={`explained-lead-${block.key}`} className="diff-move-lead">
+          {explainedLead.map((marker) => (
+            <ExplainedNote
+              key={`explained-${marker.side}${marker.start}`}
+              marker={marker}
+              lead="left"
+              onOpen={explained?.onOpen}
+            />
+          ))}
+        </div>
+      );
     // A hunk's lead notes share one row: in a split diff, each in its side's column.
     const leads = leadNotes.get(block.key);
     if (leads) {

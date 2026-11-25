@@ -24,6 +24,11 @@ interface Props {
   onToggleExpanded?: () => void;
   viewed?: boolean;
   onViewedChange?: (viewed: boolean) => void;
+  /**
+   * Viewed by parts (#564): this section's part of the file is seen but the file is not Viewed yet (announced as
+   * `aria-checked="mixed"`), and the label that replaces "Viewed", such as "2 of 4 parts seen".
+   */
+  viewedParts?: { mixed: boolean; label: string; outside?: boolean };
   headerRef?: RefObject<HTMLElement | null>;
   /** The diff's Pierre theme: the header takes its palette, as Changes' does (lib/code-palette.ts). */
   codeTheme?: string;
@@ -55,6 +60,7 @@ export function ReviewFileHeader({
   onToggleExpanded,
   viewed = false,
   onViewedChange,
+  viewedParts,
   headerRef,
   codeTheme,
   sectionHunks,
@@ -121,14 +127,29 @@ export function ReviewFileHeader({
               </span>
             )}
             {onViewedChange && (
-              <label className="review-file-viewed" title="Track this file as viewed in Gnosis">
+              <label
+                className="review-file-viewed"
+                data-parts={viewedParts ? (viewedParts.mixed ? 'mixed' : 'unseen') : undefined}
+                title={
+                  viewedParts
+                    ? `Marks this section's part of the file as seen. The file is Viewed when every part is seen${
+                        viewedParts.outside ? '; some of it is left out of the explanation, so mark it Viewed in Changes' : ''
+                      }.`
+                    : 'Track this file as viewed in Gnosis'
+                }
+              >
                 <input
                   type="checkbox"
-                  checked={viewed}
+                  // A seen part reads as mixed: checked underneath, so a click unchecks it.
+                  ref={(input) => {
+                    if (input) input.indeterminate = !!viewedParts?.mixed;
+                  }}
+                  checked={viewed || !!viewedParts?.mixed}
+                  aria-checked={viewedParts?.mixed ? 'mixed' : undefined}
                   onChange={(event) => onViewedChange(event.target.checked)}
-                  aria-label={`Viewed ${displayPath}`}
+                  aria-label={viewedParts ? `${viewedParts.label}: ${displayPath}` : `Viewed ${displayPath}`}
                 />
-                Viewed
+                {viewedParts?.label ?? 'Viewed'}
               </label>
             )}
             {gitFileUrlBase && (

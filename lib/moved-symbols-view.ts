@@ -11,12 +11,12 @@ export type MoveNoteAt = { side: MoveMark['side']; line: number } | { hunk: stri
  * before it on its own side. With no such row in its hunk, the note heads the hunk (`{ hunk }`). A symbol whose first
  * line is not shown has no note.
  */
-export function moveNoteLines(
+export function moveNoteLines<M extends Pick<MoveMark, 'side' | 'start'>>(
   parts: readonly GapPart[],
-  marks: readonly MoveMark[],
+  marks: readonly M[],
   split = false
-): Map<MoveMark, MoveNoteAt> {
-  const result = new Map<MoveMark, MoveNoteAt>();
+): Map<M, MoveNoteAt> {
+  const result = new Map<M, MoveNoteAt>();
   for (const mark of marks)
     for (const part of parts) {
       const at = part.kind === 'hunk' ? noteAt(part.key, part.hunk, mark, split) : undefined;
@@ -29,7 +29,7 @@ export function moveNoteLines(
 }
 
 /** Where a mark's note goes in one hunk, if its first line is there. */
-function noteAt(key: string, hunk: GapHunk, mark: MoveMark, split: boolean): MoveNoteAt | undefined {
+function noteAt(key: string, hunk: GapHunk, mark: Pick<MoveMark, 'side' | 'start'>, split: boolean): MoveNoteAt | undefined {
   const after = mark.side === 'after';
   let oldLine = hunk.oldStart,
     newLine = hunk.newStart;
