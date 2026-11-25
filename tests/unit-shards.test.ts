@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { DURATION_FILES, NATIVE_SHARDS, browserSuites, shardSuites } from '../scripts/run-browser-suites.mjs';
+import { DURATION_FILES, NATIVE_PR_SHARDS, NATIVE_SHARDS, browserSuites, shardSuites } from '../scripts/run-browser-suites.mjs';
 import { shardRuns, unitShard, unitTestFiles, usesTestPart } from '../scripts/run-unit-tests.mjs';
 import { inPart, testPart } from './support/test-part';
 
@@ -39,34 +39,39 @@ void test('the parts of a split file run each of its tests exactly once', () => 
   }
 });
 
-// The native browser jobs in checks.yml must use the shard counts NATIVE_SHARDS names (npm run test:native-local
-// prints them), and balance by a duration file that measures every suite.
-void test('the native browser jobs match NATIVE_SHARDS and balance every suite by measured durations', () => {
+// The native browser jobs in checks.yml must use the shard counts NATIVE_SHARDS (main) and NATIVE_PR_SHARDS (pull
+// requests) name, and balance by a duration file that measures every suite.
+void test('the native browser jobs match NATIVE_SHARDS and NATIVE_PR_SHARDS and balance every suite by measured durations', () => {
   const suites = browserSuites(scripts);
-  for (const [platform, name] of [
-    ['darwin', 'macos'],
-    ['win32', 'windows'],
+  const include = /include: \$\{\{ fromJSON\(github\.event_name == 'pull_request' && '(\[.*?\])' \|\| '(\[.*?\])'\) \}\}/.exec(workflow);
+  assert.ok(include, 'checks.yml picks the native matrix by event');
+  type Row = { os: string; platform: string; shards: number; shard: number; timeout: number };
+  const [pr, main] = [JSON.parse(include[1]) as Row[], JSON.parse(include[2]) as Row[]];
+  for (const [rows, counts, label] of [
+    [pr, NATIVE_PR_SHARDS, 'pull requests'],
+    [main, NATIVE_SHARDS, 'main'],
   ] as const) {
-    const rows = [
-      ...workflow.matchAll(
-        new RegExp(`\\{ os: \\w+-latest, platform: ${name}, shards: (\\d+), shard: (\\d+) \\}`, 'g')
-      ),
-    ];
-    const count = NATIVE_SHARDS[platform];
-    assert.deepEqual(
-      rows.map((row) => [Number(row[1]), Number(row[2])]),
-      Array.from({ length: count }, (_, i) => [count, i + 1]),
-      `${name} shards in checks.yml`
-    );
-    assert.equal(DURATION_FILES[platform], `scripts/browser-suite-durations-${name}.json`);
-    const durations = JSON.parse(readFileSync(DURATION_FILES[platform], 'utf8')) as Record<string, number>;
-    const unmeasured = suites.filter((suite) => typeof durations[suite.key] !== 'number').map((suite) => suite.key);
-    assert.deepEqual(unmeasured, [], `Measure these suites on ${name}: ${unmeasured.join(', ')}`);
-    const shards = Array.from({ length: count }, (_, i) => shardSuites(suites, durations, i + 1, count).length);
-    assert.equal(
-      shards.reduce((sum, size) => sum + size, 0),
-      suites.length
-    );
+    for (const [platform, name] of [
+      ['darwin', 'macos'],
+      ['win32', 'windows'],
+    ] as const) {
+      const count = counts[platform];
+      assert.deepEqual(
+        rows.filter((row) => row.platform === name).map((row) => [row.shards, row.shard]),
+        Array.from({ length: count }, (_, i) => [count, i + 1]),
+        `${name} shards on ${label} in checks.yml`
+      );
+      assert.ok(rows.filter((row) => row.platform === name).every((row) => row.timeout >= 30), `${name} timeouts`);
+      assert.equal(DURATION_FILES[platform], `scripts/browser-suite-durations-${name}.json`);
+      const durations = JSON.parse(readFileSync(DURATION_FILES[platform], 'utf8')) as Record<string, number>;
+      const unmeasured = suites.filter((suite) => typeof durations[suite.key] !== 'number').map((suite) => suite.key);
+      assert.deepEqual(unmeasured, [], `Measure these suites on ${name}: ${unmeasured.join(', ')}`);
+      const shards = Array.from({ length: count }, (_, i) => shardSuites(suites, durations, i + 1, count).length);
+      assert.equal(
+        shards.reduce((sum, size) => sum + size, 0),
+        suites.length
+      );
+    }
   }
 });
 

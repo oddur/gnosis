@@ -24,7 +24,7 @@ Any other path runs them, so a new kind of file is covered without a change here
 
 On docs-only PRs the native jobs show as skipped, and Check runs the browser smoke suite. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.
 
-Before you open a PR that changes anything outside that list, run the same suites on your own Mac or Windows machine:
+The PR's own CI runs these suites, so you don't need to run them locally. These runs take over the machine. If you choose to run them on your own Mac or Windows machine:
 
 ```sh
 npm run test:native-local -- --list --shard 1/4   # the suites of Browser (macos-latest 1/4)
@@ -75,7 +75,7 @@ Some checks that use time stay enforced on CI, because they check behaviour, not
 - Instant views (`--instant-views`): a prepared PR or the saved queue shows well before the fixture's slow network or slow start would answer.
 - Timeouts with wide margins: an interactive read stops waiting for a 1 s fetch (`local-clone`), and a status read waits for a stuck preload for about 250 ms (`pr-status`). Quit flushing (`quit-flush`) uses mocked timers.
 
-Run `npm run test:perf` on your own machine before a release, and after you change rendering, scrolling, sync, diff or queue code. Put the `[perf]` lines in the PR description.
+After you change rendering, scrolling, sync, diff or queue code, put the `[perf]` lines from the PR's CI job logs in the PR description. CI logs every budget but doesn't enforce them. `npm run test:perf` enforces them locally and takes over the machine while it runs, so run it only when you choose to, for example before a release.
 
 ```sh
 npm run test:perf                  # unit timing tests on this machine, then the timed browser suites in Docker
