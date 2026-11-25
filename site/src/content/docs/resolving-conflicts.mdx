@@ -4,10 +4,78 @@ description: Resolve merge conflicts with proposals that you check before Gnosis
 order: 9
 ---
 
-When a PR has merge conflicts, Gnosis sorts each conflict into one of three groups. Merged conflicts have a proven resolution. Check conflicts have a proposal that you must confirm. Decide conflicts need your choice. For each conflict, keep the PR's change, the base branch's change, or both, or edit the result. Press <Kbd keys="1" />, <Kbd keys="2" /> or <Kbd keys="3" /> to choose, and <Kbd keys="a" /> to use the proposal and go to the next conflict. Gnosis never pushes without your confirmation: <Kbd keys="⌘ ↵" /> opens the Review and push confirmation.
+When a PR has merge conflicts with its base branch, Gnosis can resolve them with you. Gnosis merges the base branch into the PR's branch with a merge commit. It does not merge the PR itself.
+
+## Two safety rules
+
+- **Gnosis never merges a conflict that it cannot prove.** A proposal that the checks do not prove waits for your choice. The draft keeps the conflict markers until you choose.
+- **Nothing is pushed without your confirmation.** Only the **Review and push…** confirmation pushes, and only when you select **Push merge commit**.
+
+## When to use this
+
+- Use it when GitHub says that the PR has conflicts, and you can push to the PR's branch.
+- Gnosis cannot resolve binary files, renames on both sides, or deleted files. It marks them **Needs a local merge tool** and gives you the commands to merge on your computer.
+
+## Open the conflicts
+
+Select **Resolve conflicts…** in the PR header, in the PR's menu, or in the stack overview. A sentence at the top tells you how many conflicts need you.
 
 <DocShot
   name="conflicts"
-  alt="Resolving a merge conflict: keep the PR's change, main's, or both."
+  alt="The Conflicts view. A conflict shows the PR's version and main's version side by side. Under them are the buttons Keep PR change, Keep main's change, Keep both and Edit."
   caption="Resolving a merge conflict: keep the PR's change, main's, or both."
 />
+
+## Merged, Check and Decide
+
+Gnosis puts each conflict in one of three groups:
+
+- **Merged**: the checks prove the proposal. The proposal is in the draft. Select **Decide myself** to remove it and choose yourself.
+- **Check**: there is a proposal, but the checks do not prove it. The draft keeps the markers. Select **Use the proposal** to accept it, or choose a different option.
+- **Decide**: there is no proposal. You must choose.
+
+Proposals come from your earlier resolutions, from a structural merge, from simple rules, or from a model. A model's proposal is always **Check**, never Merged.
+
+## Resolve a conflict
+
+For each conflict, choose one option:
+
+- **Keep PR change** (<Kbd keys="1" />), **Keep main's change** (<Kbd keys="2" />) or **Keep both** (<Kbd keys="3" />). The button names your base branch.
+- **Use the proposal** (<Kbd keys="a" />). Gnosis then goes to the next conflict that needs you.
+- **Edit** to write the result yourself, or **Edit whole file** to change lines outside the conflicts too.
+
+Press <Kbd keys="u" /> to undo your last choice. Press <Kbd keys="j" /> and <Kbd keys="k" /> to move between conflicts, and <Kbd keys="n" /> and <Kbd keys="p" /> to move between files.
+
+A blue band marks lines that neither side wrote. Read them carefully.
+
+### Ask a model
+
+Nothing goes to a model until you ask. To get proposals, select the button that names your model, for example **Ask Claude about 2 conflicts**. Gnosis sends only each conflict, the code around it, the file path, the branch names and the PR title. It never sends files or conflicts that look like they hold secrets.
+
+### Compare the result
+
+Press <Kbd keys="v" />, or use **Compare with**, to compare the result with the PR (**PR**), with the base branch (**main**), or with both (**both**).
+
+### Mark the file reviewed
+
+When no conflict is left, select **Mark reviewed**, or press <Kbd keys="m" />. Gnosis opens the next file that needs you, and saves your draft automatically.
+
+By default, you must also mark files with only Merged conflicts. Press <Kbd keys="g" /> to change this for the repository.
+
+## Review and push
+
+1. When every file is reviewed, press <Kbd keys="⌘ ↵" /> or select **Review and push…**. This opens the confirmation. It does not push.
+2. Read the update. It has three groups: **You decided**, **Merged for you** and **Arriving from main**.
+3. Write a commit message.
+4. Select **Push merge commit**. Enter alone never pushes.
+
+If someone pushed to the PR's branch after you started, the push is refused and nothing changes. Select **Load latest changes** to prepare the merge again. Your resolutions that still apply stay.
+
+If the base branch got new commits, Gnosis merges them too. If they cause new conflicts, Gnosis pushes nothing and shows you the new conflicts.
+
+## Settings
+
+- **Type check**: in <Setting name="Local clone" section="Repositories" />, turn on **Type-check conflict resolutions**. Gnosis then runs the TypeScript compiler from your clone. A new error moves the Merged conflicts to Check.
+- **Undo an update**: in <Setting name="Undo conflict updates" section="Repositories" />, turn on **Allow undoing a conflict update with a force push**. **Undo this update** then puts the branch back to its earlier commit. Gnosis refuses the undo if someone pushed after you. This option is off by default.
+
+For all the keys, see [Keyboard shortcuts](/docs/keyboard-shortcuts/#resolving-conflicts). For conflicts in a stack, see [Stacks](/docs/stacks/).

@@ -4,12 +4,93 @@ description: Read a PR on its Summary, Changes, Commits, Checks and Local notes 
 order: 4
 ---
 
-A PR opens on its Summary tab. Summary shows the description, the timeline of comments and reviews, the people and labels, and whether the PR is ready to merge. Changes shows the diff, with a file tree and a Viewed checkbox for each file and folder. Press <Kbd keys="d" /> to switch between split and unified diffs. Commits shows the diff of each commit. Checks shows the CI workflow as a graph, with the steps of each job; you can run a failed job again from there. Local notes keeps private notes about the PR on your computer, with the code they refer to.
+A PR in Gnosis has tabs: **Summary**, **Changes**, **Commits**, **Checks**, **Explanation** and **Local notes**. When the PR has merge conflicts that you resolve, a **Conflicts** tab also shows. This page tells you how to read a PR on each tab.
+
+## When to use each tab
+
+- Use **Summary** first. It tells you what the PR is, who is in it, and if it can merge.
+- Use **Changes** to read and review the code.
+- Use **Commits** to read the PR one commit at a time.
+- Use **Checks** when a check fails.
+- Use **Explanation** for a guided walkthrough. See [Explanations](/docs/explanations/).
+- Use **Local notes** to keep private notes about the PR.
+
+## Summary
+
+A PR opens on its Summary tab. Summary shows:
+
+- the description;
+- the timeline of comments and reviews;
+- the people and labels, which you can change;
+- the readiness: whether the PR can merge, and what blocks it;
+- the time that Gnosis last checked GitHub, for example "Checked 2m ago".
 
 <DocShot
   name="pr-summary"
-  alt="The PR Summary tab: description, timeline, readiness."
-  caption="The PR Summary tab: description, timeline, readiness."
+  alt="The Summary tab of a PR. The description is at the top, the timeline of comments and reviews is below it, and the readiness and people are in a column on the right."
+  caption="The Summary tab: description, timeline and readiness."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): pr-changes-split, pr-commits, pr-checks, pr-checks-failure, pr-local-notes. */}
+To work through the review threads on Summary, see [Comments & reviews](/docs/comments-and-reviews/).
+
+## Changes
+
+Changes shows the diff of the PR. A file tree is on the left.
+
+<DocShot
+  name="pr-changes-split"
+  alt="The Changes tab with the file tree on the left and src/worker.ts open in a split diff. The old lines are on the left and the new lines are on the right."
+  caption="Changes with the file tree and a split diff."
+/>
+
+### Read the diff
+
+- Press <Kbd keys="s" /> for the split diff, and <Kbd keys="u" /> for the unified diff. Press <Kbd keys="d" /> to switch between the two.
+- Press <Kbd keys="w" /> to show or hide quiet changes: whitespace, formatting, comments and imports. See [Code intelligence](/docs/code-intelligence/).
+- Open **Diff appearance** to set the layout, line numbers, line wrap and change highlights. These settings apply to all diffs.
+- Expand the gaps between hunks to see more lines around a change.
+- For a Markdown file, choose **Preview** to read the rendered page, or **Source** to read the text.
+- For an image, Gnosis compares the old image with the new image.
+
+### Mark files as viewed
+
+Select the **Viewed** checkbox of a file when you finish it. A folder in the file tree also has a Viewed menu, so you can mark all its files at the same time.
+
+### Ask about a file
+
+Press <Kbd keys="c" /> to open chat beside the file. See [Chat](/docs/chat/).
+
+## Commits
+
+Commits lists the commits of the PR. Select a commit to see only its diff.
+
+## Checks
+
+Checks shows the CI results for the PR's last commit.
+
+1. Choose **List** to see each check, or **Graph** to see the workflow as a graph.
+2. In the list, filter by **All checks**, **Needs attention** or **Running**.
+3. Select a check to see its steps, its log and its annotations.
+4. To run failed jobs again, select **Re-run failed jobs**. You must have write access to the repository.
+5. To give the failures to a coding agent, select **Pass to an agent**. Gnosis copies the failures to the clipboard.
+
+<DocShot
+  name="pr-checks"
+  alt="The Checks tab in Graph view. Workflow jobs are boxes, with lines between the jobs that depend on each other. A failed job is marked in red."
+  caption="Checks as a workflow graph."
+/>
+
+## Local notes
+
+Local notes are private notes about lines of code in the PR. Gnosis saves them on your computer and never posts them to GitHub. Use them to collect work for a coding agent.
+
+1. In Changes, start a comment on a line. See [Comments & reviews](/docs/comments-and-reviews/).
+2. Under **Save as**, choose **Local note**, then select **Add local note**.
+3. Open the Local notes tab. Select **Preview** to see what your agent receives.
+4. Select **Copy for agent**. Gnosis copies your notes with the code, the file locations and the version that you reviewed. Paste the text into your coding agent.
+
+<DocShot
+  name="pr-local-notes"
+  alt="The Local notes tab with one saved note about a line of code. The Copy for agent and Preview buttons are at the top of the list."
+  caption="Local notes: private notes for an agent."
+/>

@@ -4,12 +4,69 @@ description: Breadcrumbs, whole functions, moved code and quiet changes in diffs
 order: 11
 ---
 
-Gnosis reads the structure of the code in a diff. Breadcrumbs show the function or class of the line that you read, and you can click them to go there. When a function or class is short, Gnosis can show all of it, not only the changed lines. It finds code that moved, so a moved function is not shown as a deletion and an addition. Press <Kbd keys="w" /> to show or hide quiet changes: whitespace, formatting and comments. Turn these on or off with <Setting name="Show code structure in diffs" section="Appearance" />.
+Gnosis reads the structure of the code in a diff with tree-sitter. It knows the functions, methods and classes around each change. It uses this structure to show where a change is, to show more of the code around it, and to find code that moved.
+
+## When to use code intelligence
+
+- Use **breadcrumbs** and the **outline** to know where you are in a large file.
+- Use **Show whole function** when a hunk does not show enough of the function to understand it.
+- Use **quiet changes** to hide changes that do not change behavior, such as formatting.
+
+Code intelligence works for TypeScript, TSX, JavaScript, Rust, Go, Python, Java, C#, JSON and YAML.
+
+## Breadcrumbs
+
+The breadcrumbs above the diff show the path to the code that you read: the file, then the class, then the function. Select a part of the path to go there. Some parts have a menu, so you can choose a different item.
 
 <DocShot
   name="breadcrumbs"
-  alt="Breadcrumbs: the class and function a hunk sits in."
-  caption="Breadcrumbs: the class and function a hunk sits in."
+  alt="The breadcrumbs above a diff hunk. They show the file name, then a class name, then a method name."
+  caption="Breadcrumbs: the class and function that a hunk is in."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): moved-symbols, quiet-changes, diff-appearance. */}
+## Show the whole function
+
+Each hunk names the function or class around it. Select **Show whole function** (or class, or method) to see all of it, not only the changed lines.
+
+When a short function or class needs at most 10 more lines above and below the change, Gnosis shows all of it automatically. A rail beside the line numbers marks these lines. You can collapse them on any hunk.
+
+## The outline
+
+The outline lists the functions and classes that each file changes. Each symbol is marked as added, modified or removed, and has its own Viewed tick. Use the outline button to show or hide the outline.
+
+## Moved code
+
+When a PR moves a function to a different place, Gnosis shows the move. It does not show a deletion and an unrelated addition. A note on the moved code says where it came from, for example "Moved from commands/queue.rs". If the code also changed in the move, open the note to see only what changed.
+
+<DocShot
+  name="moved-symbols"
+  alt="A moved function in a diff with a note above it: Moved from, followed by the old file path."
+  caption="A moved function, noted where it landed."
+/>
+
+## Quiet changes
+
+Quiet changes are lines that change only whitespace, formatting, comments or imports. Gnosis can collapse them, so you read the changes that matter.
+
+- Press <Kbd keys="w" /> to show or hide all quiet changes at the same time.
+- To choose which kinds to hide, open **Diff appearance**. Under **Quiet changes**, select **Hide whitespace-only changes**, **Hide formatting-only changes**, **Hide comment-only changes** or **Hide import-only changes**.
+
+These choices apply to all diffs.
+
+<DocShot
+  name="quiet-changes"
+  alt="A diff in which formatting-only lines are collapsed into one quiet row, between two changed lines that stay visible."
+  caption="Quiet changes: formatting-only lines collapsed."
+/>
+
+<DocShot
+  name="diff-appearance"
+  alt="The Diff appearance menu. It has the diff layout, the change highlights, line numbers, line wrap, and the four Quiet changes checkboxes."
+  caption="Diff appearance: layout and quiet-change options."
+/>
+
+## Settings
+
+Turn code intelligence on or off in <Setting name="Show code structure in diffs" section="Appearance" />. Turn the automatic whole function on or off in <Setting name="Show the whole function or class when it's short" section="Appearance" />. You can also turn off single languages there.
+
+For explanations, <Setting name="Simplify import changes" section="Review" /> condenses changes that touch only imports.

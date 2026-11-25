@@ -4,12 +4,67 @@ description: Review a stack of dependent PRs as one change or one PR at a time.
 order: 10
 ---
 
-A stack is a chain of PRs where each PR builds on the one below it. Gnosis finds stacks and shows them in the queue and on a stack overview. Use the scope switcher to see the whole stack or one PR in it. Changes can show the combined diff of the stack, or the diff of each PR. The merge plan shows the order in which the PRs can merge, and the conflicts that each step can cause.
+A stack is a chain of PRs. Each PR in the chain builds on the PR below it, and the lowest PR targets the base branch. Gnosis finds stacks and shows each stack as one row in the queue. A stack has its own overview, its own changes and its own merge plan.
+
+## When to use the stack view
+
+- Use the **whole stack** to read all the changes of the stack as one change.
+- Use **one PR of the stack** to review that PR on its own, with the PRs below it as context.
+- Use the **merge plan** to see which PR can merge next, and what blocks the others.
+
+## Open a stack
+
+In the queue, select **Stacks** in the sidebar to list only stacks. Open a stack row to see the stack overview.
 
 <DocShot
   name="stack-overview"
-  alt="A stack's overview: its PRs in order."
+  alt="A stack overview with three PRs in order. Dependent PRs are at the top and the base branch is at the bottom. Each PR shows its review state, its checks and its conflicts."
   caption="A stack's overview: its PRs in order."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): stack-merge-plan. */}
+The overview lists the PRs of the stack. Dependent PRs are first, and the base branch is at the bottom. Each PR shows its review state, its checks, and whether it has conflicts.
+
+## Switch between the stack and one PR
+
+The scope switcher is above the PR tabs. It shows **Whole stack**, or the PR that you look at, for example "#121 · 2 of 3".
+
+1. Open the scope switcher.
+2. Choose **Whole stack**, or choose one PR.
+3. To go back from a PR to its stack, select **Stack**.
+
+The tabs, for example Summary, Changes and Checks, then show the scope that you chose.
+
+## Read the changes of a stack
+
+In the whole-stack scope, Changes has two modes:
+
+- **Combined** shows one diff for the whole stack, from the base branch to the top PR.
+- **By PR** shows the changes of each PR on its own.
+
+When the stack changes on GitHub, for example after a new commit, Gnosis tells you and updates the combined diff. Reviews and comments always go to one PR on GitHub. A review is never for the whole stack.
+
+## Merge a stack
+
+The merge plan shows the PRs in their merge order, the lowest PR first. For each PR, it shows whether the PR can merge, and what blocks it, for example a required check that failed or a missing approval. Select **Refresh merge status** to read the status from GitHub again.
+
+<DocShot
+  name="stack-merge-plan"
+  alt="A stack's merge plan. The PRs are in merge order, lowest first. Each PR has a status line, and one PR shows a required check that failed."
+  caption="A stack's merge plan."
+/>
+
+In the whole-stack scope, the merge action in the header merges the stack. Gnosis shows a confirmation first, as for a single PR. See [Merging & PR actions](/docs/merging-and-pr-actions/).
+
+### Other stack actions
+
+- **Mark all ready**, in the merge plan, marks the draft PRs of the stack ready for review. Required checks and approvals still apply.
+- **Re-run failed jobs…**, in a PR's merge details, runs its failed CI jobs again.
+- The conflict plan, on the stack overview, shows the next conflict to fix, the lowest PR first. Select **Resolve conflicts…** beside a PR that has conflicts.
+
+## Conflicts in a stack
+
+When you resolve a conflict in a PR that has PRs above it, Gnosis checks the stack before you push. The confirmation tells you what it found, for example: "Resolving #101 also settles #102 and #103." This check runs only on your computer. It changes no branch.
+
+After the push, Gnosis can restack the PRs above. It replays each PR onto its updated parent. It stops only on a conflict that is in Check or Decide. Gnosis pushes all the branches together in one push, or none of them.
+
+For more, see [Resolving conflicts](/docs/resolving-conflicts/).

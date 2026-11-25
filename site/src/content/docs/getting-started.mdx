@@ -4,12 +4,86 @@ description: Install Gnosis, connect GitHub, set up an AI tool, and take the gui
 order: 1
 ---
 
-Gnosis is a desktop app for GitHub code review. Install it on macOS from the download on [gnosis.to](/#download), or with Homebrew: `brew tap oddur/gnosis && brew install --cask gnosis`. When Gnosis opens for the first time, the Set up Gnosis wizard asks what your queue must show and which repositories to watch. Connect GitHub with OAuth or a token. Explanations and chat use Claude Code or Codex on your computer. Gnosis finds these tools and shows a setup guide when it cannot find one. Then a guided tour shows the Review Queue, a PR, its changes, and the menu bar. To see the tour again, use <Setting name="Show walkthrough" section="Integrations" />.
+Gnosis is a desktop app for GitHub code review. It collects the PRs that need you in one queue. It shows each PR with its changes, checks and discussion. It can also write an explanation of a PR with Claude Code or Codex on your computer.
+
+## When to use this page
+
+Use this page when you install Gnosis for the first time. It also helps when you want to run the setup again, or connect an AI tool later.
+
+## Install Gnosis
+
+On macOS, install Gnosis with Homebrew:
+
+```sh
+brew tap oddur/gnosis
+brew install --cask gnosis
+```
+
+You can also download Gnosis from [GitHub Releases](https://github.com/oddur/gnosis/releases). Gnosis checks for updates itself. To get pre-release builds, change the update channel in [Settings](/docs/settings/).
+
+## Set up Gnosis
+
+When Gnosis opens for the first time, the **Set up Gnosis** wizard starts. Each step asks one question. You can go back to an earlier step at any time.
 
 <DocShot
   name="setup-wizard"
-  alt="The Set up Gnosis wizard, starting with queue goals."
-  caption="The Set up Gnosis wizard, starting with queue goals."
+  alt="The Set up Gnosis wizard on its first step. It lists three goals with checkboxes: Review PRs assigned to me, Follow repository work, and Track my own PRs."
+  caption="The first step of the wizard asks what your queue must show."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): ai-tools. */}
+### Choose your goals
+
+Select one or more goals. Each goal makes a saved view in your queue:
+
+- **Review PRs assigned to me** makes the **Needs my review** view.
+- **Follow repository work** makes the **Repository activity** view, for the repositories that you choose.
+- **Track my own PRs** makes the **My PRs** view.
+
+To review only local Git changes, select **Use local reviews without GitHub**. The wizard then skips the GitHub, repository and notification steps.
+
+### Connect GitHub
+
+Sign in to GitHub in your browser, or get a code and enter it on GitHub. You can also use a personal access token. The dialog lists the permissions that the token must have.
+
+### Choose repositories and filters
+
+Select the repositories to watch. Your own PRs and your review requests do not need a repository. Then set the queue filters, for example labels, authors or target branches. New installations show PRs that changed in the last 30 days, and hide Dependabot PRs.
+
+### Notifications and the menu bar
+
+Gnosis sends a test notification and asks if you saw it. On macOS, it also asks if you can see the Gnosis icon in the menu bar. You can skip these steps. For more, see [Notifications & menu bar](/docs/notifications-and-menu-bar/).
+
+### Explanations and briefings
+
+Choose the model for explanations and for briefings. Automatic briefings stay off until you turn them on, and they have a daily limit. Gnosis writes a full explanation only when you ask for one.
+
+### Apply the setup
+
+Look at the preview, name your views, and choose the view that opens first. Then select **Apply setup**. To stop and continue later, select **Finish later**. To run the wizard again, use **Run setup again** in Help, in Settings, or in the command palette (<Kbd keys="⌘ K" />).
+
+## Set up an AI tool
+
+Explanations, briefings and chat use Claude Code or Codex. These programs run on your computer, and Gnosis finds them itself. If Gnosis cannot find a tool, it shows a setup guide.
+
+1. Install Claude Code or Codex.
+2. Sign in to the tool in your terminal. Your GitHub sign-in does not sign you in to the AI tool.
+3. If Gnosis still cannot find the tool, set <Setting name="Claude Code program path" section="Integrations" /> or <Setting name="Codex program path" section="Integrations" />.
+4. If the tool needs environment variables, set them in <Setting name="AI environment variables" section="Integrations" />.
+
+The setup guide is in <Setting name="Set up an AI tool" section="Integrations" />. The tool check finds the program only. It does not check your sign-in or your access to a model.
+
+<DocShot
+  name="ai-tools"
+  alt="The AI environment variables editor in Settings. It has a list for Claude and a list for Codex, and no variable is set."
+  caption="Environment variables for Claude Code and Codex."
+/>
+
+## Take the guided tour
+
+After setup, a short tour shows the Review Queue, a PR, its changes and the explanation. On macOS, it also shows the menu bar icon. The tour does not write explanations and does not submit reviews. To see it again, select <Setting name="Show walkthrough" section="Integrations" />.
+
+## Next steps
+
+- Learn the queue in [Queue & Overview](/docs/queue-and-overview/).
+- Open a PR and read [Reviewing a PR](/docs/reviewing-a-pr/).
+- Learn the keys in [Keyboard shortcuts](/docs/keyboard-shortcuts/).

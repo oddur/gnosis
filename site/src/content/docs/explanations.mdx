@@ -4,12 +4,86 @@ description: Generate a guided explanation of a PR, with sections, diagrams and 
 order: 7
 ---
 
-An explanation is a guided walkthrough of a PR that Claude Code or Codex writes on your computer. It puts the changes in a reading order, in sections, each with its part of the diff. Choose a style: Concise, In Depth, Educational or Custom. Reduce noise hides changes that do not need review. Focused sections <Prerelease /> show only the relevant slices of each file, and list the code outside the explanation at the end. You can choose the model and reasoning effort for each explanation <Prerelease />. Explanations can include diagrams and interactive explainers. Press <Kbd keys="←" /> and <Kbd keys="→" /> to move between sections.
+An explanation is a guided walkthrough of a PR. Claude Code or Codex writes it on your computer. The explanation puts the changes in a reading order, in sections. Each section has text and the part of the diff that the text explains. In some places, the app calls a section a "topic".
+
+## When to use an explanation
+
+- Use an explanation for a large PR, or for a PR in code that you do not know.
+- Use the **Educational** style when you want to learn the ideas behind a change.
+- Read the diff in **Changes** for a small PR. You do not need an explanation for it.
+
+Gnosis writes an explanation only when you ask for one. To use explanations, you need Claude Code or Codex. See [Getting started](/docs/getting-started/#set-up-an-ai-tool).
+
+## Generate an explanation
+
+1. In the PR's menu, select **Generate explanation**. To start explanations for more than one PR, select the PRs in the queue and use the selection menu.
+2. Choose a style:
+   - **Concise**: the main changes, their purpose, and the important code.
+   - **In Depth**: also how the parts work together, edge cases and tradeoffs.
+   - **Educational**: the ideas and the reasons behind the change.
+   - **Custom**: write your own instructions.
+3. Set the other options. See [Options](#options).
+4. Select **Generate explanation**.
+
+Gnosis shows the progress while it writes. You can read other PRs while you wait. When the explanation is ready, Gnosis can notify you.
+
+<DocShot
+  name="explanation-options"
+  alt="The Generate explanation dialog. It shows the four styles, the Exclude from the explanation checkboxes, the Reduce noise switch, and the Focused sections checkbox, which is selected."
+  caption="Generate explanation: style, noise, focused sections and model."
+/>
+
+### Options
+
+- **Exclude from the explanation**: leave out **Generated files** or **Test files**. You can also choose single files.
+- **Reduce noise**: **Off** explains every hunk. **Conservative** leaves out imports, formatting, comments and other clear noise. **Aggressive** also leaves out small edits that are not part of the main change. Changes still shows the left-out code.
+- **Model and reasoning effort** <Prerelease />: choose the provider, the model and the effort for this explanation. Clear **Use default** to choose. Claude has Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5. Codex has GPT-6.2 Sol, GPT-6.2 Astra, GPT-6.1 Terra and GPT-6 Luna. Higher effort can take longer. When you regenerate, Gnosis uses the same model again.
+- **Focused sections** <Prerelease />: see [Focused sections](#focused-sections).
+
+Set the defaults for each repository in <Setting name="Explanations" section="Repositories" />. The default model is <Setting name="Explanation model" section="Review" />.
+
+When you change the **Reduce noise** level of a repository, its explanations show a notice that they are out of date.
+
+## Read an explanation
 
 <DocShot
   name="explanation-reader"
-  alt="An explanation section: prose beside the code it explains."
-  caption="An explanation section: prose beside the code it explains."
+  alt="An explanation section. The explanation text is on the left and the diff that it explains is on the right."
+  caption="An explanation section: text beside the code that it explains."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): explanation-options, explanation-model, explanation-focused, explanation-outside-code, explanation-diagram, diagram-explorer. */}
+- Press <Kbd keys="→" /> or <Kbd keys="j" /> to go to the next section, and <Kbd keys="←" /> or <Kbd keys="k" /> to go back.
+- Press <Kbd keys="g g" /> to go to the change overview, and <Kbd keys="G" /> to go to the last section.
+- Press <Kbd keys="1 – 9" /> to go to a section by its number.
+- Press <Kbd keys="c" /> to ask about the section in chat. See [Chat](/docs/chat/).
+
+Inline explanations show on a blue background beside the code. They explain behavior that is not obvious. They are not GitHub comments.
+
+## Focused sections <Prerelease />
+
+A large hunk can hold code for more than one section. With **Focused sections**, each section shows only the parts of the hunk that it explains. A labelled gap marks the code that the section leaves out.
+
+<DocShot
+  name="explanation-focused"
+  alt="A focused section that shows two slices of one file. A labelled gap between the slices names the lines that the section leaves out."
+  caption="A focused section: slices of a file with labelled gaps."
+/>
+
+- The end of the explanation lists **Code outside the explanation**: the code that no section shows.
+- In Changes, markers show which section explains each part of a file. Select a marker to open that section.
+- A file is marked **Viewed by parts**. Select **Mark this part seen** for each part that you read.
+- Changes still shows every line.
+
+Focused sections need <Setting name="Parallel review" section="Review" />. Turn the option on in **Generate explanation**, or as a repository default.
+
+## Diagrams and interactive explanations
+
+An explanation can have diagrams: D2, Mermaid, mechanism diagrams and SVG pictures. Click a diagram to explore it. Then press <Kbd keys="+" /> to zoom in, <Kbd keys="-" /> to zoom out, <Kbd keys="0" /> to fit the diagram, and <Kbd keys="1" /> for its actual size.
+
+<DocShot
+  name="explanation-diagram"
+  alt="An explanation section with a D2 diagram of boxes and arrows beside the explanation text."
+  caption="A D2 diagram in an explanation section."
+/>
+
+For some sections, select **Create interactive explanation**. Gnosis writes an interactive diagram that shows how the code works. Select **Open interactive explanation** to open it again later.

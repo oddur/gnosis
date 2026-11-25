@@ -4,10 +4,60 @@ description: Open GitHub PRs, commits and comparisons in Gnosis from your browse
 order: 15
 ---
 
-The Gnosis browser extension adds an Open in Gnosis button to GitHub. It works in Chrome, Edge and Firefox, on PR, commit and compare pages. The button opens the page in Gnosis with a `gnosis://` link. Install it from `extensions/browser` in the Gnosis repository; its README has the steps.
+The **Open in Gnosis** extension adds a button to GitHub pages in your browser. The button opens the same PR in the Gnosis app, on the same tab. The extension works in Chrome, Edge and Firefox.
+
+## When to use the extension
+
+- Use it when you find a PR on GitHub, for example from an email or a chat message, and want to review it in Gnosis.
+- Use it to go from a PR's checks or files on GitHub to the same tab in Gnosis.
+
+You need the Gnosis app on your computer. See [Getting started](/docs/getting-started/).
+
+## What the extension does
 
 <DocShot
   name="browser-extension"
-  alt="Open in Gnosis on a GitHub pull request."
+  alt="A GitHub pull request page with an Open in Gnosis button in the page header, beside GitHub's own buttons."
   caption="Open in Gnosis on a GitHub pull request."
 />
+
+- The button shows on GitHub pull request pages (any tab), commit pages and compare pages. On a compare page, the button floats in the bottom-right corner.
+- When you click it, the extension opens a `gnosis://open?url=…` link with the address of the page. Gnosis then opens the PR on the matching tab. For example, a PR's Checks page on GitHub opens the Checks tab in Gnosis.
+- The toolbar icon of the extension does the same thing on these pages. On other pages, it is grey.
+- In this version, Gnosis opens only PR links. For a commit or compare page, Gnosis tells you that the link is not supported yet. See [Tabs & navigation](/docs/tabs-and-navigation/#open-gnosis-from-a-link).
+
+If Gnosis does not open, the page shows the hint "Gnosis didn't open", with a link to get Gnosis. Select × to hide the hint for good.
+
+## Install the extension
+
+The extension is not in the browser stores yet. Build it from the Gnosis source, then load it in your browser.
+
+1. In a clone of the Gnosis repository, run:
+
+   ```sh
+   npm ci
+   npm run build:extension
+   ```
+
+2. Load the build in your browser:
+   - **Chrome**: open `chrome://extensions`, turn on **Developer mode**, select **Load unpacked**, and choose `dist-extension/chrome`.
+   - **Edge**: open `edge://extensions`, turn on **Developer mode**, select **Load unpacked**, and choose `dist-extension/chrome`.
+   - **Firefox**: open `about:debugging#/runtime/this-firefox`, select **Load Temporary Add-on…**, and choose `dist-extension/firefox/manifest.json`. Firefox removes the add-on when it restarts.
+3. Open a PR on GitHub and select **Open in Gnosis**.
+4. The first time, the browser asks if it can open Gnosis. Choose to always allow it for github.com.
+
+In Firefox, if the button does not show, open `about:addons`, select the add-on, and allow access to github.com on its **Permissions** tab.
+
+## Privacy and permissions
+
+The extension reads the address of the GitHub page only when you click the button or the toolbar icon. It makes no network requests, uses no GitHub token, and stores no page data. It stores one value: whether you hid the "Gnosis didn't open" hint.
+
+| Permission | Why |
+| --- | --- |
+| Access to github.com | To show the button. GitHub moves between pages without a page load, so the extension must run on all of github.com. |
+| `storage` | To remember that you hid the hint. |
+| `activeTab` | To read the address of the tab when you click the toolbar icon. |
+
+Gnosis treats links from the extension like any other link. A link can only open a place in Gnosis. It never writes to GitHub.
+
+GitHub Enterprise is not supported.
