@@ -930,6 +930,7 @@ function ReviewPageContent({
     fileMetadataMap,
     gitFileUrlBase,
     excludedFiles: excludedFilesSet,
+    onOpenSection: (section: number, filePath: string) => inspectCode(section, filePath),
   };
   const readerActions = (
     <div className="review-toolbar">

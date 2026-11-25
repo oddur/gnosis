@@ -3,7 +3,7 @@ import { applyCodePalette } from '@/lib/diff-code-palette';
 import { MarkdownViewSwitch } from './MarkdownViewSwitch';
 import { PrBadge } from './EntityBadge';
 import { ExternalLink, MessageSquare } from 'lucide-react';
-import { prepareReviewHunk } from '@/lib/review-diff';
+import { sectionFileCounts } from '@/lib/slide-file-groups';
 import type { DiffHunk, FileMetadata } from '@/lib/types';
 import { DiffFileHeader } from './DiffFileHeader';
 import { Button } from './ui/button';
@@ -27,18 +27,10 @@ interface Props {
   headerRef?: RefObject<HTMLElement | null>;
   /** The diff's Pierre theme: the header takes its palette, as Changes' does (lib/code-palette.ts). */
   codeTheme?: string;
-}
-
-function shownCounts(hunks: DiffHunk[]) {
-  const additions = new Set<number>();
-  const deletions = new Set<number>();
-  for (const hunk of hunks) {
-    for (const line of prepareReviewHunk(hunk)?.lines ?? []) {
-      if (line.type === 'add') additions.add(line.lineNumber);
-      if (line.type === 'remove') deletions.add(line.lineNumber);
-    }
-  }
-  return { additions: additions.size, deletions: deletions.size };
+  /** All of the section's hunks of this file, for its own counts; defaults to `hunks`. */
+  sectionHunks?: DiffHunk[];
+  /** Other sections that show parts of this file (#560), and a jump to one of them. */
+  otherSections?: { sections: number[]; onOpen?: (section: number) => void };
 }
 
 /**
@@ -65,10 +57,17 @@ export function ReviewFileHeader({
   onViewedChange,
   headerRef,
   codeTheme,
+  sectionHunks,
+  otherSections,
 }: Props) {
   useLayoutEffect(() => applyCodePalette(codeTheme), [codeTheme]);
-  const counts = metadata ?? shownCounts(hunks);
-  const scope = metadata ? 'in this change' : 'shown in this topic';
+  // The section's own counts when it shows only part of the file (#560), with the whole file's beside them.
+  const counts = sectionFileCounts(sectionHunks ?? hunks, metadata);
+  const lines = (c: { additions: number; deletions: number }) =>
+    `${c.additions} added ${c.additions === 1 ? 'line' : 'lines'}, ${c.deletions} removed ${c.deletions === 1 ? 'line' : 'lines'}`;
+  const countsLabel = counts.file
+    ? `${lines(counts)} in this section; ${lines(counts.file)} in the whole file`
+    : `${lines(counts)} ${metadata ? 'in this change' : 'shown in this topic'}`;
   const displayPath = filePath.replace(/^PR-[^/]+\//, '');
   const history = (age || (metadata?.prCommitCount ?? 1) > 1) && (
     <div className="review-file-history">
@@ -92,7 +91,8 @@ export function ReviewFileHeader({
         status={metadata?.status}
         additions={counts.additions}
         deletions={counts.deletions}
-        countsLabel={`${counts.additions} added ${counts.additions === 1 ? 'line' : 'lines'}, ${counts.deletions} removed ${counts.deletions === 1 ? 'line' : 'lines'} ${scope}`}
+        fileCounts={counts.file}
+        countsLabel={countsLabel}
         lead={
           onToggleExpanded && (
             <button
@@ -149,10 +149,34 @@ export function ReviewFileHeader({
           </>
         }
       />
-      {expanded && (summary || history) && (
+      {expanded && (summary || history || !!otherSections?.sections.length) && (
         <div className="review-file-notes">
           {summary && <p className="review-file-summary select-text">{summary}</p>}
           {history}
+          {!!otherSections?.sections.length && (
+            <p className="review-file-parts" data-other-parts={otherSections.sections.join(',')}>
+              Other parts of this file:{' '}
+              {otherSections.sections.length === 1 ? 'section' : 'sections'}{' '}
+              {otherSections.sections.map((section, index) => (
+                <span key={section}>
+                  {index > 0 && ', '}
+                  {otherSections.onOpen ? (
+                    <button
+                      type="button"
+                      className="review-file-part-link"
+                      data-section={section}
+                      aria-label={`Show ${displayPath} in section ${section}`}
+                      onClick={() => otherSections.onOpen?.(section)}
+                    >
+                      {section}
+                    </button>
+                  ) : (
+                    section
+                  )}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
       )}
     </>

@@ -18,6 +18,7 @@ export function DiffFileHeader({
   additions,
   deletions,
   countsLabel,
+  fileCounts,
   lead,
   tags,
   actions,
@@ -34,6 +35,11 @@ export function DiffFileHeader({
   deletions?: number;
   /** The counts in words, when they are not the whole file's ("in this topic"). */
   countsLabel?: string;
+  /**
+   * The whole file's counts, when `additions` and `deletions` count only an Explanation section's part of it (#560):
+   * "+3 −692 here · file +14 −1947". Changes never passes them.
+   */
+  fileCounts?: { additions: number; deletions: number };
   /** Before the path, such as the topic's expand button. */
   lead?: ReactNode;
   /** After the status and counts: the file's kind tags, or the stack PR it comes from. */
@@ -71,6 +77,14 @@ export function DiffFileHeader({
                   {status && <span className="changes-file-sep"> · </span>}
                   <span className="changes-file-counts" title={countsLabel} aria-label={countsLabel}>
                     <DiffStats additions={additions} deletions={deletions} />
+                    {fileCounts && (
+                      <span className="changes-file-part" aria-hidden="true">
+                        {' here'}
+                        <span className="changes-file-sep"> · </span>
+                        {'file '}
+                        <DiffStats additions={fileCounts.additions} deletions={fileCounts.deletions} />
+                      </span>
+                    )}
                   </span>
                 </>
               )}
