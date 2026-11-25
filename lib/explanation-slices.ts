@@ -64,8 +64,13 @@ export interface SliceSymbol {
   /** The unit's lines on its side, from 1, inclusive. */
   start: number;
   end: number;
-  /** `start` to `end` with the comments and blank lines right before and after it, such as a doc comment. */
+  /**
+   * `start` to `end` with the comment block directly above it (no blank line between: its doc comment), and the blank
+   * lines touching the two. A comment past a blank line is not part of it.
+   */
   span: LineRange;
+  /** A hash of that attached comment block's text, when there is one: two copies with different ones were edited. */
+  doc?: string;
   /**
    * The lines of a definition over `WHOLE_DEFINITION_LINES` that are its own and not its children's: its body code
    * around them, labelled `function outer() (part)`. `start` and `end` are the whole definition's.
@@ -253,13 +258,27 @@ export function sideOutline(
   const units: (Unit | undefined)[] = new Array<Unit | undefined>(count + 1).fill(undefined);
   const trivia = triviaLines(lines, language);
   const isTrivia = (line: number) => trivia[line] === 1;
-  /** Lines `start` to `end` with the comments and blank lines right around them. */
-  const spanOf = (start: number, end: number): LineRange => {
+  const isBlank = (line: number) => line >= 1 && line <= count && !lines[line - 1].trim();
+  /**
+   * Lines `start` to `end` with the comment block directly above them, and the blank lines touching the two (see
+   * `SliceSymbol.span`); and that comment block's hash.
+   */
+  const spanOf = (start: number, end: number): { span: LineRange; doc?: string } => {
     let first = start,
       last = end;
-    while (first > 1 && isTrivia(first - 1)) first--;
-    while (last < count && isTrivia(last + 1)) last++;
-    return { start: first, end: last };
+    while (first > 1 && isTrivia(first - 1) && !isBlank(first - 1)) first--;
+    const doc =
+      first < start
+        ? contentHash(
+            lines
+              .slice(first - 1, start - 1)
+              .map(squash)
+              .join('\n')
+          )
+        : undefined;
+    while (isBlank(first - 1)) first--;
+    while (isBlank(last + 1)) last++;
+    return { span: { start: first, end: last }, ...(doc ? { doc } : {}) };
   };
   /**
    * `parents`: the definitions around it, outermost first, as definitionChain gives them, from the tree. `part`: the
@@ -278,7 +297,9 @@ export function sideOutline(
         label: parents.length ? `${crumb} (${parents.map((p) => p.crumb).join(' › ')})` : crumb,
         start: definition.start,
         end: definition.end,
-        span: part ? { start: definition.start, end: definition.end } : spanOf(definition.start, definition.end),
+        ...(part
+          ? { span: { start: definition.start, end: definition.end } }
+          : spanOf(definition.start, definition.end)),
         ...(part ? { part: true as const } : {}),
       },
     };
@@ -541,12 +562,18 @@ export function sliceHunk(
     into.rows.sort((a, b) => a.index - b.index);
   };
   // A group of only comments and blank lines joins the group of the changed row right after it in the hunk, or of the
-  // one right before it: the code it sits next to, which may be a part around a child, not the child.
+  // one right before it: the code it sits next to, which may be a part around a child, not the child. Comments inside
+  // a definition stay with it: a comment deleted from a kept `x()` is a change to `x()`.
   const rowGroup = new Map<number, Group>();
   for (const group of ordered) for (const row of group.rows) rowGroup.set(row.index, group);
+  const enclosed = (row: Row) => {
+    const symbol = unitOf.get(row.index)?.symbol;
+    const line = symbol?.side === 'before' ? row.old : row.new;
+    return !!symbol?.kind && line !== undefined && line >= symbol.start && line <= symbol.end;
+  };
   for (let i = 0; i < ordered.length && ordered.length > 1; ) {
     const group = ordered[i];
-    if (!group.rows.every(isTrivia)) {
+    if (!group.rows.every(isTrivia) || group.rows.every(enclosed)) {
       i++;
       continue;
     }
@@ -628,16 +655,21 @@ export function linkMoves(sliced: readonly HunkSlices[], moves: readonly SymbolM
         if (end.side === 'before' ? slice.additions : slice.deletions) continue;
         const changed = end.side === 'before' ? slice.removed : slice.added;
         if (!changed.length || changed.some((r) => r.start < symbol.span.start || r.end > symbol.span.end)) continue;
-        return slice;
+        return { slice, symbol };
       }
     }
     return undefined;
   };
   for (const move of moves) {
-    const from = endSlice(move.from),
-      to = endSlice(move.to);
-    if (!from || !to || from === to || from.movedTo || to.movedFrom) continue;
-    const body = move.exact && !move.commentsChanged && !move.renamed ? 'identical' : 'edited';
+    const fromEnd = endSlice(move.from),
+      toEnd = endSlice(move.to);
+    if (!fromEnd || !toEnd) continue;
+    const from = fromEnd.slice,
+      to = toEnd.slice;
+    if (from === to || from.movedTo || to.movedFrom) continue;
+    // Its doc comment changed, or the name: the move's diff is shown.
+    const docChanged = fromEnd.symbol.doc !== toEnd.symbol.doc;
+    const body = move.exact && !move.commentsChanged && !move.renamed && !docChanged ? 'identical' : 'edited';
     const renamed = move.renamed ? { renamed: { from: move.from.name, to: move.to.name } } : {};
     Object.assign(from, { movedTo: to.id, moveBody: body, ...renamed });
     Object.assign(to, { movedFrom: from.id, moveBody: body, ...renamed });

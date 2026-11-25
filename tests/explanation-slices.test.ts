@@ -529,3 +529,114 @@ void describe('moves and labels', () => {
     assert.deepEqual([...triviaLines(['# note', 'x = 1', '* y'], 'python')].slice(1), [1, 0, 0]);
   });
 });
+
+void describe('comments around a moved definition', () => {
+  const tsMoved = [
+    'export function moved(input: number[], limit: number): number {',
+    '  let total = 0;',
+    ...Array.from({ length: 8 }, (_, i) => `  total += input[${i}] * ${i + 7} - Math.min(limit, input.length + ${i});`),
+    '  return total;',
+    '}',
+  ];
+  const tsKeep = ['export function keep(): number {', '  return 1;', '}'];
+  const pyMoved = [
+    'def moved(values, limit):',
+    '    total = 0',
+    ...Array.from({ length: 8 }, (_, i) => `    total += values[${i}] * ${i + 7} - min(limit, len(values) + ${i})`),
+    '    return total',
+  ];
+  const pyKeep = ['def keep():', '    return 1'];
+  const text = (lines: readonly string[]) => `${lines.join('\n')}\n`;
+  /** The PR: `moved` deleted from a.EXT (after `keep`, with `around` its lines there), and added to b.EXT. */
+  async function moveWith(ext: 'ts' | 'py', before: readonly string[], added: readonly string[]) {
+    const keep = ext === 'ts' ? tsKeep : pyKeep;
+    const files = requests([
+      { path: `src/a.${ext}`, before: text(before), after: text(keep) },
+      { path: `src/b.${ext}`, after: text(added) },
+    ]);
+    const sliced = await slices(files);
+    assertCovered(files, sliced);
+    return sliced.flatMap((hunk) => hunk.slices);
+  }
+  const linked = (all: readonly HunkSlice[]) => all.filter((slice) => slice.movedTo || slice.movedFrom);
+
+  void test('control: a moved function with a blank line around it links as identical', async () => {
+    const all = await moveWith('ts', [...tsKeep, '', ...tsMoved], tsMoved);
+    assert.deepEqual(
+      linked(all).map((s) => s.moveBody),
+      ['identical', 'identical']
+    );
+    const py = await moveWith('py', [...pyKeep, '', '', ...pyMoved], pyMoved);
+    assert.deepEqual(
+      linked(py).map((s) => s.moveBody),
+      ['identical', 'identical']
+    );
+  });
+
+  void test('A: a separate comment block above the deleted function blocks the link', async () => {
+    const comment = ['// Old implementation, removed:', '// function old() {', '//   return 2;', '// }'];
+    const all = await moveWith('ts', [...tsKeep, '', ...comment, '', ...tsMoved], tsMoved);
+    assert.deepEqual(linked(all), []);
+  });
+
+  void test('C: a section comment after the deleted function blocks the link', async () => {
+    const before = [...tsKeep, '', ...tsMoved, '', '// ---- Section: helpers ----', 'export const helper = 1;'];
+    const files = requests([
+      { path: 'src/a.ts', before: text(before), after: text([...tsKeep, '', 'export const helper = 1;']) },
+      { path: 'src/b.ts', after: text(tsMoved) },
+    ]);
+    const sliced = await slices(files);
+    assertCovered(files, sliced);
+    assert.deepEqual(linked(sliced.flatMap((hunk) => hunk.slices)), []);
+  });
+
+  void test('F: a new comment attached to the added copy makes the move edited, never identical', async () => {
+    const hack = '// HACK: disables auth checks until the migration lands';
+    const all = await moveWith('ts', [...tsKeep, '', ...tsMoved], [hack, ...tsMoved]);
+    assert.deepEqual(
+      linked(all).map((s) => s.moveBody),
+      ['edited', 'edited']
+    );
+  });
+
+  void test('P2: a commented-out Python helper above the deleted function blocks the link', async () => {
+    const helper = ['# def old_helper():', '#     return 1'];
+    const all = await moveWith('py', [...pyKeep, '', '', ...helper, '', ...pyMoved], pyMoved);
+    assert.deepEqual(linked(all), []);
+  });
+
+  void test('a comment deleted inside a kept function is a change to that function', async () => {
+    const big = [
+      'export function moved(input: number[], limit: number): number {',
+      '  let total = 0;',
+      ...Array.from({ length: 90 }, (_, i) => `  total += input[${i}] * ${i + 7} - Math.min(limit, ${i});`),
+      '  return total;',
+      '}',
+    ];
+    const x = (withComment: boolean) => [
+      'export function x(): number {',
+      '  const y = 1;',
+      ...(withComment ? ['  // a note that goes away'] : []),
+      '  return y;',
+      '}',
+    ];
+    const files = requests([
+      {
+        path: 'src/a.ts',
+        before: text([...x(true), '', ...big, ...tsKeep]),
+        after: text([...x(false), '', ...tsKeep]),
+      },
+      { path: 'src/b.ts', after: text(big) },
+    ]);
+    const sliced = await slices(files);
+    assertCovered(files, sliced);
+    const a = ofFile(sliced, 'src/a.ts');
+    assert.equal(a.whole, undefined);
+    const note = a.slices.find((slice) => slice.label === 'function x()');
+    assert.ok(note, a.slices.map((slice) => slice.label).join(' | '));
+    assert.equal(note.deletions, 1);
+    const moved = a.slices.find((slice) => slice.label === 'function moved()');
+    assert.ok(moved);
+    assert.equal(moved.moveBody, 'identical');
+  });
+});
