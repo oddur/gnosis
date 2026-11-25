@@ -1,4 +1,6 @@
 import { useListScrollAnchor } from '../lib/use-list-order';
+import { useVirtualizerSettled } from '../lib/test-settled';
+import { queueSection, type QueueSection } from '../lib/held-queue-layout';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import { PrStarMarker } from './PrEntryActions';
@@ -12,6 +14,9 @@ import { ChevronRight } from 'lucide-react';
 import type { QueueItem } from '../lib/workbench';
 import type { QueueGroup, QueueGrouping } from '../lib/queue-groups';
 import type { ReviewHistoryEntry } from '../lib/types';
+
+/** A pointer resting this long without moving no longer holds the queue's order (#549). */
+export const POINTER_REST_MS = 5000;
 
 /** Lists longer than this mount only the rows near the viewport. */
 export const QUEUE_VIRTUAL_THRESHOLD = 30;
@@ -56,6 +61,10 @@ interface Props {
   onVisibleItemsChange?: (ids: string[]) => void;
   /** The row under the pointer or keyboard focus, or null when neither rests on a row. */
   onIntent?: (id: string | null) => void;
+  /** Each entry's section while the layout is held (lib/held-queue-layout.ts); otherwise read from the entry. */
+  sections?: ReadonlyMap<string, QueueSection>;
+  /** Whether the pointer is over the list. Called with false when the list unmounts. */
+  onPointerInside?: (inside: boolean) => void;
   /** Group by Action or Repository: a sticky, collapsible heading before each group. `items` are in group order. */
   groups?: QueueGrouping;
   onToggleGroup?: (key: string) => void;
@@ -80,7 +89,7 @@ function GroupHeading({ group, onToggle }: { group: QueueGroup; onToggle?: (key:
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, grouped = true, starredFirst = true, groups, onToggleGroup, reveal }: Props) {
+export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, onPointerInside, sections, grouped = true, starredFirst = true, groups, onToggleGroup, reveal }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<string | null>(null);
   // Without groups, one line per entry, as before. Grouped, a heading line before each group's entries.
@@ -105,10 +114,16 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
   }, [items, groups]);
   const virtual = lines.length > QUEUE_VIRTUAL_THRESHOLD;
   const margin = useScrollMargin(scrollElement, container, virtual);
-  const category = useCallback((item: QueueItem) => item.starred && starredFirst ? 'starred' : item.attention, [starredFirst]);
+  const category = useCallback((item: QueueItem) => sections?.get(item.subject.id) ?? queueSection(item, starredFirst), [sections, starredFirst]);
   const { indexes, counts, ids, headings, positions } = useMemo(() => {
-    const counts = new Map<QueueItem['attention'] | 'starred', number>();
-    for (const item of items) counts.set(category(item), (counts.get(category(item)) ?? 0) + 1);
+    // Each section heading counts the entries under it, up to the next heading. A held layout (#549) can show a
+    // section twice, so this is not always the section's total. Keyed by the index of the heading's first entry.
+    const counts = new Map<number, number>();
+    let start = 0;
+    items.forEach((item, index) => {
+      if (index > 0 && category(items[index - 1]) !== category(item)) start = index;
+      counts.set(start, (counts.get(start) ?? 0) + 1);
+    });
     // Entries are numbered among entries only: headings are not list items.
     const headings: number[] = [];
     const positions = new Map<number, number>();
@@ -149,6 +164,61 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
       ])].sort((a, b) => a - b);
     },
   });
+  useVirtualizerSettled('queue-list', virtualizer, virtual);
+  // Whether the pointer rests on the list, from where it moves, not from leave events: when sync replaces the element
+  // under the pointer, the browser sends no leave event for the list once the pointer goes. Only a pointer the reader
+  // moved onto the list counts; the browser's own pointerover after a layout change can end it but never start it. A
+  // pointer that has not moved for a while, or a window in the background or hidden, no longer counts, so the queue's
+  // held order (#549) cannot keep new entries at the bottom indefinitely.
+  useEffect(() => {
+    const list = container.current;
+    if (!list || !onPointerInside) return;
+    let inside = false;
+    let idle = 0;
+    let lastMove = 0;
+    const set = (next: boolean) => {
+      if (next !== inside) onPointerInside((inside = next));
+    };
+    const rest = () => {
+      window.clearTimeout(idle);
+      lastMove = 0;
+      set(false);
+    };
+    const over = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && list.contains(event.target))) rest();
+    };
+    const move = (event: PointerEvent) => {
+      const inList = event.target instanceof Node && list.contains(event.target);
+      if (!inList) {
+        rest();
+        return;
+      }
+      const entering = !inside;
+      set(true);
+      // Restarting the timer on every move costs more than it needs to; a few times a second is enough. The hold
+      // always starts with a timer, so it ends even if the pointer never moves again.
+      if (!entering && event.timeStamp - lastMove < 250) return;
+      lastMove = event.timeStamp;
+      window.clearTimeout(idle);
+      idle = window.setTimeout(rest, POINTER_REST_MS);
+    };
+    // Leaving the window.
+    const out = (event: PointerEvent) => { if (!event.relatedTarget) rest(); };
+    const hidden = () => { if (document.visibilityState === 'hidden') rest(); };
+    document.addEventListener('pointerover', over, true);
+    document.addEventListener('pointermove', move, true);
+    document.addEventListener('pointerout', out, true);
+    document.addEventListener('visibilitychange', hidden);
+    window.addEventListener('blur', rest);
+    return () => {
+      document.removeEventListener('pointerover', over, true);
+      document.removeEventListener('pointermove', move, true);
+      document.removeEventListener('pointerout', out, true);
+      document.removeEventListener('visibilitychange', hidden);
+      window.removeEventListener('blur', rest);
+      rest();
+    };
+  }, [onPointerInside]);
   useListScrollAnchor(scrollElement, ids, selected, index => {
     const line = index >= 0 ? indexes.get(ids[index]) ?? -1 : -1;
     if (virtual && line >= 0) virtualizer.scrollToIndex(line, { align: 'start' });
@@ -224,7 +294,7 @@ export const VirtualReviewQueue = memo(function VirtualReviewQueue({ items, labe
     const group = category(item);
     const first = index === 0 || category(items[index - 1]) !== group;
     return <>
-      {grouped && first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(group)}</span></h2>}
+      {grouped && first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(index)}</span></h2>}
       {renderRow(item)}
     </>;
   };
