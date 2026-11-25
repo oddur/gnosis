@@ -19,15 +19,52 @@ on:
           - macos-latest
           - windows-latest
           - ubuntu-24.04
+      skip_checks:
+        description: Release even though the commit's Checks run did not pass (for a known flaky failure; say why in the notes)
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
+  # A release ships the tested commit only: its Checks run on main must have passed. The release itself runs no tests.
+  # A manual run with skip_checks releases anyway, for a failure known to be a flaky test.
+  checks-passed:
+    name: Commit passed Checks
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Find the tagged commit's Checks run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SKIP: ${{ inputs.skip_checks || false }}
+        run: |
+          set -uo pipefail
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha) || { echo "Could not resolve $TAG"; exit 1; }
+          if [ "$SKIP" = true ]; then
+            echo "::warning::Releasing $TAG ($sha) without a passing Checks run (skip_checks)."
+            exit 0
+          fi
+          runs=$(gh api "repos/$REPO/actions/workflows/checks.yml/runs?head_sha=$sha&per_page=20" \
+            --jq '[.workflow_runs[] | {status, conclusion, event, url: .html_url}]') || { echo "Could not read Checks runs"; exit 1; }
+          echo "$runs"
+          if echo "$runs" | jq -e 'any(.[]; .event == "push" and .conclusion == "success")' >/dev/null; then
+            echo "$TAG ($sha) passed Checks on main."
+            exit 0
+          fi
+          echo "::error::$TAG ($sha) has no passing Checks run on main. Wait for it, or re-run this workflow by hand with skip_checks for a known flaky failure."
+          exit 1
+
   # The account runs at most 5 macOS jobs at once, and a push to main uses all of them. Cancel Checks runs
   # still in flight so the release's macOS build is not starved; a release is tagged only on a green main.
   free-macos-runners:
     name: Free macOS runners
+    needs: checks-passed
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -44,6 +81,7 @@ jobs:
 
   release:
     name: ${{ matrix.os }}
+    needs: checks-passed
     runs-on: ${{ matrix.os }}
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
