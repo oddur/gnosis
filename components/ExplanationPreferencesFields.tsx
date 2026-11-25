@@ -2,23 +2,45 @@ import { useEffect, useId, useState } from 'react';
 import {
   EXPLANATION_STYLES,
   NOISE_LEVELS,
+  explanationModel,
+  modelChoice,
   normalizeExplanationPreferences,
   type ExplanationPreferences,
+  type ReviewModel,
 } from '../lib/explanation-options';
+import { PROVIDERS } from '../lib/models';
+import { effortLabels } from '../lib/effort';
+import { ModelEffortSelect } from './ModelEffortSelect';
 
 export function ExplanationPreferencesFields({
   value,
   onChange,
   extensions = false,
+  focusedSections = false,
+  reviewModel,
+  modelDefault = false,
 }: {
   value: ExplanationPreferences;
   onChange: (value: ExplanationPreferences) => void;
   extensions?: boolean;
+  /** Show the Focused sections choice (#562): in Settings it is the repository's default, in Generate explanation this explanation's. */
+  focusedSections?: boolean;
+  /**
+   * Show the model and reasoning effort (#573), from every provider's models; unset hides them. The review model in
+   * Settings is the default.
+   */
+  reviewModel?: ReviewModel;
+  /** Offer "Use default", which clears the provider, model and effort (the repository settings). */
+  modelDefault?: boolean;
 }) {
   const id = useId();
   const extensionsLabel = value.hiddenExtensions.map((extension) => extension || '[none]').join(', ');
   const [extensionText, setExtensionText] = useState(extensionsLabel);
   useEffect(() => setExtensionText(extensionsLabel), [extensionsLabel]);
+  const chosen = reviewModel && explanationModel(value, reviewModel);
+  const fallback = reviewModel && explanationModel({}, reviewModel);
+  const modelLabel = (provider: keyof typeof PROVIDERS, model: string) =>
+    `${PROVIDERS[provider].label} · ${(PROVIDERS[provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label ?? model}`;
   return (
     <div className="explanation-preferences-fields">
       <fieldset className="explanation-style-options">
@@ -52,6 +74,38 @@ export function ExplanationPreferencesFields({
           />
           <small>Your global review instructions also apply.</small>
         </label>
+      )}
+      {reviewModel && chosen && fallback && (
+        <div className="explanation-model-setting">
+          <span id={`${id}-model`} className="explanation-model-label">
+            Model and reasoning effort
+          </span>
+          {modelDefault && (
+            <label className="repository-inherit">
+              <input
+                type="checkbox"
+                checked={!modelChoice(value).model}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    ...(event.target.checked ? { provider: undefined, model: undefined, effort: undefined } : chosen),
+                  })
+                }
+              />
+              Use default ({modelLabel(fallback.provider, fallback.model)} · {effortLabels[fallback.effort]})
+            </label>
+          )}
+          {(!modelDefault || !!modelChoice(value).model) && (
+            <ModelEffortSelect
+              label="Explanation model"
+              describedBy={`${id}-model`}
+              provider={chosen.provider}
+              model={chosen.model}
+              effort={chosen.effort}
+              onChange={(selection) => onChange({ ...value, ...selection })}
+            />
+          )}
+        </div>
       )}
       <fieldset className="explanation-file-rules">
         <legend>Exclude from the explanation</legend>
@@ -106,6 +160,22 @@ export function ExplanationPreferencesFields({
           Changes.
         </small>
       </div>
+      {focusedSections && (
+        <label className="explanation-focused-setting">
+          <input
+            type="checkbox"
+            checked={value.focusedSections}
+            onChange={(event) => onChange({ ...value, focusedSections: event.target.checked })}
+          />
+          <span>
+            <strong>Focused sections</strong>
+            <small>
+              Each section shows only the parts of large changes it explains. Code no section needs is listed
+              separately. Changes still shows every line. Needs parallel review.
+            </small>
+          </span>
+        </label>
+      )}
       {extensions && (
         <label className="explanation-custom-label" htmlFor={`${id}-extensions`}>
           Hidden extensions

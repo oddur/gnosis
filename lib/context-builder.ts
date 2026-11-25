@@ -45,6 +45,33 @@ function nearbyFileContent(content: string, hunks: IndexedHunk[], side: 'base' |
   return excerpt;
 }
 
+/**
+ * Focused sections (#562): only the lines around the section's own code, whatever the file's size, so the writer
+ * never reads other sections' code as plain source. Bounded like nearbyFileContent.
+ */
+function windowedFileContent(content: string, ranges: readonly { start: number; end: number; pad?: number }[], pad = 8) {
+  const lines = content.split('\n');
+  const selected = new Set<number>();
+  for (const range of ranges)
+    for (
+      let i = Math.max(0, range.start - 1 - (range.pad ?? pad));
+      i < Math.min(lines.length, range.end + (range.pad ?? pad)) && selected.size < MAX_FILE_LINES;
+      i++
+    )
+      selected.add(i);
+  let excerpt =
+    "Source near this section's code only (original line numbers; omitted lines are shown in other sections, left out, or unchanged):\n";
+  for (const index of [...selected].sort((a, b) => a - b)) {
+    const line = `${index + 1}: ${lines[index]}\n`;
+    if (excerpt.length + line.length > 16_000) {
+      excerpt += '[Further surrounding source omitted; see diff hunks.]';
+      break;
+    }
+    excerpt += line;
+  }
+  return excerpt;
+}
+
 // Render the Claude-conventions block for the prompt. Returns empty
 // string when there's nothing to include — callers can concatenate
 // unconditionally. Omits inner tags with no content so the prompt
@@ -315,7 +342,14 @@ export function buildTopicContext(
   /** Reduce noise: hunks left out of the explanation in this topic's files, shown as context only. */
   leftOutHunks: IndexedHunk[] = [],
   /** Hunks this topic lists that an earlier section shows (#560): hunk ID to that section's number. Read-only context. */
-  shownElsewhere: ReadonlyMap<string, number> = new Map()
+  shownElsewhere: ReadonlyMap<string, number> = new Map(),
+  /** Focused sections (#562): the section's code blocks (focusedTopicDiff), in place of the hunk blocks. */
+  focusedDiff?: string,
+  /** Focused sections: per file, the lines file contents may show (focusFileWindows); a file without any is omitted. */
+  fileWindows?: ReadonlyMap<
+    string,
+    { base: readonly { start: number; end: number; pad?: number }[]; head: readonly { start: number; end: number; pad?: number }[] }
+  >
 ): string {
   const relevantHunks = [...new Set(topic.hunkIds)].map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
@@ -360,16 +394,19 @@ PR: ${prTitle}
 PR Description: ${prDescription || '(none)'}
 </topic>
 
-<diff_hunks>
 `;
-  const elsewhere = relevantHunks.filter((h) => shownElsewhere.has(h.id));
-  for (const hunk of relevantHunks) {
-    if (shownElsewhere.has(hunk.id)) continue;
-    ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
-    ctx += `${hunk.expandedHunkHeader}\n`;
-    ctx += `${hunk.expandedContent}\n\n`;
+  const elsewhere = focusedDiff === undefined ? relevantHunks.filter((h) => shownElsewhere.has(h.id)) : [];
+  if (focusedDiff !== undefined) ctx += focusedDiff;
+  else {
+    ctx += '<diff_hunks>\n';
+    for (const hunk of relevantHunks) {
+      if (shownElsewhere.has(hunk.id)) continue;
+      ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
+      ctx += `${hunk.expandedHunkHeader}\n`;
+      ctx += `${hunk.expandedContent}\n\n`;
+    }
+    ctx += '</diff_hunks>';
   }
-  ctx += '</diff_hunks>';
   if (elsewhere.length) {
     ctx += `\n\n<shown_in_other_sections>
 Your section displays only the code in <diff_hunks>. These hunks are displayed in an earlier section, which explains them. Use them only as read-only context: do not explain them, and do not anchor notes or checks to them. Refer to them by section number when needed.
@@ -391,12 +428,18 @@ Left out of the explanation as noise. Use them only as context, for example an i
   let hasBeforeContent = false;
   let beforeSection = '\n\n<file_contents_before>\n';
   for (const filePath of affectedFiles) {
+    const windows = fileWindows?.get(filePath)?.base;
+    if (fileWindows && !windows?.length) continue;
     if (fileContents[filePath]) {
-      beforeSection += `  <file path="${filePath}">\n${nearbyFileContent(
-        fileContents[filePath],
-        relevantHunks.filter((h) => h.filePath === filePath),
-        'base'
-      )}\n  </file>\n`;
+      beforeSection += `  <file path="${filePath}">\n${
+        windows
+          ? windowedFileContent(fileContents[filePath], windows)
+          : nearbyFileContent(
+              fileContents[filePath],
+              relevantHunks.filter((h) => h.filePath === filePath),
+              'base'
+            )
+      }\n  </file>\n`;
       hasBeforeContent = true;
     }
   }
@@ -406,12 +449,18 @@ Left out of the explanation as noise. Use them only as context, for example an i
   let hasAfterContent = false;
   let afterSection = '\n\n<file_contents_after>\n';
   for (const filePath of affectedFiles) {
+    const windows = fileWindows?.get(filePath)?.head;
+    if (fileWindows && !windows?.length) continue;
     if (headFileContents[filePath]) {
-      afterSection += `  <file path="${filePath}">\n${nearbyFileContent(
-        headFileContents[filePath],
-        relevantHunks.filter((h) => h.filePath === filePath),
-        'head'
-      )}\n  </file>\n`;
+      afterSection += `  <file path="${filePath}">\n${
+        windows
+          ? windowedFileContent(headFileContents[filePath], windows)
+          : nearbyFileContent(
+              headFileContents[filePath],
+              relevantHunks.filter((h) => h.filePath === filePath),
+              'head'
+            )
+      }\n  </file>\n`;
       hasAfterContent = true;
     }
   }

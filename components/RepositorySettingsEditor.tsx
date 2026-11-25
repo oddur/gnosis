@@ -155,6 +155,9 @@ export function RepositorySettingsEditor({
               <ExplanationPreferencesFields
                 value={draft.explanation}
                 extensions
+                focusedSections
+                reviewModel={defaults.provider && defaults.model ? { provider: defaults.provider, model: defaults.model, effort: defaults.effort } : undefined}
+                modelDefault
                 onChange={(explanation) => patch({ explanation })}
               />
             )}

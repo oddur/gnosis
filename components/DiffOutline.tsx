@@ -26,6 +26,8 @@ export interface OutlineProps {
   fileName: string;
   fileViewed?: boolean;
   onMarkFileViewed?: () => void;
+  /** The mark button's words: "Mark this part seen" with Focused sections' parts (#564). */
+  markFileLabel?: string;
   /** Takes the reader to the symbol. */
   onGo: (symbol: ChangedSymbol) => void;
   /** Symbols left out because their every change is formatting or comments the reader hides (#396). */
@@ -73,7 +75,7 @@ function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
   );
 }
 
-export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, onGo, quiet = 0 }: OutlineProps) {
+export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, markFileLabel, onGo, quiet = 0 }: OutlineProps) {
   const open = useExpanded();
   const progress = useFileProgress();
   const listId = useId();
@@ -159,7 +161,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
               <>
                 <span className="diff-outline-progress">All viewed</span>
                 <button type="button" className="diff-outline-mark" onClick={onMarkFileViewed}>
-                  Mark file viewed
+                  {markFileLabel ?? 'Mark file viewed'}
                 </button>
               </>
             ) : (

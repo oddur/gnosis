@@ -24,6 +24,16 @@ export interface DiffHunk {
   content: string;
   language: string;
   renderedHtml: string;
+  /**
+   * Focused sections (#562): the slice of the hunk this entry shows, as ranges of indexes into `content` lines. Unset
+   * for a whole hunk. A renderer that doesn't read ranges shows the whole hunk, which is still correct (#563 draws them).
+   */
+  lineRanges?: { start: number; end: number }[];
+  /** The slice's ID (`<hunkId>:<hash>`) and its symbol label, such as `fn supersede (impl EntityDrainState)`. */
+  sliceId?: string;
+  label?: string;
+  /** A proven move: this is the new copy of a definition from `filePath`'s old lines. */
+  movedFrom?: import('./explanation-focus').SliceMoveSource;
 }
 
 export interface ReviewCheck {
@@ -250,6 +260,8 @@ export interface ReviewGuide {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
   /** Reduce noise: the level and the hunks left out of the explanation, listed in the overview. */
   noiseReduction?: import('./explanation-noise').NoiseReduction;
+  /** Set when the repository's Focused sections setting was on (#562): the code no section shows. */
+  focusedSections?: import('./explanation-focus').FocusedSections;
   /** Immutable revisions and eligible image paths for on-demand previews. */
   baseSha?: string;
   baseRepo?: string;
@@ -270,6 +282,11 @@ export interface ReviewGuide {
   neighborFileCount?: number;
   excludedFiles?: string[];
   generationDurationMs?: number;
+  /**
+   * The provider and model the explanation was written with, for display (#573). A briefing has no model choice in
+   * `explanationOptions`, so this is where its model shows.
+   */
+  generatedWith?: { provider: Provider; model: ModelId };
   slides: Slide[];
   headSha?: string;
   webSources?: WebSource[];
@@ -508,6 +525,8 @@ export interface SendSlideChatRequest {
 export interface GenerateReviewRequest {
   explanationOptions?: import('./explanation-options').ExplanationOptions;
   rememberExplanationOptions?: boolean;
+  /** The reader chose the model in Generate explanation (#573): only then does "Remember" save it for the repository. */
+  explanationModelChosen?: boolean;
   previousReviewId?: string;
   standalone?: boolean;
   subjectId?: string;

@@ -31,6 +31,10 @@ import {
   type SlideFileGroup,
 } from '@/lib/slide-file-groups';
 import { ReviewFileHeader } from './ReviewFileHeader';
+import { MovedSliceNote } from './MovedSliceNote';
+import { rangeBlockHunks, sliceOwners } from '@/lib/explanation-ranges';
+import type { HiddenChange, HiddenTarget } from '@/lib/diff-gaps';
+import type { ChangesFileTarget } from '../src/pages/ReviewPage';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FileTypeIcon } from './FileTypeIcon';
 import { FilePathLink } from '@/components/FilePathLink';
@@ -48,7 +52,7 @@ import {
 import { useCopyToClipboard } from '@/lib/use-copy';
 import { countRender } from '@/lib/render-count';
 import { extractShikiStyles, type CommentCallbacks } from '@/components/shared-diff-utils';
-import type { Slide, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
+import type { DiffHunk, Slide, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
 export interface SlideViewProps {
   presentation?: 'narrative' | 'code';
@@ -81,13 +85,28 @@ export interface SlideViewProps {
   onToggleReviewed?: () => void;
   viewedFiles?: Set<string>;
   onFileViewedChange?: (filePath: string, viewed: boolean) => void;
+  /**
+   * Viewed by parts (#564), with Focused sections: a block's checkbox marks only this section's part of the file as
+   * seen. Unset: the checkbox marks the whole file, as before.
+   */
+  viewedParts?: {
+    checkbox: (
+      filePath: string,
+      section: number
+    ) => { checked: boolean; mixed: boolean; label?: string; outside?: boolean; readOnly?: boolean };
+    /** The file is Viewed, or this section's part of it is seen. */
+    partSeen: (filePath: string, section: number) => boolean;
+    onChange: (filePath: string, section: number, next: boolean) => void;
+  };
   onContinue?: () => void;
   nextTopicTitle?: string | null;
   showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
-  /** Jumps to a file's block in another section: the Explanation's section navigation (#560). */
-  onOpenSection?: (section: number, filePath: string) => void;
+  /** Jumps to a file's block in another section, at a line when given: the Explanation's section navigation (#560). */
+  onOpenSection?: (section: number, filePath: string, line?: number) => void;
+  /** Opens lines in Changes: the code a section leaves out that no section shows (#563). */
+  onOpenChangesFile?: (target: ChangesFileTarget) => void;
 }
 
 /** Mount expensive diagram frames before they enter the reading viewport, once per section. */
@@ -439,12 +458,14 @@ export function SlideView({
   onToggleReviewed,
   viewedFiles,
   onFileViewedChange,
+  viewedParts,
   onContinue,
   nextTopicTitle,
   showReviewSuggestions = true,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
   onOpenSection,
+  onOpenChangesFile,
 }: SlideViewProps) {
   countRender('SlideView');
   const [diagramOpen, setDiagramOpen] = useState(false);
@@ -454,15 +475,28 @@ export function SlideView({
   const focusScroll = useSessionScroll(`${slide.id}:focus`);
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
-  // Hunks keep their reading order: a file the order returns to gets another block (lib/slide-file-groups.ts).
+  const contextLines = diffContextLines(diffAppearance);
+  // This section's number in the reader, and where every slice of the explanation shows (#563).
+  const sectionNumber = useMemo(() => {
+    const index = review?.slides.findIndex((s) => s.id === slide.id) ?? -1;
+    return index >= 0 ? index + 1 : slideNumber;
+  }, [review?.slides, slide.id, slideNumber]);
+  const owners = useMemo(() => (review ? sliceOwners(review.slides) : undefined), [review?.slides]);
+  // Hunks keep their reading order: a file the order returns to gets another block (lib/slide-file-groups.ts). A
+  // block's slices show only their ranges (#563), with the changes left out between them hidden in labelled gaps.
   const groupedHunks = useMemo(() => {
-    const groups: SlideFileGroup[] = groupSlideHunks(slide.diffHunks);
+    const groups: (SlideFileGroup & { entries: DiffHunk[]; hidden: HiddenChange[]; context?: Map<number, string> })[] = groupSlideHunks(
+      slide.diffHunks
+    ).map((group) => {
+      const ranged = rangeBlockHunks(group.hunks, { context: contextLines, owners, section: sectionNumber });
+      return { ...group, hunks: ranged.hunks, entries: group.hunks, hidden: ranged.hidden, context: ranged.context };
+    });
     for (const filePath of slide.affectedFiles) {
       if (imageMimeType(filePath) && !groups.some((group) => group.filePath === filePath))
-        groups.push({ filePath, hunks: [], run: 0, key: filePath });
+        groups.push({ filePath, hunks: [], run: 0, key: filePath, entries: [], hidden: [] });
     }
     return groups;
-  }, [slide.diffHunks, slide.affectedFiles]);
+  }, [slide.diffHunks, slide.affectedFiles, contextLines, owners, sectionNumber]);
   // Per file: its blocks' keys and all of its hunks; per block: the changes its file's other blocks show.
   const files = useMemo(() => slideFiles(groupedHunks), [groupedHunks]);
   const elsewhere = useMemo(
@@ -473,7 +507,6 @@ export function SlideView({
   const otherSections = useMemo(() => otherFileSections(review?.slides ?? [], slide.id), [review?.slides, slide.id]);
   const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
-  const contextLines = diffContextLines(diffAppearance);
   const fileEstimates = useMemo(
     () =>
       new Map(
@@ -484,7 +517,13 @@ export function SlideView({
       ),
     [groupedHunks, fileMetadataMap, contextLines]
   );
-  const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
+  // With parts (#564), a section is done when every part of its files it owns is seen.
+  const allFilesViewed =
+    groupedHunks.length > 0 &&
+    groupedHunks.every(({ filePath }) =>
+      viewedParts ? viewedParts.partSeen(filePath, sectionNumber) : viewedFiles?.has(filePath)
+    );
+  const onlyParts = allFilesViewed && groupedHunks.some(({ filePath }) => !viewedFiles?.has(filePath));
   const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
   // Each file's header, for its hunk headers to pin under (ChangesDiff).
@@ -885,13 +924,22 @@ export function SlideView({
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
-      {groupedHunks.map(({ filePath, hunks, run, key }, index) => {
+      {groupedHunks.map(({ filePath, hunks, run, key, entries, hidden, context }, index) => {
         const origin = review ? sourceForPath(review, filePath) : undefined;
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
         const viewed = viewedFiles?.has(filePath) ?? false;
-        const expanded = fileExpansion[key] ?? !viewed;
+        // With parts (#564), a block whose part is seen folds as a viewed file does.
+        const part = viewedParts?.checkbox(filePath, sectionNumber);
+        const partLabel = part?.label;
+        const expanded = fileExpansion[key] ?? !(viewed || !!part?.mixed);
+        const changeViewed = onFileViewedChange && !part?.readOnly
+          ? (next: boolean) => {
+              if (viewedParts) viewedParts.onChange(filePath, sectionNumber, next);
+              else onFileViewedChange(filePath, next);
+            }
+          : undefined;
         const contentId = `${fileContentId}-${index}`;
         const file = files.get(filePath);
         const split = (file?.blocks ?? 1) > 1;
@@ -916,6 +964,25 @@ export function SlideView({
           };
           requestAnimationFrame(land);
         };
+        // A gap over changes the section leaves out opens where they went: another section (at a moved definition's
+        // new copy, in its own file), or Changes (#563). A target the view can't open shows as text.
+        const openHidden = (target: HiddenTarget): (() => void) | undefined => {
+          if (target.kind === 'section')
+            return onOpenSection && (() => onOpenSection(target.section, target.filePath ?? filePath, target.line));
+          if (!onOpenChangesFile) return undefined;
+          return () => {
+            const { member, path } = review ? sourceForPath(review, filePath) : { member: undefined, path: filePath };
+            onOpenChangesFile({
+              url: member?.url ?? prUrl,
+              headSha: member?.headSha ?? review?.headSha,
+              path,
+              line: target.start,
+              endLine: target.end,
+              side: target.side,
+            });
+          };
+        };
+        const moves = [...new Map(entries.filter((e) => e.movedFrom).map((e) => [e.sliceId ?? e.hunkHeader, e])).values()];
         const setFileGroupsExpanded = (value: boolean) =>
           setFileExpansion((current) => ({
             ...current,
@@ -948,14 +1015,18 @@ export function SlideView({
             firstBlock={run === 0}
             elsewhere={elsewhere.get(key)}
             onShowElsewhere={split ? showElsewhere : undefined}
+            hidden={hidden.length ? hidden : undefined}
+            hiddenContext={context?.size ? context : undefined}
+            onOpenHidden={openHidden}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
-            fileViewed={viewed}
+            fileViewed={viewed || !!part?.mixed}
+            markFileLabel={partLabel === undefined ? undefined : 'Mark this part seen'}
             onMarkFileViewed={
-              onFileViewedChange
+              changeViewed
                 ? () => {
                     setFileGroupsExpanded(false);
-                    onFileViewedChange(filePath, true);
+                    changeViewed(true);
                   }
                 : undefined
             }
@@ -985,11 +1056,17 @@ export function SlideView({
                 setFileExpansion((current) => ({ ...current, [key]: !expanded }));
               }}
               viewed={viewed}
+              viewedReadOnly={!!part?.readOnly}
+              viewedParts={
+                partLabel === undefined
+                  ? undefined
+                  : { mixed: !!part?.mixed, label: partLabel, outside: part?.outside }
+              }
               onViewedChange={
-                onFileViewedChange
+                changeViewed
                   ? (next) => {
                       setFileGroupsExpanded(!next);
-                      onFileViewedChange(filePath, next);
+                      changeViewed(next);
                     }
                   : undefined
               }
@@ -1015,6 +1092,16 @@ export function SlideView({
               }
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
+              {moves.map((entry) => (
+                <MovedSliceNote
+                  key={entry.sliceId ?? entry.hunkHeader}
+                  entry={entry}
+                  review={review}
+                  diffLayout={diffLayout}
+                  appearance={diffAppearance}
+                  slideIndex={slideNumber}
+                />
+              ))}
               {(imageMimeType(filePath) || lfsResource) && (
                 <ReviewImageDiff
                   key={`${review?.reviewId}:${filePath}`}
@@ -1047,7 +1134,7 @@ export function SlideView({
       {presentation === 'code' && allFilesViewed && groupedHunks.every(({ key }) => !fileExpansion[key]) && (
         <div className="explanation-viewed-code">
           <span>
-            <Check size={14} /> These files are marked Viewed.
+            <Check size={14} /> {onlyParts ? 'Your parts of these files are seen.' : 'These files are marked Viewed.'}
           </span>
           <button
             onClick={() =>
@@ -1066,7 +1153,7 @@ export function SlideView({
           <div className="space-y-1" role="status">
             <p className="flex items-center gap-2 text-sm font-medium">
               <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              All files in this topic viewed
+              {onlyParts ? 'Your parts of these files are seen' : 'All files in this topic viewed'}
             </p>
             <p className="text-sm text-muted-foreground break-words">
               {isLastTopic

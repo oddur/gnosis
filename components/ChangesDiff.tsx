@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { processFile, type DiffLineAnnotation, type FileDiffOptions } from '@pierre/diffs';
 import {
   GAP_STEP,
@@ -12,7 +12,9 @@ import {
   placeOfLine,
   newLineAt,
   hiddenBetween,
+  hiddenTargetText,
   type GapDirection,
+  type HiddenTarget,
   type GapPart,
   type HunkCounts,
   type HunkRange,
@@ -28,7 +30,8 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
-import { ArrowRightLeft } from 'lucide-react';
+import { ArrowRightLeft, BookOpen } from 'lucide-react';
+import { markerWords, type ExplainedMarker } from '../lib/explained-markers';
 import { quietKindInfo } from '../lib/quiet-changes-header';
 import { blockKey, changeBlocks, hunkNoise, noiseLabel, quietKind, type HunkNoise, type NoiseKind } from '../lib/semantic-noise';
 import type { DiffMoves, DiffNoise } from './useDiffFileModel';
@@ -585,10 +588,12 @@ function TrailingBar({
   onRetry,
   plain,
   onShowElsewhere,
+  onOpenHidden,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onShowElsewhere?: (run: number, line?: number) => void;
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Feedback's excerpt: with nothing to show and no length, the bar is left out. */
   plain?: boolean;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
@@ -601,6 +606,37 @@ function TrailingBar({
   if (plain && !known && !onReveal) return null;
   const label = known ? `${lines(hidden)} hidden` : 'More lines may follow';
   const more = known ? `${hidden.toLocaleString()} more ${hidden === 1 ? 'line' : 'lines'}` : 'More lines';
+  if (part.gap.hiddenIn?.length)
+    return (
+      <div
+        className="diff-gap"
+        role="group"
+        aria-label={hiddenLabel(part)}
+        data-gap={part.gap.index}
+        data-trailing=""
+        data-hidden-in=""
+        data-elsewhere={part.gap.elsewhere}
+      >
+        <span className="diff-gap-trailing">
+          {onReveal && part.more?.down && (
+            <>
+              <button
+                type="button"
+                className="diff-context-button diff-gap-text"
+                title="Show the lines before the change left out here"
+                onClick={() => onReveal(part, 'all')}
+              >
+                Show
+              </button>
+              <span className="diff-gap-dot" aria-hidden="true">
+                ·
+              </span>
+            </>
+          )}
+          {hiddenBody(part.gap, onOpenHidden, onShowElsewhere)}
+        </span>
+      </div>
+    );
   if (part.gap.elsewhere !== undefined)
     return (
       <div
@@ -667,6 +703,68 @@ function TrailingBar({
 }
 
 const OPAQUE = 'Other changes, not in this topic';
+
+/** A section's gap over changes it leaves out (#563), as screen readers hear it: what it hides and where it went. */
+function hiddenLabel(part: GapBarPart): string {
+  const targets = (part.gap.hiddenIn ?? []).map(hiddenTargetText).join('; ');
+  return `${part.hidden ? `${lines(part.hidden)} hidden` : 'Changes hidden'}: ${targets}`;
+}
+
+/**
+ * Where the changes a section leaves out here went (#563): "fn supersede, fn adopt: section 3 ↗" jumps to the section
+ * that shows them, and "40 lines left out: open in Changes ↗" opens them in Changes. A change another block of the
+ * same section shows follows, as `elsewhereBody`.
+ */
+function hiddenBody(
+  gap: GapBarPart['gap'],
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined,
+  onShowElsewhere?: (run: number, line?: number) => void
+) {
+  const dot = (
+    <span className="diff-gap-dot" aria-hidden="true">
+      ·
+    </span>
+  );
+  return (
+    <>
+      {(gap.hiddenIn ?? []).map((target, index) => {
+        const text = hiddenTargetText(target);
+        const action = target.kind === 'section' ? `go to section ${target.section}` : 'open in Changes';
+        const key = target.kind === 'section' ? `section-${target.section}-${target.filePath ?? ''}` : 'outside';
+        const open = onOpenHidden?.(target);
+        return (
+          <Fragment key={key}>
+            {index > 0 && dot}
+            {open ? (
+              <button
+                type="button"
+                className="diff-context-button diff-gap-text diff-gap-hidden"
+                data-hidden-target={target.kind}
+                data-section={target.kind === 'section' ? target.section : undefined}
+                aria-label={`${text}: ${action}`}
+                title={target.kind === 'section' ? `Shown in section ${target.section}` : 'Open these lines in Changes'}
+                onClick={open}
+              >
+                {target.kind === 'outside' ? `${text}: open in Changes` : text}
+                <span aria-hidden="true"> ↗</span>
+              </button>
+            ) : (
+              <span className="diff-gap-count" data-hidden-target={target.kind}>
+                {text}
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
+      {gap.elsewhere !== undefined && (
+        <>
+          {dot}
+          {elsewhereBody(gap, onShowElsewhere)}
+        </>
+      )}
+    </>
+  );
+}
 const ELSEWHERE = 'Shown in another part of this topic';
 
 /** A topic's gap over a change another block of the file shows: it says so and offers the way there. */
@@ -703,12 +801,14 @@ function GapBar({
   plain,
   onCollapseScope,
   onShowElsewhere,
+  onOpenHidden,
 }: {
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
   onRetry?: () => void;
   onShowElsewhere?: (run: number, line?: number) => void;
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Name a gap by its hidden lines only, never as changes left out of a topic (Feedback). */
   plain?: boolean;
   scope?: HunkScope;
@@ -732,8 +832,10 @@ function GapBar({
   // A topic that leaves out changes between its hunks says so: those lines are not the after side's alone.
   const opaque = plain && part.gap.opaque ? (known ? `${lines(hidden)} hidden` : 'Lines hidden') : OPAQUE;
   const elsewhere = part.gap.elsewhere;
-  const label =
-    elsewhere !== undefined
+  const hiddenIn = !!part.gap.hiddenIn?.length;
+  const label = hiddenIn
+    ? hiddenLabel(part)
+    : elsewhere !== undefined
       ? ELSEWHERE
       : part.gap.opaque
         ? opaque
@@ -741,8 +843,16 @@ function GapBar({
           ? `${lines(hidden)} hidden`
           : 'More lines may follow';
   // A gap over a change another block of the topic shows reveals nothing; it offers the jump there.
-  const { gutter, body } =
-    elsewhere !== undefined
+  const { gutter, body } = hiddenIn
+    ? {
+        // Lines between the hunks and the change left out still reveal; the change does not.
+        gutter:
+          onReveal &&
+          gapControls({ ...part, hidden: undefined, above: !!part.more?.down, below: !!part.more?.up }, status, reveal)
+            .gutter,
+        body: hiddenBody(part.gap, onOpenHidden, onShowElsewhere),
+      }
+    : elsewhere !== undefined
       ? {
           // Lines between the hunks and the other block's change still reveal; the change does not.
           gutter:
@@ -776,6 +886,7 @@ function GapBar({
       data-gap={part.gap.index}
       data-hunk-header=""
       data-elsewhere={elsewhere}
+      data-hidden-in={hiddenIn || undefined}
       data-message={(onReveal && blocked(status)) || undefined}
     >
       <HeaderRow
@@ -1022,6 +1133,70 @@ interface MoveAnnotation {
 type MoveWords = ReturnType<typeof moveWords>;
 const isMoveAnnotation = (metadata: unknown): metadata is MoveAnnotation =>
   !!metadata && typeof metadata === 'object' && 'gnosisMove' in metadata;
+
+/** A Focused sections marker's annotation (#564): which section explains the code from this line. */
+interface ExplainedAnnotation {
+  gnosisExplained: ExplainedMarker;
+}
+const isExplainedAnnotation = (metadata: unknown): metadata is ExplainedAnnotation =>
+  !!metadata && typeof metadata === 'object' && 'gnosisExplained' in metadata;
+const NO_MARKERS: readonly ExplainedMarker[] = [];
+
+/**
+ * Where the explanation shows this code (#564), as one quiet code line right above the unit, in the same place and
+ * style as a move's note: "Explained in section 3 ↗ · fn flush", "Left out of the explanation", or "Moved: explained
+ * with fn flush ↗". A section link goes to the Explanation. It never changes which lines show.
+ */
+function ExplainedNote({
+  marker,
+  onOpen,
+  lead,
+}: {
+  marker: ExplainedMarker;
+  onOpen?: (marker: ExplainedMarker) => void;
+  lead?: 'left' | 'right';
+}) {
+  const { text, name, detail } = markerWords(marker);
+  const go = marker.kind !== 'outside' && marker.target ? onOpen : undefined;
+  return (
+    <div
+      className="diff-gap diff-move-note diff-explained-note"
+      role="note"
+      aria-label={name}
+      data-trailing=""
+      data-explained={marker.kind}
+      data-section={marker.section}
+      data-explained-at={`${marker.side === 'before' ? 'old' : 'new'}:${marker.start}`}
+      data-move-lead={lead}
+    >
+      <span className="diff-gap-trailing">
+        <BookOpen className="diff-noise-icon" size={13} strokeWidth={2} aria-hidden="true" />
+        {go ? (
+          <button
+            type="button"
+            className="diff-context-button diff-gap-text"
+            data-explained-jump=""
+            aria-label={`${name}: go to section ${marker.section}`}
+            onClick={() => go(marker)}
+          >
+            {text}
+          </button>
+        ) : (
+          <span className="diff-noise-label">{text}</span>
+        )}
+        {detail && (
+          <>
+            {' '}
+            <span className="diff-gap-dot" aria-hidden="true">
+              ·
+            </span>{' '}
+            <code className="diff-move-place">{detail}</code>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
 
 /**
  * Where a moved symbol came from, or went (#398), as one quiet code line under the line above it: "Moved from
@@ -1287,6 +1462,7 @@ export function ChangesDiff<A>({
   canReveal,
   plainGaps,
   onShowElsewhere,
+  onOpenHidden,
   navigator,
   rails = NO_RAILS,
   onCollapseScope,
@@ -1294,6 +1470,7 @@ export function ChangesDiff<A>({
   noise,
   moves,
   written = NO_WRITTEN,
+  explained,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1328,6 +1505,11 @@ export function ChangesDiff<A>({
   plainGaps?: boolean;
   /** An Explanation topic's gap over a change another block of the file shows offers a jump to that block. */
   onShowElsewhere?: (run: number, line?: number) => void;
+  /**
+   * An Explanation section's gap over changes it leaves out (#563): the action that opens where a target went, or
+   * undefined when the view can't open it (the target then shows as plain text).
+   */
+  onOpenHidden?: (target: HiddenTarget) => (() => void) | undefined;
   /** Set while the diff can take the reader to a line, as its pinned crumbs do: the file's outline uses it. */
   navigator?: RefObject<DiffNavigator | null>;
   /** Definitions shown whole by show scope (lib/show-scope.ts), for their rails. */
@@ -1342,6 +1524,11 @@ export function ChangesDiff<A>({
   moves?: DiffMoves;
   /** New-side lines a conflict resolver wrote, which neither side had (#445 item 10): a steady mark on each. */
   written?: ReadonlySet<number>;
+  /**
+   * Focused sections (#564): where the explanation shows each part of the file, as a slim note at its first line, and
+   * the jump to its section. Markers only: the lines shown never change.
+   */
+  explained?: { markers: readonly ExplainedMarker[]; onOpen?: (marker: ExplainedMarker) => void };
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1390,8 +1577,13 @@ export function ChangesDiff<A>({
   };
   const latestGoToMove = useRef(goToMove);
   latestGoToMove.current = goToMove;
+  const latestExplained = useRef(explained?.onOpen);
+  latestExplained.current = explained?.onOpen;
+  const openExplained = (marker: ExplainedMarker) => latestExplained.current?.(marker);
   const [stableRender] = useState(() => (annotation: DiffLineAnnotation<A>) => {
     const metadata: unknown = annotation.metadata;
+    if (isExplainedAnnotation(metadata))
+      return <ExplainedNote marker={metadata.gnosisExplained} onOpen={latestExplained.current ? openExplained : undefined} />;
     if (isMoveAnnotation(metadata)) {
       const mark = metadata.gnosisMove;
       return <MoveNote mark={mark} words={metadata.words} onGo={mark.sameFile || latestOpenMove.current ? () => latestGoToMove.current(mark) : undefined} />;
@@ -1505,12 +1697,36 @@ export function ChangesDiff<A>({
     }
     return result;
   }, [noteLines, slices, parts]);
+  // Focused sections' markers (#564), placed as moves' notes are: under the row right above each unit, or heading its
+  // hunk. Placed once per file's parts; the markers themselves come computed once per explanation.
+  const markers = explained?.markers ?? NO_MARKERS;
+  const explainedLines = useMemo(() => (markers.length ? moveNoteLines(parts, markers, split) : undefined), [parts, markers, split]);
+  const explainedLeads = useMemo(() => {
+    const result = new Map<string, ExplainedMarker[]>();
+    for (const [marker, at] of explainedLines ?? []) if ('hunk' in at) result.set(at.hunk, [...(result.get(at.hunk) ?? []), marker]);
+    return result;
+  }, [explainedLines]);
+  const explainedBySlice = useMemo(() => {
+    const result = new Map<string, DiffLineAnnotation<A>[]>();
+    for (const [marker, at] of explainedLines ?? []) {
+      if ('hunk' in at) continue;
+      const side = at.side === 'after' ? ('additions' as const) : ('deletions' as const);
+      const owner = slices.find((slice) => {
+        const [from, to] = side === 'deletions' ? slice.oldLines : slice.newLines;
+        return at.line >= from && at.line <= to;
+      });
+      const metadata: ExplainedAnnotation = { gnosisExplained: marker };
+      if (owner) result.set(owner.key, [...(result.get(owner.key) ?? []), { side, lineNumber: at.line, metadata } as unknown as DiffLineAnnotation<A>]);
+    }
+    return result;
+  }, [explainedLines, slices]);
   const sliceAnnotations = useMemo(() => {
-    if (!moveBySlice.size) return bySlice;
+    if (!moveBySlice.size && !explainedBySlice.size) return bySlice;
     const result = new Map(bySlice);
     for (const [key, list] of moveBySlice) result.set(key, [...(result.get(key) ?? []), ...list]);
+    for (const [key, list] of explainedBySlice) result.set(key, [...(result.get(key) ?? []), ...list]);
     return result;
-  }, [bySlice, moveBySlice]);
+  }, [bySlice, moveBySlice, explainedBySlice]);
   const targetKey = useMemo(() => {
     if (!target) return undefined;
     return slices.find((slice) => {
@@ -1996,6 +2212,7 @@ export function ChangesDiff<A>({
           plain={plainGaps}
           onCollapseScope={onCollapseScope}
           onShowElsewhere={onShowElsewhere}
+          onOpenHidden={onOpenHidden}
         />
       ) : (
         <TrailingBar
@@ -2006,6 +2223,7 @@ export function ChangesDiff<A>({
           onRetry={onRetry}
           plain={plainGaps}
           onShowElsewhere={onShowElsewhere}
+          onOpenHidden={onOpenHidden}
         />
       );
       // A bar below the last hunk heads nothing.
@@ -2059,6 +2277,21 @@ export function ChangesDiff<A>({
       );
       return;
     }
+    // Markers over a hunk's first row head its code, in one row (#564).
+    const explainedLead = explainedLeads.get(block.key);
+    if (explainedLead)
+      current.children.push(
+        <div key={`explained-lead-${block.key}`} className="diff-move-lead">
+          {explainedLead.map((marker) => (
+            <ExplainedNote
+              key={`explained-${marker.side}${marker.start}`}
+              marker={marker}
+              lead="left"
+              onOpen={explained?.onOpen}
+            />
+          ))}
+        </div>
+      );
     // A hunk's lead notes share one row: in a split diff, each in its side's column.
     const leads = leadNotes.get(block.key);
     if (leads) {

@@ -18,7 +18,7 @@ import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column
 import { estimateCodeColumnHeight } from '../lib/review-gap-hunks';
 import { scrollToMovingTarget } from '../lib/diff-layout';
 import type { ReviewGuide, Slide } from '../lib/types';
-import { ExplanationLeftOut } from './ExplanationLeftOut';
+import { ExplanationLeftOut, ExplanationOutsideCode } from './ExplanationLeftOut';
 import type { ChangesFileTarget } from '../src/pages/ReviewPage';
 
 export interface ExplanationReaderHandle {
@@ -277,6 +277,7 @@ export function ExplanationReader({
             </ul>
           </details>
         )}
+        <ExplanationOutsideCode review={review} onOpen={onOpenChangesFile} />
         <div className="explanation-ending-actions">
           {onOpenChanges && (
             <Button size="sm" variant="outline" onClick={onOpenChanges}>

@@ -72,6 +72,7 @@ void test('generation repairs invalid output, saves once, and reuses the saved a
     reviewsDir: () => dir,
     preferences: () => ({ provider: 'codex', model: 'gpt-6.2-sol' }) as Preferences,
     provider: () => provider,
+    installed: () => true,
     validate: () => {
       validations++;
       return Promise.resolve();
@@ -122,6 +123,7 @@ void test('cancelled refinements preserve the saved version and cannot be cancel
     reviewsDir: () => dir,
     preferences: () => ({}) as Preferences,
     provider: () => provider,
+    installed: () => true,
     validate: async () => {},
   });
   const req = { reviewId: 'review-1', slideId: slide.id, refinement: 'Use two items.' };
@@ -147,6 +149,7 @@ void test('a completed generation cannot overwrite a review that changed underne
     reviewsDir: () => dir,
     preferences: () => ({}) as Preferences,
     provider: () => provider,
+    installed: () => true,
     validate: () => {
       fs.writeFileSync(file, JSON.stringify({ ...review, headSha: 'different' }));
       return Promise.resolve();
@@ -176,6 +179,7 @@ void test('failed refinements leave the previous artifact intact', async (t) => 
     reviewsDir: () => dir,
     preferences: () => ({}) as Preferences,
     provider: () => provider,
+    installed: () => true,
     validate: () => Promise.resolve(),
   });
   await assert.rejects(service.generate({ reviewId: 'review-1', slideId: slide.id, refinement: 'Add a failure.' }, 1));
@@ -203,6 +207,7 @@ void test('slow generation gets ten minutes and reports a timeout instead of pro
     reviewsDir: () => dir,
     preferences: () => ({}) as Preferences,
     provider: () => provider,
+    installed: () => true,
     validate: async () => {},
   });
   const req = { reviewId: 'review-1', slideId: slide.id };
@@ -223,4 +228,37 @@ void test('slow generation gets ten minutes and reports a timeout instead of pro
   const cancelled = assert.rejects(retry, /Explainer generation cancelled/);
   service.cancel(req, 1);
   await cancelled;
+});
+
+// #573: on-demand explainers use the explanation's own provider, model and effort, and fail by name when it's missing.
+void test('explainers use the explanation’s model and never fall back to another provider', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-test-explainer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(dir, 'review-1.json'),
+    JSON.stringify({ ...review, explanationOptions: { provider: 'claude', model: 'claude-sonnet-5-5', effort: 'low' } })
+  );
+  const used: string[] = [];
+  const provider = (name: string): LLMProvider => ({
+    name: name as LLMProvider['name'],
+    models: [],
+    quick: () => Promise.resolve(''),
+    generate: (options) => {
+      used.push(`${name} ${options.model} ${options.effort}`);
+      return Promise.resolve(JSON.stringify(explainer));
+    },
+  });
+  const make = (installed: boolean) =>
+    createExplainerService({
+      reviewsDir: () => dir,
+      preferences: () => ({ provider: 'codex', model: 'gpt-6.2-sol', effort: 'high' }) as Preferences,
+      provider: provider as never,
+      installed: () => installed,
+      validate: () => Promise.resolve(),
+    });
+  const req = { reviewId: 'review-1', slideId: slide.id };
+  await assert.rejects(Promise.resolve().then(() => make(false).generate(req, 1)), /Claude was not found/);
+  assert.deepEqual(used, [], 'No other provider runs in its place');
+  await make(true).generate(req, 1);
+  assert.deepEqual(used, ['claude claude-sonnet-5-5 low']);
 });
