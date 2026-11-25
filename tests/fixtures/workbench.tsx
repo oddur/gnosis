@@ -32,6 +32,8 @@ import { createRoot } from 'react-dom/client';
 import { imageMocks } from './review-images';
 import { threadMocks } from './review-threads';
 import '../../src/globals.css';
+import { fixtureTheme } from './fixture-theme';
+import { applyTheme } from '../../lib/theme';
 import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem, type WorkbenchQueue } from '../../lib/workbench';
 import { stampQueue } from '../../lib/workbench-revision';
 import { parsePauseRequest, pauseUntil } from '../../lib/notification-settings';
@@ -722,7 +724,8 @@ let prefs: Preferences = {
   includeAllFiles: true,
   reviewSignature: false,
   firstRunSeen: onboardingScenario ? sessionStorage.getItem('fixture-first-run-seen') === 'true' : true,
-  theme: 'light',
+  // `?theme=dark` (scripts/capture-docs-screenshots.mjs) sets the theme preference; suites keep light.
+  theme: fixtureTheme() ?? 'light',
   trayEnabled: false,
   maxPrsPerRepo: 10,
   parallelReview: true,
@@ -1487,6 +1490,8 @@ Object.defineProperty(window, 'electronAPI', {
     },
   }),
 });
+// The app applies the saved theme preference at startup (src/renderer.tsx); so does the fixture, once it is set.
+if (fixtureTheme()) applyTheme(prefs.theme);
 if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();
 // The Overview is the default home tab (#390). Suites written for the queue open the queue, as a reader who last
 // chose it would; ?overview opens the default.

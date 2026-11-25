@@ -4,6 +4,7 @@ import { ChangesCommentComposer } from '../../components/ChangesCommentComposer'
 import { MarkdownCommentEditor } from '../../components/MarkdownCommentEditor';
 import { CommentMarkdown } from '../../components/CommentMarkdown';
 import '../../src/globals.css';
+import { applyFixtureTheme } from './fixture-theme';
 Object.assign(window, { electronAPI: { openExternal: async () => {}, loadPrImage: () => Promise.resolve('') } });
 function Fixture() {
   const [saved, setSaved] = useState('');
@@ -36,4 +37,5 @@ function Fixture() {
   );
 }
 const container = document.getElementById('root');
+applyFixtureTheme();
 if (container) createRoot(container).render(<Fixture />);

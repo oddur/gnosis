@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { useState } from 'react';
 import '../../src/globals.css';
+import { applyFixtureTheme } from './fixture-theme';
 import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
 import { explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
 import type { GenerateReviewRequest } from '../../lib/types';
@@ -95,4 +96,5 @@ function Fixture() {
   );
 }
 const root = document.getElementById('root');
+applyFixtureTheme();
 if (root) createRoot(root).render(<Fixture />);
