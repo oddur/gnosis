@@ -143,6 +143,11 @@ function rowTarget(
 export interface RangedBlock {
   hunks: DiffHunk[];
   hidden: HiddenChange[];
+  /**
+   * The hunks' unchanged rows the ranges leave out, by new line: a gap reveals them from the saved text as it would a
+   * whole hunk's, up to the nearest hidden change (`markHidden` caps it there), so show scope matches Changes.
+   */
+  context: Map<number, string>;
 }
 
 /**
@@ -156,7 +161,7 @@ export function rangeBlockHunks(
   hunks: DiffHunk[],
   { context = 3, owners, section = 0 }: { context?: number; owners?: SliceOwners; section?: number } = {}
 ): RangedBlock {
-  if (!hunks.some((hunk) => hunk.lineRanges?.length)) return { hunks, hidden: [] };
+  if (!hunks.some((hunk) => hunk.lineRanges?.length)) return { hunks, hidden: [], context: new Map() };
   const buckets = new Map<string, DiffHunk[]>();
   for (const hunk of hunks) {
     const key = `${hunkKey(hunk)}\u0000${hunk.content}`;
@@ -164,6 +169,7 @@ export function rangeBlockHunks(
   }
   const out: DiffHunk[] = [];
   const hidden: HiddenChange[] = [];
+  const unshown = new Map<number, string>();
   for (const entries of buckets.values()) {
     const parsed = entries.every((entry) => entry.lineRanges?.length) ? hunkRows(entries[0]) : undefined;
     const sets = parsed && entries.map((entry) => rangeRows(entry.lineRanges ?? [], parsed.rows.length));
@@ -194,8 +200,14 @@ export function rangeBlockHunks(
           news = body.filter((row) => row.marker === ' ' || row.marker === '+').length;
         // A side with no lines names the line before it, as GitHub's headers do.
         const header = `@@ -${olds ? rows[i].old : rows[i].old - 1},${olds} +${news ? rows[i].new : rows[i].new - 1},${news} @@${rest}`;
-        const { lineRanges: _ranges, sliceId: _id, label: _label, movedFrom: _moved, ...plain } = base;
-        out.push({ ...plain, hunkHeader: header, content: lines.slice(i, j + 1).join('\n') });
+        // The slices' own fields stay on the entries; each cut hunk is plain.
+        out.push({
+          filePath: base.filePath,
+          language: base.language,
+          renderedHtml: base.renderedHtml,
+          hunkHeader: header,
+          content: lines.slice(i, j + 1).join('\n'),
+        });
         i = j + 1;
         continue;
       }
@@ -207,6 +219,7 @@ export function rangeBlockHunks(
       };
       while (i < rows.length && !show[i]) {
         const row = rows[i];
+        if (row.marker === ' ') unshown.set(row.new, lines[i].slice(1));
         if (changed(row)) {
           const { key, target } = rowTarget(base, i, row, owners, section);
           if (current?.key !== key) {
@@ -236,7 +249,7 @@ export function rangeBlockHunks(
       flush();
     }
   }
-  return { hunks: out, hidden };
+  return { hunks: out, hidden, context: unshown };
 }
 
 /** The code no section shows, per file in path order, for "Code outside the explanation" (#563). */

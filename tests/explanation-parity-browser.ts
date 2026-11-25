@@ -548,8 +548,9 @@ void app.whenReady().then(async () => {
     assert.ok(!ranged.rows.some((r) => r.includes('total += 30 * 2') || r.includes('version + 120')), 'Changes of other sections stay hidden');
     // Every line the section shows within Changes' hunks is Changes' line, number and text.
     const spans = changes.flatMap((h) => {
-      const m = /L(\d+)(?:–(\d+))?/.exec(h.range ?? '');
-      return m ? [[Number(m[1]), Number(m[2] ?? m[1])]] : [];
+      const m = h.range === undefined ? null : /L(\d+)(?:–(\d+))?/.exec(h.range);
+      const end: string | undefined = m?.[2];
+      return m ? [[Number(m[1]), Number(end ?? m[1])]] : [];
     });
     for (const row of ranged.rows) {
       const line = Number(row.split(':')[1]);

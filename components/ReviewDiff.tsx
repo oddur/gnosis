@@ -52,6 +52,8 @@ interface Props {
   hidden?: readonly HiddenChange[];
   /** Opens where a hidden change went: another section, or Changes. */
   onOpenHidden?: (target: HiddenTarget) => void;
+  /** Unchanged lines of the saved hunks the section's ranges leave out, by new line: gaps reveal from them (#563). */
+  hiddenContext?: ReadonlyMap<number, string>;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
   inlineExplanations?: InlineExplanation[];
@@ -105,6 +107,7 @@ export function ReviewDiff({
   onShowElsewhere,
   hidden,
   onOpenHidden,
+  hiddenContext,
   commentCallbacks,
   threads = [],
   inlineExplanations = [],
@@ -145,6 +148,13 @@ export function ReviewDiff({
     () => reviewGapHunks(hunks, { status: fileStatus, context, pins }),
     [hunks, fileStatus, context, pinKey]
   );
+  // A section's ranges leave rows of their saved hunks out: those unchanged lines are known too, as a whole hunk's are.
+  const known = useMemo(() => {
+    if (!hiddenContext?.size) return saved.known;
+    const all = [...saved.known];
+    for (const [line, text] of hiddenContext) all[line - 1] ??= text;
+    return all;
+  }, [saved.known, hiddenContext]);
   const lfs = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
   const path = source?.path ?? filePath;
   const request = useMemo<PrFileRequest | undefined>(
@@ -187,7 +197,7 @@ export function ReviewDiff({
     previousPath: source?.previousPath,
     patch: saved.patch,
     hunks: saved.hunks,
-    known: saved.known,
+    known,
     partial: true,
     elsewhere,
     hidden,

@@ -130,8 +130,9 @@ void test('targets in one gap merge per section and for the left-out code', () =
     change(22, { kind: 'section', section: 3, names: ['fn adopt'] }),
     change(25, { kind: 'outside', lines: 10, side: 'after', start: 25, end: 27 }),
   ]);
-  assert.deepEqual(gaps[1].hiddenIn?.map(hiddenTargetText), ['fn supersede, fn adopt: section 3', '40 lines left out']);
-  assert.deepEqual(gaps[1].hiddenIn?.[1], { kind: 'outside', lines: 40, side: 'after', start: 8, end: 27 });
+  const targets = gaps[1].hiddenIn ?? [];
+  assert.deepEqual(targets.map(hiddenTargetText), ['fn supersede, fn adopt: section 3', '40 lines left out']);
+  assert.deepEqual(targets[1], { kind: 'outside', lines: 40, side: 'after', start: 8, end: 27 });
   assert.equal(
     hiddenTargetText({ kind: 'section', section: 4, names: ['a', 'b', 'c', 'd', 'e'] }),
     'a, b, c, 2 more: section 4'

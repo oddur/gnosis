@@ -471,11 +471,11 @@ export function SlideView({
   // Hunks keep their reading order: a file the order returns to gets another block (lib/slide-file-groups.ts). A
   // block's slices show only their ranges (#563), with the changes left out between them hidden in labelled gaps.
   const groupedHunks = useMemo(() => {
-    const groups: (SlideFileGroup & { entries: DiffHunk[]; hidden: HiddenChange[] })[] = groupSlideHunks(
+    const groups: (SlideFileGroup & { entries: DiffHunk[]; hidden: HiddenChange[]; context?: Map<number, string> })[] = groupSlideHunks(
       slide.diffHunks
     ).map((group) => {
       const ranged = rangeBlockHunks(group.hunks, { context: contextLines, owners, section: sectionNumber });
-      return { ...group, hunks: ranged.hunks, entries: group.hunks, hidden: ranged.hidden };
+      return { ...group, hunks: ranged.hunks, entries: group.hunks, hidden: ranged.hidden, context: ranged.context };
     });
     for (const filePath of slide.affectedFiles) {
       if (imageMimeType(filePath) && !groups.some((group) => group.filePath === filePath))
@@ -904,7 +904,7 @@ export function SlideView({
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
-      {groupedHunks.map(({ filePath, hunks, run, key, entries, hidden }, index) => {
+      {groupedHunks.map(({ filePath, hunks, run, key, entries, hidden, context }, index) => {
         const origin = review ? sourceForPath(review, filePath) : undefined;
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
@@ -982,6 +982,7 @@ export function SlideView({
             elsewhere={elsewhere.get(key)}
             onShowElsewhere={split ? showElsewhere : undefined}
             hidden={hidden.length ? hidden : undefined}
+            hiddenContext={context?.size ? context : undefined}
             onOpenHidden={onOpenSection || onOpenChangesFile ? openHidden : undefined}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}

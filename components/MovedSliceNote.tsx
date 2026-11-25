@@ -96,7 +96,10 @@ function MoveDiff({
       .read({ url: source.prUrl, path: source.path, baseSha, headSha })
       .then((contents) => {
         if (!live) return;
-        if (contents.before.kind !== 'text') return setOld({ state: 'failed' });
+        if (contents.before.kind !== 'text') {
+          setOld({ state: 'failed' });
+          return;
+        }
         const lines = contents.before.content.split('\n').slice(moved.startLine - 1, moved.endLine);
         setOld(lines.length ? { state: 'ready', text: `${lines.join('\n')}\n` } : { state: 'failed' });
       })
