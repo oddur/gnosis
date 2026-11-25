@@ -2,6 +2,8 @@ name: Checks
 
 on:
   pull_request:
+    # ready_for_review: a draft marked ready runs again, now with the macOS and Windows suites (see `changes`).
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -19,7 +21,7 @@ jobs:
   changes:
     # Whether this run needs the full macOS and Windows browser suites. They run on every push to main, and on a pull
     # request unless every file it changes is on a short list known not to affect them (docs, the site, issue
-    # templates, license files, and Markdown outside the code and test folders). A path that is not on the list runs them. So does the `native-ci` label, read
+    # templates, license files, and Markdown outside the code and test folders), or the PR is a draft. A path that is not on the list runs them. So does the `native-ci` label, read
     # from the API when the job runs, so re-running all jobs after adding it is enough. If the job cannot tell (an API
     # call fails, or the job fails), the suites run.
     name: Native suites needed
@@ -51,6 +53,16 @@ jobs:
             run_native "Could not read the PR's labels: the native suites run."
           if printf '%s\n' "$labels" | grep -qx native-ci; then
             run_native "The PR has the native-ci label: the native suites run."
+          fi
+          # A draft runs the Linux suites only, so iterating on a PR doesn't spend macOS and Windows runners. Marking it
+          # ready for review runs everything once more (ready_for_review above), before it can be merged. Read live, so a
+          # re-run after marking it ready sees it. If the state can't be read, the suites run.
+          draft=$(gh api "repos/$REPO/pulls/$PR" --jq .draft) ||
+            run_native "Could not read whether the PR is a draft: the native suites run."
+          if [ "$draft" = true ]; then
+            echo "A draft PR: only the Linux suites run. Mark it ready for review to run the macOS and Windows suites."
+            echo native=false >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs them.
           files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||

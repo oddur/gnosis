@@ -20,7 +20,7 @@ Old commit messages have `+semver:` labels. Nothing reads them. The person who c
 
 ## Cut a stable release
 
-1. Make sure that the Checks run for the `main` commit is green.
+1. Make sure that the Checks run for the `main` commit is green. The Release workflow checks this too (see below).
 2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit. CI only reports timing budgets; see [Performance tests](continuous-integration.md#performance-tests).
 3. Tag the commit and push the tag:
 
@@ -35,7 +35,7 @@ The workflow also updates the Homebrew tap (`oddur/homebrew-gnosis`).
 
 ## Cut a pre-release from main
 
-1. Make sure that the Checks run for the `main` commit is green. The Release workflow cancels Checks runs that are still in progress, because macOS runners are limited.
+1. Make sure that the Checks run for the `main` commit is green. The Release workflow cancels Checks runs that are still in progress, because macOS runners are limited. The workflow's first job, **Commit passed Checks**, enforces this: it stops the release unless the tagged commit has a passing Checks run on `main`. The release itself runs no tests. If the commit's run was cancelled (a newer merge, or an earlier release freeing macOS runners, cancels it), re-run that run with `gh run rerun <id> --failed` and release once it passes. Use **skip_checks** on a manual run of the Release workflow only for a failure known to be a flaky test, and say why in the release notes.
 2. Run `npm run test:perf` locally on a quiet machine, and note any budget over its limit.
 3. Find the next number. List the pre-release tags for the version:
 
