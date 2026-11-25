@@ -71,6 +71,8 @@ export type HiddenTarget =
       names: string[];
       /** A new line of the change, for the jump to land on it. */
       line?: number;
+      /** The file the jump opens, when it is another: a moved definition's new copy. */
+      filePath?: string;
     }
   | {
       kind: 'outside';
@@ -105,7 +107,9 @@ function mergeTargets(targets: readonly HiddenTarget[]): HiddenTarget[] {
   const out: HiddenTarget[] = [];
   for (const target of targets) {
     const same = out.find(
-      (t) => t.kind === target.kind && (t.kind === 'outside' || (target.kind === 'section' && t.section === target.section))
+      (t) =>
+        t.kind === target.kind &&
+        (t.kind === 'outside' || (target.kind === 'section' && t.section === target.section && t.filePath === target.filePath))
     );
     if (!same) out.push(target.kind === 'section' ? { ...target, names: [...target.names] } : { ...target });
     else if (same.kind === 'section' && target.kind === 'section') {
@@ -113,10 +117,11 @@ function mergeTargets(targets: readonly HiddenTarget[]): HiddenTarget[] {
       same.line ??= target.line;
     } else if (same.kind === 'outside' && target.kind === 'outside') {
       same.lines += target.lines;
+      // The new side wins, as in a run of rows (lib/explanation-ranges.ts): Changes opens where lines were added.
       if (same.side === target.side) {
         same.start = Math.min(same.start, target.start);
         same.end = Math.max(same.end, target.end);
-      }
+      } else if (target.side === 'after') Object.assign(same, { side: 'after', start: target.start, end: target.end });
     }
   }
   return out;

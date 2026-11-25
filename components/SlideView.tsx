@@ -953,18 +953,23 @@ export function SlideView({
           };
           requestAnimationFrame(land);
         };
-        // A gap over changes the section leaves out opens where they went: another section, or Changes (#563).
-        const openHidden = (target: HiddenTarget) => {
-          if (target.kind === 'section') return onOpenSection?.(target.section, filePath, target.line);
-          const { member, path } = review ? sourceForPath(review, filePath) : { member: undefined, path: filePath };
-          onOpenChangesFile?.({
-            url: member?.url ?? prUrl,
-            headSha: member?.headSha ?? review?.headSha,
-            path,
-            line: target.start,
-            endLine: target.end,
-            side: target.side,
-          });
+        // A gap over changes the section leaves out opens where they went: another section (at a moved definition's
+        // new copy, in its own file), or Changes (#563). A target the view can't open shows as text.
+        const openHidden = (target: HiddenTarget): (() => void) | undefined => {
+          if (target.kind === 'section')
+            return onOpenSection && (() => onOpenSection(target.section, target.filePath ?? filePath, target.line));
+          if (!onOpenChangesFile) return undefined;
+          return () => {
+            const { member, path } = review ? sourceForPath(review, filePath) : { member: undefined, path: filePath };
+            onOpenChangesFile({
+              url: member?.url ?? prUrl,
+              headSha: member?.headSha ?? review?.headSha,
+              path,
+              line: target.start,
+              endLine: target.end,
+              side: target.side,
+            });
+          };
         };
         const moves = [...new Map(entries.filter((e) => e.movedFrom).map((e) => [e.sliceId ?? e.hunkHeader, e])).values()];
         const setFileGroupsExpanded = (value: boolean) =>
@@ -1001,7 +1006,7 @@ export function SlideView({
             onShowElsewhere={split ? showElsewhere : undefined}
             hidden={hidden.length ? hidden : undefined}
             hiddenContext={context?.size ? context : undefined}
-            onOpenHidden={onOpenSection || onOpenChangesFile ? openHidden : undefined}
+            onOpenHidden={openHidden}
             commentCallbacks={commentCallbacks}
             stickyUnder={headerRef}
             fileViewed={viewed}
