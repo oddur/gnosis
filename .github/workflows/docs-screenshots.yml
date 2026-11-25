@@ -97,4 +97,19 @@ jobs:
             echo
             echo "Pull requests opened with the workflow token start no other workflows: close and reopen this one, or push to it, to run the checks."
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --draft --base "${GITHUB_REF_NAME}" --head "$BRANCH" --title "Update documentation screenshots" --body-file "$RUNNER_TEMP/body.md"
+          # The repository may not let Actions open pull requests (Settings > Actions > "Allow GitHub Actions to create and
+          # approve pull requests"). Then the branch is pushed and the PR is opened by hand from it, with this body.
+          if ! gh pr create --draft --base "${GITHUB_REF_NAME}" --head "$BRANCH" --title "Update documentation screenshots" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::notice::Pushed $BRANCH. Actions could not open the pull request: open it from that branch; the body is in the docs-screenshots-pr-body artifact."
+          fi
+
+      - name: Upload the pull request body and capture report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-screenshots-pr-body
+          path: |
+            ${{ runner.temp }}/body.md
+            ${{ runner.temp }}/docs-screenshots.json
+          if-no-files-found: ignore
+          retention-days: 14
