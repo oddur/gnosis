@@ -244,7 +244,7 @@ export function ExplanationReader({
           key={s.id}
           index={i + 1}
           title={s.title}
-          hasCode={s.diffHunks.length > 0}
+          hasCode={s.diffHunks.length > 0 || !!s.shownIn?.length}
           forceReady={i < 2 || revealed === i + 1 || (inspected === i + 1 && !!tool)}
           narrative={renderSection(s, i + 1)}
           code={renderCode(s, i + 1)}
