@@ -1,6 +1,6 @@
 ---
 title: Browser extension
-description: Open GitHub PRs, commits and comparisons in Gnosis from your browser.
+description: Open GitHub PRs in Gnosis from your browser.
 order: 15
 ---
 
@@ -22,7 +22,8 @@ You need the Gnosis app on your computer. See [Getting started](/docs/getting-st
 />
 
 - The button shows on GitHub pull request pages (any tab), commit pages and compare pages. On a compare page, the button floats in the bottom-right corner.
-- When you click it, the extension opens a `gnosis://open?url=…` link with the address of the page. Gnosis then opens the PR on the matching tab. For example, a PR's Checks page on GitHub opens the Checks tab in Gnosis.
+- When you click it, the extension opens a `gnosis://open?url=…` link with the address of the page. Gnosis then opens the PR on the matching tab. For example, a PR's Checks page on GitHub opens the Checks tab in Gnosis. If the address points to a file, a line or a comment, Gnosis opens the tab and tells you that it cannot go further yet.
+- When you are signed out, Gnosis asks you to connect GitHub first. A link to a muted PR does not open.
 - The toolbar icon of the extension does the same thing on these pages. On other pages, it is grey.
 - In this version, Gnosis opens only PR links. For a commit or compare page, Gnosis tells you that the link is not supported yet. See [Tabs & navigation](/docs/tabs-and-navigation/#open-gnosis-from-a-link).
 
@@ -50,7 +51,7 @@ In Firefox, if the button does not show, open `about:addons`, select the add-on,
 
 ## Privacy and permissions
 
-The extension reads the address of the GitHub page only when you click the button or the toolbar icon. It makes no network requests, uses no GitHub token, and stores no page data. It stores one value: whether you hid the "Gnosis didn't open" hint.
+The extension checks the address of each GitHub page to decide whether to show the button. It passes the address to Gnosis only when you click the button or the toolbar icon. It makes no network requests, uses no GitHub token, and stores no page data. It stores one value: whether you hid the "Gnosis didn't open" hint.
 
 | Permission | Why |
 | --- | --- |

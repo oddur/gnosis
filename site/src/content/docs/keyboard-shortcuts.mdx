@@ -4,13 +4,13 @@ description: Every keyboard shortcut in Gnosis, by place.
 order: 14
 ---
 
-Gnosis has keyboard shortcuts for most work. This page lists all of them, by the place where they work.
+Gnosis has keyboard shortcuts for most work. This page lists the main shortcuts, by the place where they work.
 
 ## How to read this page
 
-- The keys on this page are the macOS keys. On Windows and Linux, use Ctrl for ⌘. To go back and forward, use Alt+← and Alt+→.
+- The keys are the macOS keys. On Windows and Linux, use Ctrl for ⌘, and Alt+← and Alt+→ to go back and forward.
 - Single-key shortcuts do not work while you type in a text field, or while a dialog is open.
-- In a review, press <Kbd keys="?" /> to see the most used shortcuts. The overlay does not show the tab, queue and diagram keys. They are only on this page.
+- In an explanation, press <Kbd keys="?" /> to see the most used shortcuts. The overlay leaves out the tab, history, queue, Overview, feedback and diagram keys.
 
 ## Everywhere
 
@@ -18,7 +18,6 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 | --- | --- |
 | <Kbd keys="⌘ K" /> | Open the command palette |
 | <Kbd keys="⌘ ," /> | Open Settings |
-| <Kbd keys="?" /> | Show the keyboard shortcuts in a review |
 | <Kbd keys="Esc" /> | Close a dialog or overlay |
 | <Kbd keys="⇧ F10" /> | Open the menu of a PR or stack |
 
@@ -26,7 +25,7 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 
 | Keys | Action |
 | --- | --- |
-| <Kbd keys="⌘ T" /> | Open a new tab |
+| <Kbd keys="⌘ T" /> | Open a new home tab |
 | <Kbd keys="⌘ W" /> | Close the tab |
 | <Kbd keys="⌘ ⇧ T" /> | Reopen the last closed tab |
 | <Kbd keys="⌃ Tab" /> | Go to the next tab |
@@ -45,8 +44,10 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 | <Kbd keys="/" /> | Search the queue |
 | <Kbd keys="z" /> | Snooze the selected PRs |
 | <Kbd keys="⌘ A" /> | Select every PR in the list |
-| <Kbd keys="⌘ Space" /> | Add a PR to the selection, or remove it |
+| <Kbd keys="⌘ Space" /> | Add the focused PR to the selection, or remove it. ⌘-click does the same, and macOS often uses ⌘ Space for Spotlight. |
 | <Kbd keys="⌘ \" /> | Show or hide the queue sidebar |
+
+Shift-click, or Shift+↑ and Shift+↓, selects a range of PRs.
 
 ## Overview
 
@@ -65,11 +66,12 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 | <Kbd keys="⌘ ⇧ U" /> | Open the Update menu |
 | <Kbd keys="⌘ ⇧ V" /> | Review the PR, reply to feedback, or request a review |
 
-## Summary feedback
+## Summary
 
 | Keys | Action |
 | --- | --- |
-| <Kbd keys="j" /> <Kbd keys="k" /> | Go to the next or previous item |
+| <Kbd keys="j" /> <Kbd keys="k" /> | Go to the next or previous item in the timeline. Outside the timeline, go to the next or previous PR. |
+| <Kbd keys="Esc" /> | Go back |
 | <Kbd keys="n" /> | Go to the next unresolved thread |
 | <Kbd keys="r" /> | Reply |
 | <Kbd keys="e" /> | Resolve the thread |
@@ -89,6 +91,7 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 
 | Keys | Action |
 | --- | --- |
+| <Kbd keys="?" /> | Show the keyboard shortcut overlay |
 | <Kbd keys="→" /> <Kbd keys="j" /> | Go to the next section |
 | <Kbd keys="←" /> <Kbd keys="k" /> | Go to the previous section |
 | <Kbd keys="g g" /> | Go to the change overview |
@@ -97,11 +100,11 @@ Gnosis has keyboard shortcuts for most work. This page lists all of them, by the
 
 ## Diagrams
 
-These keys work after you click a diagram. See [Explanations](/docs/explanations/#diagrams-and-interactive-explanations).
+These keys work in the expanded D2 or Mermaid viewer. See [Explanations](/docs/explanations/#diagrams-and-interactive-explanations).
 
 | Keys | Action |
 | --- | --- |
-| <Kbd keys="+" /> | Zoom in |
+| <Kbd keys="+" /> | Zoom in (= also works) |
 | <Kbd keys="-" /> | Zoom out |
 | <Kbd keys="0" /> | Fit the diagram to the view |
 | <Kbd keys="1" /> | Show the diagram at its actual size |
@@ -117,16 +120,16 @@ These keys work in the Conflicts view. See [Resolving conflicts](/docs/resolving
 | <Kbd keys="1" /> | Keep the PR's change |
 | <Kbd keys="2" /> | Keep the base branch's change |
 | <Kbd keys="3" /> | Keep both changes |
-| <Kbd keys="u" /> | Undo the choice on the current conflict. Right after <Kbd keys="a" />, undo that choice. |
+| <Kbd keys="u" /> | Undo the choice on the current conflict, or the last <Kbd keys="a" /> |
 | <Kbd keys="v" /> | Compare with the PR, the base branch, or both |
-| <Kbd keys="g" /> | Review the Merged-only files yourself |
+| <Kbd keys="g" /> | Turn on Review Merged-only files myself |
 | <Kbd keys="m" /> | Mark the file as reviewed and open the next file |
 | <Kbd keys="n" /> <Kbd keys="p" /> | Go to the next or previous file |
-| <Kbd keys="⌘ ↵" /> | Open the Review and push confirmation. It never pushes by itself. |
+| <Kbd keys="⌘ ↵" /> | Open the Review and push confirmation. It does not push. |
 | <Kbd keys="Esc" /> | Close the Conflicts view |
 
 <DocShot
   name="shortcut-overlay"
   alt="The keyboard shortcut overlay over an explanation. It lists the shortcuts in groups: Reading, Reviewing, PR actions, Resolving conflicts and Review controls."
-  caption="Press ? in a review to see the keyboard shortcut overlay."
+  caption="Press ? in an explanation to see the keyboard shortcut overlay."
 />

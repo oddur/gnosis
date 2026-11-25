@@ -11,7 +11,7 @@ The PR header has the actions that change a PR on GitHub. You can merge the PR, 
 - Use **Merge** when the PR is approved and its checks pass.
 - Use **auto-merge** when the PR must merge as soon as GitHub allows it.
 - Use **Update** when the PR's branch is behind its base branch.
-- Use **Mark ready for review** or **Convert to draft** to change the PR's draft state.
+- Use the **Draft** toggle to change the PR's draft state.
 
 <DocShot
   name="pr-header-actions"
@@ -22,11 +22,11 @@ The PR header has the actions that change a PR on GitHub. You can merge the PR, 
 ## Merge a PR
 
 1. Press <Kbd keys="⌘ ⇧ M" />, or select **Merge** in the PR header.
-2. To use a different merge method, open the arrow beside **Merge** and choose **Merge commit**, **Squash** or **Rebase**. Gnosis shows only the methods that the repository allows.
+2. To use a different merge method, open the arrow beside **Merge** and choose **Squash and merge**, **Create a merge commit** or **Rebase and merge**. Gnosis shows only the methods that the repository allows.
 3. Gnosis checks your permissions and the PR's current commits on GitHub. Read the confirmation.
-4. Select the merge button in the confirmation, or press Enter.
+4. Select the merge button in the confirmation. From the keyboard, press Tab to go to the button, then press Enter.
 
-Gnosis never merges without a click or Enter in the confirmation. If the PR changed on GitHub after you opened the confirmation, select **Refresh confirmation** and read it again.
+Gnosis never merges without a click or Enter on the button in the confirmation. If the PR changed on GitHub after you opened the confirmation, select **Refresh confirmation** and read it again.
 
 In a repository with a merge queue, the button is **Add to merge queue**.
 
@@ -36,7 +36,7 @@ In a repository with a merge queue, the button is **Add to merge queue**.
   caption="The merge confirmation."
 />
 
-When the PR has merge conflicts, **Resolve conflicts…** shows in place of **Merge**. See [Resolving conflicts](/docs/resolving-conflicts/).
+When the PR has merge conflicts, **Resolve conflicts…** shows in place of **Merge**, and <Kbd keys="⌘ ⇧ M" /> opens it. When every conflict is merged and checked, the button reads **Review and push…**. See [Resolving conflicts](/docs/resolving-conflicts/).
 
 ## Update the branch
 
@@ -54,19 +54,18 @@ A merge commit brings the base branch's changes into the PR. A rebase puts the P
   caption="The Update menu: merge or rebase."
 />
 
-## Turn auto-merge on or off
+## The Draft and Auto-merge toggles
 
-Select **Turn on auto-merge** or **Turn off auto-merge**. GitHub then merges the PR when all its requirements pass. To change the auto-merge method, first turn auto-merge off.
+The header has two toggles. In a narrow window, they are in the ⋯ menu as **Mark ready for review**, **Convert to draft**, **Turn on auto-merge** and **Turn off auto-merge**.
 
-## Change the draft state
+- Turn **Draft** off to mark the PR ready for review. Turn it on to convert the PR to a draft.
+- Turn **Auto-merge** on to let GitHub merge the PR when all its requirements pass. To change the auto-merge method, first turn auto-merge off.
 
-Select **Mark ready for review** or **Convert to draft**.
-
-The toggles act at once. Gnosis shows the change before GitHub answers. A message then shows the result, with **Undo**. If GitHub refuses the change, Gnosis tells you and shows the PR as GitHub has it.
+The toggles act at once. Gnosis shows the change before GitHub answers. A message then shows the result, with **Undo**. Undo works only while GitHub still shows your change. Otherwise the message says "Changed on GitHub since; nothing undone". If GitHub refuses the change, Gnosis tells you and shows the PR as GitHub has it.
 
 ## Merged and closed PRs
 
-- On a merged or closed PR, **Delete branch** deletes the PR's branch. Gnosis asks you to confirm first.
+- On a merged PR, **Delete branch…** deletes the PR's branch, while the branch still exists. Gnosis asks you to confirm first.
 - On a merged PR, **Revert…** opens the PR on GitHub. There, Revert makes a new PR that undoes the merge.
 - On a closed PR, **Reopen** opens the PR again.
 
@@ -74,11 +73,11 @@ To close a PR without a merge, use **Close PR** in the **Needs a decision** sect
 
 ## Review the PR
 
-Press <Kbd keys="⌘ ⇧ V" /> to review the PR. On your own PR, the same keys let you reply to the feedback, or ask for a review.
+Press <Kbd keys="⌘ ⇧ V" />, or select **Review PR** in the header, to review the PR. When threads wait for your reply, the action is **Reply to feedback**. On your own PR, it is **Request review…**. In the whole-stack scope, these keys do nothing.
 
 <DocShot
   name="submit-review"
-  alt="The Review PR dialog with three decisions: Comment, Approve and Request changes, a summary field, and the Submit review button."
+  alt="The Review PR dialog with three decisions: Comment, Approve and Request changes, the Review message field, and the Submit review button."
   caption="Review PR: approve, comment or request changes."
 />
 

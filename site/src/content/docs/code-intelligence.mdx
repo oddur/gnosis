@@ -12,15 +12,17 @@ Gnosis reads the structure of the code in a diff with tree-sitter. It knows the 
 - Use **Show whole function** when a hunk does not show enough of the function to understand it.
 - Use **quiet changes** to hide changes that do not change behavior, such as formatting.
 
-Code intelligence works for TypeScript, TSX, JavaScript, Rust, Go, Python, Java, C#, JSON and YAML.
+Code intelligence works for TypeScript, TSX, JavaScript, Rust, Go, Python, Java, C#, JSON and YAML. Quiet changes and moved code also use it, and follow the language settings.
 
 ## Breadcrumbs
 
-The breadcrumbs above the diff show the path to the code that you read: the file, then the class, then the function. Select a part of the path to go there. Some parts have a menu, so you can choose a different item.
+Each hunk header has a breadcrumb of the definitions around the hunk, for example `impl StoreBridge › fn save`. A long chain shows the two innermost parts. The file header above already names the file, so the file name is only in the tooltip.
+
+The page breadcrumb at the top of the view is different. It shows the PR, the tab and the file. Select a part of it to go there. Some parts have a menu, so you can choose a different item.
 
 <DocShot
   name="breadcrumbs"
-  alt="The breadcrumbs above a diff hunk. They show the file name, then a class name, then a method name."
+  alt="The breadcrumb in a diff hunk header. It shows a class name, then a method name."
   caption="Breadcrumbs: the class and function that a hunk is in."
 />
 
@@ -36,7 +38,7 @@ The outline lists the functions and classes that each file changes. Each symbol 
 
 ## Moved code
 
-When a PR moves a function to a different place, Gnosis shows the move. It does not show a deletion and an unrelated addition. A note on the moved code says where it came from, for example "Moved from commands/queue.rs". If the code also changed in the move, open the note to see only what changed.
+When a PR moves a function to a different place, Changes keeps both copies and notes the move on each. The new copy says where it came from, for example "Moved from src/queue.ts:22", and the old copy says where it went. The note also tells you how many lines changed in the move, and has a link to the other copy. Lines that did not change are dimmed, so the edits stand out.
 
 <DocShot
   name="moved-symbols"
@@ -67,6 +69,6 @@ These choices apply to all diffs.
 
 ## Settings
 
-Turn code intelligence on or off in <Setting name="Show code structure in diffs" section="Appearance" />. Turn the automatic whole function on or off in <Setting name="Show the whole function or class when it's short" section="Appearance" />. You can also turn off single languages there.
+Turn code intelligence on or off in <Setting name="Show code structure in diffs" section="Appearance" />. Turn the automatic whole function on or off in <Setting name="Show the whole function or class when it’s short" section="Appearance" />. You can also turn off single languages there.
 
 For explanations, <Setting name="Simplify import changes" section="Review" /> condenses changes that touch only imports.

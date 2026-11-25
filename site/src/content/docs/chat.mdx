@@ -18,7 +18,7 @@ Chat needs Claude Code or Codex on your computer. See [Getting started](/docs/ge
 
 1. Open an explanation section, or a file in Changes.
 2. Press <Kbd keys="c" />. If the chat is open already, <Kbd keys="c" /> puts the cursor in it.
-3. Type your question and press Enter to send it. Press Shift+Enter for a new line.
+3. Type your question and press <Kbd keys="Enter" /> to send it. Press Shift+Enter for a new line.
 
 <DocShot
   name="chat-panel"
@@ -26,7 +26,7 @@ Chat needs Claude Code or Codex on your computer. See [Getting started](/docs/ge
   caption="Chat beside an explanation section."
 />
 
-Each section and each file has its own conversation. In a file chat, Gnosis can also show suggested questions. Select one to ask it.
+Each section and each file has its own conversation. Gnosis can also show suggested questions. Select one to ask it.
 
 <DocShot
   name="chat-file"
@@ -47,16 +47,20 @@ To remove the selected code before you send, select the remove button on it.
 The chat panel has a model menu and a **Context** menu.
 
 - **Model**: choose a Claude or Codex model for the next question. The section chat and the file chat each keep their own model.
-- **Context**: choose how much of the PR each question carries: 32k, 64k or 128k tokens. A larger size sends more of the PR with each question.
+- **Context**: choose how much of the PR each question carries: 32k, 64k (the default) or 128k tokens. One size applies to all chats.
 
 Gnosis remembers these choices for the next time.
+
+## What Gnosis sends
+
+Claude Code and Codex run on your computer, but the models run at Anthropic or OpenAI. Each question sends your question, the selected code, the PR's title and description, the diff of the file or section, related files, and more of the PR's diff, up to the context size. A larger context size sends more of your code. Explanations send code too. See [Explanations](/docs/explanations/#what-gnosis-sends).
 
 ## While the answer comes
 
 - Select **Stop answer** to stop the answer.
 - You can write your next question while the answer comes. Send it when the answer is complete.
 - Drag the edge of the panel to make it wider or narrower.
-- Press Esc to close the chat.
+- Press <Kbd keys="Esc" /> to close the chat.
 
 ## Read the answer
 

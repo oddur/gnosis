@@ -4,7 +4,7 @@ description: Read a PR on its Summary, Changes, Commits, Checks and Local notes 
 order: 4
 ---
 
-A PR in Gnosis has tabs: **Summary**, **Changes**, **Commits**, **Checks**, **Explanation** and **Local notes**. When the PR has merge conflicts that you resolve, a **Conflicts** tab also shows. This page tells you how to read a PR on each tab.
+A PR in Gnosis has tabs: **Summary**, **Changes**, **Commits**, **Checks**, **Explanation** and **Local notes**. While you resolve merge conflicts, a **Conflicts** tab also shows. This page tells you how to read a PR on each tab.
 
 ## When to use each tab
 
@@ -54,7 +54,9 @@ Changes shows the diff of the PR. A file tree is on the left.
 
 ### Mark files as viewed
 
-Select the **Viewed** checkbox of a file when you finish it. A folder in the file tree also has a Viewed menu, so you can mark all its files at the same time.
+Select the **Viewed** checkbox of a file when you finish it. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters.
+
+Viewed marks stay on your computer. They do not change the Viewed boxes on GitHub.
 
 ### Ask about a file
 
@@ -70,9 +72,8 @@ Checks shows the CI results for the PR's last commit.
 
 1. Choose **List** to see each check, or **Graph** to see the workflow as a graph.
 2. In the list, filter by **All checks**, **Needs attention** or **Running**.
-3. Select a check to see its steps, its log and its annotations.
+3. Select a check to see its steps and its annotations. For a GitHub Actions job, select **Load log** to read the log. Gnosis shows the first 2 MB; open GitHub for the complete log.
 4. To run failed jobs again, select **Re-run failed jobs**. You must have write access to the repository.
-5. To give the failures to a coding agent, select **Pass to an agent**. Gnosis copies the failures to the clipboard.
 
 <DocShot
   name="pr-checks"

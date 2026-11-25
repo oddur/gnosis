@@ -20,7 +20,7 @@ Gnosis tells you when a PR needs you. It sends a desktop notification when Gnosi
   caption="A notification when checks fail."
 />
 
-Select a notification to open the PR at the right place. On macOS, you can reply to a mention, a reply or a change request from the notification itself. Turn this on or off with <Setting name="Allow replies from notifications" section="Notifications" />.
+Select a notification to open the PR at the right place. On macOS, you can reply to a mention, a reply or a change request from the notification itself. The reply posts to that thread on GitHub. On other systems, the notification opens the thread. Turn this on or off with <Setting name="Allow replies from notifications" section="Notifications" />.
 
 ### Choose the events
 
@@ -37,7 +37,7 @@ Turn the two kinds of notification on or off with <Setting name="Desktop notific
 
 ### Choose the repositories
 
-Watched repositories notify you about all events. For other repositories, set <Setting name="Other repositories" section="Notifications" /> to **All**, **Only when it's on me** or **None**. To set a different level for one repository, add it under <Setting name="Repository exceptions" section="Notifications" />. You can also set the level from a PR's menu.
+Watched repositories notify you about all events, unless you set an exception for them. For other repositories, set <Setting name="Other repositories" section="Notifications" /> to **All**, **Only when it's on me** or **None**. To set a different level for one repository, add it under <Setting name="Repository exceptions" section="Notifications" />. You can also set the level from a PR's menu.
 
 ### Bots
 
@@ -45,7 +45,7 @@ Bots never notify you. To hear from a bot, add its login under <Setting name="Bo
 
 ### Pause notifications
 
-In the **Quiet** section, pause notifications for 1 hour, until tomorrow morning, or until Monday. Select **Resume** to end the pause early. While notifications are paused, Gnosis still marks PRs unread. When the pause ends, you get one summary.
+In the **Quiet** section, choose **Pause for 1 hour**, **Until tomorrow morning** or **Until Monday**. Select **Resume** to end the pause early. While notifications are paused, Gnosis still marks PRs unread. When the pause ends, you get one summary.
 
 Gnosis also follows your system's Focus and Do Not Disturb settings.
 
@@ -62,7 +62,7 @@ On macOS, Gnosis has an icon in the menu bar. The icon can show a number of PRs 
 
 Click the icon to open the panel. The panel groups the PRs into **To review**, **To fix** and **Ready**. Select a PR to open it in Gnosis. Use the arrow keys, or <Kbd keys="j" /> and <Kbd keys="k" />, to move through the list. The panel never writes to GitHub.
 
-Right-click the icon for **Open Gnosis**, **Settings** and **Quit**.
+When the icon shows the summary panel, right-click it for **Open Gnosis**, **Settings…** and **Quit Gnosis**. When it shows the classic menu, right-click also opens the classic menu.
 
 ### Set up the menu bar
 

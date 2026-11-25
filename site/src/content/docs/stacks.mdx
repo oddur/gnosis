@@ -26,7 +26,7 @@ The overview lists the PRs of the stack. Dependent PRs are first, and the base b
 
 ## Switch between the stack and one PR
 
-The scope switcher is above the PR tabs. It shows **Whole stack**, or the PR that you look at, for example "#121 · 2 of 3".
+The scope switcher is in the row of PR tabs. It shows **Whole stack**, or the PR that you look at, for example "#121 · 2 of 3".
 
 1. Open the scope switcher.
 2. Choose **Whole stack**, or choose one PR.
@@ -41,30 +41,35 @@ In the whole-stack scope, Changes has two modes:
 - **Combined** shows one diff for the whole stack, from the base branch to the top PR.
 - **By PR** shows the changes of each PR on its own.
 
-When the stack changes on GitHub, for example after a new commit, Gnosis tells you and updates the combined diff. Reviews and comments always go to one PR on GitHub. A review is never for the whole stack.
+When the stack changes on GitHub, for example after a new commit, Gnosis tells you that new commits are available. Your current comparison does not change until you select **Update changes**. Reviews and comments always go to one PR on GitHub. A review is never for the whole stack.
 
 ## Merge a stack
 
-The merge plan shows the PRs in their merge order, the lowest PR first. For each PR, it shows whether the PR can merge, and what blocks it, for example a required check that failed or a missing approval. Select **Refresh merge status** to read the status from GitHub again.
+The merge plan groups the PRs by their status, for example draft or waiting. For each PR, it shows whether the PR can merge, and what blocks it, for example a required check that failed or a missing approval. When the status is not known, select **Refresh merge status** to read it from GitHub again.
 
 <DocShot
   name="stack-merge-plan"
-  alt="A stack's merge plan. The PRs are in merge order, lowest first. Each PR has a status line, and one PR shows a required check that failed."
+  alt="A stack's merge plan. The PRs are grouped by status. Each PR has a status line, and one PR shows a required check that failed."
   caption="A stack's merge plan."
 />
 
-In the whole-stack scope, the merge action in the header merges the stack. Gnosis shows a confirmation first, as for a single PR. See [Merging & PR actions](/docs/merging-and-pr-actions/).
+In the whole-stack scope, select **Merge whole stack…** in the header. A confirmation takes you through three steps: Review, Method and Confirm. All the PRs merge together, or none of them do.
+
+- If the PRs are not a GitHub stack yet, Gnosis first creates a GitHub stack from their branches. The GitHub stack stays, also when the merge is then blocked.
+- Every PR must be open, ready for review and writable, and not in a merge queue. The branches must be in one repository and in a straight chain, with no merge conflicts.
+
+See also [Merging & PR actions](/docs/merging-and-pr-actions/).
 
 ### Other stack actions
 
 - **Mark all ready**, in the merge plan, marks the draft PRs of the stack ready for review. Required checks and approvals still apply.
 - **Re-run failed jobs…**, in a PR's merge details, runs its failed CI jobs again.
-- The conflict plan, on the stack overview, shows the next conflict to fix, the lowest PR first. Select **Resolve conflicts…** beside a PR that has conflicts.
+- The conflict plan, on the stack overview, shows the next conflict to fix, the lowest PR first. On your own PR, select **Resolve conflicts in #n**. On another person's PR, it offers **Change base of #n on GitHub**. Each PR's details also have **Resolve conflicts…**.
 
 ## Conflicts in a stack
 
-When you resolve a conflict in a PR that has PRs above it, Gnosis checks the stack before you push. The confirmation tells you what it found, for example: "Resolving #101 also settles #102 and #103." This check runs only on your computer. It changes no branch.
+When you resolve a conflict in a PR that has PRs above it, Gnosis checks the stack before you push. The confirmation tells you what it found, for example: "Resolving #101 also settles #102 and #103." This check runs in the background and only on your computer, and not on battery power. It changes no branch.
 
-After the push, Gnosis can restack the PRs above. It replays each PR onto its updated parent. It stops only on a conflict that is in Check or Decide. Gnosis pushes all the branches together in one push, or none of them.
+After the push, Gnosis can restack the PRs above. It replays each PR onto its updated parent. It stops only on a conflict that is in Check or Decide. An update that needs your review has a **Reviewed** checkbox. Mark each one before you continue, or choose **Leave the dependent PRs unchanged**. The restack **force-pushes** the branch of each dependent PR, with a lease, so a commit that someone else pushed is never overwritten. All the branches must be in one repository. Gnosis pushes them together in one push, or none of them.
 
 For more, see [Resolving conflicts](/docs/resolving-conflicts/).
