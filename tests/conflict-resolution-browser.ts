@@ -67,9 +67,12 @@ void app.whenReady().then(async () => {
   const click = async (label: string) => {
     if (RESET_ITEMS.includes(label) && !(await js<boolean>(`!!(${visibleButton(label)})`))) {
       for (let n = 0; n < 200 && !(await resetItem(label)); n++) await new Promise((r) => setTimeout(r, 30));
-      await resetMenu(true);
-      await wait(`(${menuItem(label)}) && !(${menuItem(label)}).hasAttribute('data-disabled')`);
-      await js(`(${menuItem(label)}).click()`);
+      // Found and clicked in one step, reopening the menu if it closed. An item can leave between two steps: an
+      // autosave changes the draft, its verdict key with it, and until that check is back the reset point is the
+      // draft with nothing Merged (fail closed), which can be the draft itself (macOS run 45686247092).
+      await wait(
+        `(()=>{if(!document.querySelector('.conflict-reset-menu')){const b=document.querySelector('[data-conflict-reset]:not(:disabled)');if(b){b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))}return false}const i=${menuItem(label)};if(!i||i.hasAttribute('data-disabled'))return false;i.click();return true})()`
+      );
       await wait("!document.querySelector('.conflict-reset-menu')");
       return;
     }

@@ -691,8 +691,10 @@ void app.whenReady().then(async () => {
       await closeTabs();
       counts[`tabs closed ${cycle}`] = await listeners();
     }
-    // GNOSIS_HEAP_RETAINERS=1: what keeps the closed tabs' DOM alive, from a heap snapshot.
-    if (process.env.GNOSIS_HEAP_RETAINERS) {
+    // GNOSIS_HEAP_RETAINERS=1: what keeps the closed tabs' DOM alive, from a heap snapshot. Taken on its own when the
+    // detached DOM check below is about to fail: that is rare and macOS-only (main run 45686247092 kept 4,009 and then
+    // 7,396 elements, with no retainer to read), so the run that fails names what kept them.
+    if (process.env.GNOSIS_HEAP_RETAINERS || counts['tabs closed 5'].elements - counts['tabs closed'].elements >= 500) {
       const debug = win.webContents.debugger;
       const chunks: string[] = [];
       const collect = (_event: unknown, method: string, params: { chunk?: string }) => {
