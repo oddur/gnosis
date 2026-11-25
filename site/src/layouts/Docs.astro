@@ -1,0 +1,108 @@
+---
+/**
+ * A docs page: the page list and search on the left, the article, and "On this page" on the right. Narrow windows
+ * fold the page list into a Docs menu above the article and drop the right column for an inline contents list.
+ */
+import '../styles/docs.css';
+import Base from './Base.astro';
+import DocsNav, { type DocsLink } from '../components/docs/DocsNav.astro';
+import DocsSearch from '../components/docs/DocsSearch.astro';
+
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+interface Props {
+  title: string;
+  description: string;
+  pages: DocsLink[];
+  current?: string;
+  prerelease?: boolean;
+  headings?: Heading[];
+}
+const { title, description, pages, current, prerelease, headings = [] } = Astro.props;
+const toc = headings.filter((heading) => heading.depth === 2 || heading.depth === 3);
+const index = pages.findIndex((page) => page.id === current);
+const previous = index > 0 ? pages[index - 1] : undefined;
+const next = index >= 0 ? pages[index + 1] : undefined;
+const currentTitle = index >= 0 ? pages[index].title : 'Overview';
+---
+
+<Base title={`${title} — Gnosis docs`} description={description}>
+  <div class="docs frame">
+    <aside class="docs-aside" aria-label="Docs">
+      <DocsSearch />
+      <nav class="docs-sidebar" aria-label="Docs pages">
+        <a class="docs-home" href="/docs/" aria-current={current ? undefined : 'page'}>
+          Docs
+        </a>
+        <DocsNav pages={pages} current={current} />
+      </nav>
+      <details class="docs-menu">
+        <summary>
+          <span>Docs menu</span>
+          <span class="docs-menu-current">{currentTitle}</span>
+        </summary>
+        <nav aria-label="Docs pages">
+          <a class="docs-home" href="/docs/" aria-current={current ? undefined : 'page'}>
+            Docs
+          </a>
+          <DocsNav pages={pages} current={current} />
+        </nav>
+      </details>
+    </aside>
+    <main id="main" class="docs-main">
+      <article class="docs-article" data-pagefind-body>
+        <header class="docs-title">
+          <h1>{title}</h1>
+          {prerelease && <span class="prerelease-tag">Pre-release</span>}
+          <p>{description}</p>
+        </header>
+        {toc.length > 0 && (
+          <details class="docs-toc-inline" data-pagefind-ignore>
+            <summary>On this page</summary>
+            <ol>
+              {toc.map((heading) => (
+                <li class={`depth-${heading.depth}`}>
+                  <a href={`#${heading.slug}`}>{heading.text}</a>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+        <div class="docs-prose">
+          <slot />
+        </div>
+      </article>
+      {(previous || next) && (
+        <nav class="docs-pager" aria-label="Previous and next page">
+          {previous && (
+            <a href={`/docs/${previous.id}/`} rel="prev">
+              <span>Previous</span>
+              {previous.title}
+            </a>
+          )}
+          {next && (
+            <a href={`/docs/${next.id}/`} rel="next" class="docs-pager-next">
+              <span>Next</span>
+              {next.title}
+            </a>
+          )}
+        </nav>
+      )}
+    </main>
+    {toc.length > 0 && (
+      <nav class="docs-toc" aria-label="On this page">
+        <h2>On this page</h2>
+        <ol>
+          {toc.map((heading) => (
+            <li class={`depth-${heading.depth}`}>
+              <a href={`#${heading.slug}`}>{heading.text}</a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    )}
+  </div>
+</Base>

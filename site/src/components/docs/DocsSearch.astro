@@ -1,0 +1,91 @@
+---
+/**
+ * Search over the docs. `pagefind --site dist` builds a static index after `astro build` (npm run build); there is no
+ * search service. Without JavaScript the box stays hidden. In `astro dev` the index does not exist, so the box says so.
+ */
+---
+
+<div class="docs-search" data-docs-search hidden>
+  <label for="docs-search-input" class="sr-only">
+    Search the docs
+  </label>
+  <input
+    id="docs-search-input"
+    type="search"
+    placeholder="Search the docs"
+    autocomplete="off"
+    spellcheck="false"
+    aria-controls="docs-search-results"
+    aria-describedby="docs-search-status"
+  />
+  <p id="docs-search-status" class="docs-search-status" role="status" aria-live="polite"></p>
+  <ol id="docs-search-results" class="docs-search-results" hidden></ol>
+</div>
+
+<script>
+  interface PagefindResult {
+    data: () => Promise<{ url: string; excerpt: string; meta: { title?: string } }>;
+  }
+  interface Pagefind {
+    search: (query: string) => Promise<{ results: PagefindResult[] } | null>;
+    debouncedSearch: (query: string, options?: object, ms?: number) => Promise<{ results: PagefindResult[] } | null>;
+  }
+  const root = document.querySelector<HTMLElement>('[data-docs-search]');
+  const input = root?.querySelector<HTMLInputElement>('input');
+  const list = root?.querySelector<HTMLOListElement>('ol');
+  const status = root?.querySelector<HTMLElement>('[role="status"]');
+  if (root && input && list && status) {
+    root.hidden = false;
+    let pagefind: Promise<Pagefind | undefined> | undefined;
+    const load = () =>
+      (pagefind ??= (import(/* @vite-ignore */ `${location.origin}/pagefind/pagefind.js`) as Promise<Pagefind>).catch(
+        () => undefined
+      ));
+    input.addEventListener('focus', () => void load(), { once: true });
+    let latest = 0;
+    input.addEventListener('input', async () => {
+      const query = input.value.trim();
+      const run = ++latest;
+      if (!query) {
+        list.hidden = true;
+        list.replaceChildren();
+        status.textContent = '';
+        return;
+      }
+      const search = await load();
+      if (!search) {
+        status.textContent = 'Search works on the built site (npm run build, then npm run preview).';
+        return;
+      }
+      const found = await search.debouncedSearch(query, {}, 150);
+      if (found === null || run !== latest) return; // A newer query replaced this one.
+      const pages = await Promise.all(found.results.slice(0, 8).map((result) => result.data()));
+      if (run !== latest) return;
+      list.replaceChildren(
+        ...pages.map((page) => {
+          const item = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = page.url;
+          const title = document.createElement('strong');
+          title.textContent = page.meta.title ?? page.url;
+          const excerpt = document.createElement('span');
+          // Pagefind's excerpt is text from these docs, escaped, with <mark> around the matches.
+          excerpt.innerHTML = page.excerpt;
+          link.append(title, excerpt);
+          item.append(link);
+          return item;
+        })
+      );
+      list.hidden = pages.length === 0;
+      status.textContent = pages.length
+        ? `${found.results.length} ${found.results.length === 1 ? 'page' : 'pages'} found`
+        : 'No pages found';
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && input.value) {
+        input.value = '';
+        input.dispatchEvent(new Event('input'));
+      }
+    });
+  }
+</script>

@@ -1,0 +1,179 @@
+{
+  "note": "Shortcuts that live only in inline key handlers, so check-docs.mjs can't read them from the ? cheatsheet. Each entry names its source file and a piece of code that must still be there. Write macOS keys. Remove an entry when its shortcut is removed, and add one when a handler gets a new key.",
+  "shortcuts": [
+    {
+      "keys": "↓",
+      "label": "Next PR in the queue",
+      "source": "components/QueueRow.tsx",
+      "evidence": "e.key === 'ArrowDown' || e.key === 'ArrowUp'"
+    },
+    {
+      "keys": "↑",
+      "label": "Previous PR in the queue",
+      "source": "components/QueueRow.tsx",
+      "evidence": "e.key === 'ArrowDown' || e.key === 'ArrowUp'"
+    },
+    {
+      "keys": "j",
+      "label": "Next PR in the queue",
+      "source": "src/pages/HomePage.tsx",
+      "evidence": "moveSelection(1)"
+    },
+    {
+      "keys": "k",
+      "label": "Previous PR in the queue",
+      "source": "src/pages/HomePage.tsx",
+      "evidence": "moveSelection(-1)"
+    },
+    {
+      "keys": "Enter",
+      "label": "Open the selected PR",
+      "source": "components/QueueRow.tsx",
+      "evidence": "e.key === 'Enter' && active && !e.repeat"
+    },
+    {
+      "keys": "/",
+      "label": "Search the queue",
+      "source": "src/pages/HomePage.tsx",
+      "evidence": "'/': () => searchInput.current?.focus()"
+    },
+    {
+      "keys": "z",
+      "label": "Snooze the selected PRs",
+      "source": "src/pages/HomePage.tsx",
+      "evidence": "// Z snoozes the selected entries."
+    },
+    {
+      "keys": "⌘ A",
+      "label": "Select every PR in the list",
+      "source": "components/QueueRow.tsx",
+      "evidence": "(e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a'"
+    },
+    {
+      "keys": "⌘ Space",
+      "label": "Add the PR to the selection, or remove it",
+      "source": "components/QueueRow.tsx",
+      "evidence": "(e.metaKey || e.ctrlKey) && e.key === ' '"
+    },
+    {
+      "keys": "⇧ F10",
+      "label": "Open the menu of a PR or stack",
+      "source": "components/EntryActions.tsx",
+      "evidence": "event.shiftKey && event.key === 'F10'"
+    },
+    {
+      "keys": "⌘ \\",
+      "label": "Show or hide the queue sidebar",
+      "source": "components/QueueSidebar.tsx",
+      "evidence": "[mac ? 'cmd+\\\\' : 'ctrl+\\\\']"
+    },
+    {
+      "keys": "a",
+      "label": "Overview: run the row's action",
+      "source": "components/OverviewPage.tsx",
+      "evidence": "// The row's one action: Merge, Re-review, Reply, Review, Nudge or Close PR."
+    },
+    {
+      "keys": "z",
+      "label": "Overview: snooze the row",
+      "source": "components/OverviewPage.tsx",
+      "evidence": "return snooze(id);"
+    },
+    {
+      "keys": "n",
+      "label": "Summary feedback: next unresolved thread",
+      "source": "components/PrFeedbackView.tsx",
+      "evidence": "n: goNextUnresolved,"
+    },
+    {
+      "keys": "r",
+      "label": "Summary feedback: reply",
+      "source": "components/PrFeedbackView.tsx",
+      "evidence": "r: () => press(/^Reply$/),"
+    },
+    {
+      "keys": "e",
+      "label": "Summary feedback: resolve the thread",
+      "source": "components/PrFeedbackView.tsx",
+      "evidence": "e: () => press(/^Resolve thread$/),"
+    },
+    {
+      "keys": "u",
+      "label": "Summary feedback: mark unread",
+      "source": "components/PrFeedbackView.tsx",
+      "evidence": "void markUnread(item);"
+    },
+    {
+      "keys": "⌘ T",
+      "label": "New tab",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "if (key === 't') return event.shiftKey ? 'reopen' : 'new';"
+    },
+    {
+      "keys": "⌘ ⇧ T",
+      "label": "Reopen the last closed tab",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "if (key === 't') return event.shiftKey ? 'reopen' : 'new';"
+    },
+    {
+      "keys": "⌘ W",
+      "label": "Close the tab",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "if (!event.shiftKey && key === 'w') return 'close';"
+    },
+    {
+      "keys": "⌃ Tab",
+      "label": "Next tab",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "event.key === 'Tab') return event.shiftKey ? 'previous' : 'next';"
+    },
+    {
+      "keys": "⌃ ⇧ Tab",
+      "label": "Previous tab",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "event.key === 'Tab') return event.shiftKey ? 'previous' : 'next';"
+    },
+    {
+      "keys": "⌘ 1–9",
+      "label": "Go to tab 1 to 9",
+      "source": "lib/workspace-tabs.ts",
+      "evidence": "/^[1-9]$/.test(key)"
+    },
+    {
+      "keys": "⌘ [",
+      "label": "Back",
+      "source": "lib/navigation-history.ts",
+      "evidence": "event.key === '[' || event.code === 'BracketLeft'"
+    },
+    {
+      "keys": "⌘ ]",
+      "label": "Forward",
+      "source": "lib/navigation-history.ts",
+      "evidence": "event.key === ']' || event.code === 'BracketRight'"
+    },
+    {
+      "keys": "+",
+      "label": "Diagram: zoom in",
+      "source": "components/DiagramViewport.tsx",
+      "evidence": "['+', '=', '-', '0', '1'].includes(event.key)"
+    },
+    {
+      "keys": "-",
+      "label": "Diagram: zoom out",
+      "source": "components/DiagramViewport.tsx",
+      "evidence": "['+', '=', '-', '0', '1'].includes(event.key)"
+    },
+    {
+      "keys": "0",
+      "label": "Diagram: fit to the view",
+      "source": "components/DiagramViewport.tsx",
+      "evidence": "event.key === '0' ? 'fit'"
+    },
+    {
+      "keys": "1",
+      "label": "Diagram: actual size",
+      "source": "components/DiagramViewport.tsx",
+      "evidence": "event.key === '1' ? 1"
+    }
+  ]
+}
