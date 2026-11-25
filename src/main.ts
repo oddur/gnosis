@@ -2652,10 +2652,10 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
   const options = normalizeExplanationOptions(previous.explanationOptions);
   // Focused sections (#562): the explanation's own choice; one saved before the choice existed follows the repository.
   if (!('focusedSections' in previous.explanationOptions)) options.focusedSections = explanationDefaults(source).focusedSections;
-  // Model and effort (#573): the explanation's own; one saved before the choice existed follows the repository.
+  // Provider, model and effort (#573): the explanation's own; one saved before the choice follows the repository.
   if (!('model' in previous.explanationOptions)) {
-    const { model, effort } = explanationDefaults(source);
-    if (model) options.model = model;
+    const { provider, model, effort } = explanationDefaults(source);
+    if (provider && model) Object.assign(options, { provider, model });
     if (effort) options.effort = effort;
   }
   // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
@@ -2723,9 +2723,9 @@ async function runBackgroundGeneration(
 ): Promise<void> {
   // Focused sections (#562) is chosen per explanation in Generate explanation; the repository's setting is the default.
   const requested = request.explanationOptions ?? explanationDefaults(source);
-  // The explanation's own model and effort (#573), else the review model in Settings; saved with the explanation.
-  const { model, effort } = explanationModel(requested, request);
-  const options: ExplanationOptions = { ...requested, model, effort };
+  // The explanation's own provider, model and effort (#573), else the review model in Settings; saved with it.
+  const { provider, model, effort } = explanationModel(requested, request);
+  const options: ExplanationOptions = { ...requested, provider, model, effort };
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
@@ -2737,7 +2737,6 @@ async function runBackgroundGeneration(
   });
   const {
     prUrl,
-    provider,
     thinking,
     smartImports,
     reviewSuggestions,
@@ -3047,7 +3046,7 @@ async function runBackgroundGeneration(
               focus ? focusFileWindows(ownedHunkIds(topic.hunkIds, owners, idx), focus) : undefined,
             );
 
-            const topicKey = reviewFingerprint(writerCheckpointKey({ topicCtx, topic }, { model, effort }, focus));
+            const topicKey = reviewFingerprint(writerCheckpointKey({ topicCtx, topic }, { provider, model, effort }, focus));
             const topicId = `slide-${slideNum}`;
             const saved = checkpoint!.get(topicKey);
             if (!saved) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'writing' });
@@ -3923,13 +3922,16 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const requested = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)
     : explanationDefaults(source);
-  // The explanation's model and effort (#573): its own choice for the current provider, else the review model.
-  const { model, effort } = explanationModel(requested, request);
-  const options: ExplanationOptions = { ...requested, model, effort };
+  // The explanation's provider, model and effort (#573): its own choice, else the review model in Settings.
+  const { provider, model, effort } = explanationModel(requested, request);
+  const options: ExplanationOptions = { ...requested, provider, model, effort };
+  // Never fall back to another provider: one that isn't installed fails here, by name.
+  if (!checkCliInstalled(provider, [`${os.homedir()}/.volta/bin/${provider}`]).installed)
+    throw new Error(`${PROVIDERS[provider].label} was not found. Open Settings → Integrations for AI setup.`);
   // Focused sections (#562): this explanation's choice; "Remember for this repository" saves it as the default with the rest.
   if (options.style === 'custom' && !options.customInstructions.trim())
     throw new Error('Add instructions for the Custom explanation style.');
-  request = { ...request, model, effort, explanationOptions: options, rememberExplanationOptions: false };
+  request = { ...request, provider, model, effort, explanationOptions: options, rememberExplanationOptions: false };
   const inventory = await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot);
   if (!inventory.some((file) => !explanationExclusion(file, options)))
     throw new Error('Include at least one file before generating an explanation.');

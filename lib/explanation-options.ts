@@ -1,6 +1,6 @@
 import { effectiveFileKinds, fileExtension, pathFileKinds, type FileKinds, type FileKindOverride } from './file-kinds';
 import type { ChangedFile } from './types';
-import { PROVIDERS, type ModelId, type Provider } from './models';
+import { PROVIDER_IDS, PROVIDERS, type ModelId, type Provider } from './models';
 import { EFFORT_LEVELS, normalizeEffort, type Effort } from './effort';
 
 export const EXPLANATION_STYLES = [
@@ -40,9 +40,10 @@ export interface ExplanationPreferences {
    */
   focusedSections: boolean;
   /**
-   * The explanation's model and reasoning effort, from the current provider's models. Unset follows the review model
+   * The explanation's provider, model and reasoning effort, from any provider's models. Unset follows the review model
    * in Settings. Generation fills them in, so Regenerate keeps the model the explanation was written with.
    */
+  provider?: Provider;
   model?: ModelId;
   effort?: Effort;
 }
@@ -99,12 +100,21 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
     ].slice(0, 1000),
     reduceNoise: normalizeNoiseLevel(v.reduceNoise),
     focusedSections: v.focusedSections === true,
-    ...(knownModel(v.model) ? { model: v.model } : {}),
+    ...modelChoice(v.provider, v.model),
     ...(EFFORT_LEVELS.includes(v.effort as Effort) ? { effort: v.effort as Effort } : {}),
   };
 }
-const knownModel = (value: unknown): value is ModelId =>
-  Object.values(PROVIDERS).some((provider) => provider.models.some((model) => model.id === value));
+/** The provider that offers a model; none for an unknown model. */
+const modelProvider = (model: unknown): Provider | undefined =>
+  PROVIDER_IDS.find((provider) => PROVIDERS[provider].models.some((m) => m.id === model));
+/**
+ * A known model with its provider. Without a provider, the model's own. An unknown provider, an unknown model, or a
+ * model the provider doesn't offer is dropped, so the explanation follows the review model in Settings.
+ */
+function modelChoice(provider: unknown, model: unknown): { provider?: Provider; model?: ModelId } {
+  const owner = modelProvider(model);
+  return owner && (provider === undefined || provider === owner) ? { provider: owner, model: model as ModelId } : {};
+}
 /** The model an explanation was written with, for its metadata line; none for one saved before the choice (#573). */
 export function explanationModelLabel(options: Pick<ExplanationPreferences, 'model'> | undefined): string | undefined {
   return Object.values(PROVIDERS)
@@ -119,17 +129,18 @@ export interface ReviewModel {
   thinking?: boolean;
 }
 /**
- * The model and effort an explanation is written with. Its own model when the current provider offers it, else the
- * review model in Settings (fail closed: an unknown or other-provider model never reaches the CLI). The effort is
- * normalized for the chosen model.
+ * The provider, model and effort an explanation is written with: its own choice when the model is known and belongs to
+ * the provider, else the review provider and model in Settings (fail closed: an unknown model, or one from another
+ * provider, never reaches a CLI). The effort is normalized for the model.
  */
 export function explanationModel(
-  options: Pick<ExplanationPreferences, 'model' | 'effort'>,
+  options: Pick<ExplanationPreferences, 'provider' | 'model' | 'effort'>,
   review: ReviewModel
-): { model: ModelId; effort: Effort } {
-  const own = PROVIDERS[review.provider].models.some((model) => model.id === options.model);
-  const model = own && options.model ? options.model : review.model;
-  return { model, effort: normalizeEffort(review.provider, model, options.effort ?? review.effort, review.thinking ?? true) };
+): { provider: Provider; model: ModelId; effort: Effort } {
+  const own = modelChoice(options.provider, options.model);
+  const provider = own.provider ?? review.provider,
+    model = own.model ?? review.model;
+  return { provider, model, effort: normalizeEffort(provider, model, options.effort ?? review.effort, review.thinking ?? true) };
 }
 export function normalizeNoiseLevel(value: unknown): NoiseLevel {
   return NOISE_LEVELS.some((level) => level.value === value) ? (value as NoiseLevel) : DEFAULT_NOISE_LEVEL;

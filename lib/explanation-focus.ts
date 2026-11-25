@@ -221,15 +221,15 @@ export function focusCheckpointKey<T extends object>(identity: T, index: FocusIn
   return index ? { ...identity, focusedSections: index.hash } : identity;
 }
 /**
- * A writer's checkpoint key: the topic, its context, the model and effort it is written with (a section another model
+ * A writer's checkpoint key: the topic, its context, the provider, model and effort it is written with (a section another model
  * wrote is never reused), and with Focused sections the slices.
  */
 export function writerCheckpointKey(
   identity: { topicCtx: unknown; topic: unknown },
-  choice: { model: string; effort?: string },
+  choice: { provider: string; model: string; effort?: string },
   index: FocusIndex | undefined
 ) {
-  return focusCheckpointKey({ ...identity, version: 9, model: choice.model, effort: choice.effort }, index);
+  return focusCheckpointKey({ ...identity, version: 9, provider: choice.provider, model: choice.model, effort: choice.effort }, index);
 }
 
 /**

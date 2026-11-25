@@ -25,11 +25,11 @@ export function ExplanationPreferencesFields({
   /** Show the Focused sections choice (#562): in Settings it is the repository's default, in Generate explanation this explanation's. */
   focusedSections?: boolean;
   /**
-   * Show the model and reasoning effort (#573) for this provider's models; unset hides them. The review model in
+   * Show the model and reasoning effort (#573), from every provider's models; unset hides them. The review model in
    * Settings is the default.
    */
   reviewModel?: ReviewModel;
-  /** Offer "Use default", which clears the model and effort (the repository settings). */
+  /** Offer "Use default", which clears the provider, model and effort (the repository settings). */
   modelDefault?: boolean;
 }) {
   const id = useId();
@@ -38,8 +38,8 @@ export function ExplanationPreferencesFields({
   useEffect(() => setExtensionText(extensionsLabel), [extensionsLabel]);
   const chosen = reviewModel && explanationModel(value, reviewModel);
   const fallback = reviewModel && explanationModel({}, reviewModel);
-  const modelLabel = (model: string) =>
-    reviewModel && (PROVIDERS[reviewModel.provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label;
+  const modelLabel = (provider: keyof typeof PROVIDERS, model: string) =>
+    `${PROVIDERS[provider].label} · ${(PROVIDERS[provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label ?? model}`;
   return (
     <div className="explanation-preferences-fields">
       <fieldset className="explanation-style-options">
@@ -85,21 +85,23 @@ export function ExplanationPreferencesFields({
                 type="checkbox"
                 checked={value.model === undefined}
                 onChange={(event) =>
-                  onChange({ ...value, ...(event.target.checked ? { model: undefined, effort: undefined } : chosen) })
+                  onChange({
+                    ...value,
+                    ...(event.target.checked ? { provider: undefined, model: undefined, effort: undefined } : chosen),
+                  })
                 }
               />
-              Use default ({modelLabel(fallback.model)} · {effortLabels[fallback.effort]})
+              Use default ({modelLabel(fallback.provider, fallback.model)} · {effortLabels[fallback.effort]})
             </label>
           )}
           {(!modelDefault || value.model !== undefined) && (
             <ModelEffortSelect
               label="Explanation model"
               describedBy={`${id}-model`}
-              provider={reviewModel.provider}
+              provider={chosen.provider}
               model={chosen.model}
               effort={chosen.effort}
-              options={PROVIDERS[reviewModel.provider].models.map((m) => ({ value: m.id, label: m.label }))}
-              onChange={(selection) => onChange({ ...value, model: selection.model, effort: selection.effort })}
+              onChange={(selection) => onChange({ ...value, ...selection })}
             />
           )}
         </div>

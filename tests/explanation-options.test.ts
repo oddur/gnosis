@@ -108,43 +108,65 @@ void test('excluded paths are omitted from primary diff including namespaced sta
   assert.doesNotMatch(filtered, /generated\/b.ts/);
 });
 
-// Model and reasoning effort per explanation (#573).
-void test('options keep a known model and effort and drop anything else', () => {
-  const kept = normalizeExplanationOptions({ model: 'claude-sonnet-5-5', effort: 'low' });
-  assert.equal(kept.model, 'claude-sonnet-5-5');
+// Provider, model and reasoning effort per explanation (#573).
+void test('options keep a known provider, model and effort and drop anything else', () => {
+  const kept = normalizeExplanationOptions({ provider: 'codex', model: 'gpt-6.1-terra', effort: 'low' });
+  assert.equal(kept.provider, 'codex');
+  assert.equal(kept.model, 'gpt-6.1-terra');
   assert.equal(kept.effort, 'low');
-  const dropped = normalizeExplanationOptions({ model: 'claude-unknown-9', effort: 'turbo' });
-  assert.equal('model' in dropped, false);
-  assert.equal('effort' in dropped, false);
+  // Without a provider, the model's own provider.
+  assert.equal(normalizeExplanationOptions({ model: 'claude-sonnet-5-5' }).provider, 'claude');
+  for (const value of [
+    { model: 'claude-unknown-9' },
+    { provider: 'gemini', model: 'claude-sonnet-5-5' },
+    { provider: 'claude', model: 'gpt-6.2-sol' },
+  ]) {
+    const dropped = normalizeExplanationOptions(value);
+    assert.equal('provider' in dropped, false, JSON.stringify(value));
+    assert.equal('model' in dropped, false, JSON.stringify(value));
+  }
+  assert.equal('effort' in normalizeExplanationOptions({ effort: 'turbo' }), false);
   assert.equal('model' in normalizeExplanationPreferences(null), false, 'Unset follows Settings');
 });
 void test('the explanation model falls back to the review model and effort is normalized for the model', () => {
   const review = { provider: 'claude' as const, model: 'claude-opus-5-5' as const, effort: 'medium' as const };
-  assert.deepEqual(explanationModel({}, review), { model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(explanationModel({}, review), { provider: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
   assert.deepEqual(explanationModel({ model: 'claude-haiku-5-5', effort: 'low' }, review), {
+    provider: 'claude',
     model: 'claude-haiku-5-5',
     effort: 'low',
   });
-  // Unknown, or another provider's model: Settings' model, never the requested ID.
-  assert.equal(explanationModel({ model: 'claude-unknown-9' as never }, review).model, 'claude-opus-5-5');
-  assert.equal(explanationModel({ model: 'gpt-6.2-sol' }, review).model, 'claude-opus-5-5');
+  // Another provider's model is used with its provider.
+  assert.deepEqual(explanationModel({ provider: 'codex', model: 'gpt-6.1-terra', effort: 'ultra' }, review), {
+    provider: 'codex',
+    model: 'gpt-6.1-terra',
+    effort: 'ultra',
+  });
+  // Unknown model, unknown provider, or a model the provider doesn't offer: Settings' provider and model.
+  const fallback = { provider: 'claude', model: 'claude-opus-5-5' };
+  const pick = (value: object) => {
+    const { provider, model } = explanationModel(value as never, review);
+    return { provider, model };
+  };
+  assert.deepEqual(pick({ model: 'claude-unknown-9' }), fallback);
+  assert.deepEqual(pick({ provider: 'gemini', model: 'gpt-6.2-sol' }), fallback);
+  assert.deepEqual(pick({ provider: 'claude', model: 'gpt-6.2-sol' }), fallback);
+  assert.deepEqual(pick({ provider: 'codex' }), fallback);
   // Claude has no Ultra; Codex models other than Luna do.
   assert.equal(explanationModel({ model: 'claude-sonnet-5-5', effort: 'ultra' }, review).effort, 'max');
-  const codex = { provider: 'codex' as const, model: 'gpt-6.2-sol' as const };
-  assert.equal(explanationModel({ model: 'gpt-6.1-terra', effort: 'ultra' }, codex).effort, 'ultra');
-  assert.equal(explanationModel({ model: 'gpt-6-luna', effort: 'ultra' }, codex).effort, 'max');
+  assert.equal(explanationModel({ model: 'gpt-6-luna', effort: 'ultra' }, review).effort, 'max');
   assert.equal(explanationModelLabel({ model: 'claude-sonnet-5-5' }), 'Sonnet 5.5');
   assert.equal(explanationModelLabel({}), undefined);
 });
 void test('remember saves the model and effort as the repository default', () => {
-  const options = normalizeExplanationOptions({ style: 'in-depth', model: 'claude-sonnet-5-5', effort: 'low', fileOverrides: { 'a.ts': false } });
+  const options = normalizeExplanationOptions({ style: 'in-depth', provider: 'codex', model: 'gpt-6.1-terra', effort: 'low', fileOverrides: { 'a.ts': false } });
   const prefs = { repositorySettings: { 'org/repo': { prInactivityDays: 7 } } };
   const saved = rememberExplanationDefault(prefs, 'org/repo', options);
   assert.deepEqual(saved.repositorySettings?.['org/repo'], {
     prInactivityDays: 7,
-    explanation: normalizeExplanationPreferences({ style: 'in-depth', model: 'claude-sonnet-5-5', effort: 'low' }),
+    explanation: normalizeExplanationPreferences({ style: 'in-depth', provider: 'codex', model: 'gpt-6.1-terra', effort: 'low' }),
   });
   assert.equal(normalizeRepositorySettings(saved.repositorySettings)['org/repo'].explanation?.effort, 'low', 'It survives a reload');
   const local = rememberExplanationDefault({}, 'local:/tmp/project', options);
-  assert.equal(local.localExplanationPreferences?.['local:/tmp/project'].model, 'claude-sonnet-5-5');
+  assert.equal(local.localExplanationPreferences?.['local:/tmp/project'].provider, 'codex');
 });

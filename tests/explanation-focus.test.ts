@@ -289,12 +289,14 @@ void describe('setting off', () => {
     assert.equal(normalizeExplanationPreferences({ focusedSections: true }).focusedSections, true);
   });
 
-  void test('a writer checkpoint key changes with the model and effort (#573)', () => {
+  void test('a writer checkpoint key changes with the provider, model and effort (#573)', () => {
     const identity = { topicCtx: 'context', topic: { title: 'T' } };
-    const key = (model: string, effort: string) => fingerprint(writerCheckpointKey(identity, { model, effort }, undefined));
-    assert.equal(key('claude-opus-5-5', 'high'), key('claude-opus-5-5', 'high'));
-    assert.notEqual(key('claude-opus-5-5', 'high'), key('claude-sonnet-5-5', 'high'));
-    assert.notEqual(key('claude-opus-5-5', 'high'), key('claude-opus-5-5', 'low'));
+    const key = (provider: string, model: string, effort: string) =>
+      fingerprint(writerCheckpointKey(identity, { provider, model, effort }, undefined));
+    assert.equal(key('claude', 'claude-opus-5-5', 'high'), key('claude', 'claude-opus-5-5', 'high'));
+    assert.notEqual(key('claude', 'claude-opus-5-5', 'high'), key('claude', 'claude-sonnet-5-5', 'high'));
+    assert.notEqual(key('claude', 'claude-opus-5-5', 'high'), key('claude', 'claude-opus-5-5', 'low'));
+    assert.notEqual(key('claude', 'gpt-6.2-sol', 'high'), key('codex', 'gpt-6.2-sol', 'high'));
   });
 
   void test('the planner index, checkpoint keys and writer context are unchanged', () => {

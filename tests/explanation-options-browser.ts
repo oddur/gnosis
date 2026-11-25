@@ -67,16 +67,16 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${focused}?.checked`), false, 'Focused sections shows in the dialog, off by default');
     await js(`${focused}.click()`);
     await wait(`${focused}.checked===true`);
-    // Model and reasoning effort (#573): Settings' review model by default, from the current provider's models.
+    // Model and reasoning effort (#573): Settings' review model by default, from every provider's models.
     const picker = `document.querySelector('.explanation-setup-dialog [aria-label="Explanation model"]')`;
     assert.match(await js<string>(`${picker}?.textContent`), /Opus 5\.5.*High/, 'The review model and effort are the default');
     await press('Explanation model');
     await wait("!!document.querySelector('.model-picker-popup')");
     await press('Explanation model selection');
-    await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Sonnet 5.5'))");
-    assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT'))"), false);
-    await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('Sonnet 5.5')).click()");
-    await wait(`${picker}.textContent.includes('Sonnet 5.5')`);
+    await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT-6.1 Terra'))");
+    assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Sonnet 5.5'))"), true);
+    await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('GPT-6.1 Terra')).click()");
+    await wait(`${picker}.textContent.includes('GPT-6.1 Terra')`);
     await js("document.querySelector('.model-picker-popup input[type=radio][value=low]').click()");
     await wait(`${picker}.textContent.includes('Low')`);
     await click('Done');
@@ -139,7 +139,8 @@ void app.whenReady().then(async () => {
     assert.equal(attempts[0].explanationOptions.reduceNoise, 'aggressive', 'The level is part of the options');
     assert.equal(attempts[0].explanationOptions.focusedSections, true, 'Focused sections is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
-    assert.equal(attempts[0].explanationOptions.model, 'claude-sonnet-5-5', 'The chosen model is part of the options');
+    assert.equal(attempts[0].explanationOptions.provider, 'codex', 'The chosen provider is part of the options');
+    assert.equal(attempts[0].explanationOptions.model, 'gpt-6.1-terra', 'The chosen model is part of the options');
     assert.equal(attempts[0].explanationOptions.effort, 'low', 'The chosen effort is part of the options');
     win.setSize(1280, 850);
     await open('?restore');
@@ -271,6 +272,7 @@ interface GenerateRequest {
     hiddenExtensions: string[];
     reduceNoise: string;
     focusedSections: boolean;
+    provider?: string;
     model?: string;
     effort?: string;
   };
