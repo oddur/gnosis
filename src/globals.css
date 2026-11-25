@@ -2128,6 +2128,11 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .review-file-summary + .review-file-history { margin-top:5px; }
 .review-file-summary { max-width:72ch; font-size:var(--type-body); line-height:1.55; overflow-wrap:anywhere; }
 .review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:var(--type-caption); color:var(--muted-foreground); }
+/* Other sections that show parts of this file (#560): one quiet line, its section numbers jump there. */
+.review-file-parts { font-size:var(--type-caption); color:var(--muted-foreground); }
+:is(.review-file-summary, .review-file-history) + .review-file-parts { margin-top:5px; }
+.review-file-part-link { color:var(--ring); text-decoration:underline; text-underline-offset:3px; font-variant-numeric:tabular-nums; }
+.review-file-part-link:focus-visible { outline:2px solid var(--ring); outline-offset:1px; border-radius:2px; }
 /* Repeated control glyphs are CSS masks: one element each instead of an SVG subtree. Same lucide paths. */
 .icon-mask { display:inline-block; flex-shrink:0; width:var(--icon-size,14px); height:var(--icon-size,14px); background:currentColor; -webkit-mask:var(--icon) center/contain no-repeat; mask:var(--icon) center/contain no-repeat; }
 .icon-chevrons-up-down { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
@@ -2788,7 +2793,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
   .changes-file-action-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 }
 @container file-header (width < 520px) {
-  .changes-file-header :is(.changes-file-sep, .diff-stats) { display:none; }
+  .changes-file-header :is(.changes-file-sep, .diff-stats, .changes-file-part) { display:none; }
   .changes-file-header h2 > :is(.changes-file-path[data-old], .changes-file-arrow) { display:none; }
   .changes-file-header h2[data-renamed] > .changes-file-path:not([data-old]) > .changes-file-name { max-width:100%; }
 }
@@ -3070,7 +3075,28 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 
 /* Shared merge readiness: explicit wording, with color as a secondary signal. */
 .queue-metadata { display:flex; flex-direction:column; gap:6px; min-width:0; }
-.queue-status-line { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; min-height:26px; }
+.queue-status-line { display:flex; align-items:center; gap:12px; height:26px; min-width:0; }
+/* A queue row keeps its height whatever sync reports (#549). Badges appear and disappear and labels change length as
+   sync runs; if that changed a row's height, the rows below would move under the pointer, and a click aimed at one
+   row could land on another row's control. So the title, status and metadata lines are one line each, and what does
+   not fit ends in an ellipsis instead of wrapping. Lines with focusable badges clip (no scroll container) and keep 6px
+   for focus rings (2px outline, 3px offset). Only text with nothing focusable in it truncates: the PR, repository and
+   author badges and the checks button stay whole. */
+.queue-status-line, .queue-metadata-line .queue-meta, .queue-row-main .queue-title-line { flex-wrap:nowrap; overflow:clip; overflow-clip-margin:6px; }
+.queue-status-line > *, .queue-status-line .pr-review-statuses > * { min-width:0; flex-shrink:1; }
+.queue-status-line .pr-review-statuses { flex-wrap:nowrap; overflow:clip; overflow-clip-margin:6px; }
+.queue-status-line .pr-review-status, .queue-status-line .merge-readiness-badge { white-space:nowrap; }
+.queue-status-line .pr-review-status > span:not(.sr-only), .queue-status-line .merge-readiness-badge > span { min-width:0; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
+.queue-status-line .merge-readiness-blocked { flex-shrink:0; white-space:nowrap; }
+.queue-metadata-line .queue-meta { min-width:0; }
+.queue-metadata-line .queue-meta > * { flex-shrink:0; }
+.queue-metadata-line .queue-pr-origin { flex-wrap:nowrap; flex-shrink:1; min-width:0; overflow:clip; overflow-clip-margin:6px; overflow-wrap:normal; }
+.queue-pr-origin > * { flex-shrink:0; }
+.queue-pr-origin > .queue-pr-when { flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.queue-pr-author { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.queue-row-main .queue-title-line .pr-labels { flex:0 1 auto; flex-wrap:nowrap; min-width:0; overflow:clip; overflow-clip-margin:6px; }
+.queue-row-main .queue-title-line .pr-label { flex-shrink:1; min-width:5ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; overflow-wrap:normal; }
+.queue-row-main .queue-title-line .pr-label-more { flex-shrink:0; }
 .pr-review-statuses { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; }
 .pr-review-status { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%; padding:3px 7px; border-radius:4px; font-size:var(--type-caption); font-weight:650; line-height:20px; color:var(--muted-foreground); background:color-mix(in srgb, currentColor 9%, var(--background)); font-variant-numeric:tabular-nums; }
 .pr-review-status svg { flex-shrink:0; }

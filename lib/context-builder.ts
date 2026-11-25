@@ -313,9 +313,11 @@ export function buildTopicContext(
   allTopics: TopicPlan[],
   claudeContext?: ProjectClaudeContext | null,
   /** Reduce noise: hunks left out of the explanation in this topic's files, shown as context only. */
-  leftOutHunks: IndexedHunk[] = []
+  leftOutHunks: IndexedHunk[] = [],
+  /** Hunks this topic lists that an earlier section shows (#560): hunk ID to that section's number. Read-only context. */
+  shownElsewhere: ReadonlyMap<string, number> = new Map()
 ): string {
-  const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
+  const relevantHunks = [...new Set(topic.hunkIds)].map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
@@ -360,12 +362,23 @@ PR Description: ${prDescription || '(none)'}
 
 <diff_hunks>
 `;
+  const elsewhere = relevantHunks.filter((h) => shownElsewhere.has(h.id));
   for (const hunk of relevantHunks) {
+    if (shownElsewhere.has(hunk.id)) continue;
     ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
     ctx += `${hunk.expandedHunkHeader}\n`;
     ctx += `${hunk.expandedContent}\n\n`;
   }
   ctx += '</diff_hunks>';
+  if (elsewhere.length) {
+    ctx += `\n\n<shown_in_other_sections>
+Your section displays only the code in <diff_hunks>. These hunks are displayed in an earlier section, which explains them. Use them only as read-only context: do not explain them, and do not anchor notes or checks to them. Refer to them by section number when needed.
+When the narrative brief asks for code listed here, refer to it by its section number; do not explain or quote it.
+`;
+    for (const hunk of elsewhere)
+      ctx += `--- ${hunk.filePath} [${hunk.id}] (shown in section ${shownElsewhere.get(hunk.id)})\n${hunk.hunkHeader}\n${hunk.content}\n\n`;
+    ctx += '</shown_in_other_sections>';
+  }
   if (leftOutHunks.length) {
     ctx += `\n\n<left_out_hunks>
 Left out of the explanation as noise. Use them only as context, for example an import that explains a call. Do not explain or cite them, and do not anchor notes or checks to them.

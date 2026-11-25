@@ -25,6 +25,7 @@ import {
   blockRanges,
   elsewhereChanges,
   groupSlideHunks,
+  otherFileSections,
   slideFileGroupKey,
   slideFiles,
   type SlideFileGroup,
@@ -85,6 +86,8 @@ export interface SlideViewProps {
   showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
+  /** Jumps to a file's block in another section: the Explanation's section navigation (#560). */
+  onOpenSection?: (section: number, filePath: string) => void;
 }
 
 /** Mount expensive diagram frames before they enter the reading viewport, once per section. */
@@ -441,6 +444,7 @@ export function SlideView({
   showReviewSuggestions = true,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
+  onOpenSection,
 }: SlideViewProps) {
   countRender('SlideView');
   const [diagramOpen, setDiagramOpen] = useState(false);
@@ -465,6 +469,8 @@ export function SlideView({
     () => elsewhereChanges(groupedHunks, (filePath) => fileMetadataMap?.get(filePath)?.status),
     [groupedHunks, fileMetadataMap]
   );
+  // Other sections that show parts of this section's files (#560).
+  const otherSections = useMemo(() => otherFileSections(review?.slides ?? [], slide.id), [review?.slides, slide.id]);
   const keysOf = useCallback((filePath: string) => files.get(filePath)?.keys ?? [filePath], [files]);
   // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
   const contextLines = diffContextLines(diffAppearance);
@@ -848,7 +854,32 @@ export function SlideView({
         </p>
       )}
 
-      {groupedHunks.length === 0 && (
+      {groupedHunks.length === 0 && !!slide.shownIn?.length && (
+        // Every hunk this topic lists is shown by an earlier section (#560): point there, not to "no code".
+        <p className="slide-meta review-code-elsewhere" data-shown-in={slide.shownIn.join(',')}>
+          The code for this topic is shown in {slide.shownIn.length === 1 ? 'section' : 'sections'}{' '}
+          {slide.shownIn.map((section, index) => (
+            <span key={section}>
+              {index > 0 && ', '}
+              {onOpenSection ? (
+                <button
+                  type="button"
+                  className="review-file-part-link"
+                  data-section={section}
+                  aria-label={`Show the code in section ${section}`}
+                  onClick={() => onOpenSection(section, slide.affectedFiles[0] ?? '')}
+                >
+                  {section} ↗
+                </button>
+              ) : (
+                section
+              )}
+            </span>
+          ))}
+          .
+        </p>
+      )}
+      {groupedHunks.length === 0 && !slide.shownIn?.length && (
         <div className="flex flex-col gap-1.5">
           <p className="editorial-label text-sm">Background topic.</p>
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
@@ -973,6 +1004,15 @@ export function SlideView({
               source={review?.snapshot?.subject.kind === 'stack' ? origin?.member : undefined}
               commentCount={run === 0 ? (pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) : 0}
               age={ageBadge}
+              sectionHunks={file?.hunks}
+              otherSections={
+                run === 0 && otherSections.has(filePath)
+                  ? {
+                      sections: otherSections.get(filePath) ?? [],
+                      onOpen: onOpenSection && ((section) => onOpenSection(section, filePath)),
+                    }
+                  : undefined
+              }
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
               {(imageMimeType(filePath) || lfsResource) && (

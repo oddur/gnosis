@@ -168,3 +168,58 @@ export function elsewhereChanges(
   }
   return out;
 }
+
+interface Counts {
+  additions: number;
+  deletions: number;
+}
+
+/** The added and removed lines `hunks` show, each line once. */
+export function shownCounts(hunks: readonly DiffHunk[]): Counts {
+  const additions = new Set<number>();
+  const deletions = new Set<number>();
+  for (const hunk of hunks) {
+    for (const line of prepareReviewHunk(hunk)?.lines ?? []) {
+      if (line.type === 'add') additions.add(line.lineNumber);
+      if (line.type === 'remove') deletions.add(line.lineNumber);
+    }
+  }
+  return { additions: additions.size, deletions: deletions.size };
+}
+
+/**
+ * A section's file header counts (#560): the whole file's counts when the section shows all of its changes or none
+ * of them, else the section's own, with the whole file's beside them (`file`). Without the file's counts, the section's own.
+ */
+export function sectionFileCounts(hunks: readonly DiffHunk[], file?: Counts): Counts & { file?: Counts } {
+  if (!file) return shownCounts(hunks);
+  const here = shownCounts(hunks);
+  const part =
+    here.additions + here.deletions > 0 &&
+    here.additions <= file.additions &&
+    here.deletions <= file.deletions &&
+    here.additions + here.deletions < file.additions + file.deletions;
+  return part
+    ? { ...here, file: { additions: file.additions, deletions: file.deletions } }
+    : { additions: file.additions, deletions: file.deletions };
+}
+
+/**
+ * Per file of a section, the other sections that show parts of it (#560): their numbers (1-based, the reader's
+ * `data-explanation-section`), in order.
+ */
+export function otherFileSections(
+  slides: readonly { id: string; diffHunks: readonly DiffHunk[] }[],
+  slideId: string
+): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  slides.forEach((slide, index) => {
+    if (slide.id === slideId) return;
+    for (const filePath of new Set(slide.diffHunks.map((h) => h.filePath))) {
+      const sections = out.get(filePath) ?? [];
+      sections.push(index + 1);
+      out.set(filePath, sections);
+    }
+  });
+  return out;
+}

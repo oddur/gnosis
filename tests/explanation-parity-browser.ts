@@ -498,6 +498,22 @@ void app.whenReady().then(async () => {
     assert.deepEqual(merged.paths, ['src/scope.ts', 'src/imports.ts'], 'One block of scope.ts, then imports.ts');
     assert.ok(merged.changes.length > 0);
     assert.equal(new Set(merged.changes).size, merged.changes.length, 'Every changed line shows once');
+
+    // ── Other parts of a file (#560): the header counts the section's own lines, and links jump to the other parts ──
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
+    const firstScope = `document.querySelector('[data-explanation-section="1"] .review-file-group[data-file-run="0"]:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"])')`;
+    await wait(`!!${firstScope}?.querySelector('.review-file-parts .review-file-part-link')`, 500);
+    const parts = await js<{ sections: string; text: string; counts: string; label: string }>(`(()=>{const g=${firstScope};const p=g.querySelector('.review-file-parts');const c=g.querySelector('.changes-file-header .changes-file-counts');
+      return {sections:p.dataset.otherParts,text:p.textContent,counts:c.textContent,label:c.getAttribute('aria-label')}})()`);
+    console.log('Other parts:', JSON.stringify(parts));
+    assert.match(parts.sections, /^2,3\b/, 'Sections 2 and 3 show other parts of scope.ts');
+    assert.match(parts.text, /^Other parts of this file: sections 2, 3/);
+    assert.match(parts.counts, /^\+\d+−\d+ here · file \+\d+−\d+$/, `The header counts the section's lines beside the file's: ${parts.counts}`);
+    assert.match(parts.label, /in this section; \d+ added lines?, \d+ removed lines? in the whole file$/);
+    // The link goes through the Explanation's section navigation and lands on section 3's block of the file.
+    await js(`${firstScope}.querySelector('.review-file-part-link[data-section="3"]').click()`);
+    await wait(`(()=>{const a=document.activeElement;const g=a?.closest('.review-file-group');const s=document.querySelector('.explanation-document').getBoundingClientRect();const r=g?.getBoundingClientRect();
+      return a?.closest('[data-explanation-section]')?.dataset.explanationSection==='3'&&(g?.dataset.filePath??'').endsWith('src/scope.ts')&&!!r&&r.top<s.bottom&&r.bottom>s.top})()`, 500);
     await capture('explanation-reading-order', `(()=>{const r=document.querySelector('[data-explanation-section="2"] .explanation-section-code').getBoundingClientRect();return {x:Math.round(r.left),y:Math.max(0,Math.round(r.top)),width:Math.round(r.width),height:Math.round(Math.min(800,r.height))}})()`);
 
     // ── Reduce noise: the overview lists the hunk left out as noise, and its entry opens Changes at its lines ──

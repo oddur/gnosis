@@ -43,6 +43,8 @@ export const DURATION_FILES = {
 };
 /** How many shards the native browser jobs in .github/workflows/checks.yml use, per platform. */
 export const NATIVE_SHARDS = { darwin: 4, win32: 5 };
+/** The same on pull requests: fewer, longer macOS shards, so several PRs fit the account's 5 macOS runners. */
+export const NATIVE_PR_SHARDS = { darwin: 2, win32: 5 };
 /** A `scripts/test-workbench.mjs --flag` suite flag. */
 export const SUITE_FLAG = /--[a-z0-9-]+/;
 const workbenchCommand = new RegExp(`scripts/test-workbench\\.mjs(?:\\s+(${SUITE_FLAG.source}))?\\s*$`);
