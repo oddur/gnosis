@@ -89,7 +89,7 @@ export function ExplanationOutsideCode({
                       <button
                         type="button"
                         disabled={!onOpen}
-                        aria-label={`Open ${entry.label} at ${name} in Changes`}
+                        aria-label={`Open ${entry.label}${entry.movedTo ? `, moved to ${sourceForPath(review, entry.movedTo.filePath).path},` : ''} at ${name} in Changes`}
                         title={onOpen ? `Open ${name} in Changes` : name}
                         onClick={() =>
                           onOpen?.({
@@ -103,7 +103,15 @@ export function ExplanationOutsideCode({
                         }
                       >
                         <span className="explanation-left-out-location">{where.label}</span>
-                        <span className="explanation-left-out-reason">{entry.label}</span>
+                        <span className="explanation-left-out-reason">
+                          {entry.label}
+                          {entry.movedTo && (
+                            <span className="explanation-outside-moved" data-moved-to={entry.movedTo.filePath}>
+                              {' '}
+                              · moved to <code>{sourceForPath(review, entry.movedTo.filePath).path}</code>
+                            </span>
+                          )}
+                        </span>
                         <span className="explanation-outside-counts">
                           +{entry.additions.toLocaleString()} −{entry.deletions.toLocaleString()}
                         </span>
