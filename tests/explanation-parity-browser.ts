@@ -526,6 +526,9 @@ void app.whenReady().then(async () => {
     const focused = '[data-explanation-section="4"] .review-file-group';
     const focusedScope = `document.querySelector('${focused}:is([data-file-path="src/scope.ts"],[data-file-path$="/src/scope.ts"])')`;
     await wait(`(()=>{const g=${focusedScope};return !!g&&window.deepAll('[data-line]',g).length>0&&!!g.querySelector('.diff-gap[data-hidden-in] button[data-hidden-target]')})()`, 500);
+    // Show scope settles once both sides parse: wait until every hunk header's lines are a hunk's lines in Changes.
+    const changesRanges = JSON.stringify(changes.map((h) => h.range).filter(Boolean));
+    await wait(`(()=>{const h=window.headers(${focusedScope}).filter(h=>h.range);return h.length===2&&h.every(x=>${changesRanges}.includes(x.range))})()`, 500);
     const ranged = await js<{
       paths: string[];
       rows: string[];
