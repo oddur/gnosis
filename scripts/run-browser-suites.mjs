@@ -205,7 +205,11 @@ function runSuite(command, env, limitSeconds, onChild) {
       timedOut = true;
       killTree(child);
       // A killed tree exits at once. If the shell still does not report an exit, move on anyway.
-      grace = setTimeout(() => finish(1), 10_000);
+      // A shell that outlives its kill (taskkill failed on Windows) must not keep this runner alive after the last suite.
+      grace = setTimeout(() => {
+        child.unref();
+        finish(1);
+      }, 10_000);
     }, limitSeconds * 1000);
     child.on('exit', (status, signal) => finish(status ?? (signal ? 1 : 0)));
     child.on('error', () => finish(1));
@@ -261,7 +265,7 @@ async function main() {
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.on(signal, () => {
       if (running) killTree(running);
-      process.exit(130);
+      process.exit(signal === 'SIGTERM' ? 143 : 130);
     });
   for (const suite of selected) {
     const limit = suiteTimeoutSeconds(suite.key, durations);
