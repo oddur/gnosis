@@ -8,8 +8,10 @@ import {
   normalizeExplanationPreferences,
   normalizeLocalExplanationPreferences,
   EXPLANATION_STYLES,
+  explanationModel,
+  explanationModelLabel,
 } from '../lib/explanation-options';
-import { normalizeRepositorySettings } from '../lib/repository-settings';
+import { normalizeRepositorySettings, rememberExplanationDefault } from '../lib/repository-settings';
 import { filterDiff } from '../lib/file-filter';
 const file = (path: string, sourcePath = path) =>
   explanationFile({ filename: sourcePath, additions: 3, deletions: 1, status: 'modified' }, path, 'PR');
@@ -104,4 +106,45 @@ void test('excluded paths are omitted from primary diff including namespaced sta
   const filtered = filterDiff(diff, excluded);
   assert.match(filtered, /PR-1\/a.ts/);
   assert.doesNotMatch(filtered, /generated\/b.ts/);
+});
+
+// Model and reasoning effort per explanation (#573).
+void test('options keep a known model and effort and drop anything else', () => {
+  const kept = normalizeExplanationOptions({ model: 'claude-sonnet-5-5', effort: 'low' });
+  assert.equal(kept.model, 'claude-sonnet-5-5');
+  assert.equal(kept.effort, 'low');
+  const dropped = normalizeExplanationOptions({ model: 'claude-unknown-9', effort: 'turbo' });
+  assert.equal('model' in dropped, false);
+  assert.equal('effort' in dropped, false);
+  assert.equal('model' in normalizeExplanationPreferences(null), false, 'Unset follows Settings');
+});
+void test('the explanation model falls back to the review model and effort is normalized for the model', () => {
+  const review = { provider: 'claude' as const, model: 'claude-opus-5-5' as const, effort: 'medium' as const };
+  assert.deepEqual(explanationModel({}, review), { model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(explanationModel({ model: 'claude-haiku-5-5', effort: 'low' }, review), {
+    model: 'claude-haiku-5-5',
+    effort: 'low',
+  });
+  // Unknown, or another provider's model: Settings' model, never the requested ID.
+  assert.equal(explanationModel({ model: 'claude-unknown-9' as never }, review).model, 'claude-opus-5-5');
+  assert.equal(explanationModel({ model: 'gpt-6.2-sol' }, review).model, 'claude-opus-5-5');
+  // Claude has no Ultra; Codex models other than Luna do.
+  assert.equal(explanationModel({ model: 'claude-sonnet-5-5', effort: 'ultra' }, review).effort, 'max');
+  const codex = { provider: 'codex' as const, model: 'gpt-6.2-sol' as const };
+  assert.equal(explanationModel({ model: 'gpt-6.1-terra', effort: 'ultra' }, codex).effort, 'ultra');
+  assert.equal(explanationModel({ model: 'gpt-6-luna', effort: 'ultra' }, codex).effort, 'max');
+  assert.equal(explanationModelLabel({ model: 'claude-sonnet-5-5' }), 'Sonnet 5.5');
+  assert.equal(explanationModelLabel({}), undefined);
+});
+void test('remember saves the model and effort as the repository default', () => {
+  const options = normalizeExplanationOptions({ style: 'in-depth', model: 'claude-sonnet-5-5', effort: 'low', fileOverrides: { 'a.ts': false } });
+  const prefs = { repositorySettings: { 'org/repo': { prInactivityDays: 7 } } };
+  const saved = rememberExplanationDefault(prefs, 'org/repo', options);
+  assert.deepEqual(saved.repositorySettings?.['org/repo'], {
+    prInactivityDays: 7,
+    explanation: normalizeExplanationPreferences({ style: 'in-depth', model: 'claude-sonnet-5-5', effort: 'low' }),
+  });
+  assert.equal(normalizeRepositorySettings(saved.repositorySettings)['org/repo'].explanation?.effort, 'low', 'It survives a reload');
+  const local = rememberExplanationDefault({}, 'local:/tmp/project', options);
+  assert.equal(local.localExplanationPreferences?.['local:/tmp/project'].model, 'claude-sonnet-5-5');
 });

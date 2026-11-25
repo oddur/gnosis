@@ -9,6 +9,7 @@ import { ArrowRight, GitPullRequest, Layers, Check, ExternalLink } from 'lucide-
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import type { ReviewGuide } from '../lib/types';
+import { explanationModelLabel } from '../lib/explanation-options';
 export function WorkbenchOverview({
   review,
   embedded = false,
@@ -84,6 +85,7 @@ export function WorkbenchOverview({
             </Button>
             <span className="text-xs text-muted-foreground">
               {review.totalFilesChanged} file changes · {review.totalLinesChanged} lines
+              {explanationModelLabel(review.explanationOptions) && ` · ${explanationModelLabel(review.explanationOptions)}`}
             </span>
           </div>
           <div className="overview-columns">

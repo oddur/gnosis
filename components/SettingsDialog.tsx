@@ -450,7 +450,7 @@ export function SettingsDialog({
     applyCodeFont(font);
   }
 
-  const repositoryDefaults = { prInactivityDays, ignoreDependabotPrs, autoBriefings, briefingDailyLimit, repositoryBriefingDailyLimit: repositoryDailyLimit, repositorySettings, watchedRepos, notificationSettings: notificationPrefs };
+  const repositoryDefaults = { prInactivityDays, ignoreDependabotPrs, autoBriefings, briefingDailyLimit, repositoryBriefingDailyLimit: repositoryDailyLimit, repositorySettings, watchedRepos, notificationSettings: notificationPrefs, provider, model, effort };
   const unwatchedSettings = Object.keys(repositorySettings).filter(repo => !watchedRepos.some(watched => repositoryKey(watched) === repo));
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

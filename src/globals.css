@@ -5566,6 +5566,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-noise-switch button:focus-visible { outline:2px solid var(--ring);outline-offset:1px; }
 .explanation-noise-description { grid-column:1 / -1;font-size:var(--type-caption);line-height:1.5;color:var(--muted-foreground); }
 @media(max-width:620px) { .explanation-noise-setting{grid-template-columns:1fr;}.explanation-noise-switch{justify-self:start;} }
+.explanation-model-setting { display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0; }
+.explanation-model-label { font-size:var(--type-control);font-weight:600;margin-inline-end:auto; }
 .explanation-focused-setting { display:flex;align-items:flex-start;gap:8px;font-size:var(--type-control); }
 .explanation-focused-setting input { margin-top:3px; }
 .explanation-focused-setting span { display:grid;gap:2px; }

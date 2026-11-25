@@ -11,9 +11,9 @@ import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from
 import {
   explanationExclusion,
   explanationInstructions,
+  explanationModel,
   normalizeLocalExplanationPreferences,
   normalizeExplanationOptions,
-  normalizeExplanationPreferences,
   type ExplanationOptions,
   type ExplanationSetup,
   type ExplanationSetupUpdate,
@@ -33,6 +33,7 @@ import {
   focusLeftovers,
   focusPlannerNoise,
   focusCheckpointKey,
+  writerCheckpointKey,
   focusPlannerIndex,
   focusedTopicDiff,
   unitHunkIds,
@@ -47,7 +48,7 @@ import { workflowGrouping, type WorkflowGraphInput, type WorkflowRunInfo } from 
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority, predictedPriority } from './pr-open-preloader';
 import { parseOpenTargets, type OpenTarget, type OpenTier } from '../lib/pr-open-targets';
-import { normalizeRepositorySettings, normalizeBriefingLimit, repositoryKey } from '../lib/repository-settings';
+import { normalizeRepositorySettings, normalizeBriefingLimit, rememberExplanationDefault, repositoryKey } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
 import { createExplanationBuilds } from './explanation-builds';
@@ -687,6 +688,7 @@ async function triggerProactiveReview(
     const provider = useOverrides ? prefs.proactiveProvider : prefs.provider;
     const model = useOverrides ? prefs.proactiveModel : prefs.model;
     const thinking = useOverrides ? prefs.proactiveThinking : prefs.thinking;
+    const effort = useOverrides ? prefs.proactiveEffort : prefs.effort;
 
     const abortController = new AbortController();
     createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, model, 'open', prData.headSha, true);
@@ -701,10 +703,11 @@ async function triggerProactiveReview(
       model,
       instructions: prefs.instructions,
       thinking,
-      effort: useOverrides ? prefs.proactiveEffort : prefs.effort,
+      effort,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
-      explanationOptions: explanationDefaults(source),
+      // Briefings use the briefing model, not a repository's explanation model; saved with it for Regenerate.
+      explanationOptions: { ...explanationDefaults(source), ...explanationModel({}, { provider, model, effort, thinking }) },
       claudeContext: prefs.claudeContext,
     };
 
@@ -2649,6 +2652,12 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
   const options = normalizeExplanationOptions(previous.explanationOptions);
   // Focused sections (#562): the explanation's own choice; one saved before the choice existed follows the repository.
   if (!('focusedSections' in previous.explanationOptions)) options.focusedSections = explanationDefaults(source).focusedSections;
+  // Model and effort (#573): the explanation's own; one saved before the choice existed follows the repository.
+  if (!('model' in previous.explanationOptions)) {
+    const { model, effort } = explanationDefaults(source);
+    if (model) options.model = model;
+    if (effort) options.effort = effort;
+  }
   // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
   if (!('reduceNoise' in previous.explanationOptions) || (previous.noiseDefault && options.reduceNoise === previous.noiseDefault))
     options.reduceNoise = explanationDefaults(source).reduceNoise;
@@ -2713,22 +2722,23 @@ async function runBackgroundGeneration(
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
   // Focused sections (#562) is chosen per explanation in Generate explanation; the repository's setting is the default.
-  const options = request.explanationOptions ?? explanationDefaults(source);
+  const requested = request.explanationOptions ?? explanationDefaults(source);
+  // The explanation's own model and effort (#573), else the review model in Settings; saved with the explanation.
+  const { model, effort } = explanationModel(requested, request);
+  const options: ExplanationOptions = { ...requested, model, effort };
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
   // Activity names the PR by number, so similar titles stay distinct when truncated.
   const prNumber = reviewSnapshot?.subject.kind === 'stack' ? undefined : /\/pull\/(\d+)/.exec(request.prUrl)?.[1];
-  activities.start({id:`review:${reviewId}`,kind:'review',title:prNumber ? `#${prNumber} ${prData.title}` : prData.title,detail:'Preparing review',model:request.model,reviewId}, {
+  activities.start({id:`review:${reviewId}`,kind:'review',title:prNumber ? `#${prNumber} ${prData.title}` : prData.title,detail:'Preparing review',model,reviewId}, {
     cancel:()=>activeGenerations.get(reviewId)?.abortController?.abort('User cancelled'),
     retry:()=>startReview(request),
   });
   const {
     prUrl,
     provider,
-    model,
     thinking,
-    effort,
     smartImports,
     reviewSuggestions,
     webResearch,
@@ -3037,7 +3047,7 @@ async function runBackgroundGeneration(
               focus ? focusFileWindows(ownedHunkIds(topic.hunkIds, owners, idx), focus) : undefined,
             );
 
-            const topicKey = reviewFingerprint(focusCheckpointKey({ topicCtx, topic, version: 9 }, focus));
+            const topicKey = reviewFingerprint(writerCheckpointKey({ topicCtx, topic }, { model, effort }, focus));
             const topicId = `slide-${slideNum}`;
             const saved = checkpoint!.get(topicKey);
             if (!saved) explanationBuilds.event(reviewId, { type: 'topic', id: topicId, status: 'writing' });
@@ -3910,27 +3920,22 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   workbench.interrupt();
   const { source, prData, reviewSnapshot } = await prepareReviewSource(request, reviewSourceDeps(token));
 
-  const options = request.explanationOptions
+  const requested = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)
     : explanationDefaults(source);
+  // The explanation's model and effort (#573): its own choice for the current provider, else the review model.
+  const { model, effort } = explanationModel(requested, request);
+  const options: ExplanationOptions = { ...requested, model, effort };
   // Focused sections (#562): this explanation's choice; "Remember for this repository" saves it as the default with the rest.
   if (options.style === 'custom' && !options.customInstructions.trim())
     throw new Error('Add instructions for the Custom explanation style.');
-  request = { ...request, explanationOptions: options, rememberExplanationOptions: false };
+  request = { ...request, model, effort, explanationOptions: options, rememberExplanationOptions: false };
   const inventory = await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot);
   if (!inventory.some((file) => !explanationExclusion(file, options)))
     throw new Error('Include at least one file before generating an explanation.');
   if (rememberOptions) {
-    const prefs = loadPreferences(),
-      repo = explanationRepository(source),
-      value = normalizeExplanationPreferences(options);
-    if (repo.startsWith('local:'))
-      prefs.localExplanationPreferences = { ...prefs.localExplanationPreferences, [repo]: value };
-    else
-      prefs.repositorySettings = {
-        ...prefs.repositorySettings,
-        [repo]: { ...prefs.repositorySettings?.[repo], explanation: value },
-      };
+    const prefs = loadPreferences();
+    Object.assign(prefs, rememberExplanationDefault(prefs, explanationRepository(source), options));
     savePreferences(prefs);
     broadcastToAllWindows('preferences-changed', prefs);
   }

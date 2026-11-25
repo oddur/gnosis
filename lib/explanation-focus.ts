@@ -220,6 +220,17 @@ export function focusPlannerIndex(hunks: readonly IndexedHunk[], index: FocusInd
 export function focusCheckpointKey<T extends object>(identity: T, index: FocusIndex | undefined): T | (T & { focusedSections: string }) {
   return index ? { ...identity, focusedSections: index.hash } : identity;
 }
+/**
+ * A writer's checkpoint key: the topic, its context, the model and effort it is written with (a section another model
+ * wrote is never reused), and with Focused sections the slices.
+ */
+export function writerCheckpointKey(
+  identity: { topicCtx: unknown; topic: unknown },
+  choice: { model: string; effort?: string },
+  index: FocusIndex | undefined
+) {
+  return focusCheckpointKey({ ...identity, version: 9, model: choice.model, effort: choice.effort }, index);
+}
 
 /**
  * The plan's IDs checked against the units: a unit's ID stays; a sliced hunk's ID becomes its slices; a whole hunk's

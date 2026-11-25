@@ -2,26 +2,44 @@ import { useEffect, useId, useState } from 'react';
 import {
   EXPLANATION_STYLES,
   NOISE_LEVELS,
+  explanationModel,
   normalizeExplanationPreferences,
   type ExplanationPreferences,
+  type ReviewModel,
 } from '../lib/explanation-options';
+import { PROVIDERS } from '../lib/models';
+import { effortLabels } from '../lib/effort';
+import { ModelEffortSelect } from './ModelEffortSelect';
 
 export function ExplanationPreferencesFields({
   value,
   onChange,
   extensions = false,
   focusedSections = false,
+  reviewModel,
+  modelDefault = false,
 }: {
   value: ExplanationPreferences;
   onChange: (value: ExplanationPreferences) => void;
   extensions?: boolean;
   /** Show the Focused sections choice (#562): in Settings it is the repository's default, in Generate explanation this explanation's. */
   focusedSections?: boolean;
+  /**
+   * Show the model and reasoning effort (#573) for this provider's models; unset hides them. The review model in
+   * Settings is the default.
+   */
+  reviewModel?: ReviewModel;
+  /** Offer "Use default", which clears the model and effort (the repository settings). */
+  modelDefault?: boolean;
 }) {
   const id = useId();
   const extensionsLabel = value.hiddenExtensions.map((extension) => extension || '[none]').join(', ');
   const [extensionText, setExtensionText] = useState(extensionsLabel);
   useEffect(() => setExtensionText(extensionsLabel), [extensionsLabel]);
+  const chosen = reviewModel && explanationModel(value, reviewModel);
+  const fallback = reviewModel && explanationModel({}, reviewModel);
+  const modelLabel = (model: string) =>
+    reviewModel && (PROVIDERS[reviewModel.provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label;
   return (
     <div className="explanation-preferences-fields">
       <fieldset className="explanation-style-options">
@@ -55,6 +73,36 @@ export function ExplanationPreferencesFields({
           />
           <small>Your global review instructions also apply.</small>
         </label>
+      )}
+      {reviewModel && chosen && fallback && (
+        <div className="explanation-model-setting">
+          <span id={`${id}-model`} className="explanation-model-label">
+            Model and reasoning effort
+          </span>
+          {modelDefault && (
+            <label className="repository-inherit">
+              <input
+                type="checkbox"
+                checked={value.model === undefined}
+                onChange={(event) =>
+                  onChange({ ...value, ...(event.target.checked ? { model: undefined, effort: undefined } : chosen) })
+                }
+              />
+              Use default ({modelLabel(fallback.model)} · {effortLabels[fallback.effort]})
+            </label>
+          )}
+          {(!modelDefault || value.model !== undefined) && (
+            <ModelEffortSelect
+              label="Explanation model"
+              describedBy={`${id}-model`}
+              provider={reviewModel.provider}
+              model={chosen.model}
+              effort={chosen.effort}
+              options={PROVIDERS[reviewModel.provider].models.map((m) => ({ value: m.id, label: m.label }))}
+              onChange={(selection) => onChange({ ...value, model: selection.model, effort: selection.effort })}
+            />
+          )}
+        </div>
       )}
       <fieldset className="explanation-file-rules">
         <legend>Exclude from the explanation</legend>

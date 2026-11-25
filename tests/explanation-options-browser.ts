@@ -25,6 +25,11 @@ void app.whenReady().then(async () => {
     js(
       `(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
+  // Buttons by aria-label, with the mousedown Radix and the searchable selects listen for.
+  const press = (label: string) =>
+    js(
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+    );
   const dir = path.resolve('.impeccable/review/explanation-options');
   fs.mkdirSync(dir, { recursive: true });
   const capture = async (name: string) => {
@@ -62,6 +67,20 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`${focused}?.checked`), false, 'Focused sections shows in the dialog, off by default');
     await js(`${focused}.click()`);
     await wait(`${focused}.checked===true`);
+    // Model and reasoning effort (#573): Settings' review model by default, from the current provider's models.
+    const picker = `document.querySelector('.explanation-setup-dialog [aria-label="Explanation model"]')`;
+    assert.match(await js<string>(`${picker}?.textContent`), /Opus 5\.5.*High/, 'The review model and effort are the default');
+    await press('Explanation model');
+    await wait("!!document.querySelector('.model-picker-popup')");
+    await press('Explanation model selection');
+    await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Sonnet 5.5'))");
+    assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT'))"), false);
+    await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('Sonnet 5.5')).click()");
+    await wait(`${picker}.textContent.includes('Sonnet 5.5')`);
+    await js("document.querySelector('.model-picker-popup input[type=radio][value=low]').click()");
+    await wait(`${picker}.textContent.includes('Low')`);
+    await click('Done');
+    await wait("!document.querySelector('.model-picker-popup')");
     await capture('compact');
     await js(
       "[...document.querySelectorAll('.explanation-file-rules label')].find(e=>e.textContent.includes('Test files')).querySelector('input').click()"
@@ -120,6 +139,8 @@ void app.whenReady().then(async () => {
     assert.equal(attempts[0].explanationOptions.reduceNoise, 'aggressive', 'The level is part of the options');
     assert.equal(attempts[0].explanationOptions.focusedSections, true, 'Focused sections is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
+    assert.equal(attempts[0].explanationOptions.model, 'claude-sonnet-5-5', 'The chosen model is part of the options');
+    assert.equal(attempts[0].explanationOptions.effort, 'low', 'The chosen effort is part of the options');
     win.setSize(1280, 850);
     await open('?restore');
     await count(3);
@@ -232,7 +253,7 @@ void app.whenReady().then(async () => {
     );
     await click('Cancel');
     console.log(
-      'Explanation setup passed: scope, styles, Reduce noise, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
+      'Explanation setup passed: scope, styles, model and effort, Reduce noise, overrides, restore, saved answer and push update, cancel, errors, bulk retry, responsive layout.'
     );
   } catch (e) {
     console.error(e);
@@ -245,5 +266,12 @@ void app.whenReady().then(async () => {
 });
 interface GenerateRequest {
   rememberExplanationOptions: boolean;
-  explanationOptions: { style: string; hiddenExtensions: string[]; reduceNoise: string; focusedSections: boolean };
+  explanationOptions: {
+    style: string;
+    hiddenExtensions: string[];
+    reduceNoise: string;
+    focusedSections: boolean;
+    model?: string;
+    effort?: string;
+  };
 }

@@ -49,7 +49,9 @@ export type RepositoryDefaults = Pick<
   | 'repositorySettings'
 > &
   /** For the default notification level: All for watched repositories, else "Other repositories". */
-  Partial<Pick<Preferences, 'watchedRepos' | 'notificationSettings'>>;
+  Partial<Pick<Preferences, 'watchedRepos' | 'notificationSettings'>> &
+  /** The review model: the default for a repository's explanation model and effort (#573). */
+  Partial<Pick<Preferences, 'provider' | 'model' | 'effort'>>;
 export const repositoryKey = (repo: string) => repo.trim().toLowerCase();
 export const validRepository = (repo: string) => /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repo);
 export function normalizeBriefingLimit(value: unknown, fallback = 10): number {
@@ -200,4 +202,18 @@ export function automaticBriefingBlock(
   const limited = repos.filter((repo) => (repositoryUsed[repo] ?? 0) >= repositorySettings(p, repo).briefingDailyLimit);
   if (limited.length)
     return `Daily automatic briefing limit reached for ${limited.join(', ')}. Resets at midnight. You can generate a briefing manually.`;
+}
+/**
+ * "Remember for this repository" in Generate explanation: the preferences patch that makes these options, model and
+ * effort included, the repository's explanation default. File choices are not part of it.
+ */
+export function rememberExplanationDefault(
+  prefs: Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'>,
+  repo: string,
+  options: ExplanationPreferences
+): Pick<Preferences, 'localExplanationPreferences' | 'repositorySettings'> {
+  const value = normalizeExplanationPreferences(options);
+  return repo.startsWith('local:')
+    ? { localExplanationPreferences: { ...prefs.localExplanationPreferences, [repo]: value } }
+    : { repositorySettings: { ...prefs.repositorySettings, [repo]: { ...prefs.repositorySettings?.[repo], explanation: value } } };
 }

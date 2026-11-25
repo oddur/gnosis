@@ -1,5 +1,7 @@
 import { effectiveFileKinds, fileExtension, pathFileKinds, type FileKinds, type FileKindOverride } from './file-kinds';
 import type { ChangedFile } from './types';
+import { PROVIDERS, type ModelId, type Provider } from './models';
+import { EFFORT_LEVELS, normalizeEffort, type Effort } from './effort';
 
 export const EXPLANATION_STYLES = [
   { value: 'concise', label: 'Concise', description: 'Main changes, their purpose, and essential code.' },
@@ -37,6 +39,12 @@ export interface ExplanationPreferences {
    * by default; generation reads the repository's value, and a later change makes the explanation out of date.
    */
   focusedSections: boolean;
+  /**
+   * The explanation's model and reasoning effort, from the current provider's models. Unset follows the review model
+   * in Settings. Generation fills them in, so Regenerate keeps the model the explanation was written with.
+   */
+  model?: ModelId;
+  effort?: Effort;
 }
 export interface ExplanationOptions extends ExplanationPreferences {
   /** Source paths (namespaced by PR in a stack). Explicit choices override filter rules. */
@@ -91,7 +99,37 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
     ].slice(0, 1000),
     reduceNoise: normalizeNoiseLevel(v.reduceNoise),
     focusedSections: v.focusedSections === true,
+    ...(knownModel(v.model) ? { model: v.model } : {}),
+    ...(EFFORT_LEVELS.includes(v.effort as Effort) ? { effort: v.effort as Effort } : {}),
   };
+}
+const knownModel = (value: unknown): value is ModelId =>
+  Object.values(PROVIDERS).some((provider) => provider.models.some((model) => model.id === value));
+/** The model an explanation was written with, for its metadata line; none for one saved before the choice (#573). */
+export function explanationModelLabel(options: Pick<ExplanationPreferences, 'model'> | undefined): string | undefined {
+  return Object.values(PROVIDERS)
+    .flatMap((provider) => provider.models as readonly { id: string; label: string }[])
+    .find((model) => model.id === options?.model)?.label;
+}
+/** Settings' review model: the fallback for an explanation without its own choice. */
+export interface ReviewModel {
+  provider: Provider;
+  model: ModelId;
+  effort?: Effort;
+  thinking?: boolean;
+}
+/**
+ * The model and effort an explanation is written with. Its own model when the current provider offers it, else the
+ * review model in Settings (fail closed: an unknown or other-provider model never reaches the CLI). The effort is
+ * normalized for the chosen model.
+ */
+export function explanationModel(
+  options: Pick<ExplanationPreferences, 'model' | 'effort'>,
+  review: ReviewModel
+): { model: ModelId; effort: Effort } {
+  const own = PROVIDERS[review.provider].models.some((model) => model.id === options.model);
+  const model = own && options.model ? options.model : review.model;
+  return { model, effort: normalizeEffort(review.provider, model, options.effort ?? review.effort, review.thinking ?? true) };
 }
 export function normalizeNoiseLevel(value: unknown): NoiseLevel {
   return NOISE_LEVELS.some((level) => level.value === value) ? (value as NoiseLevel) : DEFAULT_NOISE_LEVEL;

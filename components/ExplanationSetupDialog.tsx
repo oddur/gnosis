@@ -397,12 +397,13 @@ export function ExplanationSetupDialog({
                     <ExplanationPreferencesFields
                       value={options}
                       focusedSections
+                      reviewModel={requests[selected] ?? requests[0]}
                       onChange={(value) => change({ ...value, fileOverrides: options.fileOverrides })}
                     />
                   </fieldset>
                   {requests.length > 1 && !useDefaults && (
                     <p className="explanation-setup-note">
-                      Style and filters apply to all selected explanations. File choices apply to the selected PR or
+                      Style, model and filters apply to all selected explanations. File choices apply to the selected PR or
                       stack.
                     </p>
                   )}
@@ -499,7 +500,7 @@ export function ExplanationSetupDialog({
                   </label>
                   {remember && (
                     <p className="explanation-setup-note">
-                      Saves the style and filters when generation starts. Individual file choices stay with this
+                      Saves the style, model and filters when generation starts. Individual file choices stay with this
                       explanation.
                     </p>
                   )}
