@@ -27,7 +27,9 @@ import { sliceRequests } from '../lib/explanation-slices';
 import {
   focusCutUnits,
   focusDiffHunks,
+  focusFileWindows,
   focusIndex,
+  focusMovedNoise,
   focusLeftovers,
   focusPlannerNoise,
   focusCheckpointKey,
@@ -2978,10 +2980,14 @@ async function runBackgroundGeneration(
         : hunkOwners(sortedTopics.map((topic) => topic.hunkIds), hunkMap, noise.cut);
       if (focus && cutUnits) {
         // Units no section lists: left out and listed, or to "Other changes" when they are small together.
+        // A moved old copy follows its new copy: covered when a section owns it, else cut or left over with it.
         const leftovers = focusLeftovers(focus, owners, cutUnits);
         focusOther = focusDiffHunks(leftovers.other, focus, hunkMap);
         focusedSections = { repository: explanationRepository(source), outside: leftovers.outside };
-        for (const unit of focus.units.values()) assignedIds.add(unit.hunkId);
+        const movedNoise = focusMovedNoise(focus, leftovers.cutMoves, noise.cut);
+        if (movedNoise.length) noise = { ...noise, leftOut: [...noise.leftOut, ...movedNoise] };
+        // A hunk is placed only when every unit of it has a place; any other goes whole to "Other changes".
+        for (const hunkId of leftovers.placed) assignedIds.add(hunkId);
       } else for (const id of owners.keys()) assignedIds.add(id);
       explanationBuilds.event(reviewId, { type: 'plan', topics: sortedTopics.map((topic, idx) => ({ id: `slide-${idx + 1}`, title: topic.title })) });
       explanationBuilds.draftBase(reviewId, {
@@ -3024,6 +3030,7 @@ async function runBackgroundGeneration(
               focus
                 ? focusedTopicDiff(ownedHunkIds(topic.hunkIds, owners, idx), shownElsewhere(topic.hunkIds, owners, idx), focus, hunkMap, fileContents, headFileContents)
                 : undefined,
+              focus ? focusFileWindows(ownedHunkIds(topic.hunkIds, owners, idx), focus) : undefined,
             );
 
             const topicKey = reviewFingerprint(focusCheckpointKey({ topicCtx, topic, version: 9 }, focus));
@@ -3292,8 +3299,10 @@ async function runBackgroundGeneration(
       excludedFiles: [...excludedPaths],
       explanationOptions: options,
       noiseReduction: noiseReduction(),
-      // Set when the repository's setting was on; on the single-shot path nothing is left out.
-      ...(options.focusedSections ? { focusedSections: focusedSections ?? { repository: explanationRepository(source), outside: [] } } : {}),
+      // Set when the repository's setting was on. The single-shot path slices nothing: saved as not applied.
+      ...(options.focusedSections
+        ? { focusedSections: focusedSections ?? { repository: explanationRepository(source), outside: [], applied: false as const } }
+        : {}),
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,

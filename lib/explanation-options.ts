@@ -180,6 +180,8 @@ export function savedFocusedSections(
  * regenerated. `saved` is the explanation's `focusedSections`: an explanation without it was made with the setting off.
  * Unknown when the repository isn't known.
  */
-export function focusedSectionsChanged(saved: object | undefined, current: boolean | undefined): boolean {
+export function focusedSectionsChanged(saved: { applied?: boolean } | undefined, current: boolean | undefined): boolean {
+  // Saved with the setting on but not applied (parallel review off): regenerating changes nothing.
+  if (saved?.applied === false) return false;
   return current !== undefined && current !== !!saved;
 }

@@ -151,11 +151,11 @@ export function RepositorySettingsEditor({
               />
               Use default explanation settings
             </label>
+            {/* Focused sections (#562) stays hidden until its ranges and left-out list render (#563). */}
             {draft.explanation && (
               <ExplanationPreferencesFields
                 value={draft.explanation}
                 extensions
-                focusedSections
                 onChange={(explanation) => patch({ explanation })}
               />
             )}
