@@ -33,7 +33,7 @@ import { raiseDefinitions, raiseNoise } from '../lib/syntax-scope-client';
 import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-syntax-contents';
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
-import { showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
+import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { changedSymbols } from '../lib/symbol-outline';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
@@ -66,6 +66,8 @@ interface KeptDiff {
   reveals?: GapReveals;
   pins?: readonly (readonly [number, number])[];
   adopted?: readonly ShownScope[];
+  /** What a focused section's adopted plan was made from (lib/show-scope.ts `scopePlanSignature`). */
+  adoptedSignature?: string;
   collapsed?: ReadonlySet<string>;
 }
 const kept = new Map<string, KeptDiff>();
@@ -394,21 +396,32 @@ export function useDiffFileModel({
         : undefined,
     [scopeOn, definitions.after, definitions.before, definitions.beforeParsing, hunks, gaps, lines]
   );
-  const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[] }>();
+  const [adopted, setAdopted] = useState<{ key: string; value: readonly ShownScope[]; signature?: string }>();
   const [collapsed, setCollapsed] = useState<{ key: string; value: ReadonlySet<string> }>();
   // A plan adopted by an earlier mount shows from the first render: nothing moves as the file parses again.
   const adoptedPlan = adopted?.key === revealKey ? adopted.value : seed?.adopted;
+  const adoptedSignature = adopted?.key === revealKey ? adopted.signature : seed?.adoptedSignature;
+  // A focused section's gaps over changes it leaves out decide what its plan can show (#563): when they, or the parsed
+  // structure, change, the plan is made again. Changes, and topics without such gaps, keep their first plan.
+  const planSignature = useMemo(() => scopePlanSignature(gaps, definitions), [gaps, definitions.after, definitions.before]);
   // Once the file is parsed, its short definitions show whole, keeping the line at the top of the view in place.
   useEffect(() => {
-    if (!planned || adoptedPlan) return;
-    if (planned.length) {
+    const byHand = !!(collapsed?.key === revealKey ? collapsed.value : seed?.collapsed)?.size;
+    const next = nextScopePlan(
+      adoptedPlan ? { value: adoptedPlan, signature: adoptedSignature } : undefined,
+      planned,
+      planSignature,
+      byHand
+    );
+    if (!next) return;
+    if (next.value !== adoptedPlan && next.value.length) {
       // A topic shows lines outside what it saved once both sides say they are unchanged.
       if (partial) readAfter();
       if (sectionRef.current) keepDiffLineInView(sectionRef.current);
     }
-    keep(revealKey, { adopted: planned });
-    setAdopted({ key: revealKey, value: planned });
-  }, [planned]);
+    keep(revealKey, { adopted: next.value, adoptedSignature: next.signature });
+    setAdopted({ key: revealKey, value: next.value, signature: next.signature });
+  }, [planned, planSignature]);
   // Lines kept from an earlier mount show from the side they were read from, which this mount may not have yet.
   useEffect(() => {
     if (seed?.reveals || seed?.pins || seed?.adopted?.length) readAfter();

@@ -11,6 +11,8 @@ import {
 } from '../lib/diff-gaps';
 import { movedBody, outsideByFile, outsideLines, rangeBlockHunks, shortSliceNames, sliceOwners } from '../lib/explanation-ranges';
 import { reviewGapHunks } from '../lib/review-gap-hunks';
+import { nextScopePlan, scopePlanSignature, showScopePlan } from '../lib/show-scope';
+import type { SyntaxDefinition } from '../lib/syntax-scope';
 import { sectionFileCounts } from '../lib/slide-file-groups';
 import type { DiffHunk } from '../lib/types';
 
@@ -289,4 +291,43 @@ void test('left-out code merged across sides opens on the new side', () => {
     { oldStart: 20, oldEnd: 20, newStart: 20, newEnd: 19, target: { kind: 'outside', lines: 1, side: 'before', start: 20, end: 20 } },
   ]);
   assert.deepEqual(gaps[1].hiddenIn, [{ kind: 'outside', lines: 5, side: 'after', start: 8, end: 9 }]);
+});
+
+void test('a focused section’s show-scope plan is made again once its gap can reveal the definition’s last line', () => {
+  // resolvePaths is lines 4–12; the section shows its change at 8 (lines 5–11) and a change at 25 (22–28). Between
+  // them, the gap hides a change at 18 that another section shows.
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+  const hunk = (at: number): GapHunk => {
+    const rows: GapHunk['rows'] = [];
+    for (let n = at - 3; n <= at + 3; n++)
+      if (n === at) rows.push({ type: '-', text: `old ${n}` }, { type: '+', text: lines[n - 1] });
+      else rows.push({ type: ' ', text: lines[n - 1] });
+    return { oldStart: at - 3, newStart: at - 3, rows, noEofOld: false, noEofNew: false };
+  };
+  const hunks = [hunk(8), hunk(25)];
+  const resolvePaths: SyntaxDefinition = { kind: 'function', name: 'resolvePaths', label: 'resolvePaths', crumb: 'resolvePaths', start: 4, end: 12, signatureEnd: 4 };
+  const definitions = { after: [resolvePaths] };
+  const later = markHidden(diffGaps(hunks, lines.length, { partial: true }) ?? [], hunks, [
+    { oldStart: 18, oldEnd: 18, newStart: 18, newEnd: 18, target: { kind: 'section', section: 5, names: ['fn x'] } },
+  ]);
+  // First, before both sides are read, the gap can't reveal line 12; later it can, up to the hidden change.
+  const early = later.map((gap) => (gap.hiddenIn ? { ...gap, revealDown: 0 } : gap));
+  assert.equal(later[1].revealDown, 6);
+  const planOf = (gaps: typeof later) => showScopePlan(revealedParts(hunks, gaps, {}, lines), gaps, definitions);
+  const first = nextScopePlan(undefined, planOf(early), scopePlanSignature(early, definitions), false);
+  assert.ok(first);
+  assert.ok(!first.value.some((scope) => scope.key === '4-12'), 'the first plan can’t show resolvePaths whole');
+  const second = nextScopePlan(first, planOf(later), scopePlanSignature(later, definitions), false);
+  assert.deepEqual(
+    second?.value.map((scope) => [scope.key, scope.spans]),
+    [['4-12', [[4, 4], [12, 12]]]],
+    'the final plan shows resolvePaths whole'
+  );
+  // The same inputs again keep it; a scope the reader collapsed by hand is never fought.
+  assert.equal(nextScopePlan(second, planOf(later), scopePlanSignature(later, definitions), false), undefined);
+  assert.equal(nextScopePlan(first, planOf(later), scopePlanSignature(later, definitions), true), undefined);
+  // Without gaps over hidden changes (Changes), the first plan stays.
+  const plain = diffGaps(hunks, lines.length) ?? [];
+  assert.equal(scopePlanSignature(plain, definitions), undefined);
+  assert.equal(nextScopePlan(first, planOf(later), undefined, false), undefined);
 });
