@@ -4,7 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { getProvider } from '../lib/provider';
-import { normalizeModelSelection } from '../lib/models';
+import { normalizeModelSelection, PROVIDERS, type Provider } from '../lib/models';
+import { explanationModel } from '../lib/explanation-options';
 import { buildExplainerPrompt, EXPLAINER_SYSTEM, parseExplainer } from '../lib/explainer';
 import type { GenerateExplainerRequest, InteractiveExplainer, Preferences, ReviewGuide, Slide } from '../lib/types';
 
@@ -14,6 +15,8 @@ interface Dependencies {
   preferences: () => Preferences;
   validate: (artifact: InteractiveExplainer, signal: AbortSignal) => Promise<void>;
   provider?: typeof getProvider;
+  /** Whether a provider's CLI is installed: the explanation's provider is used or the explainer fails, by name. */
+  installed: (provider: Provider) => boolean;
 }
 
 function fingerprint(review: ReviewGuide, slide: Slide): string {
@@ -64,7 +67,13 @@ export function createExplainerService(deps: Dependencies) {
     if (!slide.diffHunks.length) throw new Error('This slide has no source code to explain.');
     const revision = fingerprint(review, slide);
     const prefs = deps.preferences();
-    const selection = normalizeModelSelection(prefs.provider, prefs.model);
+    // The explanation's own provider, model and effort (#573), else the review model in Settings. Never another
+    // provider in place of the explanation's: one that isn't installed fails here.
+    // A briefing has no choice of its own: the model it was written with.
+    const settings = normalizeModelSelection(prefs.provider, prefs.model);
+    const selection = explanationModel(review.explanationOptions ?? {}, { ...settings, effort: prefs.effort }, review.generatedWith);
+    if (!deps.installed(selection.provider))
+      throw new Error(`${PROVIDERS[selection.provider].label} was not found. Open Settings → Integrations for AI setup.`);
     deps.activity?.start(
       {
         id: taskId,
@@ -91,7 +100,7 @@ export function createExplainerService(deps: Dependencies) {
           systemPrompt: EXPLAINER_SYSTEM,
           model: selection.model,
           thinking: true,
-          effort: prefs.effort,
+          effort: selection.effort,
           isolated: true,
           cwd,
           signal,

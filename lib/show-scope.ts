@@ -73,9 +73,17 @@ export function showScopePlan(
     const shown = part.hunk.rows.reduce((n, row) => n + (row.type === '-' ? 0 : 1), 0);
     changed.push({ top: part.hunk.newStart, bottom: part.hunk.newStart + shown - 1 });
   }
-  const opaque = gaps.filter((gap) => gap.opaque);
+  // The lines each opaque gap can't reveal. A gap over changes a focused section leaves out (#563) knows where they
+  // are: the unchanged lines between them and the hunks reveal, so a short definition there shows whole, as in Changes.
+  const opaque = gaps
+    .filter((gap) => gap.opaque)
+    .map((gap) =>
+      gap.hiddenIn?.length
+        ? { start: gap.newStart + (gap.revealDown ?? 0), end: gap.newEnd === undefined ? Infinity : gap.newEnd - (gap.revealUp ?? 0) }
+        : { start: gap.newStart, end: gap.newEnd ?? Infinity }
+    );
   const fits = (definition: SyntaxDefinition) => {
-    if (opaque.some((gap) => gap.newStart <= definition.end && (gap.newEnd ?? Infinity) >= definition.start)) return undefined;
+    if (opaque.some((gap) => gap.start <= definition.end && gap.end >= definition.start)) return undefined;
     const inside = changed.filter((hunk) => hunk.top <= definition.end && Math.max(hunk.top, hunk.bottom) >= definition.start);
     if (!inside.length) return undefined;
     const top = Math.min(...inside.map((hunk) => hunk.top));
@@ -127,4 +135,46 @@ export interface ScopeRail {
   start: number;
   end: number;
   signatureEnd: number;
+}
+
+/**
+ * What decides a focused section's plan (#563): the gaps over changes it leaves out (where they are, what each can
+ * reveal, what they hide) and the parsed definitions on both sides. Undefined without such a gap: Changes, and any
+ * topic without focused slices, adopt their first plan and keep it.
+ */
+export function scopePlanSignature(
+  gaps: readonly DiffGap[] | undefined,
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] }
+): string | undefined {
+  if (!gaps?.some((gap) => gap.hiddenIn?.length)) return undefined;
+  const ranges = (list: readonly SyntaxDefinition[] | undefined) => (list ?? []).map((d) => `${d.start}-${d.end}`).join(',');
+  const layout = gaps
+    .filter((gap) => gap.opaque)
+    .map((gap) => `${gap.index}:${gap.newStart}-${gap.newEnd ?? ''}:${gap.revealDown ?? 0}/${gap.revealUp ?? 0}:${gap.hiddenIn?.length ?? 0}`)
+    .join(';');
+  return `${layout}|${ranges(definitions.after)}|${ranges(definitions.before)}`;
+}
+
+export interface AdoptedScopePlan {
+  value: readonly ShownScope[];
+  /** The inputs it was made from (`scopePlanSignature`); undefined for a plan adopted once and kept. */
+  signature?: string;
+}
+
+/**
+ * The plan to adopt now, or undefined to keep the current one. The first plan is always adopted. A focused section's
+ * plan is made again when what its gaps can reveal, or the parsed structure, changes (a gap that could not reveal a
+ * definition's last line may, once both sides are read), but never once the reader has collapsed a scope by hand.
+ */
+export function nextScopePlan(
+  adopted: AdoptedScopePlan | undefined,
+  planned: readonly ShownScope[] | undefined,
+  signature: string | undefined,
+  changedByHand: boolean
+): AdoptedScopePlan | undefined {
+  if (!planned) return undefined;
+  if (!adopted) return { value: planned, signature };
+  if (signature === undefined || signature === adopted.signature || changedByHand) return undefined;
+  const same = (plan: readonly ShownScope[]) => JSON.stringify(plan.map((scope) => [scope.key, scope.spans]));
+  return same(planned) === same(adopted.value) ? { value: adopted.value, signature } : { value: planned, signature };
 }

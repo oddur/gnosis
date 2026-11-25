@@ -8,7 +8,7 @@ import { useMarkdownView } from '../lib/use-markdown-view';
 import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
 import { CommitBadge } from './EntityBadge';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { File } from '@pierre/diffs/react';
 import { parseDiffFromFile, type DiffFileInput, type FileDiffMetadata, type FileDiffOptions, type SelectedLineRange } from '@pierre/diffs';
 import { Bot, CheckCheck, MessageSquare, ExternalLink } from 'lucide-react';
@@ -40,6 +40,7 @@ import type { ReviewImageSide } from '../lib/review-images';
 import { briefCode, briefPin, type AgentBriefLocation } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import { useChangesComments } from './useChangesComments';
+import { ExplainedChangesContext } from '../lib/explained-changes';
 import { DiffFileHeader } from './DiffFileHeader';
 import { LfsDownload } from './LfsDownload';
 import { ReviewImageDiff } from './ReviewImageDiff';
@@ -430,6 +431,17 @@ export function PrFileInspection({
     replaceThread: discussion.replace,
   });
   const annotations = comments.annotations;
+  // Focused sections (#564): which section of the PR's explanation shows each part of this file. One PR's own changes
+  // only, at the explanation's head; markers never change the lines shown.
+  const explainedSource = useContext(ExplainedChangesContext);
+  const explainedMarkers =
+    commit || combined || entry.snapshot.comparison
+      ? undefined
+      : explainedSource?.markersFor(entry.snapshot.url, entry.file.path, entry.snapshot.metadata.headSha);
+  const explained = useMemo(
+    () => (explainedMarkers?.length && explainedSource ? { markers: explainedMarkers, onOpen: explainedSource.open } : undefined),
+    [explainedMarkers, explainedSource]
+  );
   const hasInlineDrafts = annotations.some(
     (a) => a.metadata.drafts.length > 0 || a.metadata.brief.length > 0 || a.metadata.composer
   );
@@ -837,6 +849,7 @@ export function PrFileInspection({
                   onCollapseScope={model.collapseScope}
                   noise={model.noise}
                   moves={model.moves}
+                  explained={explained}
                   outline={{
                     quiet: model.quietSymbols,
                     symbols: model.symbols,

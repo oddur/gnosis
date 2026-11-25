@@ -20,6 +20,8 @@ import {
   type SyntaxLanguage,
 } from '../lib/syntax-scope';
 import type { NoiseAnswer, NoiseRequest } from '../lib/explanation-noise';
+import { slicePr, type HunkSlices, type SliceFile, type SliceMoveFile } from '../lib/explanation-slices';
+import type { FilePrints, SymbolMove } from '../lib/moved-symbols';
 import { createPatch } from 'diff';
 
 /**
@@ -161,7 +163,12 @@ export type CheckRequest =
   | { id: number; kind?: 'check' | 'moved'; file: CheckedFile; disabled: SyntaxLanguage[] }
   /** A text's definitions, for a conflict's enclosing definition (lib/conflict-model.ts). */
   | { id: number; kind: 'definitions'; path: string; text: string; disabled: SyntaxLanguage[] }
-  | { id: number; kind: 'noise'; files: NoiseFile[] };
+  | { id: number; kind: 'noise'; files: NoiseFile[] }
+  /** An explanation's file cut into slices (lib/explanation-slices.ts), or its moved-symbol candidates. */
+  | { id: number; kind: 'slices'; file: SliceFile; disabled: SyntaxLanguage[] }
+  | { id: number; kind: 'slice-prints'; file: SliceFile; disabled: SyntaxLanguage[] }
+  /** The proven moves among the files' candidates (sliceMoves). */
+  | { id: number; kind: 'slice-moves'; files: SliceMoveFile[] };
 /** One file for the noise comparison: its new text, its hunks, and whether to read its import nodes. */
 export type NoiseFile = Pick<NoiseRequest, 'language' | 'after' | 'hunks' | 'imports'>;
 export type CheckResponse =
@@ -169,6 +176,9 @@ export type CheckResponse =
   | { id: number; proposal?: ConflictProposal }
   | { id: number; noise: (NoiseAnswer | null)[] }
   | { id: number; definitions?: SyntaxDefinition[] }
+  | { id: number; slices: HunkSlices[] }
+  | { id: number; prints: FilePrints | null }
+  | { id: number; moves: SymbolMove[] }
   | { id: number; error: string };
 
 interface Job {
@@ -182,9 +192,11 @@ interface Job {
 const jobLabel = (request: CheckRequest) =>
   request.kind === 'noise'
     ? `${request.files.length} files' noise comparison`
-    : request.kind === 'definitions'
-      ? request.path
-      : request.file.path;
+    : request.kind === 'slice-moves'
+      ? `${request.files.length} files' moves`
+      : request.kind === 'definitions'
+        ? request.path
+        : request.file.path;
 
 /**
  * A text's tree-sitter definitions, as the checks read them. A language that is off in Settings, a text over the
@@ -384,6 +396,33 @@ export function createConflictCheckWorker(
         answers[index] = response.noise[0];
       }
       return answers;
+    },
+    /**
+     * An explanation's hunks cut into slices (lib/explanation-slices.ts), one job per file so each has its own time
+     * limit, then the PR's moves in one more job. Fail safe: a file the worker doesn't answer for (a timeout, an error,
+     * a stopped worker, `signal`) keeps its whole hunks, and its language family's moves are not matched.
+     */
+    async slices(
+      files: readonly SliceFile[],
+      disabled: SyntaxLanguage[] = [],
+      signal?: AbortSignal
+    ): Promise<HunkSlices[]> {
+      return slicePr(
+        files,
+        async (file) => {
+          const response = await run({ id: ++serial, kind: 'slices', file, disabled }, signal);
+          return response && 'slices' in response ? response.slices : undefined;
+        },
+        async (file) => {
+          const response = await run({ id: ++serial, kind: 'slice-prints', file, disabled }, signal);
+          return response && 'prints' in response ? response.prints : undefined;
+        },
+        async (candidates) => {
+          const response = await run({ id: ++serial, kind: 'slice-moves', files: candidates }, signal);
+          return response && 'moves' in response ? response.moves : undefined;
+        },
+        () => disposed || !!signal?.aborted
+      );
     },
     dispose() {
       disposed = true;

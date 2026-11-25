@@ -131,6 +131,7 @@ import { UpdateBanner } from '../../components/UpdateBanner';
 import { Button } from '../../components/ui/button';
 import { LazyMarkdown as Markdown } from '../../components/LazyMarkdown';
 import { PROVIDERS } from '../../lib/models';
+import { explanationModel } from '../../lib/explanation-options';
 import { timeAgo } from '../../lib/utils';
 import { githubFailureMessage } from '../../lib/github-feedback';
 import { useKeyboardShortcuts } from '../../lib/use-keyboard-shortcuts';
@@ -1038,9 +1039,11 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     setSummaryErrors((previous) => ({ ...previous, [requestKey]: '' }));
     setPendingStarts((previous) => new Set(previous).add(requestKey));
     try {
-      const cli = await window.electronAPI.checkCliInstalled(request.provider);
+      // The explanation's own provider (#573) when it chose one; never another provider in its place.
+      const { provider } = explanationModel(request.explanationOptions ?? {}, request);
+      const cli = await window.electronAPI.checkCliInstalled(provider);
       if (!cli.installed)
-        throw new Error(`${PROVIDERS[request.provider].label} was not found. Open Settings → Integrations for AI setup.`);
+        throw new Error(`${PROVIDERS[provider].label} was not found. Open Settings → Integrations for AI setup.`);
       const result = await window.electronAPI.startReview(request);
       if (openedItem) setRequestedReviews((previous) => ({ ...previous, [requestKey]: result.reviewId }));
       if (!prefs.firstRunSeen || showGettingStarted) void dismissGettingStarted();

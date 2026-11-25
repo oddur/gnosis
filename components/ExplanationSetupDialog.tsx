@@ -217,6 +217,9 @@ export function ExplanationSetupDialog({
   const started = useRef(new Set<number>());
   const generating = useRef(false);
   const [completed, setCompleted] = useState(0);
+  // Explanations whose model the reader chose here (#573), by index, or "common" for the shared options. Only a choice
+  // made here is saved by "Remember"; a model that came from saved data is used but not pinned.
+  const [modelChosen, setModelChosen] = useState<Set<number | 'common'>>(new Set());
   useEffect(() => {
     const lifetime = new AbortController();
     setError('');
@@ -287,7 +290,10 @@ export function ExplanationSetupDialog({
       ? { ...common, fileOverrides: entry.options.fileOverrides }
       : entry.options;
   function change(value: ExplanationOptions) {
-    if (requests.length > 1 && !useDefaults) setCommon(value);
+    const shared = requests.length > 1 && !useDefaults;
+    if (options && (value.provider !== options.provider || value.model !== options.model || value.effort !== options.effort))
+      setModelChosen((previous) => new Set(previous).add(shared ? 'common' : selected));
+    if (shared) setCommon(value);
     setSetups((previous) =>
       previous.map((entry, index) =>
         index === selected
@@ -321,6 +327,7 @@ export function ExplanationSetupDialog({
           ...requests[index],
           explanationOptions: resolvedOptions(entry),
           rememberExplanationOptions: remember,
+          explanationModelChosen: modelChosen.has(requests.length > 1 && !useDefaults ? 'common' : index),
         });
         started.current.add(index);
         setCompleted(started.current.size);
@@ -396,12 +403,14 @@ export function ExplanationSetupDialog({
                   <fieldset disabled={requests.length > 1 && useDefaults}>
                     <ExplanationPreferencesFields
                       value={options}
+                      focusedSections
+                      reviewModel={requests[selected] ?? requests[0]}
                       onChange={(value) => change({ ...value, fileOverrides: options.fileOverrides })}
                     />
                   </fieldset>
                   {requests.length > 1 && !useDefaults && (
                     <p className="explanation-setup-note">
-                      Style and filters apply to all selected explanations. File choices apply to the selected PR or
+                      Style, model and filters apply to all selected explanations. File choices apply to the selected PR or
                       stack.
                     </p>
                   )}
@@ -498,7 +507,7 @@ export function ExplanationSetupDialog({
                   </label>
                   {remember && (
                     <p className="explanation-setup-note">
-                      Saves the style and filters when generation starts. Individual file choices stay with this
+                      Saves the style, model and filters when generation starts. Individual file choices stay with this
                       explanation.
                     </p>
                   )}

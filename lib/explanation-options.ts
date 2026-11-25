@@ -1,5 +1,15 @@
 import { effectiveFileKinds, fileExtension, pathFileKinds, type FileKinds, type FileKindOverride } from './file-kinds';
 import type { ChangedFile } from './types';
+import {
+  PROVIDER_IDS,
+  PROVIDERS,
+  RETIRED_CLAUDE_MODELS,
+  RETIRED_CODEX_MODELS,
+  normalizeModelSelection,
+  type ModelId,
+  type Provider,
+} from './models';
+import { EFFORT_LEVELS, normalizeEffort, type Effort } from './effort';
 
 export const EXPLANATION_STYLES = [
   { value: 'concise', label: 'Concise', description: 'Main changes, their purpose, and essential code.' },
@@ -32,6 +42,18 @@ export interface ExplanationPreferences {
   hiddenExtensions: string[];
   /** Reduce noise (lib/explanation-noise.ts). Part of the options, so a change makes a new explanation. */
   reduceNoise: NoiseLevel;
+  /**
+   * Focused sections (#562): sections show only the slices of large hunks they explain. A per-repository setting, off
+   * by default; generation reads the repository's value, and a later change makes the explanation out of date.
+   */
+  focusedSections: boolean;
+  /**
+   * The explanation's provider, model and reasoning effort, from any provider's models. Unset follows the review model
+   * in Settings. Generation fills them in, so Regenerate keeps the model the explanation was written with.
+   */
+  provider?: Provider;
+  model?: ModelId;
+  effort?: Effort;
 }
 export interface ExplanationOptions extends ExplanationPreferences {
   /** Source paths (namespaced by PR in a stack). Explicit choices override filter rules. */
@@ -67,6 +89,7 @@ export const DEFAULT_EXPLANATION_PREFERENCES: ExplanationPreferences = {
   excludeTests: false,
   hiddenExtensions: [],
   reduceNoise: DEFAULT_NOISE_LEVEL,
+  focusedSections: false,
 };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 export function normalizeExplanationPreferences(value: unknown): ExplanationPreferences {
@@ -84,7 +107,72 @@ export function normalizeExplanationPreferences(value: unknown): ExplanationPref
       ),
     ].slice(0, 1000),
     reduceNoise: normalizeNoiseLevel(v.reduceNoise),
+    focusedSections: v.focusedSections === true,
+    ...modelChoice(v),
   };
+}
+/** A provider's model, current or retired; a retired one is offered under its successor. */
+const offers = (provider: Provider, model: unknown) =>
+  typeof model === 'string' &&
+  (PROVIDERS[provider].models.some((m) => m.id === model) ||
+    Object.hasOwn(provider === 'claude' ? RETIRED_CLAUDE_MODELS : RETIRED_CODEX_MODELS, model));
+/** The provider that offers a model, current or retired; none for an unknown model. */
+const modelProvider = (model: unknown): Provider | undefined => PROVIDER_IDS.find((provider) => offers(provider, model));
+type ModelChoice = Pick<ExplanationPreferences, 'provider' | 'model' | 'effort'>;
+/**
+ * The explanation's provider, model and effort, as one choice. A retired model becomes its successor with the same
+ * provider; without a provider, the model's own. An unknown provider or model, or a model the provider doesn't offer,
+ * drops all three together (never a provider without its model, or an effort meant for another model).
+ */
+export function modelChoice(value: { provider?: unknown; model?: unknown; effort?: unknown }): ModelChoice {
+  const provider = value.provider === undefined ? modelProvider(value.model) : value.provider;
+  if ((provider !== 'claude' && provider !== 'codex') || !offers(provider, value.model)) return {};
+  const selection = normalizeModelSelection(provider, value.model);
+  return {
+    ...selection,
+    ...(EFFORT_LEVELS.includes(value.effort as Effort) ? { effort: value.effort as Effort } : {}),
+  };
+}
+/** The model an explanation was written with, for its metadata line; a retired model shows as its successor. */
+export function explanationModelLabel(options: { provider?: unknown; model?: unknown } | undefined): string | undefined {
+  const { provider, model } = modelChoice(options ?? {});
+  return provider && (PROVIDERS[provider].models as readonly { id: string; label: string }[]).find((m) => m.id === model)?.label;
+}
+/** Settings' review model: the fallback for an explanation without its own choice. */
+export interface ReviewModel {
+  provider: Provider;
+  model: ModelId;
+  effort?: Effort;
+  thinking?: boolean;
+}
+/**
+ * The provider, model and effort an explanation is written with: its own choice (`modelChoice`), else the repository's
+ * default, else the review model in Settings. Fail closed: an unknown model, or one from another provider, never
+ * reaches a CLI, and the provider is never switched without the model and effort. The effort is normalized for the model.
+ */
+export function explanationModel(
+  options: ModelChoice,
+  review: ReviewModel,
+  repository?: ModelChoice
+): { provider: Provider; model: ModelId; effort: Effort } {
+  const own = modelChoice(options),
+    fallback = modelChoice(repository ?? {});
+  const chosen = own.model ? own : fallback.model ? fallback : undefined;
+  const provider = chosen?.provider ?? review.provider,
+    model = chosen?.model ?? review.model;
+  return {
+    provider,
+    model,
+    effort: normalizeEffort(provider, model, chosen ? (chosen.effort ?? review.effort) : review.effort, review.thinking ?? true),
+  };
+}
+/** Options without an explanation model choice: they follow the repository's default, then Settings. */
+export function withoutModelChoice<T extends ModelChoice>(options: T): T {
+  const rest = { ...options };
+  delete rest.provider;
+  delete rest.model;
+  delete rest.effort;
+  return rest;
 }
 export function normalizeNoiseLevel(value: unknown): NoiseLevel {
   return NOISE_LEVELS.some((level) => level.value === value) ? (value as NoiseLevel) : DEFAULT_NOISE_LEVEL;

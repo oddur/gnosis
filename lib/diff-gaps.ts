@@ -55,6 +55,124 @@ export interface DiffGap {
   elsewhere?: number;
   /** The new line of that change, for the jump to land on it. */
   elsewhereLine?: number;
+  /**
+   * An Explanation section shows slices of a hunk (#563), and this gap holds changes of the hunk it leaves out: where
+   * each went, another section or the code left out of the explanation (`markHidden`). The gap is opaque.
+   */
+  hiddenIn?: HiddenTarget[];
+}
+/** Where a change a section leaves out went (#563): another section shows it, or no section does. */
+export type HiddenTarget =
+  | {
+      kind: 'section';
+      /** The section (1-based, the reader's `data-explanation-section`). */
+      section: number;
+      /** The slices' short labels, such as `fn supersede`. */
+      names: string[];
+      /** A new line of the change, for the jump to land on it. */
+      line?: number;
+      /** The file the jump opens, when it is another: a moved definition's new copy. */
+      filePath?: string;
+    }
+  | {
+      kind: 'outside';
+      /** Changed lines left out. */
+      lines: number;
+      /** The left-out lines, on the new side when the change adds lines, else the old side. */
+      side: 'before' | 'after';
+      start: number;
+      end: number;
+    };
+/**
+ * A run of a hunk's changed lines a section leaves out, on both sides, from 1. A side with no lines starts at the line
+ * after the change and ends before it (`end === start - 1`).
+ */
+export interface HiddenChange {
+  oldStart: number;
+  oldEnd: number;
+  newStart: number;
+  newEnd: number;
+  target: HiddenTarget;
+}
+
+/** A hidden target as the gap bar says it: "fn supersede, fn adopt: section 3", or "40 lines left out". */
+export function hiddenTargetText(target: HiddenTarget): string {
+  if (target.kind === 'outside') return `${target.lines.toLocaleString()} ${target.lines === 1 ? 'line' : 'lines'} left out`;
+  const names = target.names.length > 3 ? [...target.names.slice(0, 3), `${target.names.length - 3} more`] : target.names;
+  return names.length ? `${names.join(', ')}: section ${target.section}` : `Section ${target.section}`;
+}
+
+/** Targets of one gap, one per section and one for the code left out, in the order they first appear. */
+function mergeTargets(targets: readonly HiddenTarget[]): HiddenTarget[] {
+  const out: HiddenTarget[] = [];
+  for (const target of targets) {
+    const same = out.find(
+      (t) =>
+        t.kind === target.kind &&
+        (t.kind === 'outside' || (target.kind === 'section' && t.section === target.section && t.filePath === target.filePath))
+    );
+    if (!same) out.push(target.kind === 'section' ? { ...target, names: [...target.names] } : { ...target });
+    else if (same.kind === 'section' && target.kind === 'section') {
+      for (const name of target.names) if (!same.names.includes(name)) same.names.push(name);
+      same.line ??= target.line;
+    } else if (same.kind === 'outside' && target.kind === 'outside') {
+      same.lines += target.lines;
+      // The new side wins, as in a run of rows (lib/explanation-ranges.ts): Changes opens where lines were added.
+      if (same.side === target.side) {
+        same.start = Math.min(same.start, target.start);
+        same.end = Math.max(same.end, target.end);
+      } else if (target.side === 'after') Object.assign(same, { side: 'after', start: target.start, end: target.end });
+    }
+  }
+  return out;
+}
+
+/**
+ * Gaps that hold changes a section leaves out (#563): their lines are not unchanged code, so the gap is opaque and
+ * names where each change went. A change lies in a gap when it sits after the hunk above and before the hunk below on
+ * both sides, so a deleted file's changes, which all sit at one new line, still find their gap. The lines between the
+ * hunks and the nearest hidden change still reveal, as far as the gap could before.
+ */
+export function markHidden(
+  gaps: DiffGap[],
+  hunks: readonly GapHunk[],
+  hidden: readonly HiddenChange[] | undefined
+): DiffGap[] {
+  if (!hidden?.length) return gaps;
+  return gaps.map((gap) => {
+    const above = gap.index > 0 ? hunks[gap.index - 1] : undefined,
+      below = hunks.at(gap.index);
+    const inside = hidden.filter(
+      (change) =>
+        (!above || (change.oldStart > oldEnd(above) && change.newStart > newEnd(above))) &&
+        (!below || (change.oldStart <= below.oldStart && change.newStart <= below.newStart))
+    );
+    if (!inside.length) return gap;
+    const first = Math.min(...inside.map((change) => change.newStart)),
+      last = Math.max(...inside.map((change) => Math.max(change.newEnd, change.newStart - 1)));
+    const down = Math.max(0, first - gap.newStart),
+      up = gap.newEnd === undefined ? 0 : Math.max(0, gap.newEnd - last);
+    const cap = (current: number | undefined, limit: number) => Math.min(gap.opaque ? (current ?? 0) : Infinity, limit);
+    return {
+      ...gap,
+      opaque: true,
+      revealDown: cap(gap.revealDown, down),
+      revealUp: cap(gap.revealUp, up),
+      hiddenIn: mergeTargets([...(gap.hiddenIn ?? []), ...inside.map((change) => change.target)]),
+    };
+  });
+}
+
+/**
+ * Gaps of a file that reveals nothing (added, deleted, LFS) but whose section leaves changes out between its slices
+ * (#563): each gap with lines is opaque and reveals nothing, and the one below the last hunk, whose end is unknown, is
+ * empty until `markHidden` finds changes in it.
+ */
+export function sealedGaps(hunks: GapHunk[]): DiffGap[] | undefined {
+  return diffGaps(hunks, undefined, { partial: true })?.map((gap) => {
+    if (gap.newEnd === undefined) return { ...gap, newEnd: gap.newStart - 1 };
+    return gap.newEnd >= gap.newStart || gap.opaque ? { ...gap, opaque: true, revealDown: 0, revealUp: 0 } : gap;
+  });
 }
 /** A change another block of the same file shows, in new-side lines (lib/slide-file-groups.ts). */
 export interface ElsewhereChange {
