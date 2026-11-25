@@ -57,6 +57,11 @@ void app.whenReady().then(async () => {
     await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
     await wait(`${noise}.find(b=>b.getAttribute('aria-checked')==='true')?.textContent==='Off'&&document.activeElement.textContent==='Off'`);
     await js(`${noise}.find(b=>b.textContent==='Aggressive').click()`);
+    // Focused sections (#562): chosen per explanation here, off by default, sent with the options.
+    const focused = "document.querySelector('.explanation-setup-dialog .explanation-focused-setting input')";
+    assert.equal(await js(`${focused}?.checked`), false, 'Focused sections shows in the dialog, off by default');
+    await js(`${focused}.click()`);
+    await wait(`${focused}.checked===true`);
     await capture('compact');
     await js(
       "[...document.querySelectorAll('.explanation-file-rules label')].find(e=>e.textContent.includes('Test files')).querySelector('input').click()"
@@ -113,6 +118,7 @@ void app.whenReady().then(async () => {
     assert.equal(attempts[0].rememberExplanationOptions, true);
     assert.equal(attempts[0].explanationOptions.style, 'custom');
     assert.equal(attempts[0].explanationOptions.reduceNoise, 'aggressive', 'The level is part of the options');
+    assert.equal(attempts[0].explanationOptions.focusedSections, true, 'Focused sections is part of the options');
     assert.deepEqual(attempts[0].explanationOptions.hiddenExtensions, ['.md']);
     win.setSize(1280, 850);
     await open('?restore');
@@ -239,5 +245,5 @@ void app.whenReady().then(async () => {
 });
 interface GenerateRequest {
   rememberExplanationOptions: boolean;
-  explanationOptions: { style: string; hiddenExtensions: string[]; reduceNoise: string };
+  explanationOptions: { style: string; hiddenExtensions: string[]; reduceNoise: string; focusedSections: boolean };
 }

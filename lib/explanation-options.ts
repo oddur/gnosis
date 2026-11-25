@@ -160,28 +160,3 @@ export function normalizeLocalExplanationPreferences(value: unknown): Record<str
       .map(([key, entry]) => [key, normalizeExplanationPreferences(entry)])
   );
 }
-
-/** The repository's saved Focused sections setting (#562), read as the main process reads its defaults. */
-export function savedFocusedSections(
-  preferences: {
-    repositorySettings?: Record<string, { explanation?: Partial<ExplanationPreferences> } | undefined>;
-    localExplanationPreferences?: Record<string, Partial<ExplanationPreferences> | undefined>;
-  },
-  repository: string
-): boolean {
-  const saved = repository.startsWith('local:')
-    ? preferences.localExplanationPreferences?.[repository]
-    : preferences.repositorySettings?.[repository]?.explanation;
-  return saved?.focusedSections === true;
-}
-
-/**
- * Whether the repository's Focused sections setting differs from how an explanation was made, so it can be
- * regenerated. `saved` is the explanation's `focusedSections`: an explanation without it was made with the setting off.
- * Unknown when the repository isn't known.
- */
-export function focusedSectionsChanged(saved: { applied?: boolean } | undefined, current: boolean | undefined): boolean {
-  // Saved with the setting on but not applied (parallel review off): regenerating changes nothing.
-  if (saved?.applied === false) return false;
-  return current !== undefined && current !== !!saved;
-}

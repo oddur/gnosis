@@ -2647,8 +2647,8 @@ function explanationSetupOptions(request: GenerateReviewRequest, source: SourceI
     );
   if (!previous || !previous.explanationOptions) return { options: explanationDefaults(source), restored: false };
   const options = normalizeExplanationOptions(previous.explanationOptions);
-  // Focused sections is the repository's setting, never a choice for one explanation (#562).
-  options.focusedSections = explanationDefaults(source).focusedSections;
+  // Focused sections (#562): the explanation's own choice; one saved before the choice existed follows the repository.
+  if (!('focusedSections' in previous.explanationOptions)) options.focusedSections = explanationDefaults(source).focusedSections;
   // Reduce noise follows the repository's level when the explanation did, so Regenerate after a level change uses it.
   if (!('reduceNoise' in previous.explanationOptions) || (previous.noiseDefault && options.reduceNoise === previous.noiseDefault))
     options.reduceNoise = explanationDefaults(source).reduceNoise;
@@ -2712,8 +2712,8 @@ async function runBackgroundGeneration(
   signal: AbortSignal,
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
-  // Focused sections (#562) is always the repository's current setting, so a change to it makes this explanation out of date.
-  const options = { ...(request.explanationOptions ?? explanationDefaults(source)), focusedSections: explanationDefaults(source).focusedSections };
+  // Focused sections (#562) is chosen per explanation in Generate explanation; the repository's setting is the default.
+  const options = request.explanationOptions ?? explanationDefaults(source);
   const instructions = explanationInstructions(options, request.instructions);
   const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
@@ -3913,8 +3913,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const options = request.explanationOptions
     ? normalizeExplanationOptions(request.explanationOptions)
     : explanationDefaults(source);
-  // Focused sections is the repository's setting (#562): remembering options never changes it.
-  options.focusedSections = explanationDefaults(source).focusedSections;
+  // Focused sections (#562): this explanation's choice; "Remember for this repository" saves it as the default with the rest.
   if (options.style === 'custom' && !options.customInstructions.trim())
     throw new Error('Add instructions for the Custom explanation style.');
   request = { ...request, explanationOptions: options, rememberExplanationOptions: false };

@@ -396,6 +396,7 @@ export function ExplanationSetupDialog({
                   <fieldset disabled={requests.length > 1 && useDefaults}>
                     <ExplanationPreferencesFields
                       value={options}
+                      focusedSections
                       onChange={(value) => change({ ...value, fileOverrides: options.fileOverrides })}
                     />
                   </fieldset>

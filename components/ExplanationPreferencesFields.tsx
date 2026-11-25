@@ -15,7 +15,7 @@ export function ExplanationPreferencesFields({
   value: ExplanationPreferences;
   onChange: (value: ExplanationPreferences) => void;
   extensions?: boolean;
-  /** Show the per-repository Focused sections setting (#562). Settings only: generation reads the repository's value. */
+  /** Show the Focused sections choice (#562): in Settings it is the repository's default, in Generate explanation this explanation's. */
   focusedSections?: boolean;
 }) {
   const id = useId();

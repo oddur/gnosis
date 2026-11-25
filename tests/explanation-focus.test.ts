@@ -22,9 +22,7 @@ import {
 } from '../lib/explanation-focus';
 import {
   DEFAULT_EXPLANATION_PREFERENCES,
-  focusedSectionsChanged,
   normalizeExplanationPreferences,
-  savedFocusedSections,
 } from '../lib/explanation-options';
 import type { HunkSlice, HunkSlices } from '../lib/explanation-slices';
 import { hunkOwners, ownedHunkIds, ownerSections, resolveDiffHunks, shownElsewhere } from '../lib/hunk-ownership';
@@ -283,18 +281,11 @@ void describe('focused sections', () => {
 });
 
 void describe('setting off', () => {
-  void test('the setting is per repository and off by default', () => {
+  void test('the setting is off by default', () => {
     assert.equal(DEFAULT_EXPLANATION_PREFERENCES.focusedSections, false);
     assert.equal(normalizeExplanationPreferences(null).focusedSections, false);
     assert.equal(normalizeExplanationPreferences({ focusedSections: 'yes' }).focusedSections, false);
     assert.equal(normalizeExplanationPreferences({ focusedSections: true }).focusedSections, true);
-    const prefs = {
-      repositorySettings: { 'o/r': { explanation: { focusedSections: true } } },
-      localExplanationPreferences: { 'local:/p': { focusedSections: false } },
-    };
-    assert.equal(savedFocusedSections(prefs, 'o/r'), true);
-    assert.equal(savedFocusedSections(prefs, 'o/other'), false);
-    assert.equal(savedFocusedSections(prefs, 'local:/p'), false);
   });
 
   void test('the planner index, checkpoint keys and writer context are unchanged', () => {
@@ -314,13 +305,6 @@ void describe('setting off', () => {
     assert.ok(ctx.includes(`--- src/queue.ts [hunk-0] (shown in section 1)\n@@ -0,0 +1,30 @@\n+function alpha() {`));
   });
 
-  void test('an explanation made with the other setting can be regenerated', () => {
-    assert.equal(focusedSectionsChanged(undefined, false), false);
-    assert.equal(focusedSectionsChanged(undefined, true), true, 'saved without slices, setting now on');
-    assert.equal(focusedSectionsChanged({}, false), true);
-    assert.equal(focusedSectionsChanged({}, true), false);
-    assert.equal(focusedSectionsChanged(undefined, undefined), false, 'unknown repository');
-  });
 });
 
 void describe('checkpoint keys', () => {
@@ -408,11 +392,6 @@ void describe('review fixes', () => {
     assert.match(after, /21: function gamma\(\) \{/);
     assert.doesNotMatch(after, /function alpha|function beta/, 'other sections\' code is not plain source');
     assert.doesNotMatch(ctx, /<file path="src\/small.ts">/, 'a file the section shows no code of is omitted');
-  });
-
-  void test('an explanation where the setting was on but not applied asks for no regenerate', () => {
-    assert.equal(focusedSectionsChanged({ applied: false }, true), false);
-    assert.equal(focusedSectionsChanged({ applied: false }, false), false);
   });
 });
 
