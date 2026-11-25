@@ -240,7 +240,15 @@ export function validateFocusTopics(topics: readonly TopicPlan[], index: FocusIn
 /** The planner's noise list without hunks that a topic lists part of: a hunk is cut whole or not at all. */
 export function focusPlannerNoise(noise: unknown, topics: readonly TopicPlan[], index: FocusIndex): unknown {
   if (!Array.isArray(noise)) return noise;
-  const listed = new Set(topics.flatMap((topic) => topic.hunkIds.map((id) => index.units.get(id)?.hunkId)));
+  // A listed new copy explains its old copy, so the old copy's hunk is listed too: never cut and shown twice.
+  const listed = new Set(
+    topics.flatMap((topic) =>
+      topic.hunkIds.flatMap((id) => {
+        const from = index.movedFrom.get(id);
+        return [index.units.get(id)?.hunkId, from === undefined ? undefined : index.units.get(from)?.hunkId];
+      })
+    )
+  );
   return noise.filter(
     (entry: unknown) => !(entry && typeof entry === 'object' && listed.has((entry as { hunkId?: string }).hunkId))
   );
@@ -345,6 +353,11 @@ export function focusMovedNoise(
   });
 }
 
+/** Lines of a file to show, with `pad` lines around them (the reader's default when unset). */
+export interface FileWindow extends LineRange {
+  pad?: number;
+}
+
 /**
  * The file lines a focused writer may read as plain source (#562): its owned units' changed ranges on each side, with
  * the first line of each definition around them for scope. Other sections' code is not plain context.
@@ -352,8 +365,8 @@ export function focusMovedNoise(
 export function focusFileWindows(
   owned: readonly string[],
   index: FocusIndex
-): Map<string, { base: LineRange[]; head: LineRange[] }> {
-  const windows = new Map<string, { base: LineRange[]; head: LineRange[] }>();
+): Map<string, { base: FileWindow[]; head: FileWindow[] }> {
+  const windows = new Map<string, { base: FileWindow[]; head: FileWindow[] }>();
   for (const id of owned) {
     const unit = index.units.get(id);
     if (!unit) continue;
@@ -361,7 +374,7 @@ export function focusFileWindows(
     file.base.push(...unit.slice.oldLines);
     file.head.push(...unit.slice.newLines);
     for (const symbol of unit.slice.symbols)
-      (symbol.side === 'before' ? file.base : file.head).push({ start: symbol.start, end: symbol.start });
+      (symbol.side === 'before' ? file.base : file.head).push({ start: symbol.start, end: symbol.start, pad: 0 });
     windows.set(unit.filePath, file);
   }
   return windows;

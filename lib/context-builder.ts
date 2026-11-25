@@ -49,11 +49,15 @@ function nearbyFileContent(content: string, hunks: IndexedHunk[], side: 'base' |
  * Focused sections (#562): only the lines around the section's own code, whatever the file's size, so the writer
  * never reads other sections' code as plain source. Bounded like nearbyFileContent.
  */
-function windowedFileContent(content: string, ranges: readonly { start: number; end: number }[], pad = 8) {
+function windowedFileContent(content: string, ranges: readonly { start: number; end: number; pad?: number }[], pad = 8) {
   const lines = content.split('\n');
   const selected = new Set<number>();
   for (const range of ranges)
-    for (let i = Math.max(0, range.start - 1 - pad); i < Math.min(lines.length, range.end + pad) && selected.size < MAX_FILE_LINES; i++)
+    for (
+      let i = Math.max(0, range.start - 1 - (range.pad ?? pad));
+      i < Math.min(lines.length, range.end + (range.pad ?? pad)) && selected.size < MAX_FILE_LINES;
+      i++
+    )
       selected.add(i);
   let excerpt =
     "Source near this section's code only (original line numbers; omitted lines are shown in other sections, left out, or unchanged):\n";
@@ -342,7 +346,10 @@ export function buildTopicContext(
   /** Focused sections (#562): the section's code blocks (focusedTopicDiff), in place of the hunk blocks. */
   focusedDiff?: string,
   /** Focused sections: per file, the lines file contents may show (focusFileWindows); a file without any is omitted. */
-  fileWindows?: ReadonlyMap<string, { base: readonly { start: number; end: number }[]; head: readonly { start: number; end: number }[] }>
+  fileWindows?: ReadonlyMap<
+    string,
+    { base: readonly { start: number; end: number; pad?: number }[]; head: readonly { start: number; end: number; pad?: number }[] }
+  >
 ): string {
   const relevantHunks = [...new Set(topic.hunkIds)].map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
