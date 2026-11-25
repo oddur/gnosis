@@ -120,7 +120,7 @@ export function ExplanationPreferencesFields({
             <strong>Focused sections</strong>
             <small>
               Each section shows only the parts of large changes it explains. Code no section needs is listed
-              separately. Changes still shows every line.
+              separately. Changes still shows every line. Needs parallel review.
             </small>
           </span>
         </label>

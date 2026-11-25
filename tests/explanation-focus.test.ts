@@ -7,6 +7,8 @@ import { buildTopicContext } from '../lib/context-builder';
 import { formatHunkIndexForPrompt, type IndexedHunk } from '../lib/diff-parse';
 import {
   cutHunk,
+  focusFileWindows,
+  focusMovedNoise,
   focusCheckpointKey,
   focusCutUnits,
   focusDiffHunks,
@@ -124,6 +126,7 @@ function sliced(moves = true): HunkSlices[] {
 const topic = (title: string, hunkIds: string[], order: number) =>
   ({ title, slideType: 'feature', importance: 'important', hunkIds, dependsOn: [], order, narrativeBrief: '' }) as unknown as TopicPlan;
 const hunkMap = new Map(HUNKS.map((h) => [h.id, h]));
+const pick = ({ other, outside }: { other: string[]; outside: unknown[] }) => ({ other, outside });
 
 void describe('focused sections', () => {
   void test('units: a sliced hunk is its slices, a whole hunk keeps its hunk ID, a moved deletion is covered', () => {
@@ -142,12 +145,13 @@ void describe('focused sections', () => {
     const index = focusIndex(HUNKS, sliced());
     const prompt = focusPlannerIndex(HUNKS, index);
     assert.match(prompt, /<slices_note>/);
-    assert.match(prompt, /<slice id="hunk-0:a" hunk="hunk-0" file="src\/queue.ts" label="fn alpha" lines="\+1-10" additions="10" deletions="0">\n\+function alpha\(\) \{/);
+    assert.match(prompt, /<slice id="hunk-0:a" file="src\/queue.ts" label="fn alpha" lines="\+1-10" additions="10" deletions="0">\n\+function alpha\(\) \{/);
     assert.match(prompt, /<slice id="hunk-0:b"[^>]*movedFrom="src\/old.ts:2-11 \(edited\)"/);
     // A whole hunk keeps the hunk index's own entry.
     assert.ok(prompt.includes(formatHunkIndexForPrompt([HUNKS[1]]).split('\n')[1]));
     assert.doesNotMatch(prompt, /hunk-2/, 'the moved deletion is explained with its new copy');
     assert.doesNotMatch(prompt, /id="hunk-0"/, 'a sliced hunk is listed only as its slices');
+    assert.doesNotMatch(prompt, /hunk="/, 'a slice never names its hunk ID for the planner to copy');
     // An excerpt never carries markup.
     const tricky = hunk('hunk-9', 'a.ts', 'added', '@@ -0,0 +1,2 @@', ['+<b>"x"</b>', '+y']);
     const trickyIndex = focusIndex([tricky], [{ hunkId: 'hunk-9', filePath: 'a.ts', slices: [slice('hunk-9:a', 'fn a', 0, 0), slice('hunk-9:b', 'fn b', 1, 1)] }]);
@@ -196,9 +200,9 @@ void describe('focused sections', () => {
     const block = focusedTopicDiff(ownedHunkIds(topics[1].hunkIds, owners, 1), shownElsewhere(topics[1].hunkIds, owners, 1), index, hunkMap, BASE, HEAD);
     const shows = /<diff_hunks>([\s\S]*?)<\/diff_hunks>/.exec(block)?.[1] ?? '';
     assert.match(shows, /displays exactly the code below/);
-    assert.match(shows, /--- src\/queue.ts \(added\) \[hunk-0:c\] fn gamma\nDefinitions:\n- fn gamma: `function gamma\(\) \{`\n@@ -1,0 \+21,10 @@\n\+function gamma\(\) \{/);
+    assert.match(shows, /--- src\/queue.ts \(added\) \[hunk-0:c\] fn gamma\nDefinitions:\n- fn gamma: `function gamma\(\) \{`\n@@ -0,0 \+21,10 @@\n\+function gamma\(\) \{/);
     assert.doesNotMatch(shows, /alpha/);
-    assert.match(block, /<shown_in_other_sections>[\s\S]*\[hunk-0:a\] fn alpha \(shown in section 1\)\n@@ -1,0 \+1,10 @@\n\+function alpha/);
+    assert.match(block, /<shown_in_other_sections>[\s\S]*\[hunk-0:a\] fn alpha \(shown in section 1\)\n@@ -0,0 \+1,10 @@\n\+function alpha/);
     // The writer context uses the block in place of the hunk blocks.
     const t = { ...topics[1], hunkIds: unitHunkIds(topics[1].hunkIds, index) };
     const ctx = buildTopicContext(t, hunkMap, BASE, HEAD, {}, 'PR', '', 'arc', topics, null, [], new Map(), block);
@@ -209,7 +213,9 @@ void describe('focused sections', () => {
 
   void test('cutHunk gives each range its own header on both sides', () => {
     const [part] = cutHunk('@@ -1,12 +1,2 @@', OLD_LINES.join('\n'), [{ start: 1, end: 10 }]);
-    assert.equal(part.header, '@@ -2,10 +2,0 @@');
+    // A side with no lines is numbered with the line before it.
+    assert.equal(part.header, '@@ -2,10 +1,0 @@');
+    assert.equal(cutHunk('@@ -0,0 +1,30 @@', NEW_LINES.join('\n'), [{ start: 20, end: 29 }])[0].header, '@@ -0,0 +21,10 @@');
     assert.equal(part.content.split('\n').length, 10);
   });
 
@@ -225,7 +231,7 @@ void describe('focused sections', () => {
     assert.match(focusedTopicDiff(['hunk-0:b'], new Map(), focusIndex(HUNKS, identical), hunkMap, BASE, HEAD), /Its body is unchanged\.\n/);
     // Covered: no section lists hunk-2, and it is neither left out nor in Other changes.
     const owners = hunkOwners([['hunk-0:a', 'hunk-0:b', 'hunk-0:c', 'hunk-1']], index.units, new Set());
-    assert.deepEqual(focusLeftovers(index, owners, new Set()), { other: [], outside: [] });
+    assert.deepEqual(pick(focusLeftovers(index, owners, new Set())), { other: [], outside: [] });
     // A deletion that adds lines is never treated as moved (fail closed).
     const adds = sliced().map((h) => (h.hunkId === 'hunk-2' ? { ...h, slices: [{ ...h.slices[0], additions: 1 }] } : h));
     assert.equal(focusIndex(HUNKS, adds).movedAway.size, 0);
@@ -245,7 +251,7 @@ void describe('focused sections', () => {
     const index = focusIndex(HUNKS, sliced());
     // gamma (10) and small.ts (2) are left: 12 lines, under the limit.
     const small = hunkOwners([['hunk-0:a', 'hunk-0:b']], index.units, new Set());
-    assert.deepEqual(focusLeftovers(index, small, new Set()), { other: ['hunk-0:c', 'hunk-1'], outside: [] });
+    assert.deepEqual(pick(focusLeftovers(index, small, new Set())), { other: ['hunk-0:c', 'hunk-1'], outside: [] });
     // alpha, gamma and small.ts: 22 lines (FOCUS_OTHER_CHANGES_LINES is 20), left out and listed per file with line ranges.
     const big = hunkOwners([['hunk-0:b']], index.units, new Set());
     const { other, outside } = focusLeftovers(index, big, new Set());
@@ -261,7 +267,7 @@ void describe('focused sections', () => {
     // Units of hunks cut as noise are neither.
     const cut = focusCutUnits(index, new Map([['hunk-0', { reason: 'noise' }]]));
     assert.deepEqual([...cut], ['hunk-0:a', 'hunk-0:b', 'hunk-0:c']);
-    assert.deepEqual(focusLeftovers(index, new Map(), cut), { other: ['hunk-1'], outside: [] });
+    assert.deepEqual(pick(focusLeftovers(index, new Map(), cut)), { other: ['hunk-1'], outside: [] });
   });
 
   void test('a stub plan end to end: slice IDs in, ownership, left-out and slide entries out', () => {
@@ -311,8 +317,8 @@ void describe('setting off', () => {
   void test('an explanation made with the other setting can be regenerated', () => {
     assert.equal(focusedSectionsChanged(undefined, false), false);
     assert.equal(focusedSectionsChanged(undefined, true), true, 'saved without slices, setting now on');
-    assert.equal(focusedSectionsChanged({ outside: [] }, false), true);
-    assert.equal(focusedSectionsChanged({ outside: [] }, true), false);
+    assert.equal(focusedSectionsChanged({}, false), true);
+    assert.equal(focusedSectionsChanged({}, true), false);
     assert.equal(focusedSectionsChanged(undefined, undefined), false, 'unknown repository');
   });
 });
@@ -338,5 +344,74 @@ void describe('checkpoint keys', () => {
     assert.notEqual(key(a), key(undefined));
     assert.notEqual(key(a), key(resliced));
     assert.equal(key(a), key(again));
+  });
+});
+
+void describe('review fixes', () => {
+  void test('a moved old copy follows its new copy: cut with it, or left out next to it, never lost', () => {
+    const index = focusIndex(HUNKS, sliced());
+    // The new copy is cut as noise: the old copy is cut too, with where it moved.
+    const cut = focusCutUnits(index, new Map([['hunk-0', { reason: 'noise' }]]));
+    const owners = hunkOwners([['hunk-1']], index.units, cut);
+    const cutCase = focusLeftovers(index, owners, cut);
+    assert.deepEqual(cutCase.cutMoves, [{ id: 'hunk-2', to: 'hunk-0:b' }]);
+    assert.deepEqual(cutCase.other, []);
+    assert.deepEqual([...cutCase.placed].sort(), ['hunk-0', 'hunk-1', 'hunk-2']);
+    assert.deepEqual(focusMovedNoise(index, cutCase.cutMoves, new Map([['hunk-0', { reason: 'formatting', source: 'planner' as const }]])), [
+      { filePath: 'src/old.ts', side: 'before', startLine: 2, endLine: 11, reason: 'moved to src/queue.ts: formatting', source: 'planner' },
+    ]);
+    // The new copy is left out: the old copy is listed right after it, saying where it moved.
+    const left = focusLeftovers(index, hunkOwners([['hunk-1']], index.units, new Set()), new Set());
+    assert.deepEqual(
+      left.outside.map((o) => [o.id, o.movedTo?.id]),
+      [['hunk-0:a', undefined], ['hunk-0:b', undefined], ['hunk-2', 'hunk-0:b'], ['hunk-0:c', undefined]]
+    );
+    assert.deepEqual([...left.placed].sort(), ['hunk-0', 'hunk-1', 'hunk-2']);
+    // Only an owned new copy covers its old copy.
+    const covered = focusLeftovers(index, hunkOwners([['hunk-0:b']], index.units, new Set()), new Set());
+    assert.ok(!covered.outside.some((o) => o.id === 'hunk-2'));
+  });
+
+  void test("a move's source is the symbol that holds the slice's changed lines", () => {
+    const withOther = sliced().map((h) =>
+      h.hunkId === 'hunk-2'
+        ? {
+            ...h,
+            slices: [
+              {
+                ...h.slices[0],
+                symbols: [
+                  { side: 'before' as const, kind: 'function' as const, name: 'keep', label: 'fn keep', start: 1, end: 1, span: { start: 1, end: 1 } },
+                  ...h.slices[0].symbols,
+                ],
+              },
+            ],
+          }
+        : h
+    );
+    const index = focusIndex(HUNKS, withOther);
+    assert.deepEqual(focusDiffHunks(['hunk-0:b'], index, hunkMap)[0].movedFrom, { filePath: 'src/old.ts', startLine: 2, endLine: 11, body: 'edited' });
+    // No symbol holds all the removed lines: not a move (fail closed).
+    const loose = sliced().map((h) =>
+      h.hunkId === 'hunk-2' ? { ...h, slices: [{ ...h.slices[0], removed: [{ start: 1, end: 11 }] }] } : h
+    );
+    assert.equal(focusIndex(HUNKS, loose).movedAway.size, 0);
+  });
+
+  void test("a focused writer's file contents show only lines around its own code", () => {
+    const index = focusIndex(HUNKS, sliced());
+    const windows = focusFileWindows(['hunk-0:c'], index);
+    assert.deepEqual([...windows.keys()], ['src/queue.ts']);
+    const t = topic('B', ['hunk-0', 'hunk-1'], 1);
+    const ctx = buildTopicContext(t, hunkMap, BASE, HEAD, {}, 'PR', '', 'arc', [t], null, [], new Map(), '<diff_hunks>\n</diff_hunks>', windows);
+    const after = /<file_contents_after>([\s\S]*?)<\/file_contents_after>/.exec(ctx)?.[1] ?? '';
+    assert.match(after, /21: function gamma\(\) \{/);
+    assert.doesNotMatch(after, /function alpha|function beta/, 'other sections\' code is not plain source');
+    assert.doesNotMatch(ctx, /<file path="src\/small.ts">/, 'a file the section shows no code of is omitted');
+  });
+
+  void test('an explanation where the setting was on but not applied asks for no regenerate', () => {
+    assert.equal(focusedSectionsChanged({ applied: false }, true), false);
+    assert.equal(focusedSectionsChanged({ applied: false }, false), false);
   });
 });

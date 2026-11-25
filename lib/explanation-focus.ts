@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createTwoFilesPatch } from 'diff';
 import { formatHunkIndexForPrompt, type IndexedHunk } from './diff-parse';
-import { wholeHunk, type HunkSlice, type HunkSlices, type LineRange } from './explanation-slices';
+import { wholeHunk, type HunkSlice, type HunkSlices, type LineRange, type SliceSymbol } from './explanation-slices';
+import type { LeftOutHunk } from './explanation-noise';
 import { resolveDiffHunks } from './hunk-ownership';
 import type { DiffHunk, TopicPlan } from './types';
 
@@ -36,6 +37,8 @@ export interface FocusIndex {
   aliases: Map<string, string[]>;
   /** A deleted unit whose definition moved, to the unit of its new copy: covered by the move, never shown alone. */
   movedAway: Map<string, string>;
+  /** The reverse: the unit of a moved definition's new copy, to its old copy's unit. */
+  movedFrom: Map<string, string>;
   /** A content hash of the slices and their moves, for the explanation's checkpoint keys. */
   hash: string;
 }
@@ -62,6 +65,8 @@ export interface OutsideCode {
   newLines: LineRange[];
   additions: number;
   deletions: number;
+  /** A moved definition's old copy: listed next to its new copy, which is also left out. */
+  movedTo?: { filePath: string; id: string };
 }
 
 /** Saved with an explanation made while the repository's Focused sections setting was on (ReviewGuide.focusedSections). */
@@ -70,6 +75,23 @@ export interface FocusedSections {
   repository?: string;
   /** Code no section shows, sorted by file and line. Empty when it all went to "Other changes". */
   outside: OutsideCode[];
+  /**
+   * False when the setting was on but nothing was sliced: the single-shot path (Settings → parallel review off).
+   * Unset means applied.
+   */
+  applied?: false;
+}
+
+const within = (ranges: readonly LineRange[], outer: LineRange) =>
+  ranges.every((range) => range.start >= outer.start && range.end <= outer.end);
+/**
+ * The moved definition in a slice: the symbol on `side` whose span holds all of the slice's changed lines on that side
+ * (`removed` for the old copy, `added` for the new one). Never a "(part)" of a larger definition.
+ */
+export function movedSymbol(slice: HunkSlice, side: 'before' | 'after'): SliceSymbol | undefined {
+  const changed = side === 'before' ? slice.removed : slice.added;
+  if (!changed.length) return undefined;
+  return slice.symbols.find((symbol) => symbol.side === side && !symbol.part && within(changed, symbol.span));
 }
 
 const sliceHunk = (hunk: IndexedHunk) => ({ id: hunk.id, header: hunk.expandedHunkHeader, content: hunk.expandedContent });
@@ -97,11 +119,16 @@ export function focusIndex(hunks: readonly IndexedHunk[], sliced: readonly HunkS
     if (!whole) aliases.set(hunk.id, entry.slices.map((slice) => slice.id));
   }
   const movedAway = new Map<string, string>();
+  const movedFrom = new Map<string, string>();
   for (const unit of units.values()) {
     const to = unit.slice.movedTo && unitOf.get(unit.slice.movedTo);
     const target = to ? units.get(to) : undefined;
-    const part = (u: FocusUnit) => u.slice.symbols.some((s) => s.part);
-    if (to && target && to !== unit.id && unit.slice.additions === 0 && !part(unit) && !part(target)) movedAway.set(unit.id, to);
+    if (!to || !target || to === unit.id || unit.slice.additions !== 0 || movedFrom.has(to)) continue;
+    // Both ends must be the moved definition alone, never the "(part)" of a larger one.
+    if (unit.slice.symbols.some((s) => s.part) || target.slice.symbols.some((s) => s.part)) continue;
+    if (!movedSymbol(unit.slice, 'before') || !movedSymbol(target.slice, 'after')) continue;
+    movedAway.set(unit.id, to);
+    movedFrom.set(to, unit.id);
   }
   const hash = createHash('sha256')
     .update(
@@ -110,7 +137,7 @@ export function focusIndex(hunks: readonly IndexedHunk[], sliced: readonly HunkS
       )
     )
     .digest('hex');
-  return { units, aliases, movedAway, hash };
+  return { units, aliases, movedAway, movedFrom, hash };
 }
 
 // ── Planner ─────────────────────────────────────────────────────
@@ -144,23 +171,20 @@ const where = (slice: HunkSlice) =>
 
 /** The moved definition's old place, for the planner and the writer. */
 function moveSource(index: FocusIndex, unitId: string): (SliceMoveSource & { unit: FocusUnit }) | undefined {
-  for (const [from, to] of index.movedAway) {
-    if (to !== unitId) continue;
-    const unit = index.units.get(from);
-    if (!unit) continue;
-    const symbol = unit.slice.symbols.find((s) => s.side === 'before');
-    const renamed = unit.slice.renamed ?? index.units.get(to)?.slice.renamed;
-    const lines = unit.slice.oldLines;
-    return {
-      unit,
-      filePath: unit.filePath,
-      startLine: symbol?.start ?? lines.at(0)?.start ?? 1,
-      endLine: symbol?.end ?? lines.at(-1)?.end ?? 1,
-      body: unit.slice.moveBody ?? index.units.get(to)?.slice.moveBody ?? 'edited',
-      ...(renamed ? { renamed: { ...renamed } } : {}),
-    };
-  }
-  return undefined;
+  const from = index.movedFrom.get(unitId);
+  const unit = from === undefined ? undefined : index.units.get(from);
+  const symbol = unit && movedSymbol(unit.slice, 'before');
+  if (!unit || !symbol) return undefined;
+  const target = index.units.get(unitId);
+  const renamed = unit.slice.renamed ?? target?.slice.renamed;
+  return {
+    unit,
+    filePath: unit.filePath,
+    startLine: symbol.start,
+    endLine: symbol.end,
+    body: unit.slice.moveBody ?? target?.slice.moveBody ?? 'edited',
+    ...(renamed ? { renamed: { ...renamed } } : {}),
+  };
 }
 
 /**
@@ -181,7 +205,7 @@ export function formatFocusIndexForPrompt(hunks: readonly IndexedHunk[], index: 
       continue;
     }
     entries.push(
-      `  <slice id="${attribute(unit.id)}" hunk="${unit.hunkId}" file="${attribute(unit.filePath)}" label="${attribute(unit.slice.label)}" lines="${where(unit.slice)}" additions="${unit.slice.additions}" deletions="${unit.slice.deletions}"${movedFrom}>\n${attribute(excerpt(hunk, unit.slice))}\n  </slice>`
+      `  <slice id="${attribute(unit.id)}" file="${attribute(unit.filePath)}" label="${attribute(unit.slice.label)}" lines="${where(unit.slice)}" additions="${unit.slice.additions}" deletions="${unit.slice.deletions}"${movedFrom}>\n${attribute(excerpt(hunk, unit.slice))}\n  </slice>`
     );
   }
   return `${FOCUS_PLANNER_DIRECTIVE}\n<hunk_index>\n${entries.join('\n')}\n</hunk_index>`;
@@ -227,36 +251,120 @@ export function focusCutUnits(index: FocusIndex, cut: ReadonlySet<string> | Read
   return new Set([...index.units.values()].filter((unit) => cut.has(unit.hunkId)).map((unit) => unit.id));
 }
 
+/** The left-over units: where each unit no section shows goes, and the hunks whose every unit has a place. */
+export interface FocusLeftovers {
+  /** To "Other changes": all left-over code together is under `FOCUS_OTHER_CHANGES_LINES` changed lines. */
+  other: string[];
+  /** Left out of the explanation and listed; a moved old copy sits right after its new copy. */
+  outside: OutsideCode[];
+  /** Moved old copies whose new copy is cut as noise: they are cut too (`focusMovedNoise`). */
+  cutMoves: { id: string; to: string }[];
+  /** Hunks whose every unit is owned, covered by an owned move, cut, in `other` or in `outside`. */
+  placed: Set<string>;
+}
+
+const outsideCode = (unit: FocusUnit): OutsideCode => ({
+  filePath: unit.filePath,
+  id: unit.id,
+  label: unit.slice.label,
+  oldLines: unit.slice.oldLines,
+  newLines: unit.slice.newLines,
+  additions: unit.slice.additions,
+  deletions: unit.slice.deletions,
+});
+
 /**
- * Units no section shows and noise didn't cut. A moved deleted slice is covered by its move. When all of them together
- * have fewer than `FOCUS_OTHER_CHANGES_LINES` changed lines they go to "Other changes" (`other`); otherwise they are
- * left out of the explanation and listed (`outside`).
+ * Units no section shows and noise didn't cut. A moved old copy is covered only when a section owns its new copy;
+ * otherwise it follows the new copy: cut with it, or left over with it. When all left-over units together have fewer
+ * than `FOCUS_OTHER_CHANGES_LINES` changed lines they go to "Other changes" (`other`); otherwise they are left out of
+ * the explanation and listed (`outside`).
  */
 export function focusLeftovers(
   index: FocusIndex,
   owners: ReadonlyMap<string, number>,
   cut: ReadonlySet<string>
-): { other: string[]; outside: OutsideCode[] } {
-  const left = [...index.units.values()].filter(
-    (unit) => !owners.has(unit.id) && !cut.has(unit.id) && !index.movedAway.has(unit.id)
-  );
+): FocusLeftovers {
+  const cutMoves: { id: string; to: string }[] = [];
+  const left: FocusUnit[] = [];
+  const done = new Set<string>();
+  for (const unit of index.units.values()) {
+    const to = index.movedAway.get(unit.id);
+    if (owners.has(unit.id) || cut.has(unit.id) || (to !== undefined && owners.has(to))) done.add(unit.id);
+    else if (to !== undefined && cut.has(to)) {
+      cutMoves.push({ id: unit.id, to });
+      done.add(unit.id);
+    } else left.push(unit);
+  }
   const lines = left.reduce((sum, unit) => sum + unit.slice.additions + unit.slice.deletions, 0);
-  if (lines < FOCUS_OTHER_CHANGES_LINES) return { other: left.map((unit) => unit.id), outside: [] };
+  for (const unit of left) done.add(unit.id);
+  const placed = new Set<string>();
+  const hunks = new Map<string, boolean>();
+  for (const unit of index.units.values()) hunks.set(unit.hunkId, (hunks.get(unit.hunkId) ?? true) && done.has(unit.id));
+  for (const [hunkId, all] of hunks) if (all) placed.add(hunkId);
+  if (lines < FOCUS_OTHER_CHANGES_LINES) return { other: left.map((unit) => unit.id), outside: [], cutMoves, placed };
   const first = (code: OutsideCode) => code.newLines.at(0)?.start ?? code.oldLines.at(0)?.start ?? 0;
-  return {
-    other: [],
-    outside: left
-      .map((unit) => ({
+  const moved = new Map<string, FocusUnit>();
+  for (const unit of left) {
+    const to = index.movedAway.get(unit.id);
+    if (to !== undefined && left.some((other) => other.id === to)) moved.set(to, unit);
+  }
+  const listed = new Set([...moved.values()].map((unit) => unit.id));
+  const outside = left
+    .filter((unit) => !listed.has(unit.id))
+    .map(outsideCode)
+    .sort((a, b) => a.filePath.localeCompare(b.filePath) || first(a) - first(b))
+    .flatMap((code) => {
+      const old = moved.get(code.id);
+      return old ? [code, { ...outsideCode(old), movedTo: { filePath: code.filePath, id: code.id } }] : [code];
+    });
+  return { other: [], outside, cutMoves, placed };
+}
+
+/** Moved old copies cut with their new copy, as entries for the noise left-out list, with where they moved. */
+export function focusMovedNoise(
+  index: FocusIndex,
+  cutMoves: readonly { id: string; to: string }[],
+  cut: ReadonlyMap<string, { reason: string; source: LeftOutHunk['source'] }>
+): LeftOutHunk[] {
+  return cutMoves.flatMap(({ id, to }) => {
+    const unit = index.units.get(id);
+    const target = index.units.get(to);
+    const lines = unit?.slice.removed.length ? unit.slice.removed : unit?.slice.oldLines;
+    if (!unit || !target || !lines?.length) return [];
+    const why = cut.get(target.hunkId);
+    return [
+      {
         filePath: unit.filePath,
-        id: unit.id,
-        label: unit.slice.label,
-        oldLines: unit.slice.oldLines,
-        newLines: unit.slice.newLines,
-        additions: unit.slice.additions,
-        deletions: unit.slice.deletions,
-      }))
-      .sort((a, b) => a.filePath.localeCompare(b.filePath) || first(a) - first(b)),
-  };
+        side: 'before' as const,
+        startLine: lines[0].start,
+        endLine: lines[lines.length - 1].end,
+        reason: `moved to ${target.filePath}${why ? `: ${why.reason}` : ''}`.slice(0, 160),
+        source: why?.source ?? 'rules',
+      },
+    ];
+  });
+}
+
+/**
+ * The file lines a focused writer may read as plain source (#562): its owned units' changed ranges on each side, with
+ * the first line of each definition around them for scope. Other sections' code is not plain context.
+ */
+export function focusFileWindows(
+  owned: readonly string[],
+  index: FocusIndex
+): Map<string, { base: LineRange[]; head: LineRange[] }> {
+  const windows = new Map<string, { base: LineRange[]; head: LineRange[] }>();
+  for (const id of owned) {
+    const unit = index.units.get(id);
+    if (!unit) continue;
+    const file = windows.get(unit.filePath) ?? { base: [], head: [] };
+    file.base.push(...unit.slice.oldLines);
+    file.head.push(...unit.slice.newLines);
+    for (const symbol of unit.slice.symbols)
+      (symbol.side === 'before' ? file.base : file.head).push({ start: symbol.start, end: symbol.start });
+    windows.set(unit.filePath, file);
+  }
+  return windows;
 }
 
 /** Each unit's hunk ID, once each in order: the writer's file contents and noise context work per hunk. */
@@ -289,7 +397,11 @@ export function cutHunk(header: string, content: string, ranges: readonly LineRa
     const body = lines.slice(range.start, range.end + 1);
     const oldCount = body.filter((line) => line[0] !== '+' && line[0] !== '\\').length;
     const newCount = body.filter((line) => line[0] !== '-' && line[0] !== '\\').length;
-    out.push({ header: `@@ -${old},${oldCount} +${now},${newCount} @@`, content: body.join('\n') });
+    // A side with no lines is numbered with the line before it, as in a unified diff (`-0,0`).
+    out.push({
+      header: `@@ -${oldCount ? old : old - 1},${oldCount} +${newCount ? now : now - 1},${newCount} @@`,
+      content: body.join('\n'),
+    });
   }
   return out;
 }
@@ -349,7 +461,7 @@ Your section displays exactly the code below, and nothing else from these files.
       ctx += `Moved from ${moved.filePath} (old lines ${moved.startLine}-${moved.endLine})${moved.renamed ? `, renamed from ${moved.renamed.from} to ${moved.renamed.to}` : ''}. Explain it as a move, on this new copy; the old copy is not shown.`;
       if (moved.body === 'identical') ctx += ' Its body is unchanged.\n';
       else {
-        const newSymbol = unit.slice.symbols.find((s) => s.side === 'after');
+        const newSymbol = movedSymbol(unit.slice, 'after');
         const newStart = newSymbol?.start ?? unit.slice.newLines.at(0)?.start ?? 1;
         const newEnd = newSymbol?.end ?? unit.slice.newLines.at(-1)?.end ?? newStart;
         const patch = createTwoFilesPatch(
