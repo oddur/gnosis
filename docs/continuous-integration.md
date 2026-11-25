@@ -20,6 +20,8 @@ The `Native suites needed` job decides whether a run gets the full macOS and Win
 - Markdown files, except under `tests/`, `src/`, `lib/`, `components/`, `scripts/`, `resources/` and `extensions/` (there Markdown can be test data, as in `tests/fixtures/conflicts`)
 - license files: `LICENSE`, `COPYING`, `NOTICE`, with or without an extension
 
+**Draft pull requests run the Linux suites only.** Iterating on a PR, with review fixes and updates from `main`, pushes again and again, and each push cancels the run before it. On 2026-11-25, 57% of runner time went to runs that were later cancelled. Marking the PR ready for review starts a full run with the macOS and Windows suites (the `ready_for_review` trigger), so they still run once before a merge. The `native-ci` label runs them on a draft too.
+
 Any other path runs them, so a new kind of file is covered without a change here. If the job cannot read the PR's labels or files, or fails, the suites run too. To run them on a docs-only PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, not from the event.
 
 On docs-only PRs the native jobs show as skipped, and Check runs the browser smoke suite. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.

@@ -16,7 +16,9 @@
   - `npm run test:perf`;
   - the conflict lab or resolver audit;
   - any repeated or looped run.
-- **Push the branch and let the PR's CI run them.** CI runs the Linux browser shards on every PR, and the macOS and Windows shards on any PR that changes more than docs ([list](docs/continuous-integration.md#native-browser-suites-on-pull-requests)). To reproduce a flaky failure, rerun the job or add diagnostics. Don't loop it locally.
+- **Open PRs as drafts, and mark them ready (`gh pr ready <n>`) only after review fixes are in.** A draft runs the Linux suites only. Marking it ready runs the macOS and Windows suites once.
+- **Push once per round:** batch the fixes from one review into a single push, and don't update a PR from `main` while its CI is running. Each push cancels the run in progress, and its runner time is lost.
+- **Push the branch and let the PR's CI run them.** CI runs the Linux browser shards on every PR, and the macOS and Windows shards on any ready (non-draft) PR that changes more than docs ([list](docs/continuous-integration.md#native-browser-suites-on-pull-requests)). To reproduce a flaky failure, rerun the job or add diagnostics. Don't loop it locally.
 - **Read failures from the job logs:** `gh api repos/oddur/gnosis/actions/jobs/<id>/logs` (`gh run view --log-failed` can come back empty).
 - Never set `GNOSIS_BROWSER_ON_HOST=1`.
 
