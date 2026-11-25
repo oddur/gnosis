@@ -29,7 +29,7 @@ The browser check also requires the root repository's dependencies (`npm ci` at 
 
 ## Docs
 
-User docs are MDX pages in `src/content/docs`, served at `/docs`. `npm run check:docs` checks every `<DocShot>` against `public/docs/screenshots` and its capture recipe in `scripts/docs-screenshots.json`, every `<Kbd>` against the app's shortcuts (the `?` cheatsheet plus `scripts/docs-shortcuts.json`), and every `<Setting>` against the Settings labels. `npm run build` runs it first, and builds the Pagefind search index last. The root `npm test` runs it too (`tests/site-docs.test.ts`). See DESIGN.md › Docs for the layout.
+User docs are MDX pages in `src/content/docs`, served at `/docs`. `npm run check:docs` checks every `<DocShot>` against `public/docs/screenshots` and its capture recipe in the root `scripts/docs-screenshots.json` (the capture pipeline's file, #577), every `<Kbd>` against the app's shortcuts (the `?` cheatsheet plus `scripts/docs-shortcuts.json`), and every `<Setting>` against the Settings labels. `npm run build` runs it first, and builds the Pagefind search index last. The root `npm test` runs it too (`tests/site-docs.test.ts`). See DESIGN.md › Docs for the layout.
 
 ## Deployment
 

@@ -2,7 +2,8 @@
 // Checks that the user docs (site/src/content/docs/*.mdx) agree with the app and with their screenshots.
 //
 //  a. Every <DocShot name="…"> has its light and dark captures (1600 and 960 pixels wide, each with a .json sidecar)
-//     and a capture recipe in scripts/docs-screenshots.json. A recipe marked `placeholder: true` is a warning.
+//     and a capture recipe in the root scripts/docs-screenshots.json (the capture pipeline's file). A placeholder
+//     image (its sidecar says `placeholder: true`) or a recipe marked `placeholder: true` is a warning.
 //  b. Every <Kbd keys="…"> is a shortcut the app has, and the Keyboard shortcuts page lists every shortcut the app has.
 //     The app has no single keymap. The shortcuts come from the ? cheatsheet (components/ShortcutOverlay.tsx, with
 //     lib/conflict-shortcuts.ts, DIFF_LAYOUT_KEYS and QUIET_CHANGES_KEY), plus scripts/docs-shortcuts.json for the
@@ -81,35 +82,26 @@ const at = (where) => `${where.file}:${where.line}`;
 
 const SHOT_VARIANTS = ['light', 'light-small', 'dark', 'dark-small'];
 
-function checkScreenshots(siteDir, docs, report) {
-  const recipePath = join(siteDir, 'scripts/docs-screenshots.json');
-  let recipes = [];
-  try {
-    const parsed = JSON.parse(readFileSync(recipePath, 'utf8'));
-    recipes = Array.isArray(parsed.screenshots) ? parsed.screenshots : undefined;
-    if (!recipes) throw new Error('it has no "screenshots" array');
-  } catch (error) {
-    report.errors.push(`site/scripts/docs-screenshots.json can't be read: ${error.message}`);
-    recipes = [];
-  }
-  const byName = new Map();
-  for (const [index, recipe] of recipes.entries()) {
-    const label = `site/scripts/docs-screenshots.json, screenshot ${index + 1}${recipe?.name ? ` ("${recipe.name}")` : ''}`;
-    const problems = [];
-    if (typeof recipe?.name !== 'string' || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(recipe.name))
-      problems.push('"name" must be lowercase words joined by hyphens');
-    if (typeof recipe?.suite !== 'string' && typeof recipe?.fixture !== 'string')
-      problems.push('it needs a "suite" (a test-workbench.mjs flag) or a "fixture" URL');
-    if (!(recipe?.viewport?.width > 0 && recipe?.viewport?.height > 0))
-      problems.push('"viewport" must be { "width", "height" } in CSS pixels');
-    if (typeof recipe?.steps !== 'string' || !recipe.steps.trim())
-      problems.push('"steps" must say what to do before the capture');
-    if (recipe?.placeholder !== undefined && recipe.placeholder !== true)
-      problems.push('"placeholder" is either true or left out');
-    if (problems.length) report.errors.push(`${label}: ${problems.join('; ')}.`);
-    if (typeof recipe?.name === 'string') {
-      if (byName.has(recipe.name)) report.errors.push(`${label}: the name is used twice.`);
-      byName.set(recipe.name, recipe);
+function checkScreenshots(siteDir, repoDir, docs, report) {
+  // The capture pipeline (scripts/capture-docs-screenshots.mjs) owns this file: { "recipes": [{ name, page, title,
+  // suite or fixture, viewport?, steps?, scene?, ready?, note?, placeholder? }] }. This check only needs the names.
+  const recipeFile = 'scripts/docs-screenshots.json';
+  const recipePath = join(repoDir, recipeFile);
+  /** @type {Map<string, { placeholder?: boolean }> | undefined} */
+  let byName;
+  if (existsSync(recipePath)) {
+    byName = new Map();
+    try {
+      const recipes = JSON.parse(readFileSync(recipePath, 'utf8')).recipes;
+      if (!Array.isArray(recipes)) throw new Error('it has no "recipes" array');
+      for (const [index, recipe] of recipes.entries()) {
+        if (typeof recipe?.name !== 'string' || !recipe.name)
+          report.errors.push(`${recipeFile}: recipe ${index + 1} has no "name".`);
+        else if (byName.has(recipe.name)) report.errors.push(`${recipeFile}: "${recipe.name}" is used twice.`);
+        else byName.set(recipe.name, recipe);
+      }
+    } catch (error) {
+      report.errors.push(`${recipeFile} can't be read: ${error.message}`);
     }
   }
 
@@ -135,18 +127,7 @@ function checkScreenshots(siteDir, docs, report) {
       report.errors.push(
         `${at(shot)}: DocShot "${name}" is missing site/public/docs/screenshots/${missing.join(', ')}.`
       );
-    const recipe = byName.get(name);
-    if (!recipe) {
-      report.errors.push(`${at(shot)}: DocShot "${name}" has no capture recipe in site/scripts/docs-screenshots.json.`);
-      continue;
-    }
-    if (recipe.placeholder) {
-      report.warnings.push(
-        `${at(shot)}: DocShot "${name}" shows a placeholder image. The capture pipeline replaces it.`
-      );
-      continue;
-    }
-    // A placeholder image can't pass as a capture: its sidecar says so until the pipeline replaces it.
+    // A placeholder image says so in its sidecar until the pipeline captures the real one.
     const placeholders = SHOT_VARIANTS.filter((variant) => {
       const sidecar = join(dir, `${name}-${variant}.webp.json`);
       if (!existsSync(sidecar)) return false;
@@ -157,14 +138,23 @@ function checkScreenshots(siteDir, docs, report) {
         return false;
       }
     });
-    if (placeholders.length)
-      report.errors.push(
-        `${at(shot)}: DocShot "${name}" has placeholder images (${placeholders.join(', ')}), ` +
-          'but its recipe is not marked "placeholder": true. Capture them, or mark the recipe.'
+    const recipe = byName?.get(name);
+    if (placeholders.length || recipe?.placeholder)
+      report.warnings.push(
+        `${at(shot)}: DocShot "${name}" shows a placeholder image. The capture pipeline replaces it.`
       );
+    if (recipe) continue;
+    if (byName) report.errors.push(`${at(shot)}: DocShot "${name}" has no capture recipe in ${recipeFile}.`);
+    // Before the capture pipeline lands there is no recipe file. A placeholder may wait for it; a real image may not.
+    else if (placeholders.length < SHOT_VARIANTS.length)
+      report.errors.push(`${at(shot)}: DocShot "${name}" needs a capture recipe, but ${recipeFile} does not exist.`);
   }
-  for (const name of byName.keys())
-    if (!used.has(name)) report.warnings.push(`site/scripts/docs-screenshots.json: "${name}" is not used by any page.`);
+  if (!byName) report.warnings.push(`${recipeFile} does not exist yet, so no screenshot has a capture recipe.`);
+  else {
+    const unused = [...byName.keys()].filter((name) => !used.has(name));
+    if (unused.length)
+      report.warnings.push(`${unused.length} capture recipes are on no page yet: ${unused.join(', ')}.`);
+  }
   report.stats.screenshots = used.size;
 }
 
@@ -476,7 +466,7 @@ export function checkDocs({ siteDir = SITE_DIR, repoDir = REPO_DIR } = {}) {
   const docs = readDocs(siteDir);
   if (!docs.length) report.errors.push('site/src/content/docs has no .mdx pages.');
   checkPages(docs, report);
-  checkScreenshots(siteDir, docs, report);
+  checkScreenshots(siteDir, repoDir, docs, report);
   checkShortcuts(siteDir, repoDir, docs, report);
   checkSettings(repoDir, docs, report);
   return report;
