@@ -115,7 +115,7 @@ void test('a hunk cut as noise is marked as left out, unless a marker already na
       level: 'conservative' as const,
       leftOut: [
         { filePath: 'a.ts', side: 'before' as const, startLine: 31, endLine: 31, reason: 'comments only', source: 'rules' as const },
-        { filePath: 'a.ts', side: 'after' as const, startLine: 18, endLine: 18, reason: 'formatting', source: 'rules' as const },
+        { filePath: 'a.ts', side: 'before' as const, startLine: 18, endLine: 18, reason: 'formatting', source: 'rules' as const },
       ],
     },
   };
@@ -131,6 +131,21 @@ void test('a hunk cut as noise is marked as left out, unless a marker already na
     name: 'Left out of the explanation (noise): comments only',
     detail: 'comments only',
   });
+});
+
+void test('a noise marker is hidden only by a marker on its own side of the diff', () => {
+  const r = {
+    ...review([[A]]),
+    noiseReduction: {
+      level: 'conservative' as const,
+      // New line 12 is fn a's added line, but fn a is marked on its old side: the noise marker still shows.
+      leftOut: [{ filePath: 'a.ts', side: 'after' as const, startLine: 12, endLine: 12, reason: 'formatting', source: 'rules' as const }],
+    },
+  };
+  assert.deepEqual(brief(explainedMarkers(r)), [
+    ['outside', 'after', 12, null, 'formatting'],
+    ['section', 'before', 12, 1, 'fn a'],
+  ]);
 });
 
 void test('no Focused sections, or not applied: no markers', () => {

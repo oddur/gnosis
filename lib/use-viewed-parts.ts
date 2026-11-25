@@ -3,13 +3,15 @@ import { readReviewState, scheduleReviewStateWrite, writeReviewState } from './r
 import { subjectForReview } from './workbench';
 import type { ReviewGuide } from './types';
 import {
-  clearUnviewed,
   explanationFileParts,
   partCheckbox,
   readViewedParts,
+  reconcileParts,
   sectionPartSeen,
   togglePart,
   viewedPartsKey,
+  viewedPartsValue,
+  type SavedParts,
 } from './viewed-parts';
 
 /**
@@ -25,26 +27,27 @@ export function useViewedParts(
   const parts = useMemo(() => explanationFileParts(review), [review.slides, review.focusedSections, review.noiseReduction]);
   const revision = review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId ?? '';
   const key = viewedPartsKey(subjectForReview(review), revision);
-  const read = () => {
+  const read = (): SavedParts => {
     try {
       return readViewedParts(readReviewState(key), revision);
     } catch {
       // Saved progress may still be loading: start with no parts seen (fail closed).
-      return new Set<string>();
+      return { seen: new Set(), viewed: new Set() };
     }
   };
-  const [state, setState] = useState(() => ({ key, seen: read() }));
-  const seen = state.key === key ? state.seen : read();
-  if (state.key !== key) setState({ key, seen });
+  const [state, setState] = useState(() => ({ key, ...read() }));
+  const current = state.key === key ? state : { key, ...read() };
+  if (state.key !== key) setState(current);
+  const seen = current.seen;
   // The pending save, per key: a newer save of the same key replaces it; one of another key still runs.
   const pending = useRef<{ key: string; cancel: () => void } | undefined>(undefined);
   const save = useCallback(
-    (next: Set<string>) => {
-      setState({ key, seen: next });
+    (next: SavedParts) => {
+      setState({ key, ...next });
       if (pending.current?.key === key) pending.current.cancel();
       // Quit runs a pending save at once.
       const cancel = scheduleReviewStateWrite(
-        () => writeReviewState(key, next.size ? { revision, units: [...next] } : null).catch(() => {}),
+        () => writeReviewState(key, viewedPartsValue(revision, next)).catch(() => {}),
         300
       );
       pending.current = { key, cancel };
@@ -59,27 +62,26 @@ export function useViewedParts(
     (filePath: string, section: number) => sectionPartSeen(parts?.get(filePath), section, seen, viewedFiles.has(filePath)),
     [parts, seen, viewedFiles]
   );
-  // Files a section's checkbox un-views keep their other parts seen; files un-viewed elsewhere lose them (#564).
-  const ownUnview = useRef(new Set<string>());
+  // This page's own Viewed changes until they apply: they are not un-views from elsewhere.
+  const own = useRef(new Map<string, boolean>());
   const change = useCallback(
     (filePath: string, section: number, next: boolean) => {
       const result = togglePart(parts, filePath, section, next, seen, (path) => viewedFiles.has(path));
-      if (parts) save(result.seen);
       for (const [path, value] of result.viewed) {
-        if (!value) ownUnview.current.add(path);
+        own.current.set(path, value);
         void setFileViewed(path, value);
       }
+      if (parts) save(reconcileParts(parts, { seen: result.seen, viewed: current.viewed }, viewedFiles, own.current));
     },
-    [parts, seen, viewedFiles, setFileViewed, save]
+    [parts, seen, current.viewed, viewedFiles, setFileViewed, save]
   );
-  const before = useRef<ReadonlySet<string>>(viewedFiles);
+  // On load, and whenever Viewed changes: a file un-viewed elsewhere since the parts were saved loses them (#564).
   useEffect(() => {
-    const previous = before.current;
-    before.current = viewedFiles;
+    for (const [path, value] of own.current) if (viewedFiles.has(path) === value) own.current.delete(path);
     if (!parts) return;
-    const unviewed = [...previous].filter((path) => !viewedFiles.has(path) && !ownUnview.current.delete(path));
-    const next = unviewed.length ? clearUnviewed(parts, seen, unviewed) : seen;
-    if (next.size !== seen.size) save(next);
+    const next = reconcileParts(parts, current, viewedFiles, own.current);
+    const same = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((x) => b.has(x));
+    if (!same(next.seen, current.seen) || !same(next.viewed, current.viewed)) save(next);
   });
   return { parts, checkbox, partSeen, change };
 }

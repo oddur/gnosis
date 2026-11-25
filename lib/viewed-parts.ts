@@ -178,9 +178,40 @@ export function clearUnviewed(
 /** The review state key of a PR's seen parts: per subject and head, so a new head starts with none, as Viewed does. */
 export const viewedPartsKey = (subject: string, revision: string) => `gnosis-viewed-parts:${subject}:${revision}`;
 
+/** Seen parts as saved: the units seen, and the files that were Viewed when they were saved. */
+export interface SavedParts {
+  seen: Set<string>;
+  viewed: Set<string>;
+}
+
+const strings = (value: unknown) =>
+  new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+
 /** Saved seen parts, kept only when they were saved for this head. */
-export function readViewedParts(value: unknown, revision: string): Set<string> {
-  const saved = (value ?? {}) as { revision?: unknown; units?: unknown };
-  if (saved.revision !== revision || !Array.isArray(saved.units)) return new Set();
-  return new Set(saved.units.filter((unit): unit is string => typeof unit === 'string'));
+export function readViewedParts(value: unknown, revision: string): SavedParts {
+  const saved = (value ?? {}) as { revision?: unknown; units?: unknown; viewed?: unknown };
+  if (saved.revision !== revision || !Array.isArray(saved.units)) return { seen: new Set(), viewed: new Set() };
+  return { seen: strings(saved.units), viewed: strings(saved.viewed) };
+}
+
+/** The value saved for seen parts; null when none are seen. */
+export const viewedPartsValue = (revision: string, parts: SavedParts) =>
+  parts.seen.size ? { revision, units: [...parts.seen], viewed: [...parts.viewed] } : null;
+
+/**
+ * Seen parts against the files Viewed now. A file that was Viewed when the parts were saved and is not now was
+ * un-viewed elsewhere (in Changes, on GitHub, or while the Explanation was closed): it loses its seen parts, so one
+ * re-check can't view it again (fail closed). `pending` are this page's own Viewed changes not yet applied, with the
+ * value they set: they count as done. The result's `viewed` is the explanation's files Viewed now, to save.
+ */
+export function reconcileParts(
+  files: ReadonlyMap<string, FileParts> | undefined,
+  saved: SavedParts,
+  viewedNow: ReadonlySet<string>,
+  pending: ReadonlyMap<string, boolean> = new Map()
+): SavedParts {
+  const isViewed = (path: string) => pending.get(path) ?? viewedNow.has(path);
+  const unviewed = [...saved.viewed].filter((path) => !isViewed(path));
+  const viewed = new Set([...(files?.keys() ?? [])].filter(isViewed));
+  return { seen: unviewed.length ? clearUnviewed(files, saved.seen, unviewed) : saved.seen, viewed };
 }

@@ -8,10 +8,12 @@ import {
   partCheckbox,
   partsProgress,
   readViewedParts,
+  reconcileParts,
   sectionPartSeen,
   togglePart,
   unitId,
   viewedPartsKey,
+  viewedPartsValue,
 } from '../lib/viewed-parts';
 import type { DiffHunk, ReviewGuide } from '../lib/types';
 
@@ -188,8 +190,31 @@ void test('seen parts are kept per head: a new head starts with none', () => {
   const key = viewedPartsKey('https://github.com/o/r/pull/1', 'h1');
   assert.ok(isReviewStateKey(key), 'The key is saved review state');
   assert.notEqual(key, viewedPartsKey('https://github.com/o/r/pull/1', 'h2'));
-  const saved = { revision: 'h1', units: ['a:1', 'a:2', 3] };
-  assert.deepEqual([...readViewedParts(saved, 'h1')], ['a:1', 'a:2']);
-  assert.deepEqual([...readViewedParts(saved, 'h2')], [], 'Parts saved for another head are dropped');
-  assert.deepEqual([...readViewedParts(undefined, 'h1')], []);
+  const saved = { revision: 'h1', units: ['a:1', 'a:2', 3], viewed: ['a.ts'] };
+  assert.deepEqual(readViewedParts(saved, 'h1'), { seen: new Set(['a:1', 'a:2']), viewed: new Set(['a.ts']) });
+  assert.deepEqual(readViewedParts(saved, 'h2'), { seen: new Set(), viewed: new Set() }, 'Parts saved for another head are dropped');
+  assert.deepEqual(readViewedParts(undefined, 'h1'), { seen: new Set(), viewed: new Set() });
+  // Saved before Viewed was kept with them: no files to compare against.
+  assert.deepEqual(readViewedParts({ revision: 'h1', units: ['a:1'] }, 'h1').viewed, new Set());
+});
+
+void test('a file un-viewed while the Explanation was closed loses its seen parts on load', () => {
+  const parts = explanationFileParts(review(SLIDES));
+  // Saved with a.ts Viewed through both of its parts.
+  const value = viewedPartsValue('h1', { seen: new Set(['a:1', 'a:2', 'a:3']), viewed: new Set(['a.ts']) });
+  const loaded = readViewedParts(value, 'h1');
+  // a.ts was un-viewed in Changes, on GitHub or before a restart.
+  const now = reconcileParts(parts, loaded, new Set());
+  assert.deepEqual([...now.seen], [], 'Both parts are unseen');
+  assert.deepEqual([...now.viewed], []);
+  // One re-check does not view it.
+  assert.deepEqual(marks(togglePart(parts, 'a.ts', 1, true, now.seen, none)), {});
+  // Still Viewed: its parts stay seen.
+  assert.deepEqual(reconcileParts(parts, loaded, new Set(['a.ts'])).seen, loaded.seen);
+  // This page's own un-view, not applied yet, is not an un-view from elsewhere.
+  const own = reconcileParts(parts, { seen: new Set(['a:1', 'a:2']), viewed: new Set() }, new Set(['a.ts']), new Map([['a.ts', false]]));
+  assert.deepEqual([...own.seen], ['a:1', 'a:2']);
+  assert.deepEqual([...own.viewed], []);
+  // A file viewed since the save is recorded, so a later un-view is caught.
+  assert.deepEqual([...reconcileParts(parts, { seen: new Set(['a:1']), viewed: new Set() }, new Set(['b.ts'])).viewed], ['b.ts']);
 });

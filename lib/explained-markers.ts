@@ -115,7 +115,7 @@ export function explainedMarkers(review: Focused | undefined): Map<string, Expla
   // Hunks cut as noise (moved old copies cut with their new copy among them): left out too, unless a marker above
   // already says where that code is.
   for (const hunk of review.noiseReduction?.leftOut ?? []) {
-    const marked = (focused.get(hunk.filePath) ?? []).some((m) => m.start >= hunk.startLine && m.start <= hunk.endLine);
+    const marked = (focused.get(hunk.filePath) ?? []).some((m) => m.side === hunk.side && m.start >= hunk.startLine && m.start <= hunk.endLine);
     if (!marked)
       add(focused, hunk.filePath, { kind: 'outside', noise: true, side: hunk.side, start: hunk.startLine, names: hunk.reason ? [hunk.reason] : [] });
   }
