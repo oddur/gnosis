@@ -73,9 +73,17 @@ export function showScopePlan(
     const shown = part.hunk.rows.reduce((n, row) => n + (row.type === '-' ? 0 : 1), 0);
     changed.push({ top: part.hunk.newStart, bottom: part.hunk.newStart + shown - 1 });
   }
-  const opaque = gaps.filter((gap) => gap.opaque);
+  // The lines each opaque gap can't reveal. A gap over changes a focused section leaves out (#563) knows where they
+  // are: the unchanged lines between them and the hunks reveal, so a short definition there shows whole, as in Changes.
+  const opaque = gaps
+    .filter((gap) => gap.opaque)
+    .map((gap) =>
+      gap.hiddenIn?.length
+        ? { start: gap.newStart + (gap.revealDown ?? 0), end: gap.newEnd === undefined ? Infinity : gap.newEnd - (gap.revealUp ?? 0) }
+        : { start: gap.newStart, end: gap.newEnd ?? Infinity }
+    );
   const fits = (definition: SyntaxDefinition) => {
-    if (opaque.some((gap) => gap.newStart <= definition.end && (gap.newEnd ?? Infinity) >= definition.start)) return undefined;
+    if (opaque.some((gap) => gap.start <= definition.end && gap.end >= definition.start)) return undefined;
     const inside = changed.filter((hunk) => hunk.top <= definition.end && Math.max(hunk.top, hunk.bottom) >= definition.start);
     if (!inside.length) return undefined;
     const top = Math.min(...inside.map((hunk) => hunk.top));
