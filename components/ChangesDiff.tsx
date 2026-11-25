@@ -2030,11 +2030,14 @@ export function ChangesDiff<A>({
         reveal: from !== undefined && to !== undefined && from < to ? [from, to - 1] : undefined,
         here: [start, Math.max(start, Number(crumb.dataset.signatureEnd) || start)],
         section: [start, Math.max(start, Number(crumb.dataset.end) || start)],
-        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed.
+        // From the keyboard, focus stays on the pinned breadcrumb, now naming where the reader landed: on the crumb that
+        // was pressed. On the way there the reader can pass lines outside that definition, and the breadcrumb rewritten
+        // for them moves focus to their innermost crumb, so focus somewhere in the breadcrumb is not enough.
         onLanded: keyboard
           ? () => {
               const slot = [...pinned].find((b) => b.isConnected && b.dataset.live === 'scope')?.querySelector<HTMLElement>('.diff-gap-live');
-              if (slot && !slot.contains(document.activeElement)) focusCrumb(slot, String(start));
+              const active = document.activeElement as HTMLElement | null;
+              if (slot && !(active && slot.contains(active) && active.dataset.start === String(start))) focusCrumb(slot, String(start));
             }
           : undefined,
       });
