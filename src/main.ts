@@ -2985,7 +2985,11 @@ async function runBackgroundGeneration(
         focusOther = focusDiffHunks(leftovers.other, focus, hunkMap);
         focusedSections = { repository: explanationRepository(source), outside: leftovers.outside };
         const movedNoise = focusMovedNoise(focus, leftovers.cutMoves, noise.cut);
-        if (movedNoise.length) noise = { ...noise, leftOut: [...noise.leftOut, ...movedNoise] };
+        if (movedNoise.length)
+          noise = {
+            ...noise,
+            leftOut: [...noise.leftOut, ...movedNoise].sort((a, b) => a.filePath.localeCompare(b.filePath) || a.startLine - b.startLine),
+          };
         // A hunk is placed only when every unit of it has a place; any other goes whole to "Other changes".
         for (const hunkId of leftovers.placed) assignedIds.add(hunkId);
       } else for (const id of owners.keys()) assignedIds.add(id);

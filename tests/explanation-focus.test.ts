@@ -415,3 +415,39 @@ void describe('review fixes', () => {
     assert.equal(focusedSectionsChanged({ applied: false }, false), false);
   });
 });
+
+void describe('review fixes, round 2', () => {
+  void test('the planner cannot cut a moved old copy as noise while a topic lists its new copy', () => {
+    const index = focusIndex(HUNKS, sliced());
+    const noise = [{ hunkId: 'hunk-2', reason: 'deleted' }, { hunkId: 'hunk-1', reason: 'y' }];
+    assert.deepEqual(focusPlannerNoise(noise, [topic('T', ['hunk-0:b'], 1)], index), [{ hunkId: 'hunk-1', reason: 'y' }]);
+    assert.deepEqual(focusPlannerNoise(noise, [topic('T', ['hunk-0:a'], 1)], index), noise);
+  });
+
+  void test("an enclosing signature line comes alone, without another section's code around it", () => {
+    // A slice deep inside a large definition: its signature is far above, next to code another section shows.
+    const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`);
+    lines[0] = 'impl Big {';
+    const head = { 'src/queue.ts': lines.join('\n') };
+    const deep = sliced().map((h) =>
+      h.hunkId === 'hunk-0'
+        ? {
+            ...h,
+            slices: h.slices.map((sl) =>
+              sl.id === 'hunk-0:c'
+                ? { ...sl, newLines: [{ start: 50, end: 55 }], symbols: [{ ...sl.symbols[0], start: 1, end: 60, span: { start: 1, end: 60 } }] }
+                : sl
+            ),
+          }
+        : h
+    );
+    const windows = focusFileWindows(['hunk-0:c'], focusIndex(HUNKS, deep));
+    assert.deepEqual(windows.get('src/queue.ts')?.head, [{ start: 50, end: 55 }, { start: 1, end: 1, pad: 0 }]);
+    const t = topic('B', ['hunk-0'], 1);
+    const ctx = buildTopicContext(t, hunkMap, {}, head, {}, 'PR', '', 'arc', [t], null, [], new Map(), '<diff_hunks>\n</diff_hunks>', windows);
+    const after = /<file_contents_after>([\s\S]*?)<\/file_contents_after>/.exec(ctx)?.[1] ?? '';
+    assert.match(after, /\n1: impl Big \{\n/);
+    assert.doesNotMatch(after, /\n2: line 2\n/, 'no padding around the signature');
+    assert.match(after, /\n42: line 42\n/);
+  });
+});
