@@ -174,6 +174,12 @@
       "label": "Diagram: actual size",
       "source": "components/DiagramViewport.tsx",
       "evidence": "event.key === '1' ? 1"
+    },
+    {
+      "keys": "v",
+      "label": "Mark the symbol selected in the file tree as viewed",
+      "source": "components/ChangesSymbolTree.tsx",
+      "evidence": "(event.key === 'v' || event.key === 'V')"
     }
   ]
 }
