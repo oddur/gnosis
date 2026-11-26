@@ -9,6 +9,8 @@ import { patchOf } from './syntax-scope';
  */
 export const TREE_SYMBOLS_FILE = 'src/symbols/store.ts';
 export const TREE_SYMBOLS_NEXT_FILE = 'src/symbols/tasks.ts';
+/** An added file with one function taller than the screen: V pages through it before it ticks it. */
+export const TREE_SYMBOLS_LONG_FILE = 'src/zlong/report.ts';
 
 const filler = Array.from({ length: 30 }, (_, i) => `export const pad${i} = ${i};`);
 const before = [
@@ -56,12 +58,13 @@ const tasksBefore = ['export function start() {', '  return 1;', '}', '', ...fil
 const tasksAfter = tasksBefore.map((line) => (line === '  return 1;' ? '  return 2;' : line));
 
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
-const changed = (path: string, changeId: string, old: string[], next: string[]): PrChangeFile => {
+const longAfter = ['export function report(rows: number[]): number {', '  let total = 0;', ...Array.from({ length: 80 }, (_, i) => `  total += rows[${i}] ?? ${i};`), '  return total;', '}'];
+const changed = (path: string, changeId: string, old: string[], next: string[], status: PrChangeFile['status'] = 'modified'): PrChangeFile => {
   const patch = patchOf(old, next);
   const lines = patch.split('\n');
   return {
     path,
-    status: 'modified',
+    status,
     additions: lines.filter((line) => line.startsWith('+')).length,
     deletions: lines.filter((line) => line.startsWith('-')).length,
     changeId,
@@ -71,8 +74,10 @@ const changed = (path: string, changeId: string, old: string[], next: string[]):
 export const treeSymbolsFiles: PrChangeFile[] = [
   changed(TREE_SYMBOLS_FILE, 'tree-symbols-v1', before, after),
   changed(TREE_SYMBOLS_NEXT_FILE, 'tree-symbols-tasks-v1', tasksBefore, tasksAfter),
+  changed(TREE_SYMBOLS_LONG_FILE, 'tree-symbols-long-v1', [], longAfter, 'added'),
 ];
 export function treeSymbolsContents(path: string): PrFileContents | undefined {
-  const sides = path === TREE_SYMBOLS_FILE ? [before, after] : path === TREE_SYMBOLS_NEXT_FILE ? [tasksBefore, tasksAfter] : undefined;
+  const sides =
+    path === TREE_SYMBOLS_FILE ? [before, after] : path === TREE_SYMBOLS_NEXT_FILE ? [tasksBefore, tasksAfter] : path === TREE_SYMBOLS_LONG_FILE ? [[], longAfter] : undefined;
   return sides && { before: { kind: 'text', content: text(sides[0]) }, after: { kind: 'text', content: text(sides[1]) } };
 }

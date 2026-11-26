@@ -14,6 +14,7 @@ import { definitionNoun } from '../lib/hunk-scopes';
 import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
+import { usePaging } from '../lib/review-paging';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
 import { FILE_STOP, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
@@ -37,6 +38,12 @@ const VIEWED_MARK = '✓';
  * info ink in place of its counts, which move to the tooltip. The glyph reads at 12 px where a dot reads as a bullet.
  */
 const CHANGED_TEXT = '↻ Changed';
+/** An item V is paging through: how much of it the reader has seen, muted, in place of its counts. */
+const reading = (share: number, rest: string) => ({
+  text: `Reading ${share}%`,
+  parts: [{ text: `Reading ${share}%`, color: 'var(--muted-foreground)' }],
+  title: `Press V to continue reading; it's marked once you've seen all of it. ${rest}`,
+});
 const changedItem = (added: number, deleted: number, rest: string) => ({
   text: CHANGED_TEXT,
   parts: [{ text: CHANGED_TEXT, color: CHANGED_COLOR }],
@@ -165,9 +172,16 @@ export function ChangesSymbolTree({
       if (source && value.state !== 'loading') ensureCarried(source.fileKey, value.state === 'ready' ? value : undefined);
     }
   }, [known, supported]);
-  const progressSignature = `${carried}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
-  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged });
-  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged };
+  // An item V is paging through reads "Reading 40%" until it is ticked (lib/review-paging.ts).
+  const pagingNow = usePaging();
+  const progressSignature = `${carried}\n${pagingNow ? `${pagingNow.key}:${pagingNow.id}:${pagingNow.share}` : ''}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
+  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow });
+  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow };
+  /** The share seen of the item V is paging through, if it is this row's. */
+  const readingNow = (key: string, id: string) => {
+    const now = current.current.pagingNow;
+    return now && now.key === key && now.id === id ? now.share : undefined;
+  };
   const rowAt = (path: string | null | undefined): TreeRow | undefined => (path ? current.current.layout.rows.get(path) : undefined);
   /** What the menus, the selection count and the Viewed actions know a row by: a file's key, a folder's path. */
   const appPath = (path: string): string | undefined => {
@@ -229,6 +243,8 @@ export function ChangesSymbolTree({
           ],
           title: `${added} additions, ${deleted} deletions ${imports ? 'to imports' : 'outside every function and class'}`,
         };
+        const share = readingNow(row.key, TOP_LEVEL_ID);
+        if (share !== undefined) return reading(share, counts.title);
         return topSource && isUpdated(topSource.fileKey, TOP_LEVEL_ID) ? changedItem(added, deleted, counts.title) : counts;
       }
       if (row.type !== 'symbol') return null;
@@ -262,6 +278,8 @@ export function ChangesSymbolTree({
         ],
         title: `${spoken}. ${viewed ? 'Viewed' : `${node.added} additions, ${node.deleted} deletions`}${node.quiet ? `. ${node.quiet}: every change is quiet` : ''}${node.moved ? `. ${node.moved}` : ''}`,
       };
+      const share = viewed ? undefined : readingNow(row.key, node.id);
+      if (share !== undefined) return reading(share, spoken);
       return !viewed && source && isUpdated(source.fileKey, node.id) ? changedItem(node.added, node.deleted, spoken) : decoration;
     },
   });

@@ -289,13 +289,20 @@ export function currentItem({
   moved = false,
   focused,
   reading,
+  paging,
 }: {
   target?: ReviewItem;
   moved?: boolean;
   focused?: ReviewItem;
   reading?: ReviewItem;
+  /**
+   * A long item V was paging through (lib/review-paging.ts): after the reader's own scroll, it stays current while
+   * some of its changed lines are on screen and not all have been seen, over a neighbour that merely peeks in.
+   */
+  paging?: { item: ReviewItem; onScreen: boolean; done: boolean };
 }): ReviewItem | undefined {
   if (target && !moved) return target;
+  if (paging && paging.onScreen && !paging.done) return paging.item;
   return focused ?? reading;
 }
 

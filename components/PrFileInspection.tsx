@@ -262,6 +262,14 @@ export function PrFileInspection({
     status: contents?.lfs ? undefined : entry.file.status,
     noiseFilter,
   });
+  // Each review item's changed lines, for V to page through a long one before it ticks it (lib/review-paging.ts).
+  const pager = useMemo(
+    () =>
+      symbolTree && model.symbols && model.symbolLines
+        ? { fileKey: activeKey, lines: new Map(model.symbols.map((symbol) => [symbol.id, model.symbolLines?.get(symbol.id) ?? []] as const)) }
+        : undefined,
+    [symbolTree, model.symbols, model.symbolLines, activeKey]
+  );
   // The symbols the reader may tick by scrolling through them: the outline's own, each with its changed lines.
   const autoView = useMemo(
     () =>
@@ -919,6 +927,7 @@ export function PrFileInspection({
                   symbolKey={symbolTree ? activeKey : undefined}
                   autoView={symbolTree ? autoView : undefined}
                   changedLines={model.changedLines}
+                  pager={pager}
                   onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}

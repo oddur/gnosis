@@ -30,6 +30,7 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
+import { PAGE_OVERLAP_LINES, registerPager } from '../lib/review-paging';
 import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
@@ -938,6 +939,61 @@ export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 /** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
 const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
 
+/**
+ * The diff's lines on screen, as places (`diffRowPositions`), first and last: the first and last code lines below the
+ * pinned headers, found by a few hit tests. Undefined while none show, or a slice still mounting is in view (its
+ * estimate, not its lines). The scrolled-through ticks and V's paging both read the screen this way.
+ */
+function diffOnScreen(
+  element: HTMLElement,
+  scroller: HTMLElement,
+  header: HTMLElement | null | undefined,
+  positions: ReadonlyMap<string, number>,
+  split: boolean
+): readonly [number, number] | undefined {
+  const place = (point: LinePoint | undefined) => point && positions.get(`${point.side === 'before' ? 'b' : 'a'}${point.line}`);
+  /** The first code line from `y` on, stepping a code line at a time towards `toward`, up to a few lines. */
+  const probe = (x: number, y: number, toward: 1 | -1, limit: number) => {
+    for (let step = 0; step < AUTO_PROBES; step++) {
+      const at = y + toward * step * CODE_LINE_HEIGHT;
+      if (toward === 1 ? at > limit : at < limit) return undefined;
+      const found = place(lineAtPoint(x, at, element));
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  if (document.visibilityState === 'hidden' || !element.checkVisibility()) return undefined;
+  const view = scroller.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  const covered = codeTop(element, view, header);
+  const top = Math.max(view.top, box.top, covered) + 2;
+  const bottom = Math.min(view.bottom, box.bottom) - 2;
+  if (bottom <= top) return undefined;
+  // A slice still waiting to mount shows its estimate, not its lines: nothing between counts as seen.
+  for (const slice of element.querySelectorAll('.changes-slice:not([data-mounted])')) {
+    const r = slice.getBoundingClientRect();
+    if (r.bottom > top && r.top < bottom) return undefined;
+  }
+  const column = element.querySelector('[data-hunk-header] .diff-gap-where');
+  if (!column) return undefined;
+  // The code's text column; in the split diff, the new side's too, for rows that only add.
+  const xs = [column.getBoundingClientRect().left + 2, ...(split ? [box.left + box.width * 0.75] : [])];
+  const edge = (y: number, toward: 1 | -1, limit: number) => {
+    const found = xs.map((x) => probe(x, y, toward, limit)).filter((value) => value !== undefined);
+    return found.length ? (toward === 1 ? Math.min(...found) : Math.max(...found)) : undefined;
+  };
+  const first = edge(top, 1, bottom);
+  const last = edge(bottom, -1, top);
+  return first !== undefined && last !== undefined && first <= last ? [first, last] : undefined;
+}
+/** Below the file's sticky header and the hunk header pinned under it: lines above this are covered. */
+function codeTop(element: HTMLElement, view: DOMRect, header: HTMLElement | null | undefined) {
+  return Math.max(
+    header?.getBoundingClientRect().bottom ?? view.top,
+    element.querySelector('[data-hunk-header][data-stuck]')?.getBoundingClientRect().bottom ?? view.top
+  );
+}
+
 /** The scrolled-through ticks look at the view at most this often (lib/symbol-auto-view.ts). */
 const LOOK_MS = 250;
 /** Lines each of their two probes steps over, past a comment or a hunk header, before the look gives up. */
@@ -1506,6 +1562,7 @@ export function ChangesDiff<A>({
   symbolKey,
   autoView,
   changedLines,
+  pager,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1579,6 +1636,11 @@ export function ChangesDiff<A>({
    * hunks say so. Changes and Explanation topics pass the same, from the file's model.
    */
   changedLines?: ReadonlySet<string>;
+  /**
+   * In Changes with symbol rows: each review item's changed lines, so V can page through an item taller than the
+   * screen before it ticks it (lib/review-paging.ts).
+   */
+  pager?: { fileKey: string; lines: ReadonlyMap<string, readonly string[]> };
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1868,46 +1930,7 @@ export function ChangesDiff<A>({
     let lastTop = scroller.scrollTop;
     let lastAt = performance.now();
     let inView = false;
-    const place = (point: LinePoint | undefined) => point && positions.get(`${point.side === 'before' ? 'b' : 'a'}${point.line}`);
-    /** The first code line from `y` on, stepping a code line at a time towards `toward`, up to a few lines. */
-    const probe = (x: number, y: number, toward: 1 | -1, limit: number) => {
-      for (let step = 0; step < AUTO_PROBES; step++) {
-        const at = y + toward * step * CODE_LINE_HEIGHT;
-        if (toward === 1 ? at > limit : at < limit) return undefined;
-        const found = place(lineAtPoint(x, at, element));
-        if (found !== undefined) return found;
-      }
-      return undefined;
-    };
-    const onScreen = (): readonly [number, number] | undefined => {
-      if (document.visibilityState === 'hidden' || !element.checkVisibility()) return undefined;
-      const view = scroller.getBoundingClientRect();
-      const box = element.getBoundingClientRect();
-      // Below the file's sticky header and the hunk header pinned under it: lines there are covered.
-      const covered = Math.max(
-        stickyUnder?.current?.getBoundingClientRect().bottom ?? view.top,
-        element.querySelector('[data-hunk-header][data-stuck]')?.getBoundingClientRect().bottom ?? view.top
-      );
-      const top = Math.max(view.top, box.top, covered) + 2;
-      const bottom = Math.min(view.bottom, box.bottom) - 2;
-      if (bottom <= top) return undefined;
-      // A slice still waiting to mount shows its estimate, not its lines: nothing between counts as seen.
-      for (const slice of element.querySelectorAll('.changes-slice:not([data-mounted])')) {
-        const r = slice.getBoundingClientRect();
-        if (r.bottom > top && r.top < bottom) return undefined;
-      }
-      const column = element.querySelector('[data-hunk-header] .diff-gap-where');
-      if (!column) return undefined;
-      // The code's text column; in the split diff, the new side's too, for rows that only add.
-      const xs = [column.getBoundingClientRect().left + 2, ...(split ? [box.left + box.width * 0.75] : [])];
-      const edge = (y: number, toward: 1 | -1, limit: number) => {
-        const found = xs.map((x) => probe(x, y, toward, limit)).filter((value) => value !== undefined);
-        return found.length ? (toward === 1 ? Math.min(...found) : Math.max(...found)) : undefined;
-      };
-      const first = edge(top, 1, bottom);
-      const last = edge(bottom, -1, top);
-      return first !== undefined && last !== undefined && first <= last ? [first, last] : undefined;
-    };
+    const onScreen = () => diffOnScreen(element, scroller, stickyUnder?.current, positions, split);
     const look = () => {
       timer = undefined;
       // Symbols the diff may still tick: the reader may have ticked, unticked or marked the file since the last look.
@@ -1950,6 +1973,43 @@ export function ChangesDiff<A>({
       clearTimeout(timer);
     };
   }, [autoSignature, parts, split]);
+
+  // V's pager (lib/review-paging.ts): what of an item is on screen, and a page down. Its scrolls are the program's: the
+  // item stays the reader's target while V pages through it.
+  const latestPager = useRef(pager);
+  latestPager.current = pager;
+  const pagerKey = pager?.fileKey;
+  useEffect(() => {
+    const element = root.current;
+    const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
+    if (!pagerKey || !element || !scroller) return;
+    const positions = diffRowPositions(
+      parts.flatMap((part) => (part.kind === 'hunk' ? [part.hunk] : [])),
+      split
+    );
+    const byPlace = new Map<number, string>();
+    for (const [line, at] of positions) if (!byPlace.has(at)) byPlace.set(at, line);
+    return registerPager(pagerKey, {
+      lines: (id) => latestPager.current?.lines.get(id),
+      place: (line) => positions.get(line),
+      range: () => diffOnScreen(element, scroller, stickyUnder?.current, positions, split),
+      page: () => {
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return false;
+        const view = scroller.getBoundingClientRect();
+        // A screen of code below the pinned headers, less the overlap, in whole lines.
+        const lines = Math.max(1, Math.floor((view.bottom - codeTop(element, view, stickyUnder?.current)) / CODE_LINE_HEIGHT) - PAGE_OVERLAP_LINES);
+        const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        scroller.scrollBy({ top: lines * CODE_LINE_HEIGHT, behavior: instant ? 'auto' : 'smooth' });
+        return true;
+      },
+      goToPlace: (at) => {
+        const line = byPlace.get(at);
+        if (!line) return;
+        const number = Number(line.slice(1));
+        own.current?.goTo({ side: line[0] === 'b' ? 'before' : 'after', line: number, here: [number, number] });
+      },
+    });
+  }, [pagerKey, parts, split]);
 
   // Pinned hunk headers (#395). CSS sticky does the pinning; this only marks a pinned header, so its expand controls
   // can step aside. The file header's height comes from a ResizeObserver, never a layout read, and sets both the

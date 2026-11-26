@@ -52,6 +52,7 @@ import {
   type ReviewTick,
 } from '../lib/tree-symbol-review';
 import { ensureCarried, updatedCount, useCarry } from '../lib/symbol-carry';
+import { markSeen, pageStep, pagerOf, seenShare, setPaging } from '../lib/review-paging';
 import { markReviewSymbols, registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
 import { readingSymbol, rowDestination, type TopLevelChanges, type TreeSymbolNode } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
@@ -768,8 +769,68 @@ export function PrChangesView({
       const id = place ? readingItem(file.symbols.nodes, file.symbols.top, readingSymbol(file.symbols.nodes, place), place.length === 0, line) : undefined;
       if (id) reading = { key: entry.key, id };
     }
-    return currentItem({ target, reading });
+    return currentItem({ target, reading, paging: pagingNow() });
   };
+  /**
+   * Long items: V pages through an item taller than the screen before it ticks it (lib/review-paging.ts). What of the
+   * item V is paging through has been on screen since it became current, sampled at each V and each scroll's end.
+   */
+  const paging = useRef<{ key: string; fileKey: string; id: string; seen: Set<string> }>(undefined);
+  const pagingNow = () => {
+    const state = paging.current;
+    const pager = state && pagerOf(state.fileKey);
+    const lines = state && pager?.lines(state.id);
+    if (!state || !pager || !lines?.length) return undefined;
+    const range = pager.range();
+    markSeen(state.seen, lines, pager.place, range);
+    const onScreen = !!range && lines.some((line) => {
+      const at = pager.place(line);
+      return at !== undefined && at >= range[0] && at <= range[1];
+    });
+    return { item: { key: state.key, id: state.id }, onScreen, done: seenShare(lines, state.seen) >= 100 };
+  };
+  /** Pages through the item instead of ticking it, while some of its changed lines have not been seen; true if it did. */
+  function pageFirst(item: ReviewItem): boolean {
+    const target = item.id === FILE_STOP ? undefined : entries.find((e) => e.key === item.key);
+    const fileKey = target && viewKey(target);
+    const pager = fileKey ? pagerOf(fileKey) : undefined;
+    const lines = pager?.lines(item.id);
+    if (!fileKey || !pager || !lines?.length) return false;
+    if (paging.current?.key !== item.key || paging.current.id !== item.id) paging.current = { key: item.key, fileKey, id: item.id, seen: new Set() };
+    const state = paging.current;
+    const range = pager.range();
+    markSeen(state.seen, lines, pager.place, range);
+    const step = pageStep({ lines, place: pager.place, seen: state.seen, range, atEnd: false });
+    // Seen whole, or nothing more to scroll to: V ticks it.
+    if (step.kind === 'tick' || (step.kind === 'down' && !pager.page())) {
+      paging.current = undefined;
+      setPaging(undefined);
+      return false;
+    }
+    if (step.kind === 'to') pager.goToPlace(step.place);
+    // The item stays the reader's target: the page is the program's scroll.
+    setReviewTarget({ key: item.key, id: item.id });
+    setPaging({ key: item.key, fileKey, id: item.id, share: seenShare(lines, state.seen) });
+    return true;
+  }
+  // What the reader's own scrolling shows of the item being paged through counts as seen too.
+  useEffect(() => {
+    const root = workspace.current;
+    if (!root) return;
+    const ended = () => {
+      const state = paging.current;
+      const pager = state && pagerOf(state.fileKey);
+      const lines = state && pager?.lines(state.id);
+      if (!state || !pager || !lines) return;
+      markSeen(state.seen, lines, pager.place, pager.range());
+      setPaging({ key: state.key, fileKey: state.fileKey, id: state.id, share: seenShare(lines, state.seen) });
+    };
+    root.addEventListener('scrollend', ended, { capture: true, passive: true });
+    return () => {
+      root.removeEventListener('scrollend', ended, { capture: true });
+      setPaging(undefined);
+    };
+  }, []);
   // The reader moving on their own ends the target: their wheel, touch or pointer in the diff, or a key that scrolls
   // it. The jumps' own scrolls come with none of these, so they never end it; neither does the reading place changing.
   useEffect(() => {
@@ -821,10 +882,14 @@ export function PrChangesView({
         else void markReviewSymbols(viewKey(target), intent.ids, false);
         return;
       }
+      // One item, taller than the screen: V pages through it first.
+      if (!intent.file && intent.ids.length === 1 && pageFirst({ key: intent.key, id: intent.ids[0] })) return;
       ticked = await tickItem(intent.key, intent.file ? 'file' : intent.ids);
       from = { key: intent.key, id: intent.file ? FILE_STOP : intent.ids.at(-1) };
     } else {
       const item = currentReviewItem();
+      // Taller than the screen, and not all seen yet: V pages through it first.
+      if (item && pageFirst(item)) return;
       if (item) {
         ticked = await tickItem(item.key, item.id === FILE_STOP ? 'file' : [item.id]);
         from = item;

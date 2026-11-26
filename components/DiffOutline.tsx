@@ -3,6 +3,7 @@ import { Check, ChevronRight, RefreshCw, SquareDot, SquareMinus, SquarePlus } fr
 import { useFileProgress } from '../lib/file-view-progress';
 import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
 import { isUpdated, useCarry } from '../lib/symbol-carry';
+import { usePaging } from '../lib/review-paging';
 import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
@@ -79,6 +80,15 @@ const named = (symbol: ChangedSymbol) =>
       ? symbol.definition.crumb
       : `${definitionNoun(symbol.definition)} ${symbol.definition.name}`;
 
+/** An item V is paging through, with how much of it the reader has seen (lib/review-paging.ts). */
+function Reading({ share }: { share: number }) {
+  return (
+    <span className="diff-outline-reading" title="Press V to continue reading; it's marked once you've seen all of it">
+      Reading {share}%
+    </span>
+  );
+}
+
 /** An item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts). */
 function Updated() {
   return (
@@ -105,6 +115,9 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   const open = useExpanded();
   const synced = useSymbolFileSync(fileKey);
   useCarry();
+  // The item V is paging through (lib/review-paging.ts): its chip says how much of it the reader has seen.
+  const paging = usePaging();
+  const readingShare = (symbol: ChangedSymbol) => (paging && paging.fileKey === fileKey && paging.id === symbol.id ? paging.share : undefined);
   const progress = useFileProgress();
   const listId = useId();
   if (!symbols) {
@@ -175,7 +188,8 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
                   <Marker change={symbol.change} />
                   {go(symbol)}
                   {seen && <Check className="diff-outline-check" size={12} aria-label="Viewed" />}
-                  {!seen && isUpdated(fileKey, symbol.id) && <Updated />}
+                  {!seen && readingShare(symbol) !== undefined && <Reading share={readingShare(symbol) ?? 0} />}
+                  {!seen && readingShare(symbol) === undefined && isUpdated(fileKey, symbol.id) && <Updated />}
                 </li>
               );
             })}
@@ -232,7 +246,8 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
               <Marker change={symbol.change} />
               <span className="sr-only">{MARKERS[symbol.change].label}</span>
               {go(symbol)}
-              {!viewed[index] && isUpdated(fileKey, symbol.id) && <Updated />}
+              {!viewed[index] && readingShare(symbol) !== undefined && <Reading share={readingShare(symbol) ?? 0} />}
+              {!viewed[index] && readingShare(symbol) === undefined && isUpdated(fileKey, symbol.id) && <Updated />}
               {symbol.parents.length > 0 && (
                 <span className="diff-outline-parents" aria-hidden="true">
                   in {symbol.parents.map((parent) => parent.crumb).join(' › ')}

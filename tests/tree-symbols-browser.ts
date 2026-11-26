@@ -2,7 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
-import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbols';
+import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbols';
 
 /**
  * The Changes tree's changed symbols (Settings › Review, Beta; components/ChangesSymbolTree.tsx). `?tree-symbols`
@@ -177,10 +177,11 @@ void app.whenReady().then(async () => {
     await lit('start');
     await press('n');
     await lit('stop');
-    // Past the last one: a notice, and the reader stays where they are.
+    // Past tasks.ts's last one, n goes on into the files after it (files without symbols are stops too), and never
+    // back around to store.ts.
     await press('n');
-    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed symbols after this'))");
-    assert.equal((await rows()).find((r) => r.name === 'stop')?.lit, true, 'Nothing wraps around');
+    await wait(`(()=>{const a=document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??'';return !!a&&a!==${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}})()`);
+    assert.notEqual(await js(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file`), TREE_SYMBOLS_FILE, 'Nothing wraps around');
 
     // ── Every symbol viewed, Imports too: the file is Viewed, and stays open while the reader is on it ──
     // Back in store.ts first, so its diff is on screen.
@@ -293,12 +294,24 @@ void app.whenReady().then(async () => {
     assert.equal(await focusedRow(), 'start', 'Focus moved to the next row, not the tree top');
     // On to the end: each V ticks one item. Files without symbols are stops of their own.
     const visited: string[] = [];
+    // A function taller than the screen (report.ts's) pages first: V scrolls on, and its row reads "Reading N%", until
+    // every line has been on screen; then V ticks it.
+    const readingRow = () => js<string>(`window.treeRows().find(r=>r.decoration.startsWith('Reading'))?.decoration??''`);
+    const readings: string[] = [];
     for (let presses = 0; presses < 80 && !(await js<boolean>(toastWith('Everything viewed'))); presses++) {
       const before = await leftNow();
+      const reading = await readingRow();
       await press('v');
-      await wait(`${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()`);
+      await wait(
+        `${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()||((window.treeRows().find(r=>r.decoration.startsWith('Reading'))?.decoration??'')!==${JSON.stringify(reading)}&&!!window.treeRows().find(r=>r.decoration.startsWith('Reading')))`
+      );
+      const now = await readingRow();
+      if (now) readings.push(now);
       visited.push(await activeFile());
     }
+    console.log('V paged through:', JSON.stringify(readings));
+    assert.ok(readings.length >= 1, 'The long function paged before it ticked');
+    assert.ok(visited.some((file) => file === TREE_SYMBOLS_LONG_FILE), 'and V went through its file');
     console.log('V walked through:', JSON.stringify(visited));
     assert.ok(await js<boolean>(toastWith('Everything viewed')), 'V reaches the end');
     assert.ok(visited.some((file) => file.endsWith('flow.svg')), 'An image is a stop of its own');
