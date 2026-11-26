@@ -1553,6 +1553,7 @@ export function PrChangesView({
                     reveal={treeReveal}
                     onReviewKey={(intent) => void reviewAndMove(intent)}
                     onCommentKey={(item) => commentOnItem(item, 'tree')}
+                    onReviewCurrent={() => void reviewAndMove()}
                   />
                 ) : (
                   <ChangesFileTree
