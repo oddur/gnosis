@@ -516,6 +516,10 @@ export function ChangesSymbolTree({
   // The row V went to, which keeps keyboard focus across rebuilds: Unviewed only drops the rows just finished, and
   // Pierre's focus would go with them, to the tree's top or the page.
   const focusTarget = useRef<{ key: string; id: string }>(undefined);
+  // Whether the reader has clicked or arrowed in the tree since V or n last took them somewhere. Until they do, a row
+  // other than the item under review that holds the keyboard has it from Pierre, trailing the light, not from the reader:
+  // Enter there is meant for the item under review.
+  const readerChose = useRef(false);
   /** Opens every collapsed directory row above `path`: folders, the file, its containers. */
   const expandTo = (path: string) => {
     for (const ancestor of ancestorPaths(path)) {
@@ -551,6 +555,7 @@ export function ChangesSymbolTree({
     if (reveal.id !== FILE_STOP) setHeld({ key: reveal.key, id: reveal.id });
     revealing.current = { key: reveal.key, id: reveal.id, focus: reveal.focus };
     focusTarget.current = reveal.focus ? { key: reveal.key, id: reveal.id } : undefined;
+    readerChose.current = false;
     if (reveal.key === selected && reveal.id !== FILE_STOP) folderOf(model.getItem(layout.pierreOf.get(reveal.key) ?? ''))?.expand();
   }, [reveal?.nonce]);
   // Its row is selected once it is listed and its file is the current one, so the current file's selection keeps it.
@@ -674,6 +679,7 @@ export function ChangesSymbolTree({
         className="changes-file-tree"
         aria-label="Changed files"
         onClickCapture={(event) => {
+          readerChose.current = true;
           if (event.shiftKey || event.metaKey || event.ctrlKey) return;
           const path = rowPath(event.nativeEvent);
           const row = rowAt(path);
@@ -711,6 +717,7 @@ export function ChangesSymbolTree({
           if (row && row.type !== 'folder') onPreview?.(row.key);
         }}
         onKeyUp={(event) => {
+          if (TREE_MOVES.has(event.key)) readerChose.current = true;
           const row = rowAt(model.getFocusedPath());
           if (row && row.type !== 'folder') onPreview?.(row.key);
           // A symbol row moved to with the keys is where `n` starts from, as one chosen is.
@@ -773,6 +780,13 @@ export function ChangesSymbolTree({
           // comment. On any other row it goes there, as always. A file row is the item when it is the lit file stop (no
           // symbols, or symbols that could not be listed).
           const item = row?.type === 'symbol' && reviewed(row.node) ? { key: row.key, id: row.node.id } : row?.type === 'top' ? { key: row.key, id: TOP_LEVEL_ID } : row?.type === 'file' ? { key: row.key, id: FILE_STOP } : undefined;
+          // The keyboard trailing the light (no click or arrow since V or n): Enter is for the item under review.
+          const trailing = !readerChose.current && target && !(item && target.key === item.key && target.id === item.id);
+          if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && trailing && onCommentKey?.(target)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && item && target?.key === item.key && target.id === item.id && onCommentKey?.(item)) {
             event.preventDefault();
             event.stopPropagation();
