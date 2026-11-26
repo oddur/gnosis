@@ -64,7 +64,10 @@ void app.whenReady().then(async () => {
       `window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];` +
         `window.treeName=e=>(e.getAttribute('aria-label')||'').replace(/[\\u2061-\\u2064\\u200b\\u200c]/g,'');` +
         `window.treeRows=()=>window.deepAll('[role=treeitem]').map(e=>({name:window.treeName(e),level:Number(e.getAttribute('aria-level')),expanded:e.getAttribute('aria-expanded'),lit:e.getAttribute('data-item-git-status')==='untracked',decoration:e.querySelector('[data-item-section=decoration]')?.textContent.trim()??''}));` +
-        `window.treeRow=n=>window.deepAll('[role=treeitem]').find(e=>window.treeName(e)===n);void 0`
+        `window.treeRow=n=>window.deepAll('[role=treeitem]').find(e=>window.treeName(e)===n);` +
+        // The tree row with the keyboard, by activeElement through shadow roots: :focus matches only while the window
+        // itself has the system focus, which a CI window under a virtual display often does not.
+        `window.focusedTreeRow=()=>{let e=document.activeElement;while(e&&e.shadowRoot&&e.shadowRoot.activeElement)e=e.shadowRoot.activeElement;const r=e&&e.closest&&e.closest('[role=treeitem]');return r?window.treeName(r):''};void 0`
     );
   const rows = () => js<{ name: string; level: number; expanded: string | null; lit: boolean; decoration: string }[]>('window.treeRows()');
   const openChanges = async () => {
@@ -267,7 +270,7 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.changes-tree-controls label')].find(l=>l.textContent.includes('Unviewed only')).querySelector('input').click()");
     const leftNow = () => js<number>(`(()=>{const e=document.querySelector('.changes-progress-left');return e?Number(e.textContent.replace(/\\D/g,'')):0})()`);
     const activeFile = () => js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`);
-    const focusedRow = () => js<string>(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return e?window.treeName(e):''})()`);
+    const focusedRow = () => js<string>(`window.focusedTreeRow()`);
     const toastWith = (text: string) => `[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes(${JSON.stringify(text)}))`;
     // From store.ts's first item, chosen in the tree.
     await wait("!!window.treeRow('Imports')");
@@ -297,12 +300,12 @@ void app.whenReady().then(async () => {
         // flush is under the closed folder and class: both open, and flush is lit and focused.
         await wait("window.treeRow('symbols')?.getAttribute('aria-expanded')==='true'&&window.treeRow('Store')?.getAttribute('aria-expanded')==='true'");
         assert.equal(await expandedOf('Store'), 'true');
-        await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='flush'})()`);
+        await wait(`window.focusedTreeRow()==='flush'`);
       }
       const after = await decorations();
       const changed = symbolRows.filter((row) => before[row] !== after[row]).sort();
       assert.deepEqual(changed, [...expectChanged[ticked]].sort(), `V on ${ticked} ticked ${ticked} only: ${JSON.stringify({ before, after })}`);
-      await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)===${JSON.stringify(next)}})()`);
+      await wait(`window.focusedTreeRow()===${JSON.stringify(next)}`);
     }
     // The last of store.ts: on into tasks.ts, and store.ts, Viewed, leaves the Unviewed only tree.
     await press('v');
