@@ -1,0 +1,15 @@
+{
+  "prompt": "Origin: actual Gnosis application captured from commit ddf5ffa by scripts/capture-docs-screenshots.mjs, recipe \"menubar-panel\" in the light theme, from tests/fixtures/menubar.html?state=sample (as tests/menubar-browser.ts drives it) at 360×560 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 720px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-26T02:57:43.552Z",
+  "commit": "ddf5ffa3778de2b02c0c2a41b4cc3d7082ec8e25",
+  "recipe": "menubar-panel",
+  "theme": "light",
+  "fixture": "tests/fixtures/menubar.html?state=sample",
+  "viewport": {
+    "width": 360,
+    "height": 560
+  },
+  "deviceScaleFactor": 2,
+  "width": 720,
+  "source": "synthetic fixture data, actual Gnosis UI"
+}
