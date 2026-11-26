@@ -68,7 +68,10 @@ void app.whenReady().then(async () => {
       `window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];` +
         `window.treeName=e=>(e.getAttribute('aria-label')||'').replace(/[\\u2061-\\u2064\\u200b\\u200c]/g,'');` +
         `window.treeRows=()=>window.deepAll('[role=treeitem]').map(e=>({name:window.treeName(e),level:Number(e.getAttribute('aria-level')),expanded:e.getAttribute('aria-expanded'),lit:e.getAttribute('data-item-git-status')==='untracked',decoration:e.querySelector('[data-item-section=decoration]')?.textContent.trim()??''}));` +
-        `window.treeRow=n=>window.deepAll('[role=treeitem]').find(e=>window.treeName(e)===n);void 0`
+        `window.treeRow=n=>window.deepAll('[role=treeitem]').find(e=>window.treeName(e)===n);` +
+        // The tree row with the keyboard, by activeElement through shadow roots: :focus matches only while the window
+        // itself has the system focus, which a CI window under a virtual display often does not.
+        `window.focusedTreeRow=()=>{let e=document.activeElement;while(e&&e.shadowRoot&&e.shadowRoot.activeElement)e=e.shadowRoot.activeElement;const r=e&&e.closest&&e.closest('[role=treeitem]');return r?window.treeName(r):''};void 0`
     );
   const rows = () => js<{ name: string; level: number; expanded: string | null; lit: boolean; decoration: string }[]>('window.treeRows()');
   const openChanges = async () => {
@@ -156,7 +159,31 @@ void app.whenReady().then(async () => {
     // ── n and Shift+N: the next and previous unviewed symbol, across files ──
     const press = (key: string) =>
       js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},shiftKey:${key === 'N'},bubbles:true,cancelable:true}))`);
-    const lit = (symbol: string) => wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`);
+    // A record of what happens between presses, for a timeout's report: every notice shown (they leave after a few
+    // seconds), the events that count as the reader moving, and each change of focus.
+    await js(`(()=>{window.__log=[];const t0=performance.now();const log=(m)=>window.__log.push(Math.round(performance.now()-t0)+' '+m);
+      new MutationObserver(()=>{for(const t of document.querySelectorAll('.app-toast'))if(!t.dataset.logged){t.dataset.logged='1';log('toast '+t.textContent)}}).observe(document.body,{childList:true,subtree:true});
+      for(const type of ['wheel','pointerdown','touchstart'])document.addEventListener(type,(e)=>log(type+' '+(e.target&&e.target.className||e.target&&e.target.tagName)),true);
+      document.addEventListener('keydown',(e)=>log('key '+e.key),true);
+      document.addEventListener('focusin',(e)=>{let a=document.activeElement;while(a&&a.shadowRoot&&a.shadowRoot.activeElement)a=a.shadowRoot.activeElement;log('focus '+(a&&(a.getAttribute('aria-label')||a.className||a.tagName)||'').toString().replace(/[\u2061-\u2064\u200b\u200c]/g,'').slice(0,40))},true);
+      return true})()`);
+    // On a timeout, say where things stood: what is lit, any notice, the active file and the rows, so a CI failure
+    // names the cause.
+    const lit = (symbol: string) =>
+      wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`).catch(async (error: unknown) => {
+        const state = await js(
+          `({log:(window.__log||[]).slice(-40),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        ).catch(() => 'unreadable');
+        throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+      });
+    /** Waits for the keyboard to be on a tree row, with the same report as `lit` on a timeout. */
+    const focusedOn = (row: string) =>
+      wait(`window.focusedTreeRow()===${JSON.stringify(row)}`).catch(async (error: unknown) => {
+        const state = await js(
+          `({log:(window.__log||[]).slice(-40),focused:window.focusedTreeRow(),active:document.activeElement&&(document.activeElement.className||document.activeElement.tagName),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        ).catch(() => 'unreadable');
+        throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+      });
     const nextRow = `.commit-stream-row[data-file=${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}]`;
     const inView = (row: string, text: string) =>
       wait(
@@ -291,12 +318,15 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.changes-tree-controls label')].find(l=>l.textContent.includes('Unviewed only')).querySelector('input').click()");
     const leftNow = () => js<number>(`(()=>{const e=document.querySelector('.changes-progress-left');return e?Number(e.textContent.replace(/\\D/g,'')):0})()`);
     const activeFile = () => js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`);
-    const focusedRow = () => js<string>(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return e?window.treeName(e):''})()`);
+    const focusedRow = () => js<string>(`window.focusedTreeRow()`);
     const toastWith = (text: string) => `[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes(${JSON.stringify(text)}))`;
     // From store.ts's first item, chosen in the tree.
     await wait("!!window.treeRow('Imports')");
     await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
     await lit('Imports');
+    // A reader's click also puts the keyboard on the row. A script's click() does not, and the search above left the
+    // find field focused: the tree rightly leaves a text field alone, so focus the row as the click would.
+    await js("window.treeRow('Imports').focus()");
     // ── Enter on the item under review comments on it; ⌘↩ adds the draft and hands the keyboard back ──
     const composer = `${fileRow} .changes-comment-composer`;
     const enterOn = (row: string) =>
@@ -343,12 +373,12 @@ void app.whenReady().then(async () => {
         // flush is under the closed folder and class: both open, and flush is lit and focused.
         await wait("window.treeRow('symbols')?.getAttribute('aria-expanded')==='true'&&window.treeRow('Store')?.getAttribute('aria-expanded')==='true'");
         assert.equal(await expandedOf('Store'), 'true');
-        await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='flush'})()`);
+        await focusedOn('flush');
       }
       const after = await decorations();
       const changed = symbolRows.filter((row) => before[row] !== after[row]).sort();
       assert.deepEqual(changed, [...expectChanged[ticked]].sort(), `V on ${ticked} ticked ${ticked} only: ${JSON.stringify({ before, after })}`);
-      await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)===${JSON.stringify(next)}})()`);
+      await focusedOn(next);
     }
     // The last of store.ts, with a comment: ⌘⇧↩ adds it and goes on as V does, into tasks.ts; store.ts, Viewed, leaves
     // the Unviewed only tree.

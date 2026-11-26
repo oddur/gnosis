@@ -157,3 +157,12 @@ export function useReviewFile(): string | undefined {
     () => targetFile
   );
 }
+
+/**
+ * The newest jump anywhere in Changes. Each diff runs its own jump, an eased scroll that aims anew each frame, and one
+ * diff's jump knows nothing of another's: a quick second n or V into another file would be pulled back by the first
+ * still on its way. Every jump, and every move to another file, takes a new number; a jump that is not the newest stops.
+ */
+let newestJump = 0;
+export const beginJump = () => ++newestJump;
+export const isNewestJump = (jump: number) => jump === newestJump;

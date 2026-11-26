@@ -28,7 +28,7 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
-import { peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { beginJump, isNewestJump, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
 import { PAGE_OVERLAP_LINES, registerPager } from '../lib/review-paging';
 import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
@@ -2173,6 +2173,7 @@ export function ChangesDiff<A>({
       stopJump();
       clearHere();
       const id = ++jumpId;
+      const newest = beginJump();
       // Every bar has the same height, pinned or not. Its top border is the air above it (globals.css), which pins
       // under the file header: only the rest shows there.
       const bar = element.querySelector<HTMLElement>('[data-hunk-header]');
@@ -2232,7 +2233,7 @@ export function ChangesDiff<A>({
       let still = 0;
       const step = (now: number) => {
         jumpFrame = 0;
-        if (id !== jumpId) return;
+        if (id !== jumpId || !isNewestJump(newest)) return;
         // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
         if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
           jumpFrame = requestAnimationFrame(step);
