@@ -1128,8 +1128,9 @@ export function PrChangesView({
       void undoTick();
     },
   };
-  // Only with the tree's symbol rows on: otherwise `n` is not Changes' key.
-  useKeyboardShortcuts(symbolKeys, { enabled: treeSymbols && visible.length > 0, capture: true, scope: workspace });
+  // Only with the tree's symbol rows on: otherwise `n` is not Changes' key. On while the changes have any file, not only
+  // while some are listed: with Unviewed only, the last V empties the tree, and Shift+V must still take it back.
+  useKeyboardShortcuts(symbolKeys, { enabled: treeSymbols && entries.length > 0, capture: true, scope: workspace });
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
     [

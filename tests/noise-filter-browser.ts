@@ -161,7 +161,7 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>(`document.querySelector(${JSON.stringify(row('src/noise/format.ts') + ' .changes-file-counts')}).textContent`), /\+\d+.*−\d+/, 'The file keeps its +/− counts');
     await wait(`window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='format.ts')?.textContent.includes('Spaces')`);
     await wait(`!!document.querySelector('.changes-progress-quiet')`);
-    assert.match(await js<string>(`document.querySelector('.changes-progress').textContent`), /0 \/ \d+ viewed · \d+ (quiet|whitespace-only) files?/, 'The progress counts it, quietly');
+    assert.match(await js<string>(`document.querySelector('.changes-progress').textContent`), /0 \/ \d+ (files? )?viewed · \d+ (quiet|whitespace-only) files?/, 'The progress counts it, quietly');
     await scrollTo(row('src/noise/format.ts'), 0);
     await capture('whole-file', box(row('src/noise/format.ts') + ' .changes-file-header', 0, 60));
     // ── The formatter run: "Reformatted", and the hunk with a review thread stays open ──

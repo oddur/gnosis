@@ -248,8 +248,12 @@ void app.whenReady().then(async () => {
     await lit('added');
     await inView(fileRow, 'function added()');
     // V ticks and goes on to the next item, which stays in store.ts until its last one.
+    // As a reader does: choose the row, see its lines, then V. V never marks lines that have not been on screen (a long
+    // item pages first), and the click's jump is still on its way the moment after the click.
+    const lineOf: Record<string, string> = { Imports: "import { b } from 'b';", gone: 'export function gone()' };
     for (const symbol of ['Imports', 'gone']) {
       await js(`(()=>{const r=window.treeRow(${JSON.stringify(symbol)});r.querySelector('[data-item-section=content]').click();r.focus()})()`);
+      await inView(fileRow, lineOf[symbol]);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
@@ -393,6 +397,8 @@ void app.whenReady().then(async () => {
     await wait("!!window.treeRow('Imports')");
     await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
     await lit('Imports');
+    // Its line on screen, as a reader sees it before pressing V (V never marks lines that have not been on screen).
+    await inView(fileRow, "import { b } from 'b';");
     // A reader's click also puts the keyboard on the row. A script's click() does not, and the search above left the
     // find field focused: the tree rightly leaves a text field alone, so focus the row as the click would.
     await js("window.treeRow('Imports').focus()");
