@@ -93,6 +93,12 @@ export function treeSymbolLook(): { icons: FileTreeIconConfig; css: string } {
     `[data-item-git-status="untracked"] > [data-item-section="content"] { color:var(--trees-fg) !important; font-weight:var(--trees-font-weight-semibold); }`,
     `[data-item-git-status="untracked"] > [data-item-section="icon"] { opacity:1 !important; }`,
     `[data-item-git-status="untracked"] > [data-item-section="git"] { visibility:hidden; }`,
+    // Symbol names end-truncate: the start of a name is what reads (a_followed_store_feeds_every…). Pierre's middle
+    // truncation suits file names, whose extension it keeps, but halves a long function name and lays its marker over
+    // a cut letter. Its two halves flow as one line here, and the content box adds the ellipsis.
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }`,
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] :is([data-truncate-container], [data-truncate-grid], [data-truncate-content]) { display:contents; direction:ltr; }`,
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] :is([data-truncate-marker], [data-truncate-fill]) { display:none; }`,
     // Symbol rows have no Git status of their own: the dot that marks a folder holding the lit row stays off them.
     `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="git"] { visibility:hidden; }`
   );
