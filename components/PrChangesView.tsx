@@ -1471,7 +1471,7 @@ export function PrChangesView({
                       onChange={(e) => setQuery(e.target.value)}
                     />
                   )}
-                  {/* One line under the search: the tree's two view options, then the rare reset, apart at the end. */}
+                  {/* Under the search, a grid of the tree's options in two columns, with the rare reset apart at the end of the first row. */}
                   <div className="changes-tree-options">
                     <div className="changes-tree-toggles">
                       <label>
@@ -1501,32 +1501,32 @@ export function PrChangesView({
                     >
                       <RotateCcw size={14} aria-hidden="true" />
                     </Button>
+                    {/* With symbols: how the tree reviews them, a second row in the same two columns as the first. */}
+                    {treeSymbols && (
+                      <div className="changes-tree-suboptions">
+                        <label title="Mark a symbol viewed after all its changed lines have been on screen for a moment">
+                          <input
+                            type="checkbox"
+                            checked={autoViewSymbols}
+                            onChange={(e) =>
+                              setReviewPreference({ autoViewSymbols: e.target.checked }, 'Could not save the auto-mark setting.')
+                            }
+                          />
+                          Auto-mark
+                        </label>
+                        <label title="Show a symbol's diff when you rest the pointer on it in the tree">
+                          <input
+                            type="checkbox"
+                            checked={peekOnHover}
+                            onChange={(e) =>
+                              setReviewPreference({ peekOnHover: e.target.checked }, 'Could not save the peek setting.')
+                            }
+                          />
+                          Peek on hover
+                        </label>
+                      </div>
+                    )}
                   </div>
-                  {/* With symbols: how the tree reviews them, quieter and set in under "Symbols". */}
-                  {treeSymbols && (
-                    <div className="changes-tree-suboptions">
-                      <label title="Mark a symbol viewed after all its changed lines have been on screen for a moment">
-                        <input
-                          type="checkbox"
-                          checked={autoViewSymbols}
-                          onChange={(e) =>
-                            setReviewPreference({ autoViewSymbols: e.target.checked }, 'Could not save the auto-mark setting.')
-                          }
-                        />
-                        Auto-mark
-                      </label>
-                      <label title="Show a symbol's diff when you rest the pointer on it in the tree">
-                        <input
-                          type="checkbox"
-                          checked={peekOnHover}
-                          onChange={(e) =>
-                            setReviewPreference({ peekOnHover: e.target.checked }, 'Could not save the peek setting.')
-                          }
-                        />
-                        Peek on hover
-                      </label>
-                    </div>
-                  )}
                   {/* Once, until the first V or its ×: the review loop's key, where the reader starts. */}
                   {treeSymbols && vHint && (
                     <p className="changes-tree-hint" role="note">

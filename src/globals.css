@@ -2712,25 +2712,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-workspace { display:flex;flex:1;min-height:0;min-width:0;position:relative; }
 .changes-tree-pane { width:var(--changes-tree-width);max-width:42%;min-width:160px;display:flex;flex-direction:column;flex-shrink:0;background:var(--sidebar); }
 .changes-tree-controls { padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;font-size:var(--type-caption); }
-/* The tree's view options on one line under the search; the reset sits apart at the end and wraps last. */
-.changes-tree-options { display:flex;align-items:center;gap:8px;min-height:24px;color:var(--muted-foreground); }
-/* Only a very narrow tree wraps the options; the reset keeps its place at the end of the first line. */
-.changes-tree-toggles { display:flex;align-items:center;flex-wrap:wrap;column-gap:12px;row-gap:4px;min-width:0; }
+/* The tree's options under the search, a grid of two columns so every checkbox lines up: Unviewed only and Symbols, then,
+   with symbols, Auto-mark and Peek on hover under them. The reset sits apart at the end of the first row. */
+.changes-tree-options { display:grid;grid-template-columns:max-content max-content 1fr;align-items:center;column-gap:14px;row-gap:6px;min-height:24px;color:var(--muted-foreground); }
+.changes-tree-toggles { display:contents; }
 .changes-tree-options label { gap:6px;white-space:nowrap;cursor:pointer; }
 .changes-tree-options label:has(input:checked) { color:var(--foreground); }
 .changes-tree-options input { accent-color:var(--primary);margin:0; }
-/* With symbols, a second, quieter row under the first: how the tree reviews symbols, set in a little under "Symbols".
-   It stays muted when checked, a step below the view options. */
-.changes-tree-suboptions { display:flex;align-items:center;flex-wrap:wrap;column-gap:12px;row-gap:4px;min-width:0;padding-inline-start:8px;font-size:12px;line-height:16px;color:var(--muted-foreground); }
-.changes-tree-suboptions label { gap:6px;white-space:nowrap;cursor:pointer; }
-.changes-tree-suboptions input { accent-color:var(--primary);margin:0; }
+.changes-tree-suboptions { display:contents; }
 /* The one-time V tip (lib/review-hint.ts): one quiet line under the options, as small as they are. */
 .changes-tree-hint { display:flex;align-items:center;gap:6px;margin:0;font-size:12px;line-height:16px;color:var(--muted-foreground); }
 .changes-tree-hint > span { flex:1;min-width:0; }
 .changes-tree-hint .kbd { font-size:11px; }
 .changes-tree-hint button { flex:none;display:inline-flex;padding:2px;border-radius:var(--radius);color:inherit; }
 .changes-tree-hint button:hover { background:var(--muted);color:var(--foreground); }
-.changes-tree-reset { margin-inline-start:auto;align-self:flex-start;color:var(--muted-foreground); }
+.changes-tree-reset { grid-column:3;grid-row:1;justify-self:end;color:var(--muted-foreground); }
 .changes-tree-controls>input { width:100%;border:1px solid var(--input);background:var(--background);padding:6px 8px;border-radius:var(--radius); }
 .changes-tree-controls label,.changes-file-actions label { display:inline-flex;align-items:center;gap:5px; }
 .changes-file-tree { flex:1;min-height:0;color-scheme:light;--trees-theme-sidebar-bg:var(--sidebar);--trees-theme-sidebar-fg:var(--foreground);--trees-theme-git-added-fg:var(--color-success);--trees-theme-git-modified-fg:var(--color-info);--trees-theme-git-deleted-fg:var(--color-danger);--trees-theme-list-active-selection-bg:var(--accent);--trees-theme-list-active-selection-fg:var(--accent-foreground);--trees-theme-list-hover-bg:var(--muted);--trees-theme-focus-ring:var(--ring); }
