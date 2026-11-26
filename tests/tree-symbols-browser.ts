@@ -155,7 +155,15 @@ void app.whenReady().then(async () => {
     // ── n and Shift+N: the next and previous unviewed symbol, across files ──
     const press = (key: string) =>
       js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},shiftKey:${key === 'N'},bubbles:true,cancelable:true}))`);
-    const lit = (symbol: string) => wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`);
+    // On a timeout, say where things stood: what is lit, any notice, the active file and the rows, so a CI failure
+    // names the cause.
+    const lit = (symbol: string) =>
+      wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`).catch(async (error: unknown) => {
+        const state = await js(
+          `({lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        ).catch(() => 'unreadable');
+        throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+      });
     const nextRow = `.commit-stream-row[data-file=${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}]`;
     const inView = (row: string, text: string) =>
       wait(
