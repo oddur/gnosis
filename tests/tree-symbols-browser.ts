@@ -254,7 +254,13 @@ void app.whenReady().then(async () => {
     for (const symbol of ['Imports', 'gone']) {
       await js(`(()=>{const r=window.treeRow(${JSON.stringify(symbol)});r.querySelector('[data-item-section=content]').click();r.focus()})()`);
       await inView(fileRow, lineOf[symbol]);
-      await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
+      const pressRowV = () =>
+        js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
+      await pressRowV();
+      // V marks only lines that have been on screen: if the jump had not brought them there yet, this V showed them
+      // ("Read"), and the next one marks the item.
+      await wait(`['✓','Read'].includes(window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration)`);
+      if ((await rows()).find((r) => r.name === symbol)?.decoration === 'Read') await pressRowV();
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
     await lit('added');
