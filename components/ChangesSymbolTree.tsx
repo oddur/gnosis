@@ -751,7 +751,16 @@ export function ChangesSymbolTree({
           // went to. The keyboard can trail the light by a frame or land on a folder when Unviewed only drops a finished
           // file's rows, and V on whatever row holds it would tick, or untick, the wrong thing. With no item under review
           // (the reader arrowed to a container), V acts on the row: a container ticks everything under it.
-          if ((event.key === 'v' || event.key === 'V') && !event.shiftKey && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey && onReviewCurrent && (peekReviewTarget() || !row || row.type === 'folder' || row.type === 'note')) {
+          // The row is the item under review itself when it is that symbol, top level or file stop: then V acts on the row
+          // as always, ticking or taking back its tick.
+          const under = peekReviewTarget();
+          const isUnder =
+            !!under &&
+            !!row &&
+            ((row.type === 'symbol' && row.key === under.key && row.node.id === under.id) ||
+              (row.type === 'top' && row.key === under.key && under.id === TOP_LEVEL_ID) ||
+              (row.type === 'file' && row.key === under.key && under.id === FILE_STOP));
+          if ((event.key === 'v' || event.key === 'V') && !event.shiftKey && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey && onReviewCurrent && ((under && !isUnder) || !row || row.type === 'folder' || row.type === 'note')) {
             event.preventDefault();
             event.stopPropagation();
             onReviewCurrent();
