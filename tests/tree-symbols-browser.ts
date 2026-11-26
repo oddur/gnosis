@@ -155,12 +155,20 @@ void app.whenReady().then(async () => {
     // ── n and Shift+N: the next and previous unviewed symbol, across files ──
     const press = (key: string) =>
       js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},shiftKey:${key === 'N'},bubbles:true,cancelable:true}))`);
+    // A record of what happens between presses, for a timeout's report: every notice shown (they leave after a few
+    // seconds), the events that count as the reader moving, and each change of focus.
+    await js(`(()=>{window.__log=[];const t0=performance.now();const log=(m)=>window.__log.push(Math.round(performance.now()-t0)+' '+m);
+      new MutationObserver(()=>{for(const t of document.querySelectorAll('.app-toast'))if(!t.dataset.logged){t.dataset.logged='1';log('toast '+t.textContent)}}).observe(document.body,{childList:true,subtree:true});
+      for(const type of ['wheel','pointerdown','touchstart'])document.addEventListener(type,(e)=>log(type+' '+(e.target&&e.target.className||e.target&&e.target.tagName)),true);
+      document.addEventListener('keydown',(e)=>log('key '+e.key),true);
+      document.addEventListener('focusin',(e)=>{let a=document.activeElement;while(a&&a.shadowRoot&&a.shadowRoot.activeElement)a=a.shadowRoot.activeElement;log('focus '+(a&&(a.getAttribute('aria-label')||a.className||a.tagName)||'').toString().replace(/[\u2061-\u2064\u200b\u200c]/g,'').slice(0,40))},true);
+      return true})()`);
     // On a timeout, say where things stood: what is lit, any notice, the active file and the rows, so a CI failure
     // names the cause.
     const lit = (symbol: string) =>
       wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`).catch(async (error: unknown) => {
         const state = await js(
-          `({lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+          `({log:(window.__log||[]).slice(-40),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
         ).catch(() => 'unreadable');
         throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
       });
