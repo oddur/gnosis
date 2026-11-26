@@ -858,7 +858,19 @@ export function PrChangesView({
       }
     }
     const moved = await stepSymbol(1, { from, focus: true });
-    if (moved === 'end') endNotice(1);
+    if (moved !== 'end') return;
+    // V goes on until nothing is left: past the last item, what is still unviewed is behind the reader (they began part
+    // way down, or skipped some), and V takes them back to the first of it. `n` does not wrap; V's job is to finish.
+    const all = reviewFiles(allowed);
+    const keys = new Map(all.map((file) => [file.key, file.fileKey]));
+    if (itemsLeft(all, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)) > 0) {
+      const back = await stepSymbol(1, { from: { key: '' }, focus: true });
+      if (back === 'went') {
+        toast.add({ title: 'Back to the first unviewed item', timeout: NOTICE_MS });
+        return;
+      }
+    }
+    endNotice(1);
   }
   // Leaving Changes (closed, or hidden by another tab) ends the run of V's that Shift+V walks back through.
   useEffect(() => {
