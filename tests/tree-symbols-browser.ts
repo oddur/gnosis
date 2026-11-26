@@ -292,10 +292,10 @@ void app.whenReady().then(async () => {
     // Choosing the old copy goes to the new copy.
     await js("window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&e.querySelector('[data-item-section=decoration]')?.textContent.trim()==='Moved').querySelector('[data-item-section=content]').click()");
     await wait(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file===${JSON.stringify(TREE_SYMBOLS_MOVE_TARGET)}`);
-    // V on the new copy ticks it, and the old copy with it.
-    await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration!=='Moved'&&r.decoration!=='✓ moved')");
-    await js(
-      "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))})()"
+    // V on the new copy ticks it, and the old copy with it. Found and pressed in one step: a rebuild can redraw the row
+    // between a check and a later press.
+    await wait(
+      "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));if(!e)return false;e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}));return true})()"
     );
     if ((await js<string | null>(`window.treeRow(${JSON.stringify(sourceName)})?.getAttribute('aria-expanded')??null`)) === 'false')
       await js(`window.treeRow(${JSON.stringify(sourceName)}).querySelector('[data-item-section=icon]').click()`);
