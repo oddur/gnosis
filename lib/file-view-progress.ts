@@ -71,7 +71,19 @@ function revisionsByPath(s: Progress): Map<string, string[]> {
 /** A renamed file's old path, by its revision key, as the PR's file list reports it. */
 const renamedFrom = new Map<string, string>();
 /** Each registered file revision's patch, for the print a file's Viewed mark saves: no read, nothing hashed till then. */
-const revisionFiles = new Map<string, { patch?: string }>();
+const revisionFiles = new Map<string, { url: string; patch?: string }>();
+/**
+ * Drops the registered patches of these PRs (all, for undefined), with their inspection data (lib/symbol-carry.ts):
+ * a later visit registers them again.
+ */
+export function forgetRevisionFiles(urls: ReadonlySet<string> | undefined) {
+  for (const [key, file] of revisionFiles) if (!urls || urls.has(file.url)) revisionFiles.delete(key);
+}
+/** How many registered patches are held, and their size, for the diagnostics export. */
+export const revisionFileStats = () => ({
+  entries: revisionFiles.size,
+  bytes: [...revisionFiles.values()].reduce((sum, file) => sum + 2 * (file.patch?.length ?? 0), 0),
+});
 /**
  * A whole file's print: its patch. None without one (a deferred or very large diff): a blob alone says nothing of the
  * base, so such a file never carries (fail closed).
@@ -88,7 +100,7 @@ export function registerChangeProgress(snapshot: PrChanges) {
   const patch: FileProgressPatch = { aliases: {}, marks: {} };
   for (const file of snapshot.files) {
     const revision = fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha);
-    revisionFiles.set(revision, { patch: file.patch });
+    revisionFiles.set(revision, { url: snapshot.url, patch: file.patch });
     // A rename's earlier revisions are under its old path.
     if (file.previousPath && file.previousPath !== file.path) renamedFrom.set(revision, file.previousPath);
     const content = JSON.stringify([snapshot.url, file.path, file.changeId]);

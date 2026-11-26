@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { carryTicks, earlierTicks, filePrint, isFileViewed, isRegistered, isSymbolViewed } from './file-view-progress';
+import { carryTicks, earlierTicks, filePrint, forgetRevisionFiles, isFileViewed, isRegistered, isSymbolViewed, revisionFileStats } from './file-view-progress';
+import { addDiagnosticsSource } from './diagnostics-sources';
 import { planCarry } from './review-prints';
 import { FILE_STOP, countedIds } from './tree-symbol-review';
 import type { FileSymbols } from './tree-symbol-paths';
@@ -21,6 +22,29 @@ const notify = () => {
   version++;
   listeners.forEach((listener) => listener());
 };
+
+/** The PR of a revision key (`["url", path, base, head]`, or a commit's or stack's key around one); '' for others. */
+const urlOf = (key: string) => {
+  const start = key.indexOf('["');
+  if (start < 0) return '';
+  try {
+    const value = (JSON.parse(key.slice(start)) as unknown[])[0];
+    return typeof value === 'string' ? value : '';
+  } catch {
+    return '';
+  }
+};
+/**
+ * What carry-over keeps per file revision leaves with its PR's inspection data (lib/use-tree-symbols.ts registers this
+ * with the inspection caches): the registered patches, the revisions done, and the items Changed. A later visit
+ * registers and carries again; the carried ticks are saved, and never carried twice.
+ */
+export function forgetCarry(urls: ReadonlySet<string> | undefined) {
+  forgetRevisionFiles(urls);
+  for (const key of [...done]) if (!urls || urls.has(urlOf(key))) done.delete(key);
+  for (const key of [...updated.keys()]) if (!urls || urls.has(urlOf(key))) updated.delete(key);
+}
+addDiagnosticsSource('reviewCarry', () => ({ revisionFiles: revisionFileStats(), done: done.size, changed: updated.size }));
 
 /**
  * Carries the earlier ticks into this revision of a file, once. `symbols` is what the tree knows of it, undefined for

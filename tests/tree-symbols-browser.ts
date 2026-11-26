@@ -12,7 +12,8 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  * - The file expands to its symbols, nested: Imports first, then Store › flush, gone, added.
  * - Clicking the file's name opens it; only its chevron expands and collapses it.
  * - Clicking a symbol scrolls the diff to it and lights its row.
- * - V marks the symbol Viewed: the file's outline ticks it, and the file itself stays unviewed.
+ * - V marks the symbol Viewed, and goes on to the next one: the file's outline ticks it, and the file itself stays
+ *   unviewed.
  * - The file row then shows its progress, 1/4 (Imports counts as one), as the outline does, and its folder the sum of
  *   what is known; V on Imports ticks it in the tree and the outline.
  * - The last tick marks the file Viewed (lib/symbol-file-sync.ts): its row reads Viewed and its header's checkbox is
@@ -130,7 +131,7 @@ void app.whenReady().then(async () => {
       `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(fileRow)})).find(e=>e.textContent.includes('flush() {'));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
     );
 
-    // ── V marks the symbol Viewed: shared with the outline, never the file ──
+    // ── V marks the symbol Viewed, shared with the outline, and goes on; the file stays unviewed ──
     await js("window.treeRow('flush').focus()");
     await js("window.treeRow('flush').dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))");
     await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
@@ -157,8 +158,8 @@ void app.whenReady().then(async () => {
       wait(
         `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row)})).find(e=>e.textContent.includes(${JSON.stringify(text)}));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
       );
-    // From flush, the one the reader chose (Viewed now): gone, then added.
-    await press('n');
+    // V on flush went on to the next unviewed item, gone, as V does (it stays the target, so n starts there); n then
+    // goes to added.
     await lit('gone');
     await inView(fileRow, 'function gone()');
     await press('n');
@@ -186,11 +187,18 @@ void app.whenReady().then(async () => {
     await js("window.treeRow('added').querySelector('[data-item-section=content]').click()");
     await lit('added');
     await inView(fileRow, 'function added()');
-    for (const symbol of ['Imports', 'gone', 'added']) {
+    // V ticks and goes on to the next item, which stays in store.ts until its last one.
+    for (const symbol of ['Imports', 'gone']) {
       await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
+    await lit('added');
+    // The last one ticked in the outline, which (unlike V) does not move the reader on.
+    await js(`(()=>{const o=document.querySelector(${JSON.stringify(fileRow + ' .diff-outline')});if(!o.hasAttribute('data-expanded'))o.querySelector('.diff-outline-toggle').click()})()`);
+    await wait(`!!document.querySelector(${JSON.stringify(fileRow + ' input.diff-outline-tick[aria-label="Viewed function added"]')})`);
+    await js(`document.querySelector(${JSON.stringify(fileRow + ' input.diff-outline-tick[aria-label="Viewed function added"]')}).click()`);
+    await wait("window.treeRows().find(r=>r.name==='added')?.decoration==='✓'");
     await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='Viewed'`);
     await wait(`document.querySelector(${JSON.stringify(fileRow + ' .changes-file-actions input[type=checkbox]')})?.checked===true`);
     console.log('Outline after every tick:', await outlineProgress());

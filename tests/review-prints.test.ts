@@ -198,3 +198,22 @@ void test('carry-over waits for the revision to be registered, and a file with n
   ensureCarried(big, undefined);
   assert.equal(progress.isFileViewed(big), false);
 });
+
+void test("carry-over's per-PR state leaves with the PR's inspection data", async () => {
+  const progress = await import('../lib/file-view-progress');
+  // The inspection caches call this when the PR leaves them (lib/use-tree-symbols.ts registers it).
+  const { forgetCarry } = await import('../lib/symbol-carry');
+  const { fileRevisionKey } = await import('../lib/pr-changes');
+  const url = 'https://github.com/o/r/pull/13';
+  progress.registerChangeProgress({
+    url,
+    metadata: { baseSha: 'base', headSha: 'h1' },
+    files: [{ path: 'a.json', status: 'modified', additions: 1, deletions: 0, changeId: 'a1', patch: '+1' }],
+  } as unknown as Parameters<typeof progress.registerChangeProgress>[0]);
+  const key = fileRevisionKey(url, 'a.json', 'base', 'h1');
+  assert.equal(progress.isRegistered(key), true);
+  const before = progress.revisionFileStats().entries;
+  forgetCarry(new Set([url]));
+  assert.equal(progress.isRegistered(key), false, 'Its patch is no longer held');
+  assert.equal(progress.revisionFileStats().entries, before - 1);
+});

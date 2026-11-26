@@ -2,7 +2,9 @@ import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { pathEnabled, type CodeIntelligenceSettings } from './code-intelligence';
 import type { GapHunk } from './diff-gaps';
 import { pathFileKinds } from './file-kinds';
-import { inspectionFileRequest, inspectionFiles } from './inspection-cache';
+import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
+import { addDiagnosticsSource } from './diagnostics-sources';
+import { forgetCarry } from './symbol-carry';
 import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
@@ -58,11 +60,15 @@ interface Peeked {
 /** Files whose patch and symbols are kept, newest last. */
 const MADE_FILES = 2_000;
 /** Each file's patch as hunks, and what its scopes read: both walk the whole patch, and the tree looks often. */
-const patches = new Map<string, { patch?: string; settings: CodeIntelligenceSettings; hunks: ReturnType<typeof patchHunks>; plan: ReturnType<typeof syntaxContentsPlan> }>();
+const patches = new Map<
+  string,
+  { url: string; patch?: string; settings: CodeIntelligenceSettings; hunks: ReturnType<typeof patchHunks>; plan: ReturnType<typeof syntaxContentsPlan> }
+>();
 function patchOf({ fileKey, snapshot, file }: TreeSymbolSource, settings: CodeIntelligenceSettings) {
   const known = patches.get(fileKey);
   if (known && known.patch === file.patch && known.settings === settings) return known;
   const value = {
+    url: snapshot.url,
     patch: file.patch,
     settings,
     hunks: patchHunks(file.patch),
@@ -77,7 +83,23 @@ function patchOf({ fileKey, snapshot, file }: TreeSymbolSource, settings: CodeIn
   return value;
 }
 /** The last result per file, with what it was made from: the tree renders often, and most files did not change. */
-const made = new Map<string, { inputs: readonly unknown[]; peeked: Peeked }>();
+const made = new Map<string, { url: string; inputs: readonly unknown[]; peeked: Peeked }>();
+// Both leave with their PR's inspection data (a closed tab, an idle PR, a cache reset), as the definitions they were
+// made from do: every file of a PR is looked up, and each entry holds its patch, its hunks and its definitions.
+onInspectionForget((urls) => {
+  for (const cache of [patches, made] as Map<string, { url: string }>[])
+    for (const [key, entry] of cache) if (!urls || urls.has(entry.url)) cache.delete(key);
+  // Carry-over's per-PR state too: its registered patches, the revisions done, the items Changed.
+  forgetCarry(urls);
+});
+onInspectionUses((into) => {
+  // A PR whose files only these still hold is swept when idle, as its definitions are.
+  for (const entry of patches.values()) if (!into.has(entry.url)) into.set(entry.url, -Infinity);
+});
+addDiagnosticsSource('treeSymbols', () => ({
+  patches: { entries: patches.size, bytes: [...patches.values()].reduce((sum, entry) => sum + 2 * (entry.patch?.length ?? 0), 0) },
+  made: made.size,
+}));
 
 /**
  * A file's symbols from what the caches already hold, the way the diff finds them (components/useDiffFileModel.tsx):
@@ -182,7 +204,7 @@ function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, fi
   });
   const peeked: Peeked = { value: { state: 'ready', nodes, top, prints } };
   made.delete(fileKey);
-  made.set(fileKey, { inputs, peeked });
+  made.set(fileKey, { url: snapshot.url, inputs, peeked });
   for (const key of made.keys()) {
     if (made.size <= MADE_FILES) break;
     made.delete(key);
