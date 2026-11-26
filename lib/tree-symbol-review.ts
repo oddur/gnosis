@@ -1,0 +1,141 @@
+import type { FileSymbols } from './tree-symbol-paths';
+import type { TreeSymbolNode } from './tree-symbols';
+
+/**
+ * The Changes tree as a review list (Settings › Review, Beta): how many of each file's changed symbols are Viewed, the
+ * same for a folder, and which unviewed symbol `n` and Shift+N go to.
+ *
+ * A symbol counts as the outline counts it (components/DiffOutline.tsx): a changed symbol with a change that shows.
+ * Context rows (an unchanged class around a changed method) and symbols whose every change is quiet are not counted, so
+ * the tree's `2/5` and the outline's "2/5 viewed" agree, and "every symbol viewed" means the same in both.
+ */
+
+/** A symbol the review counts: changed, with a change that shows. */
+export const reviewed = (node: TreeSymbolNode) => !!node.symbol && !node.quiet;
+
+/** A file's symbols in the tree's order, context rows included: depth first, as the rows show. */
+export function treeOrder(nodes: readonly TreeSymbolNode[]): TreeSymbolNode[] {
+  const out: TreeSymbolNode[] = [];
+  const walk = (node: TreeSymbolNode) => {
+    out.push(node);
+    node.children.forEach(walk);
+  };
+  nodes.forEach(walk);
+  return out;
+}
+
+export interface SymbolProgress {
+  viewed: number;
+  total: number;
+}
+
+/** How many of a file's counted symbols are Viewed. A Viewed file has every one viewed, as its outline shows. */
+export function symbolProgress(nodes: readonly TreeSymbolNode[], isViewed: (id: string) => boolean, fileViewed = false): SymbolProgress {
+  let viewed = 0,
+    total = 0;
+  for (const node of treeOrder(nodes)) {
+    if (!reviewed(node)) continue;
+    total++;
+    if (fileViewed || isViewed(node.id)) viewed++;
+  }
+  return { viewed, total };
+}
+
+/**
+ * Each folder's sum of its files' progress, by folder path with a trailing slash (`src/`, `src/lib/`): only files
+ * whose symbols are known are in `files`, so a folder sums what is known so far.
+ */
+export function folderProgress(files: ReadonlyMap<string, SymbolProgress>): Map<string, SymbolProgress> {
+  const out = new Map<string, SymbolProgress>();
+  for (const [key, progress] of files) {
+    if (!progress.total) continue;
+    for (let at = key.indexOf('/'); at >= 0; at = key.indexOf('/', at + 1)) {
+      const folder = key.slice(0, at + 1);
+      const sum = out.get(folder) ?? { viewed: 0, total: 0 };
+      sum.viewed += progress.viewed;
+      sum.total += progress.total;
+      out.set(folder, sum);
+    }
+  }
+  return out;
+}
+
+/**
+ * What a row's decoration shows of its progress. The tree is narrow, so a row keeps one short reading:
+ * - nothing viewed yet: no progress, and the row keeps its `+N −M` (or its quiet word), so rows do not all change as
+ *   files are parsed in the background, and the size of each change stays in sight until the reader starts on it;
+ * - some viewed: `2/5` in place of the counts, which stay in the tooltip;
+ * - every symbol viewed but not the file: a muted check, `✓ 5/5`, which offers what the outline offers, marking the
+ *   file Viewed, and never does it by itself.
+ * A Viewed file reads "Viewed" as it always did; that is the caller's.
+ */
+export type ProgressLabel = { kind: 'none' } | { kind: 'some'; text: string } | { kind: 'all'; text: string };
+export function progressLabel(progress: SymbolProgress | undefined): ProgressLabel {
+  if (!progress?.total || !progress.viewed) return { kind: 'none' };
+  const text = `${progress.viewed}/${progress.total}`;
+  return progress.viewed >= progress.total ? { kind: 'all', text: `✓ ${text}` } : { kind: 'some', text };
+}
+
+/** A file of the review list, in the tree's order. */
+export interface ReviewFile {
+  key: string;
+  viewed: boolean;
+  /** What is known of its symbols; undefined for a file that lists none (a language without tags, an image). */
+  symbols?: FileSymbols;
+}
+/** Where the reader is: a file, and the symbol row they are at in it (none: the file's top). */
+export interface ReviewPlace {
+  key: string;
+  id?: string;
+}
+export type ReviewStep =
+  /** The next unviewed symbol. */
+  | { kind: 'go'; key: string; node: TreeSymbolNode }
+  /** A file on the way whose symbols are not known yet: read and parse it, then ask again. */
+  | { kind: 'load'; key: string }
+  /** No unviewed symbol that way. */
+  | { kind: 'end' };
+
+/**
+ * The next (`1`) or previous (`-1`) unviewed symbol from `from`, in the tree's order: the files in their order, each
+ * file's symbols as its rows show them. Viewed files are skipped whole, and files without symbols are passed. A file
+ * on the way whose symbols are still unknown stops the walk (`load`): the next symbol may be in it, so it is read
+ * rather than guessed past. Nothing wraps around: the end says so.
+ */
+export function stepUnviewed(
+  files: readonly ReviewFile[],
+  from: ReviewPlace,
+  direction: 1 | -1,
+  isViewed: (key: string, id: string) => boolean
+): ReviewStep {
+  const start = files.findIndex((file) => file.key === from.key);
+  const pick = (file: ReviewFile, after: number | undefined): ReviewStep | undefined => {
+    if (file.viewed || !file.symbols || file.symbols.state === 'none') return undefined;
+    if (file.symbols.state === 'loading') return { kind: 'load', key: file.key };
+    const order = treeOrder(file.symbols.nodes);
+    // From a row in this file: the rows past it. From the file's top: every row forward, none back.
+    const first = after === undefined ? (direction === 1 ? 0 : order.length - 1) : after + direction;
+    for (let i = first; i >= 0 && i < order.length; i += direction) {
+      const node = order[i];
+      if (reviewed(node) && !isViewed(file.key, node.id)) return { kind: 'go', key: file.key, node };
+    }
+    return undefined;
+  };
+  if (start >= 0) {
+    const file = files[start];
+    let at: number | undefined;
+    if (from.id !== undefined && file.symbols?.state === 'ready') {
+      const index = treeOrder(file.symbols.nodes).findIndex((node) => node.id === from.id);
+      if (index >= 0) at = index;
+    }
+    // At the file's top, nothing in it comes before the reader.
+    const here = at === undefined && direction === -1 ? undefined : pick(file, at ?? -1);
+    if (here) return here;
+  }
+  const begin = start >= 0 ? start + direction : direction === 1 ? 0 : files.length - 1;
+  for (let i = begin; i >= 0 && i < files.length; i += direction) {
+    const step = pick(files[i], undefined);
+    if (step) return step;
+  }
+  return { kind: 'end' };
+}

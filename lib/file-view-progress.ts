@@ -110,6 +110,13 @@ export function isSymbolViewed(fileKey: string, symbolId: string): boolean {
   const resolved = s.marks[symbolViewedKey(s.aliases[fileKey] ?? fileKey, symbolId)];
   return resolved ?? !!s.marks[symbolViewedKey(fileKey, symbolId)];
 }
+/**
+ * Symbols the reader unticked in this session, by file revision key and id: "Mark a symbol viewed after you scroll
+ * through it" (lib/symbol-auto-view.ts) never ticks one of them again, so it does not fight the reader's own choice.
+ * Kept in memory only: a new session starts with the marks as they were saved.
+ */
+const unticked = new Set<string>();
+export const wasSymbolUnticked = (fileKey: string, symbolId: string) => unticked.has(JSON.stringify([fileKey, symbolId]));
 /** Ticks or unticks symbols of one file with one notification and one persisted patch. */
 export function markSymbolsViewed(fileKey: string, symbolIds: readonly string[], viewed: boolean) {
   const s = load();
@@ -120,6 +127,7 @@ export function markSymbolsViewed(fileKey: string, symbolIds: readonly string[],
     const key = symbolViewedKey(resolvedFile, id);
     s.marks[key] = viewed;
     marks[key] = viewed;
+    if (!viewed) unticked.add(JSON.stringify([fileKey, id]));
   }
   return Object.keys(marks).length ? changed({ aliases: {}, marks }) : Promise.resolve(true);
 }

@@ -6,7 +6,7 @@ import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import type { GapHunk } from '../lib/diff-gaps';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { changedSymbols, outlineSummary, spokenSymbol } from '../lib/symbol-outline';
+import { changedSymbolLines, changedSymbols, outlineSummary, spokenSymbol } from '../lib/symbol-outline';
 
 /** The changed-symbols outline (#394) with the real tree-sitter runtime: added, modified and removed symbols. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -86,6 +86,28 @@ void test('Added, modified and removed symbols, matched across both sides by the
   assert.deepEqual(symbols[2].parents.map((d) => d.name), ['Store'], 'A method keeps its class as its parent');
   assert.equal(outlineSummary(symbols), 'Changes 4 functions');
   assert.equal(spokenSymbol(symbols[1]), 'function rebase, removed');
+});
+
+void test("Each symbol's changed lines, by side, for the scrolled-through ticks; a folded symbol's go to its parent", async () => {
+  const after = BEFORE
+    .map((line) => (line === '  out.push(...b);' ? '  out.push(...b.filter(Boolean));' : line))
+    .concat(['', 'export class Queue {', '  push(n: number) {', '    return n;', '  }', '}']);
+  const hunks = hunksOf(BEFORE, after);
+  const definitions = { after: await parse('typescript', after), before: await parse('typescript', BEFORE) };
+  const lines = changedSymbolLines(hunks, definitions);
+  assert.ok(lines);
+  const push = BEFORE.indexOf('  out.push(...b);') + 1;
+  const queue = after.indexOf('export class Queue {') + 1;
+  // Which lines, in any order.
+  assert.deepEqual(Object.fromEntries([...lines].map(([id, list]) => [id, [...list].sort()])), {
+    'function:merge': [`a${push}`, `b${push}`],
+    // The added method folds into the added class, with its lines.
+    'class:Queue': [queue, queue + 1, queue + 2, queue + 3, queue + 4].map((line) => `a${line}`),
+  });
+  // The same symbols as the outline lists, in the same order.
+  assert.deepEqual([...lines.keys()], changedSymbols(hunks, definitions)?.map((symbol) => symbol.id));
+  // Lines the outline leaves out are left out here too.
+  assert.deepEqual([...(changedSymbolLines(hunks, definitions, (side) => side === 'before')?.get('function:merge') ?? [])], [`a${push}`]);
 });
 
 void test('A symbol inside an added one folds into it; a whole new class lists once', async () => {

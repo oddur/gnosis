@@ -69,6 +69,37 @@ export function changedSymbols(
    */
   skip?: (side: 'before' | 'after', line: number) => boolean
 ): ChangedSymbol[] | undefined {
+  return collectSymbols(hunks, definitions, skip)?.map(({ id, change, definition, side, parents, first, added, deleted }) => ({
+    id,
+    change,
+    definition,
+    side,
+    parents,
+    first,
+    added,
+    deleted,
+  }));
+}
+
+/**
+ * Each changed symbol's own changed lines, by id, as `changedSymbols()` counts them: `a12` for added line 12 of the new
+ * file, `b7` for deleted line 7 of the old one. A symbol folded into an added or removed parent gives its lines to the
+ * parent. What "Mark a symbol viewed after you scroll through it" waits to see (lib/symbol-auto-view.ts).
+ */
+export function changedSymbolLines(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  skip?: (side: 'before' | 'after', line: number) => boolean
+): Map<string, string[]> | undefined {
+  const symbols = collectSymbols(hunks, definitions, skip);
+  return symbols && new Map(symbols.map((symbol) => [symbol.id, symbol.lines]));
+}
+
+function collectSymbols(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  skip?: (side: 'before' | 'after', line: number) => boolean
+): (ChangedSymbol & { lines: string[] })[] | undefined {
   const after = definitions.after;
   if (!after) return undefined;
   const before = definitions.before;
@@ -83,10 +114,12 @@ export function changedSymbols(
     first: ChangedSymbol['first'];
     added: number;
     deleted: number;
+    lines: string[];
   }
   const entries = new Map<string, Entry>();
   const addedLines = new Set<number>();
   const touch = (definition: SyntaxDefinition, side: 'after' | 'before', order: number, at: ChangedSymbol['first'], added: number, deleted: number) => {
+    const line = `${at.side[0]}${at.line}`;
     const id = (side === 'after' ? afterIds : beforeIds)?.get(definition)?.id;
     if (!id) return;
     // A symbol in both files gathers its added and deleted lines under the new file's definition.
@@ -95,9 +128,10 @@ export function changedSymbols(
     if (entry) {
       entry.added += added;
       entry.deleted += deleted;
+      entry.lines.push(line);
       return;
     }
-    entries.set(id, { ...own, order, first: at, added, deleted });
+    entries.set(id, { ...own, order, first: at, added, deleted, lines: [line] });
   };
   let order = 0;
   for (const hunk of hunks) {
@@ -119,7 +153,7 @@ export function changedSymbols(
       if (row.type !== '-') newLine++;
     }
   }
-  const symbols: (ChangedSymbol & { order: number })[] = [];
+  const symbols: (ChangedSymbol & { order: number; lines: string[] })[] = [];
   for (const [id, entry] of entries) {
     const parents = (entry.side === 'after' ? afterIds : beforeIds)?.get(entry.definition)?.parents ?? [];
     let change: SymbolChange;
@@ -130,7 +164,7 @@ export function changedSymbols(
       for (let line = entry.definition.start; line <= entry.definition.end && whole; line++) whole = addedLines.has(line);
       change = whole ? 'added' : 'modified';
     }
-    symbols.push({ id, change, definition: entry.definition, side: entry.side, parents, first: entry.first, added: entry.added, deleted: entry.deleted, order: entry.order });
+    symbols.push({ id, change, definition: entry.definition, side: entry.side, parents, first: entry.first, added: entry.added, deleted: entry.deleted, order: entry.order, lines: entry.lines });
   }
   // A symbol inside an added or removed one is part of it.
   const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
@@ -142,6 +176,7 @@ export function changedSymbols(
       if (ancestor && ancestor.change === symbol.change) {
         ancestor.added += symbol.added;
         ancestor.deleted += symbol.deleted;
+        ancestor.lines.push(...symbol.lines);
         if (symbol.order < ancestor.order) {
           ancestor.order = symbol.order;
           ancestor.first = symbol.first;
@@ -153,7 +188,7 @@ export function changedSymbols(
   });
   return folded
     .sort((a, b) => a.order - b.order)
-    .map((symbol): ChangedSymbol => ({
+    .map((symbol): ChangedSymbol & { lines: string[] } => ({
       id: symbol.id,
       change: symbol.change,
       definition: symbol.definition,
@@ -162,6 +197,7 @@ export function changedSymbols(
       first: symbol.first,
       added: symbol.added,
       deleted: symbol.deleted,
+      lines: symbol.lines,
     }));
 }
 
