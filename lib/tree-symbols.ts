@@ -1,0 +1,238 @@
+import type { GapHunk } from './diff-gaps';
+import type { MoveMark } from './moved-symbols-store';
+import type { ChangedSymbol, SymbolChange } from './symbol-outline';
+import type { DefinitionKind, SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
+
+/**
+ * The changed symbols of a file as rows of the Changes file tree: folder › file › class › method. The rows come from
+ * the outline's own `changedSymbols()` (lib/symbol-outline.ts), so the tree and the outline above the diff name the
+ * same symbols under the same ids, and a Viewed tick in one shows in the other (lib/file-view-progress.ts).
+ *
+ * The outline is a flat list; the tree nests it. A parent that holds changed symbols but is not changed itself is a
+ * context row, so the reader can drill down to the method that changed. Changed lines outside every definition
+ * (imports, top-level statements) make a last row, so a file's rows add up to its changes.
+ */
+
+/** The languages whose tags queries name definitions (src/assets/tree-sitter/*-tags.scm): JSON and YAML have none. */
+const TREE_LANGUAGES: ReadonlySet<SyntaxLanguage> = new Set(['typescript', 'tsx', 'javascript', 'python', 'go', 'rust', 'java', 'csharp']);
+export const treeSymbolLanguage = (language: SyntaxLanguage | undefined) => !!language && TREE_LANGUAGES.has(language);
+
+/** What a symbol row's icon shows. */
+export type TreeSymbolKind = 'function' | 'method' | 'class' | 'interface' | 'type' | 'enum' | 'variable' | 'module';
+const KINDS: Record<DefinitionKind, TreeSymbolKind> = {
+  function: 'function',
+  test: 'function',
+  macro: 'function',
+  method: 'method',
+  class: 'class',
+  struct: 'class',
+  impl: 'class',
+  interface: 'interface',
+  trait: 'interface',
+  type: 'type',
+  enum: 'enum',
+  property: 'variable',
+  key: 'variable',
+  module: 'module',
+};
+export const treeSymbolKind = (kind: DefinitionKind): TreeSymbolKind => KINDS[kind];
+
+export interface TreeSymbolNode {
+  /** The symbol's id (`class:Store>method:flush`): what its Viewed tick is kept under. */
+  id: string;
+  definition: SyntaxDefinition;
+  /** `context`: a parent around changed symbols that is not changed itself. */
+  change: SymbolChange | 'context';
+  /** The outline's symbol; undefined for a context row. */
+  symbol?: ChangedSymbol;
+  /** Changed lines that are this symbol's own, not a nested changed symbol's: 0 for a context row. */
+  added: number;
+  deleted: number;
+  /**
+   * Every change of the symbol is quiet, formatting or comments the reader hides (#396): what they are, as the file's
+   * header names a quiet file ("Formatting only"). Undefined for a symbol with a change that shows.
+   */
+  quiet?: string;
+  /** Where the symbol moved from or to (#398), in words for its tooltip. */
+  moved?: string;
+  children: TreeSymbolNode[];
+}
+
+/**
+ * The outline's symbols as a tree. `all` is `changedSymbols()` without the quiet lines left out, so every changed
+ * symbol has a row; `shown` is the outline's own list, with them left out: a symbol in `all` but not in `shown` has
+ * only quiet changes. Siblings keep the outline's order, which is the diff's.
+ */
+export function symbolTree(
+  all: readonly ChangedSymbol[],
+  shown: readonly ChangedSymbol[] = all,
+  moves: readonly MoveMark[] = [],
+  /** What a quiet symbol's changes are, in the words of a quiet file's label. */
+  quietLabel: (symbol: ChangedSymbol) => string = () => 'Quiet changes'
+): TreeSymbolNode[] {
+  const shownIds = new Set(shown.map((symbol) => symbol.id));
+  const roots: TreeSymbolNode[] = [];
+  const nodes = new Map<string, TreeSymbolNode>();
+  const place = (node: TreeSymbolNode, parent: TreeSymbolNode | undefined) => (parent ? parent.children : roots).push(node);
+  for (const symbol of all) {
+    // An id is one `kind:name` part per definition around it. A name with `>` in it (an operator) splits wrongly: the
+    // symbol then lists at the top, rather than under parents that would be guessed.
+    const parts = symbol.id.split('>');
+    const nested = parts.length === symbol.parents.length + 1;
+    let parent: TreeSymbolNode | undefined;
+    if (nested)
+      for (let depth = 0; depth < symbol.parents.length; depth++) {
+        const id = parts.slice(0, depth + 1).join('>');
+        let node = nodes.get(id);
+        if (!node) {
+          node = { id, definition: symbol.parents[depth], change: 'context', added: 0, deleted: 0, children: [] };
+          nodes.set(id, node);
+          place(node, parent);
+        }
+        parent = node;
+      }
+    const move = moves.find((mark) => mark.side === symbol.side && mark.start === symbol.definition.start && mark.name === symbol.definition.name);
+    const own = {
+      definition: symbol.definition,
+      change: symbol.change,
+      symbol,
+      added: symbol.added,
+      deleted: symbol.deleted,
+      quiet: shownIds.has(symbol.id) ? undefined : quietLabel(symbol),
+      moved: move && moveWords(move),
+    };
+    const known = nodes.get(symbol.id);
+    // A parent listed as context for a child that changed first, and changed further down itself.
+    if (known) Object.assign(known, own);
+    else {
+      const node: TreeSymbolNode = { id: symbol.id, ...own, children: [] };
+      nodes.set(symbol.id, node);
+      place(node, nested ? parent : undefined);
+    }
+  }
+  return roots;
+}
+
+/** A move in words, for a symbol row's tooltip: "Moved from lib/store.ts, line 12", "Renamed from flushAll". */
+export function moveWords(mark: Pick<MoveMark, 'side' | 'sameFile' | 'other' | 'renamed'>): string {
+  const into = mark.side === 'after';
+  const { other } = mark;
+  const where = mark.sameFile ? `line ${other.start} of this file` : `${other.path}, line ${other.start}`;
+  if (mark.renamed && mark.sameFile) return `${into ? 'Renamed from' : 'Renamed to'} ${other.name}, ${where}`;
+  return `${into ? 'Moved from' : 'Moved to'} ${where}${mark.renamed ? `, as ${other.name}` : ''}`;
+}
+
+/** Changed lines outside every definition: what the file's last row counts. */
+export interface TopLevelChanges {
+  added: number;
+  deleted: number;
+  /** Every one of them is an import (or a blank line among imports): the row reads "Imports". */
+  imports: boolean;
+}
+
+/** The smallest definition holding `line`; as lib/symbol-outline.ts finds it, so the two count the same lines. */
+function inside(definitions: readonly SyntaxDefinition[], line: number) {
+  for (const definition of definitions) if (definition.start <= line && definition.end >= line) return true;
+  return false;
+}
+
+/**
+ * The changed lines outside every definition, attributed as `changedSymbols()` attributes lines: an added line by the
+ * new file's tree, a deleted line by the old file's, or without it by the new file's lines around where it was.
+ * Undefined when there are none.
+ */
+export function topLevelChanges(
+  hunks: readonly Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] }
+): TopLevelChanges | undefined {
+  const after = definitions.after ?? [];
+  const before = definitions.before;
+  let added = 0,
+    deleted = 0;
+  const texts: string[] = [];
+  for (const hunk of hunks) {
+    let oldLine = hunk.oldStart,
+      newLine = hunk.newStart;
+    for (const row of hunk.rows) {
+      if (row.type === '+' && !inside(after, newLine)) {
+        added++;
+        texts.push(row.text);
+      } else if (
+        row.type === '-' &&
+        !(before ? inside(before, oldLine) : inside(after, Math.max(1, newLine - 1)) || inside(after, newLine))
+      ) {
+        deleted++;
+        texts.push(row.text);
+      }
+      if (row.type !== '+') oldLine++;
+      if (row.type !== '-') newLine++;
+    }
+  }
+  if (!added && !deleted) return undefined;
+  return { added, deleted, imports: importLines(texts) };
+}
+
+// An import in any of the tree's languages: `import`, `from x import`, `use`, `using`, `extern crate`, `require(…)`,
+// and re-exports. Go's and multi-line TypeScript imports spread over lines that name only a path or a binding: those
+// count among imports when an import line is there too.
+const IMPORT = /^(import\b|export\s+(type\s+)?(\*|\{[^}]*\})\s*(as\s+\w+\s*)?from\b|from\s+\S+\s+import\b|use\s|pub\s+use\s|using\s|extern\s+crate\s|package\s|(const|let|var)\s+[\w${},\s]+=\s*require\()/;
+const IMPORT_PART = /^(["'`][^"'`]+["'`];?|[\w.]+\s+["'`][^"'`]+["'`]|(type\s+)?[\w$]+(\s+as\s+[\w$]+)?,?|\}\s*(from\s+["'`][^"'`]+["'`])?;?|\)|\{|\(|\*\s+as\s+\w+)$/;
+function importLines(texts: readonly string[]): boolean {
+  let any = false;
+  for (const text of texts) {
+    const line = text.trim();
+    if (!line) continue;
+    if (IMPORT.test(line)) any = true;
+    else if (!IMPORT_PART.test(line)) return false;
+  }
+  return any;
+}
+
+/** Symbol rows whose name has `query` in it, with the rows around them; undefined for no query. */
+export function matchingSymbols(nodes: readonly TreeSymbolNode[], query: string): Set<string> | undefined {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return undefined;
+  const found = new Set<string>();
+  const walk = (node: TreeSymbolNode): boolean => {
+    let hit = node.definition.name.toLowerCase().includes(needle);
+    for (const child of node.children) if (walk(child)) hit = true;
+    if (hit) found.add(node.id);
+    return hit;
+  };
+  for (const node of nodes) walk(node);
+  return found;
+}
+
+/**
+ * The row of the symbol the reader is in, from the pinned breadcrumb's definitions around the line at the top of the
+ * view (outermost first, `kind:name` each): the innermost one with a row, so reading a changed method inside an
+ * unchanged class lights the method, and reading elsewhere in the class lights the class's context row.
+ */
+export function readingSymbol(nodes: readonly TreeSymbolNode[], path: readonly string[] | undefined): string | undefined {
+  if (!path?.length) return undefined;
+  const byPath = new Map<string, string>();
+  const walk = (node: TreeSymbolNode) => {
+    // Repeats such as overloads have `#2` on their part: the reader's place names the kind and name only.
+    const plain = node.id.replace(/#\d+(?=>|$)/g, '');
+    if (!byPath.has(plain)) byPath.set(plain, node.id);
+    node.children.forEach(walk);
+  };
+  nodes.forEach(walk);
+  for (let depth = path.length; depth > 0; depth--) {
+    const id = byPath.get(path.slice(0, depth).join('>'));
+    if (id) return id;
+  }
+  return undefined;
+}
+
+/** The ids of a node's changed symbols, itself included: what a context row's Viewed marks. */
+export function changedIds(node: TreeSymbolNode): string[] {
+  const ids: string[] = node.symbol ? [node.id] : [];
+  for (const child of node.children) ids.push(...changedIds(child));
+  return ids;
+}
+
+/** The rows in `keep`, nested as before: a search's matches in a file the reader has not opened. */
+export function pruneSymbols(nodes: readonly TreeSymbolNode[], keep: ReadonlySet<string>): TreeSymbolNode[] {
+  return nodes.filter((node) => keep.has(node.id)).map((node) => ({ ...node, children: pruneSymbols(node.children, keep) }));
+}

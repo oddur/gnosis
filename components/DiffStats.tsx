@@ -2,6 +2,8 @@
 export const DIFF_STAT_COLORS = {
   added: 'var(--color-success)',
   removed: 'var(--color-danger)',
+  /** A changed symbol (#394), as the outline marks it. */
+  modified: 'var(--code-modified)',
 };
 
 export function DiffStats({ additions, deletions }: { additions: number; deletions: number }) {

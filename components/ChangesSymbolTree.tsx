@@ -1,0 +1,475 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
+import { preparePresortedFileTreeInput, type ContextMenuItem, type FileTreeDirectoryHandle, type FileTreeItemHandle, type GitStatusEntry } from '@pierre/trees';
+import { TreeSymbolMenu, TreeViewedMenu } from './TreeViewedMenu';
+import { TREE_WORDS, commentDecorationCSS, decorationCSS, fileRowDecoration, type ChangeTreeEntry } from './ChangesFileTree';
+import { DIFF_STAT_COLORS } from './DiffStats';
+import { treeSymbolLook } from './tree-symbol-icons';
+import { selectedTreeFiles } from '../lib/tree-viewed-files';
+import { useFileProgress } from '../lib/file-view-progress';
+import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
+import type { NoiseFilter } from '../lib/semantic-noise';
+import type { ChangedSymbol } from '../lib/symbol-outline';
+import { definitionNoun } from '../lib/hunk-scopes';
+import { useReadingPlace } from '../lib/tree-symbol-sync';
+import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
+import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
+import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
+
+export interface SymbolTreeEntry extends ChangeTreeEntry {
+  /** The file as the diff reads it: set for every file, so the tree can tell which have symbols. */
+  source?: TreeSymbolSource;
+}
+
+const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renamed: 'renamed' } as const;
+
+/**
+ * The Changes file tree with each file's changed symbols under it (Settings › Review, Beta): folder › file › class ›
+ * method, in @pierre/trees as ChangesFileTree is, with the same rows for files and folders, the same Viewed menu,
+ * selection, search and reveal. A file with symbol support is a folder to Pierre (lib/tree-symbol-paths.ts): clicking
+ * its name opens the file as before, and only its chevron or the arrow keys expand it. Expanding a file reads and
+ * parses it at the top priority (lib/use-tree-symbols.ts); the selected file expands by itself, and the others stay as
+ * the reader leaves them. A symbol row takes the reader to the symbol as its outline does, and shares the outline's
+ * Viewed ticks; the row the reader is in is lit as the diff scrolls (lib/tree-symbol-sync.ts).
+ */
+export function ChangesSymbolTree({
+  entries,
+  selected,
+  query,
+  onSelect,
+  onPreview,
+  onSetViewed,
+  onGoToSymbol,
+  showComments = true,
+  revealSelected = false,
+  codeSettings,
+  noiseFilter,
+}: {
+  entries: SymbolTreeEntry[];
+  selected: string;
+  query: string;
+  onSelect: (path: string) => void;
+  onPreview?: (path: string) => void;
+  onSetViewed?: (paths: string[], viewed: boolean) => Promise<boolean>;
+  /** Takes the reader to a symbol of the file with this entry key. */
+  onGoToSymbol: (key: string, symbol: ChangedSymbol) => void;
+  showComments?: boolean;
+  revealSelected?: boolean;
+  codeSettings: CodeIntelligenceSettings;
+  noiseFilter: NoiseFilter;
+}) {
+  const progress = useFileProgress();
+  // Which files list symbols: only their paths and revisions matter, not their decorations.
+  const sourceSignature = entries.map((e) => `${e.key}\u0000${e.source?.fileKey ?? ''}`).join('\n');
+  const supported = useMemo(() => {
+    const files = new Map<string, TreeSymbolSource>();
+    for (const e of entries) if (e.source && treeSymbolsSupported(e.source, codeSettings)) files.set(e.key, e.source);
+    return files;
+  }, [sourceSignature, codeSettings]);
+  // The files expanded in the tree, as Pierre has them.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const searching = !!query.trim();
+  // Collapsed files are looked up only for a search, which reads nothing.
+  const looked = useMemo(
+    () => (searching ? supported : new Map([...supported].filter(([key]) => expanded.has(key)))),
+    [supported, expanded, searching]
+  );
+  const symbols = useTreeSymbols(looked, expanded, codeSettings, noiseFilter);
+  // A search shows a collapsed file's matching symbols only, so a query that matches the file's path does not list
+  // every symbol of every file it names.
+  const shown = useMemo(() => {
+    if (!searching) return symbols;
+    const out = new Map<string, FileSymbols>();
+    for (const [key, value] of symbols) {
+      if (expanded.has(key) || value.state !== 'ready') out.set(key, value);
+      else {
+        const hits = matchingSymbols(value.nodes, query);
+        if (hits?.size) out.set(key, { state: 'ready', nodes: pruneSymbols(value.nodes, hits) });
+      }
+    }
+    return out;
+  }, [symbols, expanded, searching, query]);
+  const keys = entries.map((e) => e.key).join('\n');
+  const layout = useMemo(
+    () => symbolTreePaths(keys ? keys.split('\n') : [], new Set(supported.keys()), shown, expanded),
+    [keys, supported, shown, expanded]
+  );
+  const pathSignature = layout.paths.join('\n');
+  const prepared = useMemo(() => preparePresortedFileTreeInput(layout.paths), [pathSignature]);
+  const current = useRef({ entries, onSelect, layout, supported, progress });
+  current.current = { entries, onSelect, layout, supported, progress };
+  const rowAt = (path: string | null | undefined): TreeRow | undefined => (path ? current.current.layout.rows.get(path) : undefined);
+  /** What the menus, the selection count and the Viewed actions know a row by: a file's key, a folder's path. */
+  const appPath = (path: string): string | undefined => {
+    const row = rowAt(path);
+    return row?.type === 'file' ? row.key : row?.type === 'folder' ? row.path : undefined;
+  };
+  const entryOf = (key: string) => current.current.entries.find((e) => e.key === key);
+  const look = treeSymbolLook();
+  const { model } = useFileTree({
+    preparedInput: prepared,
+    // Pierre's flattening would fold a file into a folder that holds only it (lib/tree-symbol-paths.ts).
+    flattenEmptyDirectories: false,
+    initialExpansion: 'closed',
+    initialExpandedPaths: openPaths(layout, new Set(), new Set()),
+    composition: { contextMenu: { triggerMode: 'right-click' } },
+    search: false,
+    icons: look.icons,
+    unsafeCSS: decorationCSS + (showComments ? commentDecorationCSS : '') + look.css,
+    fileTreeSearchMode: 'hide-non-matches',
+    renderRowDecoration: ({ item }) => {
+      const row = rowAt(item.path);
+      if (!row) return null;
+      if (row.type === 'file') {
+        const entry = entryOf(row.key);
+        return entry ? fileRowDecoration(entry, showComments) : null;
+      }
+      if (row.type === 'top') {
+        const { added, deleted, imports } = row.top;
+        return {
+          text: `+${added} −${deleted}`,
+          parts: [
+            { text: `+${added}`, color: DIFF_STAT_COLORS.added },
+            { text: `−${deleted}`, color: DIFF_STAT_COLORS.removed },
+          ],
+          title: `${added} additions, ${deleted} deletions ${imports ? 'to imports' : 'outside every function and class'}`,
+        };
+      }
+      if (row.type !== 'symbol') return null;
+      const { node } = row;
+      if (!node.symbol) return null;
+      const source = current.current.supported.get(row.key);
+      const viewed = !!entryOf(row.key)?.viewed || (!!source && current.current.progress.isSymbolViewed(source.fileKey, node.id));
+      const quiet = !viewed && node.quiet ? (TREE_WORDS[node.quiet] ?? 'Quiet') : undefined;
+      const moved = node.moved ? [{ text: '⇄', color: 'var(--muted-foreground)' }] : [];
+      const spoken = `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
+      return {
+        text: viewed ? 'Viewed' : (quiet ?? `+${node.added} −${node.deleted}`),
+        parts: [
+          ...moved,
+          ...(viewed
+            ? [{ text: 'Viewed' }]
+            : quiet
+              ? [{ text: quiet, color: 'var(--muted-foreground)' }]
+              : [
+                  { text: `+${node.added}`, color: DIFF_STAT_COLORS.added },
+                  { text: `−${node.deleted}`, color: DIFF_STAT_COLORS.removed },
+                ]),
+        ],
+        title: `${spoken}. ${viewed ? 'Viewed' : `${node.added} additions, ${node.deleted} deletions`}${node.quiet ? `. ${node.quiet}: every change is quiet` : ''}${node.moved ? `. ${node.moved}` : ''}`,
+      };
+    },
+  });
+  const selectedPaths = useFileTreeSelection(model);
+  const [matchingPaths, setMatchingPaths] = useState<ReadonlySet<string>>();
+  const selectOnly = (path?: string) => {
+    for (const key of model.getSelectedPaths()) if (key !== path) model.getItem(key)?.deselect();
+    if (path) model.getItem(path)?.select();
+  };
+  const rowPath = (event: Event) => {
+    const row = event.composedPath().find((node) => node instanceof Element && node.hasAttribute('data-item-path'));
+    return row instanceof Element ? row.getAttribute('data-item-path') : null;
+  };
+  // The files Pierre shows expanded. Read on each of its changes: a chevron, an arrow key or a search opens files.
+  useEffect(() => {
+    const read = () => {
+      const open = new Set<string>();
+      for (const key of current.current.supported.keys()) {
+        if (folderOf(model.getItem(current.current.layout.pierreOf.get(key) ?? ''))?.isExpanded()) open.add(key);
+      }
+      setExpanded((previous) => (previous.size === open.size && [...open].every((key) => previous.has(key)) ? previous : open));
+    };
+    read();
+    return model.subscribe(read);
+  }, [model, supported]);
+  // Symbol rows read Viewed from the outline's ticks: a tick anywhere renders this tree, and the rows' decorations are
+  // refreshed only when one of theirs changed.
+  let viewedSignature = '';
+  for (const id of layout.symbolPaths.keys()) {
+    const [key, symbol] = id.split('\u0000');
+    const source = supported.get(key);
+    viewedSignature += source && progress.isSymbolViewed(source.fileKey, symbol) ? '1' : '0';
+  }
+  // Folders the reader closed: a rebuild of the paths keeps what is open as it was. Real folders and symbols with
+  // children open the first time they show; files do not.
+  const closed = useRef(new Set<string>());
+  const applied = useRef<{ layout: SymbolTreePaths; entries: unknown; viewed: string }>(undefined);
+  const applyStatus = useRef(() => {});
+  useEffect(() => {
+    const last = applied.current;
+    if (last && last.layout === layout && last.entries === entries && last.viewed === viewedSignature) return;
+    // What is open now, by what stays the same across rebuilds.
+    const open = new Set<string>();
+    if (last)
+      for (const [id, path] of last.layout.directories) {
+        const item = folderOf(model.getItem(path));
+        if (!item) continue;
+        if (item.isExpanded()) {
+          open.add(id);
+          closed.current.delete(id);
+        } else closed.current.add(id);
+      }
+    applied.current = { layout, entries, viewed: viewedSignature };
+    // Resetting also refreshes Pierre's row decorations: counts, Viewed, quiet words.
+    model.resetPaths({ preparedInput: prepared, initialExpandedPaths: openPaths(layout, open, closed.current) });
+    applyStatus.current();
+  }, [model, layout, prepared, entries, viewedSignature]);
+  // The file and the symbol the reader is in.
+  const readingFile = supported.get(selected);
+  const place = useReadingPlace(readingFile?.fileKey);
+  const readingPath = useMemo(() => {
+    const known = symbols.get(selected);
+    if (!place || known?.state !== 'ready') return undefined;
+    // Outside every definition: the file's top-level row.
+    if (!place.length) return layout.paths.find((path) => { const row = layout.rows.get(path); return row?.type === 'top' && row.key === selected; });
+    const id = readingSymbol(known.nodes, place);
+    return id ? layout.symbolPaths.get(symbolRowKey(selected, id)) : undefined;
+  }, [place, symbols, selected, layout]);
+  applyStatus.current = () => {
+    const status: GitStatusEntry[] = [];
+    for (const e of entries) {
+      const path = layout.pierreOf.get(e.key);
+      if (path) status.push({ path, status: STATUS[e.status] });
+    }
+    // The one status no file here has lights the reading row (components/tree-symbol-icons.ts).
+    if (readingPath) status.push({ path: readingPath, status: 'untracked' });
+    model.setGitStatus(status);
+  };
+  useEffect(() => applyStatus.current(), [model, readingPath]);
+  const searched = useRef<unknown>(undefined);
+  useEffect(() => {
+    // Rows that came in during a search (a file's symbols landed) are matched too: Pierre matches the rows it had.
+    if (query.trim() && searched.current !== undefined && searched.current !== prepared) model.setSearch(null);
+    searched.current = query.trim() ? prepared : undefined;
+    model.setSearch(query || null);
+    const matching = query.trim() ? new Set(model.getSearchMatchingPaths().flatMap((path) => { const row = rowAt(path); return row && row.type !== 'folder' ? [row.key] : []; })) : undefined;
+    setMatchingPaths(matching);
+    if (matching) {
+      const files = new Set(selectedTreeFiles(current.current.entries, mapped(model.getSelectedPaths()), matching).map((entry) => entry.key));
+      for (const path of model.getSelectedPaths()) {
+        const app = appPath(path);
+        if (!app || (!files.has(app) && ![...files].some((file) => app.endsWith('/') && file.startsWith(app)))) model.getItem(path)?.deselect();
+      }
+    }
+  }, [model, query, prepared]);
+  /** Pierre's selected rows as the entries know them; symbol rows are not files and drop out. */
+  const mapped = (paths: readonly string[]) => paths.flatMap((path) => appPath(path) ?? []);
+  // The selected file opens by itself, and closes again when the reader moves on, unless they opened or closed it.
+  const auto = useRef<string>(undefined);
+  // The selection last acted on: a file the reader closed by hand stays closed while it stays selected.
+  const handled = useRef<string>(undefined);
+  const selectedPath = layout.pierreOf.get(selected);
+  useEffect(() => {
+    if (handled.current === selected || !selectedPath || model.getSelectedPaths().length > 1) return;
+    handled.current = selected;
+    const previous = auto.current;
+    if (previous && previous !== selected) {
+      const item = folderOf(model.getItem(layout.pierreOf.get(previous) ?? ''));
+      if (item?.isExpanded()) item.collapse();
+      auto.current = undefined;
+    }
+    const item = supported.has(selected) ? folderOf(model.getItem(selectedPath)) : undefined;
+    if (item && !item.isExpanded()) {
+      item.expand();
+      auto.current = selected;
+    }
+  }, [model, selected, selectedPath, supported]);
+  const revealed = useRef<{ model: typeof model; path: string } | null>(null);
+  useEffect(() => {
+    const item = selectedPath ? model.getItem(selectedPath) : null;
+    // The scrolling diff identifies the current file; it must not expand a user's bulk selection.
+    if (model.getSelectedPaths().length <= 1) {
+      // A symbol row of the current file stays selected: the reader chose it.
+      const keep = (path: string) => {
+        const row = rowAt(path);
+        return path === selectedPath || (!!row && row.type !== 'file' && row.type !== 'folder' && row.key === selected);
+      };
+      for (const path of model.getSelectedPaths()) if (!keep(path)) model.getItem(path)?.deselect();
+      if (!model.getSelectedPaths().length) item?.select();
+    }
+    if (!item || !selectedPath || !revealSelected || model.getSelectedPaths().length > 1) {
+      revealed.current = null;
+      return;
+    }
+    // An inventory or decoration update must not undo manual tree scrolling.
+    // Reveal only a new selection (or the first time that selection is available).
+    if (revealed.current?.model !== model || revealed.current.path !== selectedPath) {
+      model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' });
+      revealed.current = { model, path: selectedPath };
+    }
+  }, [model, selected, selectedPath, prepared, revealSelected]);
+  // The symbol the reader is in comes into view as the diff scrolls, as the current file does.
+  useEffect(() => {
+    if (readingPath && revealSelected && model.getSelectedPaths().length <= 1) model.scrollToPath(readingPath, { focus: false, offset: 'nearest' });
+  }, [model, readingPath, revealSelected]);
+  /** A symbol row's place in the diff: a context row goes to its definition, revealing down to its first change. */
+  const destination = (node: TreeSymbolNode): ChangedSymbol | undefined => {
+    if (node.symbol) return node.symbol;
+    const first = (function find(nodes: readonly TreeSymbolNode[]): ChangedSymbol | undefined {
+      for (const child of nodes) {
+        const found = child.symbol ?? find(child.children);
+        if (found) return found;
+      }
+      return undefined;
+    })(node.children);
+    return first && { ...first, id: node.id, change: 'modified', definition: node.definition, parents: [] };
+  };
+  const activate = (row: TreeRow | undefined) => {
+    if (!row || row.type === 'folder') return;
+    if (row.type === 'symbol') {
+      const symbol = destination(row.node);
+      if (symbol) onGoToSymbol(row.key, symbol);
+      return;
+    }
+    current.current.onSelect(row.key);
+  };
+  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? changedIds(row.node) : []);
+  const markSymbols = (row: TreeRow | undefined, viewed?: boolean) => {
+    const source = row?.type === 'symbol' ? supported.get(row.key) : undefined;
+    const ids = symbolIds(row);
+    if (!source || !ids.length) return;
+    const now = ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length;
+    // Never the file: Viewed collapses it, which would take the code away from under the reader.
+    void progress.markSymbolsViewed(source.fileKey, ids, viewed ?? now < ids.length);
+  };
+  const selectedFiles = selectedTreeFiles(entries, mapped(selectedPaths), matchingPaths);
+  return (
+    <div className="file-tree-selection-workspace">
+      <div className="file-tree-selection-status">
+        {selectedFiles.length > 1 ? (
+          <>
+            <span role="status">{selectedFiles.length} files selected</span>
+            <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
+          </>
+        ) : (
+          <span>Shift-click to select a range</span>
+        )}
+      </div>
+      <FileTree
+        model={model}
+        renderContextMenu={onSetViewed ? (item, context) => {
+          const row = rowAt(item.path);
+          if (row?.type === 'symbol') {
+            const source = supported.get(row.key);
+            const ids = symbolIds(row);
+            if (!source || !ids.length) return null;
+            return (
+              <TreeSymbolMenu
+                context={context}
+                label={`${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
+                count={ids.length}
+                viewed={ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length}
+                onSetViewed={(viewed) => markSymbols(row, viewed)}
+              />
+            );
+          }
+          // A file's other rows act on the file, as its own row does.
+          const target: ContextMenuItem | undefined =
+            row?.type === 'folder'
+              ? { kind: 'directory', name: item.name, path: row.path }
+              : row
+                ? { kind: 'file', name: row.key.slice(row.key.lastIndexOf('/') + 1), path: row.key }
+                : undefined;
+          if (!target) return null;
+          return (
+            <TreeViewedMenu
+              item={target}
+              context={context}
+              entries={entries}
+              matchingPaths={matchingPaths}
+              selectedPaths={mapped(model.getSelectedPaths())}
+              onSetViewed={onSetViewed}
+            />
+          );
+        } : undefined}
+        className="changes-file-tree"
+        aria-label="Changed files"
+        onClickCapture={(event) => {
+          if (event.shiftKey || event.metaKey || event.ctrlKey) return;
+          const path = rowPath(event.nativeEvent);
+          const row = rowAt(path);
+          // Folders and plain files act as Pierre has them act.
+          if (!path || !row || row.type === 'folder' || (row.type === 'file' && !row.folder)) return;
+          event.stopPropagation();
+          const item = model.getItem(path);
+          const chevron = event.nativeEvent.composedPath().some((node) => node instanceof Element && node.getAttribute('data-item-section') === 'icon');
+          const folder = folderOf(item);
+          if (chevron && folder) {
+            if (row.type === 'file' && auto.current === row.key) auto.current = undefined;
+            folder.toggle();
+            return;
+          }
+          // The name opens the file, or goes to the symbol; only the chevron expands.
+          selectOnly(path);
+          item?.focus();
+          activate(row);
+        }}
+        onClick={(event) => {
+          if (event.shiftKey || event.metaKey || event.ctrlKey || !rowPath(event.nativeEvent)) return;
+          const row = rowAt(model.getFocusedPath());
+          if (row?.type === 'file') activate(row);
+        }}
+        onContextMenuCapture={(event) => {
+          const path = rowPath(event.nativeEvent);
+          if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
+        }}
+        onPointerOver={(event) => {
+          const row = rowAt(rowPath(event.nativeEvent));
+          if (row && row.type !== 'folder') onPreview?.(row.key);
+        }}
+        onFocusCapture={() => {
+          const row = rowAt(model.getFocusedPath());
+          if (row && row.type !== 'folder') onPreview?.(row.key);
+        }}
+        onKeyUp={() => {
+          const row = rowAt(model.getFocusedPath());
+          if (row && row.type !== 'folder') onPreview?.(row.key);
+        }}
+        onKeyDownCapture={(event) => {
+          if (event.nativeEvent.composedPath().some((node) => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;
+          if (event.key === 'Escape' && model.getSelectedPaths().length > 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            selectOnly();
+            return;
+          }
+          const path = model.getFocusedPath();
+          const row = rowAt(path);
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
+          }
+          // The arrow keys open and close a file as its chevron does; the reader's choice then stays.
+          if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && row?.type === 'file' && auto.current === row.key) auto.current = undefined;
+          // V marks the symbol Viewed, as its tick in the outline does.
+          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && row?.type === 'symbol') {
+            event.preventDefault();
+            event.stopPropagation();
+            markSymbols(row);
+            return;
+          }
+          if (event.key === 'Enter' && row && row.type !== 'folder') {
+            event.preventDefault();
+            event.stopPropagation();
+            activate(row);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * The directories to show open after a rebuild: real folders and symbols with children unless the reader closed them,
+ * and files only when they were open.
+ */
+function openPaths(layout: SymbolTreePaths, open: ReadonlySet<string>, closed: ReadonlySet<string>) {
+  const paths: string[] = [];
+  for (const [id, path] of layout.directories) {
+    const file = layout.rows.get(path)?.type === 'file';
+    if (open.has(id) || (!file && !closed.has(id))) paths.push(path);
+  }
+  return paths;
+}
+
+const folderOf = (item: FileTreeItemHandle | null | undefined): FileTreeDirectoryHandle | undefined =>
+  item?.isDirectory() ? (item as FileTreeDirectoryHandle) : undefined;

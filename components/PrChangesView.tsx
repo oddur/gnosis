@@ -34,6 +34,9 @@ import {
 } from '../lib/inspection-cache';
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
+import { ChangesSymbolTree } from './ChangesSymbolTree';
+import { hasSymbolTarget, requestSymbolJump } from '../lib/tree-symbol-sync';
+import type { ChangedSymbol } from '../lib/symbol-outline';
 import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
 import { patchBounds } from '../lib/chat-citations';
@@ -430,6 +433,8 @@ export function PrChangesView({
   // Only the quiet files' labels reach the tree: a new comparison elsewhere in the PR leaves the tree's input alone.
   const quietLabels = [...quiet.files].filter(([, file]) => file.label).map(([key, file]) => `${key}\u0000${file.label}`).join('\n');
   const quietFiles = useMemo(() => new Map(quietLabels ? quietLabels.split('\n').map((row) => row.split('\u0000') as [string, string]) : []), [quietLabels]);
+  // Settings › Review › "Show changed symbols in the file tree" (Beta): off is the file tree as it was.
+  const treeSymbols = preferences.treeSymbols !== false;
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -457,9 +462,10 @@ export function PrChangesView({
           commentError: combinedDiscussion
             ? combinedDiscussion.failures.length > 0
             : !!discussion.discussions[e.snapshot.url]?.error,
+          source: treeSymbols ? { fileKey: viewKey(e), snapshot: e.snapshot, file: e.file } : undefined,
         };
       }),
-    [entries, visibleSignature, viewedSignature, discussion.discussions, quietFiles]
+    [entries, visibleSignature, viewedSignature, discussion.discussions, quietFiles, treeSymbols]
   );
   // Files whose every change is noise still count towards review: Viewed is the reviewer's own mark. The progress says
   // how many of the files left are only that, so they read as quick to clear (Viewed & next).
@@ -537,6 +543,24 @@ export function PrChangesView({
     setSelected(key);
     requestAnimationFrame(() => stream.current?.scrollToFile(key));
     if (window.innerWidth <= 700) setTreeOpen(false);
+  }
+  /**
+   * A symbol row of the file tree goes where the file's outline goes (lib/tree-symbol-sync.ts): through the diff's own
+   * navigator, once the file is mounted. A file further away is selected and scrolled to first; the stream then stops
+   * holding the file's top in place, so the jump inside it can scroll.
+   */
+  function goToSymbol(key: string, symbol: ChangedSymbol) {
+    const target = entries.find((e) => e.key === key);
+    if (!target) return;
+    const fileKey = viewKey(target);
+    const release = () => stream.current?.releasePosition();
+    if (hasSymbolTarget(fileKey)) {
+      setSelected(key);
+      requestSymbolJump(fileKey, symbol, release);
+      return;
+    }
+    requestSymbolJump(fileKey, symbol, release);
+    void select(key);
   }
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
@@ -862,6 +886,28 @@ export function PrChangesView({
                       </button>
                     )}
                   </p>
+                ) : treeSymbols ? (
+                  <ChangesSymbolTree
+                    key={`${positionId}:${revision}:symbols`}
+                    entries={treeEntries}
+                    selected={entry?.key ?? ''}
+                    query={query}
+                    onSelect={select}
+                    onGoToSymbol={goToSymbol}
+                    onSetViewed={(keys, viewed) => {
+                      const targets = new Set(keys);
+                      stream.current?.preservePosition();
+                      return progress.markFilesViewed(entries.filter(e => targets.has(e.key)).map(viewKey), viewed);
+                    }}
+                    onPreview={(key) => {
+                      hoverCancel.current();
+                      hoverCancel.current = warmFile(key);
+                    }}
+                    showComments={!commit}
+                    revealSelected
+                    codeSettings={codeSettings}
+                    noiseFilter={noiseFilter}
+                  />
                 ) : (
                   <ChangesFileTree
                     key={`${positionId}:${revision}`}

@@ -28,6 +28,7 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
+import { registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 import { ArrowRightLeft, BookOpen } from 'lucide-react';
@@ -938,7 +939,9 @@ const MISSED_PROBES = 30;
 function followReader(
   bar: HTMLElement,
   scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined,
-  file: string
+  file: string,
+  /** Hears the definitions around the reader's line whenever they change: the Changes tree follows them. */
+  onPlace?: (chain: readonly SyntaxDefinition[]) => void
 ): boolean {
   const where = bar.querySelector<HTMLElement>('.diff-gap-where');
   const section = bar.parentElement;
@@ -970,6 +973,7 @@ function followReader(
   const key = `${point.side}:${number}:${scopeKey}`;
   if (bar.getAttribute('data-live-key') === key) return true;
   bar.setAttribute('data-live-key', key);
+  if (chain) onPlace?.(chain);
   const lineSlot = bar.querySelector('.diff-gap-live-line');
   if (lineSlot) lineSlot.textContent = before ? `old L${number}` : `L${number}`;
   const slot = bar.querySelector<HTMLElement>('.diff-gap-live');
@@ -1471,6 +1475,7 @@ export function ChangesDiff<A>({
   moves,
   written = NO_WRITTEN,
   explained,
+  symbolKey,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1529,6 +1534,11 @@ export function ChangesDiff<A>({
    * the jump to its section. Markers only: the lines shown never change.
    */
   explained?: { markers: readonly ExplainedMarker[]; onOpen?: (marker: ExplainedMarker) => void };
+  /**
+   * The file's revision key, in Changes: the file tree's symbol rows (lib/tree-symbol-sync.ts) light the symbol the
+   * reader is in, as the pinned breadcrumb names it, and jump here as the outline does.
+   */
+  symbolKey?: string;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1810,6 +1820,10 @@ export function ChangesDiff<A>({
       section: [definition.start, definition.end],
     });
   };
+  const latestGoToSymbol = useRef(goToSymbol);
+  latestGoToSymbol.current = goToSymbol;
+  const latestSymbolKey = useRef(symbolKey);
+  latestSymbolKey.current = symbolKey;
   const observeHeaders = () => {
     const observer = stuck.current;
     if (!observer || !root.current) return;
@@ -1829,6 +1843,8 @@ export function ChangesDiff<A>({
     const pinned = new Set<HTMLElement>();
     let frame = 0;
     let listening = false;
+    const treeKey = latestSymbolKey.current;
+    const place = treeKey ? (chain: readonly SyntaxDefinition[]) => setReadingPlace(treeKey, chain) : undefined;
     // Frames left to look again for a place a probe could not name (MISSED_PROBES).
     let retries = 0;
     const probe = () => {
@@ -1836,7 +1852,7 @@ export function ChangesDiff<A>({
       let missed = false;
       for (const bar of pinned)
         if (!bar.isConnected) pinned.delete(bar);
-        else if (!followReader(bar, latestScopeAt.current, latestName.current)) missed = true;
+        else if (!followReader(bar, latestScopeAt.current, latestName.current, place)) missed = true;
       if (missed && retries-- > 0) frame = requestAnimationFrame(probe);
     };
     const schedule = () => {
@@ -1892,6 +1908,8 @@ export function ChangesDiff<A>({
     };
     const settled = () => {
       for (const bar of pinned) if (!bar.isConnected) pinned.delete(bar);
+      // No header pinned: the reader is above the file's first hunk, or past the file.
+      if (!pinned.size && treeKey) setReadingPlace(treeKey, undefined);
       listen(pinned.size > 0);
       if (pinned.size) schedule();
     };
@@ -2081,6 +2099,8 @@ export function ChangesDiff<A>({
     const navigation: DiffNavigator = { goTo };
     own.current = navigation;
     if (navigator) navigator.current = navigation;
+    // The tree's symbol rows go where the outline's do, now that the diff can take the reader there.
+    const unregister = treeKey ? registerSymbolTarget(treeKey, (symbol) => latestGoToSymbol.current(symbol)) : undefined;
     const onClick = (event: MouseEvent) => {
       const target = event.target as Element | null;
       const more = target?.closest<HTMLElement>('.diff-gap-live button[data-more]');
@@ -2126,6 +2146,8 @@ export function ChangesDiff<A>({
       follow.current = undefined;
       if (navigator?.current === navigation) navigator.current = null;
       if (own.current === navigation) own.current = null;
+      unregister?.();
+      if (treeKey) setReadingPlace(treeKey, undefined);
       stopJump();
       clearHere();
       element.removeEventListener('click', onClick);

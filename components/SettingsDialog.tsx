@@ -191,6 +191,7 @@ export function SettingsDialog({
   const [model, setModel] = useState<ModelId>(DEFAULT_CLAUDE_MODEL);
   const [effort, setEffort] = useState<Effort>('high');
   const [smartImports, setSmartImports] = useState(true);
+  const [treeSymbols, setTreeSymbols] = useState(true);
   const [prInactivityDays, setPrInactivityDays] = useState(DEFAULT_PR_INACTIVITY_DAYS);
   const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
@@ -281,6 +282,7 @@ export function SettingsDialog({
         setModel(prefs.model);
         setEffort(normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking));
         setSmartImports(prefs.smartImports);
+        setTreeSymbols(prefs.treeSymbols !== false);
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
         setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
@@ -798,6 +800,21 @@ export function SettingsDialog({
                   }}
                 />
               </div>
+              <SettingRow
+                label="Show changed symbols in the file tree"
+                description="List the functions and classes each file’s changes touch under it in the Changes file tree, with Viewed ticks shared with the file’s outline."
+                beta
+              >
+                <Toggle
+                  checked={treeSymbols}
+                  ariaLabel="Show changed symbols in the file tree"
+                  onChange={() => {
+                    const next = !treeSymbols;
+                    setTreeSymbols(next);
+                    saveField({ treeSymbols: next });
+                  }}
+                />
+              </SettingRow>
               <SettingRow
                 label="Simplify import changes"
                 description="Condense import-only changes in the guided review."

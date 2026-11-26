@@ -460,6 +460,8 @@ export interface Preferences {
   /** Settings › Appearance › Code intelligence. See lib/code-intelligence.ts. */
   codeIntelligence?: import('./code-intelligence').CodeIntelligencePreferences;
   showInlineExplanations?: boolean;
+  /** Settings › Review › "Show changed symbols in the file tree" (Beta): on unless false. See lib/tree-symbols.ts. */
+  treeSymbols?: boolean;
   /** Width of each chat surface's side panel, in pixels. See lib/chat-preferences.ts. */
   chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
   /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */

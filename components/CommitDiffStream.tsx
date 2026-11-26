@@ -8,6 +8,11 @@ export interface CommitDiffStreamHandle {
   preservePosition: () => void;
   /** Keep the diff line at the top of the stream in place while files change height, as on a layout switch. */
   keepAnchor: () => void;
+  /**
+   * Stops holding a file's top in place after `scrollToFile`: a jump inside the file (the file tree's symbol rows)
+   * takes over the scroll, as the reader's own wheel or pointer would.
+   */
+  releasePosition: () => void;
 }
 interface StreamFile {
   key: string;
@@ -130,7 +135,9 @@ export function CommitDiffStream({
       return current ? diffLineAnchorTop(el, current, anchor) : undefined;
     });
   }
-  useImperativeHandle(ref, () => ({ scrollToFile: jump, keepAnchor, preservePosition: () => {
+  useImperativeHandle(ref, () => ({ scrollToFile: jump, keepAnchor, releasePosition: () => {
+    pending.current = undefined;
+  }, preservePosition: () => {
     if (pending.current) return;
     const top = viewport.current?.scrollTop ?? 0;
     const item = virtual.getVirtualItems().find(row => row.end > top + 2);
