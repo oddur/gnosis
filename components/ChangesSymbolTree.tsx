@@ -634,7 +634,9 @@ export function ChangesSymbolTree({
             selectOnly();
             return;
           }
-          const path = model.getFocusedPath();
+          // The row the key came from, else Pierre's focused one: after V moves on, Pierre's focus is on the next row,
+          // and a key pressed on another focused row must act on that row.
+          const path = rowPath(event.nativeEvent) ?? model.getFocusedPath();
           const row = rowAt(path);
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
