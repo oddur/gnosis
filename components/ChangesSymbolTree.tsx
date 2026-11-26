@@ -320,12 +320,12 @@ export function ChangesSymbolTree({
     applyStatus.current();
     // Focus lost with the rows a rebuild dropped goes back to the row V went to.
     const target = focusTarget.current;
-    const lost = !document.activeElement || document.activeElement === document.body;
-    if (target && lost) {
+    if (target) {
       const path = target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
       if (path) {
         expandTo(path);
-        model.getItem(path)?.focus();
+        // After a rebuild only focus the rows took with them comes back: a row the reader moved to stays theirs.
+        focusWhenDrawn(path, { fromTree: false });
       }
     }
   }, [model, layout, prepared, entries, viewedSignature, progressSignature]);
@@ -466,6 +466,26 @@ export function ChangesSymbolTree({
       if (folder && !folder.isExpanded()) folder.expand();
     }
   };
+  /**
+   * Puts the keyboard on the row at `path` once Pierre has drawn it: a row whose folders just opened is drawn a frame
+   * later, and focusing it before then does nothing. It takes the keyboard only from places that hold no input of the
+   * reader's (the page, the diff stream, the tree itself), never from a text field, the composer or a menu.
+   */
+  const focusWhenDrawn = (path: string, { fromTree = true }: { fromTree?: boolean } = {}, frames = 20) => {
+    let active: Element | null = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    if (active?.closest('[data-item-path]')?.getAttribute('data-item-path') === path) return;
+    const free =
+      !active ||
+      active === document.body ||
+      !!active.closest('.commit-diff-stream') ||
+      // Another tree row is the reader's own choice, unless V or n is taking them on (`fromTree`).
+      (fromTree && (!!active.closest('[role=tree], [role=treeitem]') || active.tagName === 'FILE-TREE-CONTAINER'));
+    const editable = !!active?.closest('input, textarea, select, [contenteditable=true], [role=menu], [role=dialog]');
+    if (!free || editable) return;
+    model.getItem(path)?.focus();
+    if (frames > 0) requestAnimationFrame(() => focusWhenDrawn(path, { fromTree }, frames - 1));
+  };
   const pathOf = (target: { key: string; id: string }) =>
     target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
   useEffect(() => {
@@ -486,8 +506,8 @@ export function ChangesSymbolTree({
     // Every collapsed row above it opens first, as if the reader had opened them: they stay open across rebuilds.
     expandTo(path);
     if (model.getSelectedPaths().length <= 1) selectOnly(path);
-    if (target.focus) model.getItem(path)?.focus();
     model.scrollToPath(path, { focus: false, offset: 'nearest' });
+    if (target.focus) focusWhenDrawn(path);
   }, [model, layout, selected, reveal?.nonce]);
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;
