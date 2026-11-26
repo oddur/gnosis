@@ -15,7 +15,7 @@ import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
 import { FILE_STOP, folderProgress, progressLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
-import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
+import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
 export interface SymbolTreeEntry extends ChangeTreeEntry {
@@ -288,7 +288,10 @@ export function ChangesSymbolTree({
     const lost = !document.activeElement || document.activeElement === document.body;
     if (target && lost) {
       const path = target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
-      if (path) model.getItem(path)?.focus();
+      if (path) {
+        expandTo(path);
+        model.getItem(path)?.focus();
+      }
     }
   }, [model, layout, prepared, entries, viewedSignature, progressSignature]);
   // The file and the symbol the reader is in.
@@ -413,6 +416,13 @@ export function ChangesSymbolTree({
   // The row V went to, which keeps keyboard focus across rebuilds: Unviewed only drops the rows just finished, and
   // Pierre's focus would go with them, to the tree's top or the page.
   const focusTarget = useRef<{ key: string; id: string }>(undefined);
+  /** Opens every collapsed directory row above `path`: folders, the file, its containers. */
+  const expandTo = (path: string) => {
+    for (const ancestor of ancestorPaths(path)) {
+      const folder = folderOf(model.getItem(ancestor));
+      if (folder && !folder.isExpanded()) folder.expand();
+    }
+  };
   const pathOf = (target: { key: string; id: string }) =>
     target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
   useEffect(() => {
@@ -430,8 +440,11 @@ export function ChangesSymbolTree({
     const path = pathOf(target);
     if (!path) return;
     revealing.current = undefined;
+    // Every collapsed row above it opens first, as if the reader had opened them: they stay open across rebuilds.
+    expandTo(path);
     if (model.getSelectedPaths().length <= 1) selectOnly(path);
     if (target.focus) model.getItem(path)?.focus();
+    model.scrollToPath(path, { focus: false, offset: 'nearest' });
   }, [model, layout, selected, reveal?.nonce]);
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;

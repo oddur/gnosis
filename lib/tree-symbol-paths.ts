@@ -212,3 +212,15 @@ export function symbolTreePaths(
   emitChildren(root, '');
   return out;
 }
+
+/**
+ * The directory rows above a row, outermost first: every folder (a flattened chain is one), the file's folder of
+ * symbols, and each container symbol. A jump to the row expands them all, so it shows. Names never hold a `/` (it
+ * shows as NAME_SLASH), so the path's slashes are the tree's levels.
+ */
+export function ancestorPaths(path: string): string[] {
+  const out: string[] = [];
+  const own = path.endsWith('/') ? path.length - 1 : path.length;
+  for (let at = path.indexOf('/'); at >= 0 && at < own; at = path.indexOf('/', at + 1)) out.push(path.slice(0, at + 1));
+  return out;
+}

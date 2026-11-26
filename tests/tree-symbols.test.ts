@@ -19,7 +19,7 @@ import {
   topLevelSymbol,
   type TreeSymbolNode,
 } from '../lib/tree-symbols';
-import { FILE_MARK, NAME_SLASH, rowCodes, symbolRowKey, symbolTreePaths, type FileSymbols } from '../lib/tree-symbol-paths';
+import { FILE_MARK, NAME_SLASH, ancestorPaths, rowCodes, symbolRowKey, symbolTreePaths, type FileSymbols } from '../lib/tree-symbol-paths';
 
 /** The Changes tree's symbol rows (lib/tree-symbols.ts) from the outline's changedSymbols(), with real tree-sitter. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -305,4 +305,11 @@ void test('overloads are told apart by where the reader is', () => {
   // Without a start, or at one no row has, the first.
   assert.equal(readingSymbol(nodes, ['function:parse']), 'function:parse');
   assert.equal(readingSymbol(nodes, ['function:parse@99']), 'function:parse');
+});
+
+void test('a row\'s ancestors, outermost first, for a jump to open: folders, the file, its containers', () => {
+  assert.deepEqual(ancestorPaths('src ∕ lib/store.ts⁢/Store⁣x/flush⁣y'), ['src ∕ lib/', 'src ∕ lib/store.ts⁢/', 'src ∕ lib/store.ts⁢/Store⁣x/']);
+  // A directory row's own path is not its ancestor.
+  assert.deepEqual(ancestorPaths('src/store.ts⁢/Store⁣x/'), ['src/', 'src/store.ts⁢/']);
+  assert.deepEqual(ancestorPaths('readme.md'), []);
 });

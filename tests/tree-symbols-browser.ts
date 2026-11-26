@@ -250,6 +250,12 @@ void app.whenReady().then(async () => {
     await wait("!!window.treeRow('Imports')");
     await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
     await lit('Imports');
+    // The reader closes the class and the folder above it: going on must open both again.
+    const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
+    await js("window.treeRow('Store').querySelector('[data-item-section=icon]').click()");
+    await wait("window.treeRow('Store')?.getAttribute('aria-expanded')==='false'");
+    await js("window.treeRow('symbols').querySelector('[data-item-section=icon]').click()");
+    await wait("window.treeRow('symbols')?.getAttribute('aria-expanded')==='false'");
     // Each V ticks the item it is on, and only that (its class rolls up with it), lights the next, and puts the
     // keyboard focus on its row. Imports is the case that went wrong: landing on a top-level line, the pinned crumb
     // names a neighbour, which must not become what the next V ticks.
@@ -261,6 +267,12 @@ void app.whenReady().then(async () => {
       await press('v');
       await lit(next);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(ticked)})?.decoration==='✓'`);
+      if (ticked === 'Imports') {
+        // flush is under the closed folder and class: both open, and flush is lit and focused.
+        await wait("window.treeRow('symbols')?.getAttribute('aria-expanded')==='true'&&window.treeRow('Store')?.getAttribute('aria-expanded')==='true'");
+        assert.equal(await expandedOf('Store'), 'true');
+        await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='flush'})()`);
+      }
       const after = await decorations();
       const changed = symbolRows.filter((row) => before[row] !== after[row]).sort();
       assert.deepEqual(changed, [...expectChanged[ticked]].sort(), `V on ${ticked} ticked ${ticked} only: ${JSON.stringify({ before, after })}`);
