@@ -101,11 +101,12 @@ export function createAutoViewer(
         if (symbol.done) continue;
         let showing = false;
         if (range && !fast)
-          symbol.places.forEach((place, index) => {
-            if (place === undefined || place < range[0] || place > range[1]) return;
+          for (let index = 0; index < symbol.places.length; index++) {
+            const place = symbol.places[index];
+            if (place === undefined || place < range[0] || place > range[1]) continue;
             showing = true;
             symbol.seen.add(index);
-          });
+          }
         // Time counts only between two slow looks that both had the symbol on screen.
         if (showing && symbol.onScreen) symbol.dwell += gap;
         symbol.onScreen = showing;

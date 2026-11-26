@@ -35,7 +35,12 @@ import {
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { hasSymbolTarget, requestSymbolJump } from '../lib/tree-symbol-sync';
+import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
+import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported, type TreeSymbolSource } from '../lib/use-tree-symbols';
+import { stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
+import { readingSymbol } from '../lib/tree-symbols';
+import type { FileSymbols } from '../lib/tree-symbol-paths';
+import { toast } from './ui/toast';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
@@ -55,6 +60,16 @@ import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { countRender } from '../lib/render-count';
 import { openDiffComments } from '../lib/response-needed';
 
+/** How long the place `n` went to stays where the next `n` starts, while the diff scrolls there. */
+const NAV_CURSOR_MS = 1_500;
+/** How long `n` waits for one file's symbols to be read and parsed. */
+const NAV_LOAD_MS = 4_000;
+/** Files one press of `n` reads at most before it asks the reader to press again. */
+const NAV_MAX_LOADS = 12;
+/** A wait shorter than this shows no "Loading symbols…". */
+const LOADING_NOTICE_MS = 200;
+/** How long `n`'s notices stay. */
+const NOTICE_MS = 2_500;
 interface Position {
   selected: string;
   scroll: Record<string, number>;
@@ -562,6 +577,101 @@ export function PrChangesView({
     requestSymbolJump(fileKey, symbol, release);
     void select(key);
   }
+  /**
+   * `n` and Shift+N (Settings › Review › "Show changed symbols in the file tree"): the next or previous unviewed changed
+   * symbol, in the tree's order across files (lib/tree-symbol-review.ts), from where the reader is. It goes there as a
+   * click on its tree row does. A file on the way whose symbols are not known yet is read and parsed then, at the top
+   * priority, for NAV_LOAD_MS at most; files further on are not read before the walk gets to them.
+   */
+  const [treeReveal, setTreeReveal] = useState<{ key: string; id: string; nonce: number }>();
+  // Where the last `n` went: the next press starts there while the diff is still on its way.
+  const navCursor = useRef<ReviewPlace & { at: number }>(undefined);
+  const navRun = useRef(0);
+  const navFrom = (): ReviewPlace | undefined => {
+    const now = Date.now();
+    const cursor = navCursor.current;
+    if (cursor && now - cursor.at < NAV_CURSOR_MS && visible.some((e) => e.key === cursor.key)) return cursor;
+    if (!entry) return undefined;
+    const fileKey = viewKey(entry);
+    const { place, at } = peekReadingPlace(fileKey);
+    // A tree row the reader chose or moved to since they last scrolled.
+    const row = peekTreeCursor();
+    if (row && row.at > at && visible.some((e) => e.key === row.key)) return row;
+    const known = place && treeSymbolsSupported(entry, codeSettings) ? peekTreeSymbols({ fileKey, snapshot: entry.snapshot, file: entry.file }, codeSettings, noiseFilter) : undefined;
+    return { key: entry.key, id: known?.state === 'ready' ? readingSymbol(known.nodes, place) : undefined };
+  };
+  async function stepSymbol(direction: 1 | -1) {
+    const run = ++navRun.current;
+    const from = navFrom();
+    if (!from) return;
+    // What this press read: a file that could not be read is passed, not read again.
+    const read = new Map<string, FileSymbols>();
+    let loadingToast: string | undefined;
+    const loadingTimer = setTimeout(() => {
+      loadingToast = toast.add({ title: 'Loading symbols…', timeout: 0 });
+    }, LOADING_NOTICE_MS);
+    const finish = () => {
+      clearTimeout(loadingTimer);
+      if (loadingToast) toast.close(loadingToast);
+    };
+    try {
+      for (let loads = 0; ; ) {
+        const sources = new Map<string, TreeSymbolSource>(visible.map((e) => [e.key, { fileKey: viewKey(e), snapshot: e.snapshot, file: e.file }]));
+        const files: ReviewFile[] = visible.map((e) => {
+          const source = sources.get(e.key) as TreeSymbolSource;
+          return {
+            key: e.key,
+            viewed: progress.isFileViewed(source.fileKey),
+            symbols: treeSymbolsSupported(source, codeSettings) ? (read.get(e.key) ?? peekTreeSymbols(source, codeSettings, noiseFilter)) : undefined,
+          };
+        });
+        const step = stepUnviewed(files, from, direction, (key, id) => progress.isSymbolViewed(sources.get(key)?.fileKey ?? '', id));
+        if (step.kind === 'end') {
+          toast.add({ title: direction === 1 ? 'No unviewed symbols after this' : 'No unviewed symbols before this', timeout: NOTICE_MS });
+          return;
+        }
+        if (step.kind === 'go') {
+          const symbol = step.node.symbol;
+          if (!symbol) return;
+          navCursor.current = { key: step.key, id: step.node.id, at: Date.now() };
+          setTreeReveal((previous) => ({ key: step.key, id: step.node.id, nonce: (previous?.nonce ?? 0) + 1 }));
+          goToSymbol(step.key, symbol);
+          return;
+        }
+        const source = sources.get(step.key);
+        if (!source) return;
+        if (++loads > NAV_MAX_LOADS) {
+          toast.add({ title: 'Still looking for unviewed symbols', description: `Press ${direction === 1 ? 'n' : 'Shift+N'} again to read further.`, timeout: NOTICE_MS });
+          return;
+        }
+        const value = await loadTreeSymbols(source, codeSettings, noiseFilter, NAV_LOAD_MS);
+        // Another press, or the reader moved on: this one is over.
+        if (run !== navRun.current) return;
+        if (value.state === 'loading') {
+          const name = step.key.slice(step.key.lastIndexOf('/') + 1);
+          toast.add({ title: `Still loading the symbols of ${name}`, description: `Press ${direction === 1 ? 'n' : 'Shift+N'} again in a moment.`, timeout: NOTICE_MS });
+          return;
+        }
+        // The walk goes on from the same place: the file just read is now known.
+        read.set(step.key, value);
+      }
+    } finally {
+      finish();
+    }
+  }
+  useEffect(
+    () => () => {
+      navRun.current++;
+    },
+    []
+  );
+  // A held key does not race through the symbols: one step per press. A press while a file loads takes over.
+  const symbolKeys = {
+    n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1)),
+    N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1)),
+  };
+  // Only with the tree's symbol rows on: otherwise `n` is not Changes' key.
+  useKeyboardShortcuts(symbolKeys, { enabled: treeSymbols && visible.length > 0, capture: true, scope: workspace });
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
     [
@@ -907,6 +1017,7 @@ export function PrChangesView({
                     revealSelected
                     codeSettings={codeSettings}
                     noiseFilter={noiseFilter}
+                    reveal={treeReveal}
                   />
                 ) : (
                   <ChangesFileTree

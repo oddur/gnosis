@@ -10,6 +10,8 @@ import type { SyntaxDefinition } from './syntax-scope';
  */
 
 const places = new Map<string, string>();
+/** When each file's place last changed, so `n` starts from whichever moved last: the reader, or the tree's row. */
+const placeTimes = new Map<string, number>();
 const placeListeners = new Set<() => void>();
 const SEP = '>';
 
@@ -19,8 +21,21 @@ export function setReadingPlace(fileKey: string, chain: readonly Pick<SyntaxDefi
   if ((places.get(fileKey) ?? undefined) === value) return;
   if (value === undefined) places.delete(fileKey);
   else places.set(fileKey, value);
+  placeTimes.set(fileKey, Date.now());
   for (const listener of placeListeners) listener();
 }
+/** Where the reader is in the file now, as `useReadingPlace` has it, and when that last changed (0: never). */
+export function peekReadingPlace(fileKey: string): { place: string[] | undefined; at: number } {
+  const value = places.get(fileKey);
+  return { place: value === undefined ? undefined : value ? value.split(SEP) : [], at: placeTimes.get(fileKey) ?? 0 };
+}
+
+/** The symbol row last chosen in the tree, or moved to with its keys, by entry key and symbol id. */
+let treeCursor: { key: string; id: string; at: number } | undefined;
+export function setTreeCursor(key: string, id: string) {
+  treeCursor = { key, id, at: Date.now() };
+}
+export const peekTreeCursor = () => treeCursor;
 const subscribePlaces = (listener: () => void) => {
   placeListeners.add(listener);
   return () => placeListeners.delete(listener);

@@ -11,7 +11,7 @@ import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
-import { useReadingPlace } from '../lib/tree-symbol-sync';
+import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
 import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
 import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
@@ -49,6 +49,7 @@ export function ChangesSymbolTree({
   revealSelected = false,
   codeSettings,
   noiseFilter,
+  reveal,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -62,6 +63,11 @@ export function ChangesSymbolTree({
   revealSelected?: boolean;
   codeSettings: CodeIntelligenceSettings;
   noiseFilter: NoiseFilter;
+  /**
+   * A symbol `n` or Shift+N went to (PrChangesView): its row is lit and selected as a click on it would, and its file
+   * opens. A new `nonce` each time.
+   */
+  reveal?: { key: string; id: string; nonce: number };
 }) {
   const progress = useFileProgress();
   // Which files list symbols: only their paths and revisions matter, not their decorations.
@@ -353,6 +359,24 @@ export function ChangesSymbolTree({
   useEffect(() => {
     if (readingPath && revealSelected && model.getSelectedPaths().length <= 1) model.scrollToPath(readingPath, { focus: false, offset: 'nearest' });
   }, [model, readingPath, revealSelected]);
+  // A symbol `n` went to: lit at once and held until the diff arrives, as a click holds it. Its file opens; a file
+  // being selected opens by itself, and one already selected that the reader closed opens again: they asked for it.
+  const revealing = useRef<{ key: string; id: string }>(undefined);
+  useEffect(() => {
+    if (!reveal) return;
+    setHeld({ key: reveal.key, id: reveal.id });
+    revealing.current = { key: reveal.key, id: reveal.id };
+    if (reveal.key === selected) folderOf(model.getItem(layout.pierreOf.get(reveal.key) ?? ''))?.expand();
+  }, [reveal?.nonce]);
+  // Its row is selected once it is listed and its file is the current one, so the current file's selection keeps it.
+  useEffect(() => {
+    const target = revealing.current;
+    if (!target || target.key !== selected) return;
+    const path = layout.symbolPaths.get(symbolRowKey(target.key, target.id));
+    if (!path) return;
+    revealing.current = undefined;
+    if (model.getSelectedPaths().length <= 1) selectOnly(path);
+  }, [model, layout, selected, reveal?.nonce]);
   /** A symbol row's place in the diff: a context row goes to its definition, revealing down to its first change. */
   const destination = (node: TreeSymbolNode): ChangedSymbol | undefined => {
     if (node.symbol) return node.symbol;
@@ -371,6 +395,7 @@ export function ChangesSymbolTree({
       const symbol = destination(row.node);
       if (symbol) {
         setHeld({ key: row.key, id: row.node.id });
+        setTreeCursor(row.key, row.node.id);
         onGoToSymbol(row.key, symbol);
       }
       return;
@@ -475,9 +500,11 @@ export function ChangesSymbolTree({
           const row = rowAt(model.getFocusedPath());
           if (row && row.type !== 'folder') onPreview?.(row.key);
         }}
-        onKeyUp={() => {
+        onKeyUp={(event) => {
           const row = rowAt(model.getFocusedPath());
           if (row && row.type !== 'folder') onPreview?.(row.key);
+          // A symbol row moved to with the keys is where `n` starts from, as one chosen is.
+          if (row?.type === 'symbol' && TREE_MOVES.has(event.key)) setTreeCursor(row.key, row.node.id);
         }}
         onKeyDownCapture={(event) => {
           if (event.nativeEvent.composedPath().some((node) => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;
@@ -524,6 +551,9 @@ function openPaths(layout: SymbolTreePaths, open: ReadonlySet<string>, closed: R
   }
   return paths;
 }
+
+/** The keys that move the tree's focus from row to row. */
+const TREE_MOVES = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
 
 const folderOf = (item: FileTreeItemHandle | null | undefined): FileTreeDirectoryHandle | undefined =>
   item?.isDirectory() ? (item as FileTreeDirectoryHandle) : undefined;
