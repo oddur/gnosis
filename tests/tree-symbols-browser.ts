@@ -294,9 +294,14 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file===${JSON.stringify(TREE_SYMBOLS_MOVE_TARGET)}`);
     // V on the new copy ticks it, and the old copy with it. Found and pressed in one step: a rebuild can redraw the row
     // between a check and a later press.
-    await wait(
-      "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));if(!e)return false;e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}));return true})()"
-    );
+    const pressNewCopy =
+      "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));if(!e)return false;e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}));return true})()";
+    await wait(pressNewCopy);
+    // V marks only lines that have been on screen: if the jump had not shown the new copy yet, that V showed it
+    // ("Read"), and the next one marks it. Pressed once more at most: V on a marked row takes the mark back.
+    const newCopy = "window.treeRows().find(r=>r.name==='parseHeader'&&!/[Mm]oved/.test(r.decoration))?.decoration";
+    await wait(`['✓','Read'].includes(${newCopy})||window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')`);
+    if ((await js<string | undefined>(newCopy)) === 'Read') await wait(pressNewCopy);
     if ((await js<string | null>(`window.treeRow(${JSON.stringify(sourceName)})?.getAttribute('aria-expanded')??null`)) === 'false')
       await js(`window.treeRow(${JSON.stringify(sourceName)}).querySelector('[data-item-section=icon]').click()`);
     await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')");
