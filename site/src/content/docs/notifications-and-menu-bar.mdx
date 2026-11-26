@@ -1,0 +1,79 @@
+---
+title: Notifications & menu bar
+description: Get told when a PR needs you, and see your queue from the menu bar.
+order: 12
+---
+
+Gnosis tells you when a PR needs you. It sends a desktop notification when Gnosis is in the background, and an in-app notification when Gnosis is in front. On macOS, the menu bar icon also shows what needs you.
+
+## When to use notifications and the menu bar
+
+- Use **notifications** to know at once when someone asks for your review, mentions you, or replies to you.
+- Use the **menu bar** to see what needs you without opening the Gnosis window.
+- **Pause** notifications when you must focus.
+
+## Notifications
+
+<DocShot
+  name="notification"
+  alt="A Gnosis notification that tells you that the checks failed on one of your PRs. It shows the PR's title and repository."
+  caption="A notification when checks fail."
+/>
+
+Select a notification to open the PR at the right place. On macOS, you can reply to a mention, a reply or a change request from the notification itself. The reply posts to that thread on GitHub. On other systems, the notification opens the thread. Turn this on or off with <Setting name="Allow replies from notifications" section="Notifications" />.
+
+### Choose the events
+
+Open Settings › Notifications. Turn each event on or off:
+
+- **Reviews you owe**: review requested from you, review requested from your team, new commits since your review, mentions, and replies to you.
+- **Your PRs**: changes requested, approved, checks failed, and ready to merge.
+- **Snoozed PRs**: a snoozed PR is back.
+- **Gnosis**: explanation ready, and update ready.
+
+Review requests from your team are off by default. Teams such as CODEOWNERS can request you often.
+
+Turn the two kinds of notification on or off with <Setting name="Desktop notifications" section="Notifications" /> and <Setting name="In-app notifications" section="Notifications" />.
+
+### Choose the repositories
+
+Watched repositories notify you about all events, unless you set an exception for them. For other repositories, set <Setting name="Other repositories" section="Notifications" /> to **All**, **Only when it's on me** or **None**. To set a different level for one repository, add it under <Setting name="Repository exceptions" section="Notifications" />. You can also set the level from a PR's menu.
+
+### Bots
+
+Bots never notify you. To hear from a bot, add its login under <Setting name="Bots" section="Notifications" />.
+
+### Pause notifications
+
+In the **Quiet** section, choose **Pause for 1 hour**, **Until tomorrow morning** or **Until Monday**. Select **Resume** to end the pause early. While notifications are paused, Gnosis still marks PRs unread. When the pause ends, you get one summary.
+
+Gnosis also follows your system's Focus and Do Not Disturb settings.
+
+## The menu bar
+
+On macOS, Gnosis has an icon in the menu bar. The icon can show a number of PRs that need you.
+
+<DocShot
+  name="menubar-panel"
+  alt="The Gnosis menu bar panel. It lists PRs in three groups: To review, To fix and Ready. An Open Gnosis button is at the bottom."
+  caption="The menu bar panel."
+  title="Menu bar"
+/>
+
+Click the icon to open the panel. The panel groups the PRs into **To review**, **To fix** and **Ready**. Select a PR to open it in Gnosis. Use the arrow keys, or <Kbd keys="j" /> and <Kbd keys="k" />, to move through the list. The panel never writes to GitHub.
+
+When the icon shows the summary panel, right-click it for **Open Gnosis**, **Settings…** and **Quit Gnosis**. When it shows the classic menu, right-click also opens the classic menu.
+
+### Set up the menu bar
+
+In Settings › Notifications, under **Menu bar**:
+
+- <Setting name="Clicking the icon shows" section="Notifications" />: **Summary panel** or **Classic menu**.
+- <Setting name="Number on the icon" section="Notifications" />: **New since you last looked**, **Everything that needs you**, **A dot only** or **Nothing**. The Dock icon shows the same number.
+
+To hide the icon, turn off <Setting name="Menu bar icon" section="Integrations" />.
+
+## Related pages
+
+- [Queue & Overview](/docs/queue-and-overview/) shows the same PRs in the app.
+- [Settings](/docs/settings/) lists all the settings.

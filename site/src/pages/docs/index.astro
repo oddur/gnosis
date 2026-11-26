@@ -1,0 +1,25 @@
+---
+import { getCollection } from 'astro:content';
+import Docs from '../../layouts/Docs.astro';
+
+const entries = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
+const pages = entries.map((entry) => ({ id: entry.id, title: entry.data.title, prerelease: entry.data.prerelease }));
+---
+
+<Docs
+  title="Gnosis docs"
+  description="How to use Gnosis: install it, work through your review queue, read PRs and explanations, resolve conflicts, and set it up."
+  pages={pages}
+>
+  <ol class="docs-index">
+    {entries.map((entry) => (
+      <li>
+        <a href={`/docs/${entry.id}/`}>
+          {entry.data.title}
+          {entry.data.prerelease && <span class="prerelease-tag">Pre-release</span>}
+        </a>
+        <p>{entry.data.description}</p>
+      </li>
+    ))}
+  </ol>
+</Docs>

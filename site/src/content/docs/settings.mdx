@@ -1,0 +1,100 @@
+---
+title: Settings
+description: Set up your queue, repositories, review, appearance, notifications, AI tools and updates.
+order: 13
+---
+
+Settings controls how Gnosis fills your queue, writes explanations, looks, notifies you and updates itself. Gnosis saves each change automatically.
+
+## When to use Settings
+
+- Use Settings after the first setup, when your work changes. For example, when you watch a new repository or want fewer notifications.
+- Use the **Repositories** tab to give one repository different defaults.
+- Use **Diagnostics** when Gnosis and GitHub do not agree, or when you report a problem.
+
+## Open Settings
+
+Press <Kbd keys="⌘ ," /> to open Settings. Settings has eight tabs: **Queue & briefings**, **Repositories**, **Review**, **Appearance**, **Notifications**, **Integrations**, **Updates** and **Diagnostics**.
+
+## Queue & briefings
+
+- <Setting name="Ignore PRs inactive for…" section="Queue & briefings" /> hides PRs that did not change for a time. Starred PRs and PRs that a stack needs stay visible.
+- <Setting name="Ignore Dependabot PRs" section="Queue & briefings" /> hides Dependabot PRs from the queue and from automatic briefings. A Dependabot PR stays when a PR by a person depends on it.
+- <Setting name="Automatic briefings" section="Queue & briefings" /> lets Gnosis write briefings without a request. Set a limit <Setting name="Per repository, per day" section="Queue & briefings" /> and an <Setting name="Overall daily limit" section="Queue & briefings" />.
+- <Setting name="Briefing model" section="Queue & briefings" /> and <Setting name="Briefing effort" section="Queue & briefings" /> choose the model for briefings. They show after you turn on **Use a different model for briefings**.
+
+<DocShot
+  name="settings-queue"
+  alt="The Queue & briefings tab of Settings, with the inactivity limit, the Dependabot switch, the automatic briefing limits and the briefing model."
+  caption="Settings: Queue & briefings."
+/>
+
+## Repositories
+
+The Repositories tab lists the repositories that you watch. Select **Add repository** to watch one more. Select a repository to give it its own settings:
+
+- <Setting name="Explanations" section="Repositories" />: the default style, Reduce noise level <Prerelease />, model and Focused sections <Prerelease />.
+- <Setting name="Ignore PRs inactive for" section="Repositories" />, automatic briefings and <Setting name="Daily automatic briefings" section="Repositories" />.
+- <Setting name="Repository notifications" section="Repositories" />.
+- <Setting name="Undo conflict updates" section="Repositories" /> <Prerelease />. See [Resolving conflicts](/docs/resolving-conflicts/#settings).
+- <Setting name="Repository appearance" section="Repositories" />: an emoji and a color for the repository.
+- <Setting name="Local clone" section="Repositories" />: a clone of the repository on your computer. Gnosis then reads changes, commits and files from Git. PR details, comments and checks still come from GitHub. When the clone is not available, Gnosis reads from GitHub.
+
+A repository setting that you do not change uses the global default.
+
+<DocShot
+  name="settings-repositories"
+  alt="The Repositories tab of Settings, with a list of watched repositories and the settings of one repository open beside it."
+  caption="Settings: Repositories."
+/>
+
+## Review
+
+- <Setting name="Web search and context (Claude only)" section="Review" /> lets Claude search the web and read GitHub context while it writes. This is more thorough, but slower.
+- <Setting name="Parallel review" section="Review" /> writes several sections at the same time. Large reviews are faster, but use more AI requests at once.
+- <Setting name="Apply project's Claude conventions" section="Review" /> uses the repository's CLAUDE.md and .claude files.
+- <Setting name="Explanation model" section="Review" /> is the default model and effort for explanations, chat and interactive diagrams.
+- <Setting name="Simplify import changes" section="Review" /> condenses changes that touch only imports.
+- **Review instructions** apply to every explanation. For example: "Focus on security."
+
+<DocShot
+  name="settings-review"
+  alt="The Review tab of Settings, with switches for web search, parallel review, Claude conventions and import changes, the explanation model, and the review instructions field."
+  caption="Settings: Review."
+/>
+
+## Appearance
+
+- <Setting name="Theme" section="Appearance" />: **Light**, **Dark** or **Match system**.
+- <Setting name="Code font" section="Appearance" />, <Setting name="Code theme" section="Appearance" /> and <Setting name="Syntax highlighting" section="Appearance" />. A change to syntax highlighting applies after you quit and reopen Gnosis.
+- <Setting name="Code intelligence" section="Appearance" />. See [Code intelligence](/docs/code-intelligence/#settings).
+
+<DocShot
+  name="settings-appearance"
+  alt="The Appearance tab of Settings, with the theme choices, the code font, the code theme, and the code intelligence switches with a list of languages."
+  caption="Settings: Appearance."
+/>
+
+## Notifications
+
+Choose the events that notify you, the repositories and bots, and the menu bar icon. See [Notifications & menu bar](/docs/notifications-and-menu-bar/).
+
+## Integrations
+
+- <Setting name="Preloading" section="Integrations" />: <Setting name="Preload likely next pages" section="Integrations" /> and <Setting name="Prepare the top of the queue" section="Integrations" /> load data before you open it. Choose **Light**, **Normal** or **Eager**, and an <Setting name="Hourly GitHub budget" section="Integrations" />.
+- <Setting name="GitHub cache" section="Integrations" />: set the <Setting name="Disk cache size" section="Integrations" />. **Clear cache & restart** removes downloaded PR data and restarts Gnosis. Your saved reviews, settings and sign-in stay. Save any unfinished text first.
+- <Setting name="Set up an AI tool" section="Integrations" />, the program paths and <Setting name="AI environment variables" section="Integrations" />. See [Getting started](/docs/getting-started/#set-up-an-ai-tool).
+- <Setting name="Menu bar icon" section="Integrations" /> shows or hides the icon.
+- <Setting name="Anonymous usage analytics" section="Integrations" /> is **on by default**. It sends anonymous usage events, such as app starts and the features that you use, to Aptabase. It sends no personal data, PRs or code. To stop it, turn the switch off.
+- <Setting name="Show walkthrough" section="Integrations" /> starts the guided tour again.
+
+## Updates
+
+<Setting name="This version" section="Updates" /> shows the version that you use. <Setting name="Update channel" section="Updates" /> chooses **Stable**, for tested releases, or **Pre-release**, for early builds. Features marked <Prerelease /> in these docs are only in pre-release builds.
+
+## Diagnostics
+
+- <Setting name="Export" section="Diagnostics" /> saves one JSON file that you can attach to a problem report. It stays on your computer until you share it.
+- <Setting name="Sync health" section="Diagnostics" /> compares Gnosis with GitHub and lists mismatches.
+- <Setting name="Slow interactions" section="Diagnostics" /> counts slow clicks and key presses.
+- <Setting name="Conflict resolution stats" section="Diagnostics" /> <Prerelease /> counts how you handled Merged, Check and Decide conflicts. The counts stay on your computer.

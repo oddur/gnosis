@@ -1,0 +1,92 @@
+---
+title: Tabs & navigation
+description: Open several PRs and views in tabs, go back and forward, and open Gnosis from links.
+order: 3
+---
+
+Each Gnosis window has workspace tabs. A tab can show the Overview, the queue, a saved view, a PR, a stack, a saved review or Activity. Each tab keeps its own history and its own reading position.
+
+## When to use tabs
+
+- Use tabs to keep a PR open while you look at a different PR, then come back to the same line.
+- Use tabs to keep the queue and one or more saved views open at the same time.
+- Use `gnosis://` links to open a PR in Gnosis from a terminal, an editor or a script.
+
+## Open and close tabs
+
+<DocShot
+  name="workspace-tabs"
+  alt="The Gnosis title bar with four workspace tabs: the review queue and three PRs. Each PR tab shows its number and its title."
+  caption="Several PRs open in workspace tabs."
+/>
+
+- Press <Kbd keys="⌘ T" />, or select the plus button, to open a new tab. A new tab shows your home tab: the Overview by default, or the queue if you chose the queue last.
+- Press <Kbd keys="⌘ W" /> to close the active tab. When you close the last tab, Gnosis opens a new home tab.
+- Press <Kbd keys="⌘ ⇧ T" /> to reopen the last tab that you closed. Gnosis keeps up to 20 closed tabs.
+
+To open a PR in a tab from the queue:
+
+- ⌘-click the PR's title to open it in a background tab.
+- ⌘-⇧-click the title to open it in a new tab and go to that tab.
+- Middle-click the title to open it in a background tab.
+- Select **Open in new tab** in the PR's menu.
+
+⌘-click on the body of a queue row adds the row to the selection. It does not open a tab.
+
+## Move between tabs
+
+- Press <Kbd keys="⌃ Tab" /> to go to the next tab, and <Kbd keys="⌃ ⇧ Tab" /> to go to the previous tab.
+- Press <Kbd keys="⌘ 1–9" /> to go to a tab by its position. ⌘9 always goes to the last tab.
+- Select **Open tabs** to see a list of all tabs, also the tabs that do not fit in the strip.
+
+<DocShot
+  name="workspace-tabs-menu"
+  alt="The Open tabs menu. It lists every open tab with its title, and a second line with the repository, the PR number and the section."
+  caption="The Open tabs menu lists every tab."
+/>
+
+### Arrange tabs
+
+Drag a tab to move it. Right-click a tab, or press <Kbd keys="⇧ F10" /> on a focused tab, to open its menu. The menu has **Close tab**, **Close other tabs**, **Move tab left**, **Move tab right** and **Reopen closed tab**.
+
+Queue and saved-view tabs show how many PRs they list. A bold title tells you that at least one of those PRs is unread.
+
+### When you restart Gnosis
+
+Gnosis saves your tabs and opens them again after a restart. It does not save the back and forward history, the closed tabs, or unsent replies and comment text. Local notes and pending review drafts are kept.
+
+## Go back and forward
+
+Each tab has its own history. Press <Kbd keys="⌘ [" /> to go back and <Kbd keys="⌘ ]" /> to go forward. On Windows and Linux, press Alt+← and Alt+→.
+
+The **Recently viewed** menu in the title bar lists the PRs and lists that you opened last.
+
+## Find anything with the command palette
+
+Press <Kbd keys="⌘ K" /> to find PRs, code, explanations and commands. The palette also has **New tab**, **Reopen closed tab**, and a command for each open tab. See [Queue & Overview](/docs/queue-and-overview/#the-command-palette).
+
+## Open Gnosis from a link
+
+A `gnosis://` link opens Gnosis at a PR. A link can only open a place in Gnosis. It never writes to GitHub, starts a model, or runs Git.
+
+| Link | Opens |
+| --- | --- |
+| `gnosis://pr/owner/repo/123` | The PR's Summary tab |
+| `gnosis://pr/owner/repo/123/changes` | The PR on a tab: `summary`, `changes`, `commits`, `checks`, `feedback`, `explanation` or `notes` |
+| `gnosis://open?url=…` | The PR of a GitHub page, on the matching tab. Encode the GitHub URL. |
+
+In this version, only PR links open:
+
+- A link to a stack opens its PR, with a note.
+- A link to a file, a line, a comment, a commit or a slide opens only the tab, with a note.
+- `feedback` opens the Summary tab.
+- Only links to github.com open. When you are signed out, Gnosis asks you to connect GitHub first. A link to a muted PR does not open; restore the PR from **Muted PRs** first.
+- Links to the queue, Settings, a saved review, Activity, conflicts or a commit page show "This link is not supported yet".
+
+### Copy a link
+
+- In a PR's menu, select **Copy Gnosis link**.
+- With more than one PR selected, select **Copy Gnosis links**. You get one link on each line.
+- In the command palette, run **Copy Gnosis link to this view**. Links to the queue, a saved review or Settings work only inside Gnosis. From outside Gnosis, they are refused.
+
+To make these links from GitHub pages, install the [browser extension](/docs/browser-extension/).

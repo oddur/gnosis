@@ -281,7 +281,7 @@ At widths up to 760px, feature tabs form three equal columns. Feature descriptio
 
 ## Elevation & Depth
 
-The website has no box shadows. Pale fills, one-pixel borders, and connected rows establish depth. The selected PR uses cobalt fill and white text. Screenshot frames use a fine border without fabricated application chrome.
+The website has no box shadows. Pale fills, one-pixel borders, and connected rows establish depth. The selected PR uses cobalt fill and white text. Screenshot frames use a fine border without fabricated application chrome. The one exception is the docs screenshot window (see Docs), which draws a macOS window with a subtle shadow so each capture reads as the app.
 
 **The Flat Evidence Rule.** Use tone, borders, and spacing to separate evidence from its explanation.
 
@@ -366,6 +366,18 @@ Setup instructions use the pale technical surface, normal graphite headings, mut
 Preview release tags use small text, a fine border, and modest corners. These tags communicate status and are not interactive filters. Release failures retain a visible route to GitHub notes and downloads.
 
 No website input fields or dialogs exist in this system. The sidecar demonstrates existing components without introducing new field patterns.
+
+### Docs
+
+The user docs live at `/docs`, one MDX page per area in `src/content/docs` (frontmatter `title`, `description`, `order`, optional `prerelease`). `src/layouts/Docs.astro` uses three columns: a sticky 232px sidebar with search and the ordered page list, the article (70ch), and a sticky 208px "On this page" list from the h2 and h3 headings. Previous and Next cards close each page. The current page has a cobalt left rule, the selected fill and weight 600.
+
+Up to 1100px the right column goes; a collapsible "On this page" box sits above the article. Up to 760px the page list folds into a "Docs menu" disclosure under the search box, which works without JavaScript.
+
+Search uses Pagefind: `npm run build` indexes the `data-pagefind-body` article after `astro build`, with no external service. Without JavaScript the search box stays hidden.
+
+Inline components: `<Kbd keys="⌘ K" />` draws key caps in the UI font; `<Setting name="…" section="…" />` writes "Settings › Section › **Name**"; `<Prerelease />` is a small bordered "Pre-release" tag, also shown beside pre-release page titles in the sidebar.
+
+`<DocShot name="…" alt="…" caption="…" />` shows a capture in a drawn macOS window: 10px corners, a 36px title bar with traffic lights and the window title, and a subtle shadow. Each capture has light and dark files. `<picture>` shows the one that matches `prefers-color-scheme`; a small Light/Dark switch in the title bar changes only that screenshot and is not saved. The frame follows the shown theme. The image links to the full capture, like the homepage screenshots. A missing file fails the build. `scripts/check-docs.mjs` (run by `npm run build` and the root `npm test`) checks screenshots, shortcuts and setting labels against the app.
 
 ## Do's and Don'ts
 

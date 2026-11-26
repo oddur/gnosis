@@ -1,0 +1,16 @@
+---
+/**
+ * A setting, named as the Settings window labels it: <Setting name="Parallel review" section="Review" />.
+ * scripts/check-docs.mjs checks `name` against the labels in the Settings code and `section` against its tabs.
+ */
+interface Props {
+  name: string;
+  section?: string;
+}
+const { name, section } = Astro.props;
+---
+
+<span class="doc-setting">
+  {section ? <>Settings › {section} › </> : <>Settings › </>}
+  <strong>{name}</strong>
+</span>
