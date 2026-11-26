@@ -922,7 +922,7 @@ export function PrChangesView({
    * the item's changed lines (`commentAnchor`). Closing the composer hands the keyboard back to the tree row or the diff,
    * or, with ⌘⇧↩, ticks the item and goes on as V does. False when there is nothing to comment on.
    */
-  function commentOnItem(item: ReviewItem, returnTo: 'tree' | 'diff'): boolean {
+  function commentOnItem(item: ReviewItem, origin: 'tree' | 'diff'): boolean {
     const target = entries.find((e) => e.key === item.key);
     if (!target || entry?.key !== item.key || !comments.canComment) return false;
     const fileKey = viewKey(target);
@@ -934,16 +934,49 @@ export function PrChangesView({
       if (!anchor) return false;
       range = { side: anchor.side === 'LEFT' ? 'deletions' : 'additions', start: anchor.startLine ?? anchor.line, end: anchor.line };
     }
+    // Where the keyboard was when Enter was pressed (the tree row, inside its shadow root, or the diff), to give it back.
+    let from: Element | null = document.activeElement;
+    while (from?.shadowRoot?.activeElement) from = from.shadowRoot.activeElement;
+    const returnTo = from instanceof HTMLElement ? from : null;
     openReviewComment((how) => {
-      if (how === 'next') {
-        void reviewAndMove({ key: item.key, ids: item.id === FILE_STOP ? [] : [item.id], viewed: true, file: item.id === FILE_STOP });
-        return;
-      }
-      if (returnTo === 'tree') setTreeReveal((previous) => ({ key: item.key, id: item.id, nonce: (previous?.nonce ?? 0) + 1, focus: true }));
-      else workspace.current?.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+      // The composer is still mounted here, and its unmount drops focus to the page: hand the keyboard back after it
+      // has gone, so the next V, n or Enter works without a click.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (how === 'next') {
+            void reviewAndMove({ key: item.key, ids: item.id === FILE_STOP ? [] : [item.id], viewed: true, file: item.id === FILE_STOP });
+          } else if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+          else if (from === null || origin === 'diff') workspace.current?.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+          else setTreeReveal((previous) => ({ key: item.key, id: item.id, nonce: (previous?.nonce ?? 0) + 1, focus: true }));
+          keepFocusInWorkspace();
+        })
+      );
     });
     comments.begin(range);
+    focusComposer();
     return true;
+  }
+  /**
+   * Puts the keyboard in the composer once it is drawn. Its textarea has autoFocus, but the key that opened it (Enter on
+   * a tree row) hands focus back to the row as it finishes, so the composer is focused again after that, for a few
+   * frames at most while its file's diff draws it.
+   */
+  function focusComposer(frames = 30) {
+    const find = (root: Document | ShadowRoot | Element | null): HTMLTextAreaElement | null => {
+      if (!root) return null;
+      const own = root.querySelector<HTMLTextAreaElement>('.changes-comment-composer textarea');
+      if (own) return own;
+      for (const element of root.querySelectorAll('*')) {
+        const inner = element.shadowRoot && find(element.shadowRoot);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    requestAnimationFrame(() => {
+      const textarea = find(workspace.current);
+      if (textarea) textarea.focus({ preventScroll: true });
+      if ((!textarea || document.activeElement !== textarea && !textarea.matches(':focus')) && frames > 0) focusComposer(frames - 1);
+    });
   }
   function everythingViewed() {
     const number = entry?.snapshot.url.split('/').pop();
