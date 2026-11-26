@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { markSeen, pageStep, seenShare } from '../lib/review-paging';
+import { markSeen, pageStep, readingLabel, seenShare } from '../lib/review-paging';
 import { currentItem } from '../lib/tree-symbol-review';
 
 /** Long symbols: V pages through before it ticks (lib/review-paging.ts). */
@@ -60,4 +60,9 @@ void test("after the reader's own scroll, the long item they are in stays curren
   assert.deepEqual(currentItem({ moved: true, reading: next, paging: { item: long, onScreen: false, done: false } }), next);
   // A target the reader was taken to comes first, as before.
   assert.deepEqual(currentItem({ target: next, paging: { item: long, onScreen: true, done: false } }), next);
+});
+
+void test('a paged item reads "Reading N%" until it is seen in full, then "Read", which says the next V marks it', () => {
+  assert.deepEqual(readingLabel(40), { text: 'Reading 40%', full: false, title: "Press V to continue reading; it's marked once you've seen all of it" });
+  assert.deepEqual(readingLabel(100), { text: 'Read', full: true, title: 'Seen in full · press V to mark it viewed' });
 });

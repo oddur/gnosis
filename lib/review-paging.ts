@@ -108,3 +108,13 @@ export function usePaging(): Paging | undefined {
     () => paging
   );
 }
+
+/**
+ * What a paged item's row says: "Reading 40%" while some of it is unseen; "Read" once all of it has been on screen,
+ * which says what the next V does, in the info ink (`full`). One short word fits the narrow tree at 12 px.
+ */
+export function readingLabel(share: number): { text: string; full: boolean; title: string } {
+  return share >= 100
+    ? { text: 'Read', full: true, title: 'Seen in full · press V to mark it viewed' }
+    : { text: `Reading ${share}%`, full: false, title: "Press V to continue reading; it's marked once you've seen all of it" };
+}

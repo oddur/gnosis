@@ -138,10 +138,15 @@ void app.whenReady().then(async () => {
       `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(fileRow)})).find(e=>e.textContent.includes('flush() {'));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
     );
 
+    // ── The one-time tip names V, until the first V ──
+    const hint = "!!document.querySelector('.changes-tree-hint')";
+    await wait(hint);
+    assert.match(await js<string>("document.querySelector('.changes-tree-hint').textContent"), /Press V to mark what you’re reading/);
     // ── V marks the symbol Viewed, shared with the outline, and goes on; the file stays unviewed ──
     await js("window.treeRow('flush').focus()");
     await js("window.treeRow('flush').dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))");
     await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
+    await wait(`!${hint}`);
     await wait(
       `[...document.querySelectorAll(${JSON.stringify(fileRow + ' .diff-outline-go')})].some(b=>b.textContent.includes('flush')&&b.closest('[data-viewed]'))`
     );
@@ -352,6 +357,13 @@ void app.whenReady().then(async () => {
     await wait(`document.querySelectorAll(${JSON.stringify(fileRow + ' .changes-pending-comment')}).length===${draftsBefore + 1}`);
     await wait("(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='Imports'})()");
     assert.notEqual((await rows()).find((r) => r.name === 'Imports')?.decoration, '✓', 'A comment does not tick the item');
+    // Esc cancels, and hands the keyboard back to the item's row: the next V ticks that item, not a row focused before.
+    await enterOn('Imports');
+    await wait(`!!document.querySelector(${JSON.stringify(composer)})`);
+    await wait("document.activeElement?.tagName==='TEXTAREA'&&!!document.activeElement.closest('.changes-comment-composer')");
+    await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await wait(`!document.querySelector(${JSON.stringify(composer)})`);
+    await wait("(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='Imports'})()");
     // The reader closes the class and the folder above it: going on must open both again.
     const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
     await js("window.treeRow('Store').querySelector('[data-item-section=icon]').click()");
@@ -394,14 +406,14 @@ void app.whenReady().then(async () => {
     const visited: string[] = [];
     // A function taller than the screen (report.ts's) pages first: V scrolls on, and its row reads "Reading N%", until
     // every line has been on screen; then V ticks it.
-    const readingRow = () => js<string>(`window.treeRows().find(r=>r.decoration.startsWith('Reading'))?.decoration??''`);
+    const readingRow = () => js<string>(`window.treeRows().find(r=>r.decoration.startsWith('Read'))?.decoration??''`);
     const readings: string[] = [];
     for (let presses = 0; presses < 80 && !(await js<boolean>(toastWith('Everything viewed'))); presses++) {
       const before = await leftNow();
       const reading = await readingRow();
       await press('v');
       await wait(
-        `${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()||((window.treeRows().find(r=>r.decoration.startsWith('Reading'))?.decoration??'')!==${JSON.stringify(reading)}&&!!window.treeRows().find(r=>r.decoration.startsWith('Reading')))`
+        `${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()||((window.treeRows().find(r=>r.decoration.startsWith('Read'))?.decoration??'')!==${JSON.stringify(reading)}&&!!window.treeRows().find(r=>r.decoration.startsWith('Read')))`
       );
       const now = await readingRow();
       if (now) readings.push(now);

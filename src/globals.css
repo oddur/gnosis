@@ -2061,7 +2061,9 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-outline [data-viewed] > .diff-outline-go { color:var(--outline-muted); }
 .diff-outline-check { flex:none; color:var(--outline-muted); }
 /* Changed since the reader viewed it, in an earlier revision (lib/symbol-carry.ts). */
-.diff-outline-reading { flex:none; color:var(--outline-muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.diff-outline-reading { flex:none; color:var(--outline-muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* Seen in full: the next V marks it, in the ink "Changed" uses. */
+.diff-outline-reading[data-full] { color:var(--color-info); }
 .diff-outline-updated { flex:none; display:inline-flex; align-items:center; gap:3px; color:var(--color-info); font-size:12px; }
 /* A hunk of an item changed since the reader viewed it: beside its counts and lines, in the same ink, quieter. */
 .diff-gap-since { color:var(--color-info); opacity:.85; font-size:12px; white-space:nowrap; margin-inline-end:8px; }
@@ -2717,6 +2719,12 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-tree-options label { gap:6px;white-space:nowrap;cursor:pointer; }
 .changes-tree-options label:has(input:checked) { color:var(--foreground); }
 .changes-tree-options input { accent-color:var(--primary);margin:0; }
+/* The one-time V tip (lib/review-hint.ts): one quiet line under the options, as small as they are. */
+.changes-tree-hint { display:flex;align-items:center;gap:6px;margin:0;font-size:12px;line-height:16px;color:var(--muted-foreground); }
+.changes-tree-hint > span { flex:1;min-width:0; }
+.changes-tree-hint .kbd { font-size:11px; }
+.changes-tree-hint button { flex:none;display:inline-flex;padding:2px;border-radius:var(--radius);color:inherit; }
+.changes-tree-hint button:hover { background:var(--muted);color:var(--foreground); }
 .changes-tree-reset { margin-inline-start:auto;align-self:flex-start;color:var(--muted-foreground); }
 .changes-tree-controls>input { width:100%;border:1px solid var(--input);background:var(--background);padding:6px 8px;border-radius:var(--radius); }
 .changes-tree-controls label,.changes-file-actions label { display:inline-flex;align-items:center;gap:5px; }

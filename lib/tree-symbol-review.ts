@@ -379,3 +379,14 @@ export function moveMirrors(nodes: readonly TreeSymbolNode[]): { into: Record<st
   }
   return { into, away };
 }
+
+/**
+ * A symbol, Body or top-level row's counts: only the halves that are not zero (`+3`, `−2`, `+1 −1`), as the tree is
+ * narrow. A file row shows both, as GitHub does; the tooltips keep the full numbers.
+ */
+export function itemCounts(added: number, deleted: number): { text: string; parts: { sign: '+' | '−'; count: number }[] } {
+  const parts: { sign: '+' | '−'; count: number }[] = [];
+  if (added || !deleted) parts.push({ sign: '+', count: added });
+  if (deleted) parts.push({ sign: '−', count: deleted });
+  return { text: parts.map((part) => `${part.sign}${part.count}`).join(' '), parts };
+}

@@ -32,7 +32,8 @@ import {
   commitPositionId,
   inspectionData,
 } from '../lib/inspection-cache';
-import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { finishVHint, useVHint } from '../lib/review-hint';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
 import { beginJump, hasSymbolTarget, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewFile, setReviewTarget } from '../lib/tree-symbol-sync';
@@ -816,6 +817,8 @@ export function PrChangesView({
     const range = pager.range();
     markSeen(state.seen, lines, pager.place, range);
     const step = pageStep({ lines, place: pager.place, seen: state.seen, range, atEnd: false });
+    // A page is a jump of its own: one still on its way elsewhere stops.
+    if (step.kind === 'down') beginJump();
     // Seen whole, or nothing more to scroll to: V ticks it.
     if (step.kind === 'tick' || (step.kind === 'down' && !pager.page())) {
       paging.current = undefined;
@@ -888,7 +891,10 @@ export function PrChangesView({
     await markReviewSymbols(fileKey, fresh, true);
     return { key, id: ids[ids.length - 1], ids: fresh, markedFile: progress.isFileViewed(fileKey) };
   }
+  const vHint = useVHint();
   async function reviewAndMove(intent?: { key: string; ids: string[]; viewed: boolean; file: boolean }) {
+    // The first V: the tip about it has done its job.
+    finishVHint();
     let from: ReviewPlace | undefined;
     let ticked: ReviewTick | undefined;
     if (intent) {
@@ -962,7 +968,11 @@ export function PrChangesView({
         requestAnimationFrame(() => {
           if (how === 'next') {
             void reviewAndMove({ key: item.key, ids: item.id === FILE_STOP ? [] : [item.id], viewed: true, file: item.id === FILE_STOP });
-          } else if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+            return;
+          }
+          // Back on the item: it is the target again, even if a click into the composer counted as the reader moving.
+          setReviewTarget({ key: item.key, id: item.id });
+          if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
           else if (from === null || origin === 'diff') workspace.current?.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
           else setTreeReveal((previous) => ({ key: item.key, id: item.id, nonce: (previous?.nonce ?? 0) + 1, focus: true }));
           keepFocusInWorkspace();
@@ -1300,8 +1310,12 @@ export function PrChangesView({
         {!commit && onOpenFeedback && <Button variant="outline" size="sm" onClick={() => onOpenFeedback()}>Address feedback</Button>}
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
-            {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
-            {treeSymbols && left > 0 && <span className="changes-progress-left"> · {left} left</span>}
+            {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} {entries.length === 1 ? 'file' : 'files'} viewed
+            {treeSymbols && left > 0 && (
+              <span className="changes-progress-left" title="Left to review: changed functions, classes, top-level changes and files without symbols that are not viewed yet">
+                {' '}· {left} left to review
+              </span>
+            )}
             {updated > 0 && (
               <span className="changes-progress-updated" title="Changed since you viewed them, in an earlier revision">
                 {' '}· {updated} changed
@@ -1468,6 +1482,17 @@ export function PrChangesView({
                       <RotateCcw size={14} aria-hidden="true" />
                     </Button>
                   </div>
+                  {/* Once, until the first V or its ×: the review loop's key, where the reader starts. */}
+                  {treeSymbols && vHint && (
+                    <p className="changes-tree-hint" role="note">
+                      <span>
+                        Press <kbd className="kbd">V</kbd> to mark what you’re reading and go on to the next change
+                      </span>
+                      <button type="button" aria-label="Dismiss tip" title="Dismiss" onClick={finishVHint}>
+                        <X size={12} aria-hidden="true" />
+                      </button>
+                    </p>
+                  )}
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit && !combined &&

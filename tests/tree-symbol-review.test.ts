@@ -5,7 +5,7 @@ import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
 import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline';
 import { symbolTree } from '../lib/tree-symbols';
-import { FILE_STOP, folderSums, rowLabel, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { FILE_STOP, folderSums, itemCounts, rowLabel, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -473,4 +473,12 @@ void test('a row with items changed since the reader viewed them reads "N change
     Object.fromEntries(folderSums(new Map([['src/lib/a.ts', 2], ['src/b.ts', 1], ['src/c.ts', 0], ['top.json', 4]]))),
     { 'src/': 3, 'src/lib/': 2 }
   );
+});
+
+void test("a symbol row's counts leave out the zero half; both zero reads +0", () => {
+  assert.equal(itemCounts(3, 0).text, '+3');
+  assert.equal(itemCounts(0, 2).text, '−2');
+  assert.equal(itemCounts(1, 1).text, '+1 −1');
+  assert.equal(itemCounts(0, 0).text, '+0');
+  assert.deepEqual(itemCounts(0, 2).parts, [{ sign: '−', count: 2 }]);
 });

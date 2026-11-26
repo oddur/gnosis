@@ -3,7 +3,7 @@ import { Check, ChevronRight, RefreshCw, SquareDot, SquareMinus, SquarePlus } fr
 import { useFileProgress } from '../lib/file-view-progress';
 import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
 import { isUpdated, useCarry } from '../lib/symbol-carry';
-import { usePaging } from '../lib/review-paging';
+import { readingLabel, usePaging } from '../lib/review-paging';
 import { useReviewFile, useReviewTarget } from '../lib/tree-symbol-sync';
 import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
@@ -83,9 +83,10 @@ const named = (symbol: ChangedSymbol) =>
 
 /** An item V is paging through, with how much of it the reader has seen (lib/review-paging.ts). */
 function Reading({ share }: { share: number }) {
+  const label = readingLabel(share);
   return (
-    <span className="diff-outline-reading" title="Press V to continue reading; it's marked once you've seen all of it">
-      Reading {share}%
+    <span className="diff-outline-reading" data-full={label.full || undefined} title={label.title}>
+      {label.text}
     </span>
   );
 }

@@ -14,9 +14,13 @@ export const decorationCSS = `
   [data-item-section="decoration"] { flex: 0 0 auto; }
   [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
 `;
+// The comment icon goes on a file row's comment count only. Pierre's decoration parts carry no attributes, so the
+// count is found by its row's tooltip, which alone names "GitHub comment(s)" or "Comments unavailable": a symbol row's
+// "Enter to comment" must not draw it.
+const COMMENT_COUNT = `[data-item-section="decoration"] > span:is([title*="GitHub comment" i], [title*="Comments unavailable" i]) > span:last-child`;
 export const commentDecorationCSS = `
-  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
-  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
+  ${COMMENT_COUNT} { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
+  ${COMMENT_COUNT}::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
 /** The tree's short word for a quiet file's label (#396); a file of mixed kinds is "Quiet". */
 export const TREE_WORDS: Record<string, string> = {

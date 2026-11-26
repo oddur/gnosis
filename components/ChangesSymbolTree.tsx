@@ -14,9 +14,9 @@ import { definitionNoun } from '../lib/hunk-scopes';
 import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
-import { usePaging } from '../lib/review-paging';
+import { readingLabel, usePaging } from '../lib/review-paging';
 import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { FILE_STOP, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { FILE_STOP, itemCounts, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -38,12 +38,15 @@ const VIEWED_MARK = '✓';
  * info ink in place of its counts, which move to the tooltip. The glyph reads at 12 px where a dot reads as a bullet.
  */
 const CHANGED_TEXT = '↻ Changed';
+/** A symbol row's counts, the zero half left out (lib/tree-symbol-review.ts `itemCounts`). */
+const countText = (added: number, deleted: number) => itemCounts(added, deleted).text;
+const countParts = (added: number, deleted: number) =>
+  itemCounts(added, deleted).parts.map((part) => ({ text: `${part.sign}${part.count}`, color: part.sign === '+' ? DIFF_STAT_COLORS.added : DIFF_STAT_COLORS.removed }));
 /** An item V is paging through: how much of it the reader has seen, muted, in place of its counts. */
-const reading = (share: number, rest: string) => ({
-  text: `Reading ${share}%`,
-  parts: [{ text: `Reading ${share}%`, color: 'var(--muted-foreground)' }],
-  title: `Press V to continue reading; it's marked once you've seen all of it. ${rest}`,
-});
+const reading = (share: number, rest: string) => {
+  const label = readingLabel(share);
+  return { text: label.text, parts: [{ text: label.text, color: label.full ? CHANGED_COLOR : 'var(--muted-foreground)' }], title: `${label.title}. ${rest}` };
+};
 const changedItem = (added: number, deleted: number, rest: string) => ({
   text: CHANGED_TEXT,
   parts: [{ text: CHANGED_TEXT, color: CHANGED_COLOR }],
@@ -253,11 +256,8 @@ export function ChangesSymbolTree({
           return { text: word, parts: [{ text: word, color: 'var(--muted-foreground)' }], title: `${added} additions, ${deleted} deletions, every one quiet` };
         }
         const counts = {
-          text: `+${added} −${deleted}`,
-          parts: [
-            { text: `+${added}`, color: DIFF_STAT_COLORS.added },
-            { text: `−${deleted}`, color: DIFF_STAT_COLORS.removed },
-          ],
+          text: countText(added, deleted),
+          parts: countParts(added, deleted),
           title: `${added} additions, ${deleted} deletions ${imports ? 'to imports' : 'outside every function and class'}`,
         };
         const share = readingNow(row.key, TOP_LEVEL_ID);
@@ -293,17 +293,14 @@ export function ChangesSymbolTree({
       const moved = node.moved ? [{ text: '⇄', color: 'var(--muted-foreground)' }] : [];
       const spoken = isBody(node) ? node.definition.crumb : `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
       const decoration = {
-        text: viewed ? VIEWED_MARK : (quiet ?? `+${node.added} −${node.deleted}`),
+        text: viewed ? VIEWED_MARK : (quiet ?? countText(node.added, node.deleted)),
         parts: [
           ...moved,
           ...(viewed
             ? [{ text: VIEWED_MARK, color: 'var(--muted-foreground)' }]
             : quiet
               ? [{ text: quiet, color: 'var(--muted-foreground)' }]
-              : [
-                  { text: `+${node.added}`, color: DIFF_STAT_COLORS.added },
-                  { text: `−${node.deleted}`, color: DIFF_STAT_COLORS.removed },
-                ]),
+              : countParts(node.added, node.deleted)),
         ],
         title: `${spoken}. ${viewed ? 'Viewed' : `${node.added} additions, ${node.deleted} deletions`}${node.quiet ? `. ${node.quiet}: every change is quiet` : ''}${node.moved ? `. ${node.moved}` : ''}`,
       };
