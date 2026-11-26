@@ -245,7 +245,11 @@ async function capture(recipe: Recipe, theme: Theme, progress: Progress): Promis
       mobile: false,
     });
     stage('loading the fixture');
-    await loadWorkbenchPage(window, fixtureUrl(fixtures, recipe.fixture ?? '', theme));
+    const url = fixtureUrl(fixtures, recipe.fixture ?? '', theme);
+    // loadWorkbenchPage's render check reads #root, which a dialog-only fixture leaves empty (its dialog is a portal).
+    // Those fixtures load as their suites load them; the recipe's own wait steps show they rendered.
+    if ((recipe.fixture ?? '').startsWith('workbench.html')) await loadWorkbenchPage(window, url);
+    else await within(window.loadURL(url), 60_000, `loading ${recipe.fixture}`);
     await until(`innerWidth===${viewport.width} && innerHeight===${viewport.height}`, `the ${viewport.width}×${viewport.height} viewport`);
     await contents.insertCSS(
       '*,*::before,*::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;caret-color:transparent!important}'
