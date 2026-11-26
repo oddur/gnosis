@@ -1,0 +1,36 @@
+---
+/**
+ * A keyboard shortcut: <Kbd keys="⌘ ⇧ M" />. Separate the keys of one shortcut with spaces; write macOS keys.
+ * scripts/check-docs.mjs checks every `keys` value against the app's shortcuts, so write it as a literal string.
+ */
+interface Props {
+  keys: string;
+}
+const { keys } = Astro.props;
+const SPOKEN: Record<string, string> = {
+  '⌘': 'Command',
+  '⇧': 'Shift',
+  '⌥': 'Option',
+  '⌃': 'Control',
+  '↵': 'Enter',
+  '←': 'Left Arrow',
+  '→': 'Right Arrow',
+  '↑': 'Up Arrow',
+  '↓': 'Down Arrow',
+  '–': 'to',
+};
+const parts = keys.trim().split(/\s+/);
+const spoken = parts.map((part) => SPOKEN[part] ?? part).join(' ');
+const glyphs = parts.some((part) => part in SPOKEN);
+---
+
+{glyphs ? (
+  <>
+    <kbd class="doc-kbd" aria-hidden="true">
+      {parts.map((part) => (part === '–' ? <span>–</span> : <kbd>{part}</kbd>))}
+    </kbd>
+    <span class="sr-only">{spoken}</span>
+  </>
+) : (
+  <kbd class="doc-kbd">{parts.map((part) => (part === '–' ? <span>–</span> : <kbd>{part}</kbd>))}</kbd>
+)}

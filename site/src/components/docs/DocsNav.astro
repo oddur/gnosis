@@ -1,0 +1,24 @@
+---
+/** The ordered list of docs pages, used by the sidebar and by the mobile menu. */
+export interface DocsLink {
+  id: string;
+  title: string;
+  prerelease?: boolean;
+}
+interface Props {
+  pages: DocsLink[];
+  current?: string;
+}
+const { pages, current } = Astro.props;
+---
+
+<ol class="docs-nav-list">
+  {pages.map((page) => (
+    <li>
+      <a href={`/docs/${page.id}/`} aria-current={page.id === current ? 'page' : undefined}>
+        {page.title}
+        {page.prerelease && <span class="prerelease-tag">Pre-release</span>}
+      </a>
+    </li>
+  ))}
+</ol>

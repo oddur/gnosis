@@ -27,6 +27,10 @@ The browser check also requires the root repository's dependencies (`npm ci` at 
 - At commit `6f30649`, the opening Review Queue was refreshed from `--notifications` (`introduction-light`, with an in-app notification), Resolve conflicts from `--conflict-resolution` (`conflicts-light`), and the menu bar panel was added. The menu bar panel comes from the `sample-light` capture of `--menubar`, which uses only the synthetic `klang/engine` sample; it is 360pt wide, so it ships at 720 and 360 pixels.
 - To capture in Docker at 2x without network access (so no live GitHub avatars appear), build the image with `GNOSIS_DOCKER_IMAGE=gnosis-browser-tests-site`, then run the container with `--network none`, a mounted output folder linked to `.impeccable/review` (and `GNOSIS_SCREENSHOT_DIR` for the default run), and Electron launched with `--force-device-scale-factor=2 --enable-features=OverlayScrollbar`.
 
+## Docs
+
+User docs are MDX pages in `src/content/docs`, served at `/docs`. `npm run check:docs` checks every `<DocShot>` against `public/docs/screenshots` and its capture recipe in the root `scripts/docs-screenshots.json` (the capture pipeline's file, #577), every `<Kbd>` against the app's shortcuts (the `?` cheatsheet plus `scripts/docs-shortcuts.json`), and every `<Setting>` against the Settings labels. `npm run build` runs it first, and builds the Pagefind search index last. The root `npm test` runs it too (`tests/site-docs.test.ts`). See DESIGN.md › Docs for the layout.
+
 ## Deployment
 
 `.github/workflows/site.yml` builds and deploys to GitHub Pages when `site/**` changes on `main`, when a release is published, or on manual dispatch. `public/CNAME` preserves `gnosis.to`. The build fetches release notes; visitors do not call the GitHub API.

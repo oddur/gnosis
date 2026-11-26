@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 const onChangelog = Astro.url.pathname.startsWith('/changelog');
+const onDocs = Astro.url.pathname.startsWith('/docs');
 ---
 
 <header class="site-header frame">
@@ -13,6 +14,9 @@ const onChangelog = Astro.url.pathname.startsWith('/changelog');
     </a>
     <a href="/#illustrated-explanations" class="nav-explore">
       Illustrated explanations
+    </a>
+    <a href="/docs/" aria-current={onDocs ? 'page' : undefined}>
+      Docs
     </a>
     <a href="/changelog/" aria-current={onChangelog ? 'page' : undefined}>
       Changelog

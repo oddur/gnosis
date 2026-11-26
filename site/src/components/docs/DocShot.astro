@@ -1,0 +1,134 @@
+---
+/**
+ * A screenshot of the app in a drawn macOS window: <DocShot name="queue-overview" alt="…" caption="…" />.
+ *
+ * Every name has a light and a dark capture, each at 1600 and 960 pixels wide, in public/docs/screenshots:
+ * <name>-light.webp, <name>-light-small.webp, <name>-dark.webp and <name>-dark-small.webp, each with a .json
+ * provenance sidecar. A missing file fails the build. scripts/check-docs.mjs also checks the capture recipe.
+ *
+ * Without JavaScript, <picture> shows the capture that matches the reader's color scheme. The script adds a
+ * Light/Dark switch to each window; it changes only that screenshot and is not remembered.
+ */
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import Icon from '../Icon.astro';
+import { webpSize } from '../../lib/webp-size';
+
+interface Props {
+  name: string;
+  alt: string;
+  caption: string;
+  /** The text in the window's title bar. */
+  title?: string;
+}
+const { name, alt, caption, title = 'Gnosis' } = Astro.props;
+const dir = join(process.cwd(), 'public/docs/screenshots');
+const url = (file: string) => `/docs/screenshots/${file}`;
+
+const files = ['light', 'light-small', 'dark', 'dark-small'].map((variant) => `${name}-${variant}.webp`);
+const missing = files.flatMap((file) => [file, `${file}.json`]).filter((file) => !existsSync(join(dir, file)));
+if (missing.length)
+  throw new Error(
+    `DocShot "${name}" (${Astro.url.pathname}) is missing ${missing.join(', ')} in site/public/docs/screenshots. ` +
+      `Each screenshot needs light and dark captures at 1600 and 960 pixels wide, each with a .json sidecar.`
+  );
+const size = (file: string) => {
+  const found = webpSize(readFileSync(join(dir, file)));
+  if (!found) throw new Error(`DocShot "${name}": site/public/docs/screenshots/${file} is not a WebP image.`);
+  return found;
+};
+const light = size(`${name}-light.webp`);
+const dark = size(`${name}-dark.webp`);
+const sizes = '(max-width: 760px) calc(100vw - 40px), 760px';
+const srcset = (theme: string) => `${url(`${name}-${theme}-small.webp`)} 960w, ${url(`${name}-${theme}.webp`)} 1600w`;
+---
+
+<figure class="doc-shot" data-doc-shot>
+  <div class="doc-window">
+    <div class="doc-window-bar">
+      <span class="doc-window-lights" aria-hidden="true">
+        <i></i>
+        <i></i>
+        <i></i>
+      </span>
+      <span class="doc-window-title" aria-hidden="true">
+        {title}
+      </span>
+      <div class="doc-shot-themes" role="group" aria-label="Screenshot theme" hidden>
+        <button type="button" data-theme="light" aria-pressed="false">
+          Light
+        </button>
+        <button type="button" data-theme="dark" aria-pressed="false">
+          Dark
+        </button>
+      </div>
+    </div>
+    <a
+      href={url(`${name}-light.webp`)}
+      data-light={url(`${name}-light.webp`)}
+      data-dark={url(`${name}-dark.webp`)}
+      target="_blank"
+      rel="noopener"
+      aria-label={`Enlarge screenshot: ${caption} (opens a new tab)`}
+    >
+      <picture>
+        <source
+          media="(prefers-color-scheme: dark)"
+          srcset={srcset('dark')}
+          sizes={sizes}
+          width={dark.width}
+          height={dark.height}
+        />
+        <img
+          src={url(`${name}-light.webp`)}
+          srcset={srcset('light')}
+          sizes={sizes}
+          alt={alt}
+          width={light.width}
+          height={light.height}
+          loading="lazy"
+          decoding="async"
+        />
+      </picture>
+      <span class="enlarge">
+        <Icon name="expand" size={17} /> Enlarge
+      </span>
+    </a>
+  </div>
+  <figcaption>
+    {caption}
+    <span>Actual app · sample repository</span>
+  </figcaption>
+</figure>
+
+<script>
+  // Each screenshot gets its own Light/Dark switch. It starts on the reader's color scheme, follows that scheme until
+  // the reader picks one, and is not saved: other screenshots and later visits keep the default.
+  const scheme = window.matchMedia('(prefers-color-scheme: dark)');
+  for (const figure of document.querySelectorAll<HTMLElement>('[data-doc-shot]')) {
+    const switcher = figure.querySelector<HTMLElement>('.doc-shot-themes');
+    const source = figure.querySelector('source');
+    const link = figure.querySelector<HTMLAnchorElement>('a[data-light]');
+    if (!switcher || !source || !link) continue;
+    let chosen: 'light' | 'dark' | undefined;
+    const show = (theme: 'light' | 'dark') => {
+      figure.dataset.theme = theme;
+      // The dark <source> wins when its media matches, so 'all' shows dark and 'not all' shows light.
+      source.media = theme === 'dark' ? 'all' : 'not all';
+      link.href = link.dataset[theme] ?? link.href;
+      for (const button of switcher.querySelectorAll<HTMLButtonElement>('button'))
+        button.setAttribute('aria-pressed', String(button.dataset.theme === theme));
+    };
+    show(scheme.matches ? 'dark' : 'light');
+    scheme.addEventListener('change', () => {
+      if (!chosen) show(scheme.matches ? 'dark' : 'light');
+    });
+    switcher.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-theme]');
+      if (!button) return;
+      chosen = button.dataset.theme === 'dark' ? 'dark' : 'light';
+      show(chosen);
+    });
+    switcher.hidden = false;
+  }
+</script>
