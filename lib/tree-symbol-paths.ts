@@ -67,6 +67,8 @@ export type FileSymbols =
       top?: TopLevelChanges;
       /** Each counted item's print, by id, for its tick to carry to a new revision (lib/review-prints.ts). */
       prints?: Readonly<Record<string, string>>;
+      /** What each item's changed lines call, by id, for a peek's callers (lib/review-peek.ts). */
+      calls?: Readonly<Record<string, readonly import('./review-peek').ItemCall[]>>;
     };
 
 /** What one of the tree's rows is. */

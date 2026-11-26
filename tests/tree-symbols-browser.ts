@@ -26,6 +26,8 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_MOVE_SOURCE, TR
  * - Reset viewed clears every file and tick of these changes, and its toast's Undo puts them back.
  * - Enter on the item under review opens the comment composer on its lines; ⌘↩ adds the draft and puts the keyboard back
  *   on its row; ⌘⇧↩ adds it and goes on as V does.
+ * - Space peeks at a symbol: its own diff and the changed symbols calling it (start calls flush); Enter on a caller
+ *   peeks at it, Backspace goes back, Esc closes with the keyboard back on the row, V marks it without moving on.
  * - Review with V: with Unviewed only, V from a file's top goes to its first item, then ticks each item and goes on,
  *   lighting and focusing the next row, out of store.ts and through every file, files without symbols one stop each,
  *   to "Everything viewed" with its Review PR action; Shift+V takes the last one back.
@@ -323,6 +325,44 @@ void app.whenReady().then(async () => {
     await wait("window.treeRows().some(r=>r.name==='worker.ts')");
 
     // ── Review with V: Unviewed only and Symbols on, V ticks each item and goes on, to the end ──
+    await js(`document.querySelector('button[aria-label="Reset viewed"]:not(:disabled)')?.click()`);
+    await wait(`document.querySelector('button[aria-label="Reset viewed"]')?.disabled===true`);
+
+    // ── Space peeks at a symbol: its own diff and its changed callers, without moving the review ──
+    if (!(await js<boolean>("!!window.treeRow('flush')"))) await js(`window.treeRow(${JSON.stringify(name)}).querySelector('[data-item-section=icon]').click()`);
+    await wait("!!window.treeRow('flush')");
+    const keyIn = (key: string, extra = '') =>
+      js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,composed:true,cancelable:true${extra}}))`);
+    const peekOf = (symbol: string) => `!!document.querySelector('[role=dialog][aria-label="Peek: ${symbol}"]')`;
+    const spaceOn = (row: string) =>
+      js(`(()=>{const r=window.treeRow(${JSON.stringify(row)});r.focus();r.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true,composed:true,cancelable:true}))})()`);
+    const activeBefore = await js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`);
+    await spaceOn('flush');
+    await wait(peekOf('flush'));
+    // Its own hunk, drawn as Changes draws it, and start, which calls it from tasks.ts.
+    await wait("window.deepAll('[data-line]',document.querySelector('.symbol-peek')).some(e=>e.textContent.includes('return 2;'))");
+    await wait("[...document.querySelectorAll('.symbol-peek [role=option]')].some(o=>o.textContent.includes('start'))");
+    assert.equal(await js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`), activeBefore, 'A peek moves nothing');
+    // Down and Enter peek at the caller; Backspace goes back.
+    await wait("!!document.activeElement?.closest('.symbol-peek')");
+    await keyIn('ArrowDown');
+    await keyIn('Enter');
+    await wait(peekOf('start'));
+    await keyIn('Backspace');
+    await wait(peekOf('flush'));
+    // Esc closes, and the keyboard is back on the row.
+    await keyIn('Escape');
+    await wait("!document.querySelector('.symbol-peek')");
+    await wait("window.focusedTreeRow()==='flush'");
+    // V in a peek marks it, and the review does not move on.
+    await spaceOn('flush');
+    await wait(peekOf('flush'));
+    await wait("!!document.activeElement?.closest('.symbol-peek')");
+    await keyIn('v');
+    await wait("!document.querySelector('.symbol-peek')");
+    await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
+    assert.equal(await js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`), activeBefore, 'and moves nothing');
+    // Back to nothing viewed for the walk below.
     await js(`document.querySelector('button[aria-label="Reset viewed"]:not(:disabled)')?.click()`);
     await wait(`document.querySelector('button[aria-label="Reset viewed"]')?.disabled===true`);
     await js("[...document.querySelectorAll('.changes-tree-controls label')].find(l=>l.textContent.includes('Unviewed only')).querySelector('input').click()");

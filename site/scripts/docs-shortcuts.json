@@ -200,6 +200,18 @@
       "evidence": "if (e.shiftKey && reviewCommentOpen()) {"
     },
     {
+      "keys": "Space",
+      "label": "File tree: peek at the selected symbol or file",
+      "source": "components/ChangesSymbolTree.tsx",
+      "evidence": "// Space peeks at the row's item"
+    },
+    {
+      "keys": "Backspace",
+      "label": "Peek: back to the symbol peeked at before",
+      "source": "components/SymbolPeek.tsx",
+      "evidence": "key === 'Backspace' && canBack"
+    },
+    {
       "keys": "⇧ V",
       "label": "Changes: undo the last v",
       "source": "components/PrChangesView.tsx",

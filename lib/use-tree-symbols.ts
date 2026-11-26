@@ -9,8 +9,9 @@ import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
 import { hidden, noiseFilterOn, noiseLabel, patchHunks, type NoiseFilter, type NoiseKind } from './semantic-noise';
-import { changedSymbolLines, changedSymbols, trivialSymbols } from './symbol-outline';
+import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, trivialSymbols } from './symbol-outline';
 import { changedRowTexts, itemPrints } from './review-prints';
+import { itemCalls } from './review-peek';
 import { countedIds } from './tree-symbol-review';
 import { syntaxContentsPlan, wholeFileText } from './syntax-contents';
 import { SYNTAX_MAX_CHARACTERS, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
@@ -99,6 +100,8 @@ onInspectionUses((into) => {
 addDiagnosticsSource('treeSymbols', () => ({
   patches: { entries: patches.size, bytes: [...patches.values()].reduce((sum, entry) => sum + 2 * (entry.patch?.length ?? 0), 0) },
   made: made.size,
+  // The calls kept for peeks' callers, which leave with their PR as the rest of `made` does.
+  calls: [...made.values()].reduce((sum, entry) => sum + (entry.peeked.value.state === 'ready' ? Object.values(entry.peeked.value.calls ?? {}).reduce((n, list) => n + list.length, 0) : 0), 0),
 }));
 
 /**
@@ -193,16 +196,19 @@ function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, fi
   }, trivialSymbols(gapHunks, fileDefinitions, undefined, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`))));
   const top = treeTop(gapHunks, fileDefinitions, quietLines);
   // What each counted item reads, from the text at hand, for its tick to carry to the next revision.
-  const prints = itemPrints({
-    items: countedIds({ state: 'ready', nodes, top }) ?? [],
-    nodes,
-    top,
-    after: afterText,
-    before: beforeText,
-    rows: changedRowTexts(gapHunks),
-    own: changedSymbolLines(gapHunks, fileDefinitions),
-  });
-  const peeked: Peeked = { value: { state: 'ready', nodes, top, prints } };
+  const items = countedIds({ state: 'ready', nodes, top }) ?? [];
+  const rows = changedRowTexts(gapHunks);
+  const own = changedSymbolLines(gapHunks, fileDefinitions);
+  const prints = itemPrints({ items, nodes, top, after: afterText, before: beforeText, rows, own });
+  // What each item's changed lines call, for a peek's "Called by, in this PR" (lib/review-peek.ts): from the lines
+  // already read, with nothing parsed again.
+  const lines = new Map<string, readonly string[]>();
+  for (const id of items) {
+    const keys = id === TOP_LEVEL_ID ? top?.lines : own?.get(isBody({ id }) ? bodyOwner(id) : id);
+    if (keys) lines.set(id, keys);
+  }
+  const calls = itemCalls(lines, rows);
+  const peeked: Peeked = { value: { state: 'ready', nodes, top, prints, calls } };
   made.delete(fileKey);
   made.set(fileKey, { url: snapshot.url, inputs, peeked });
   for (const key of made.keys()) {

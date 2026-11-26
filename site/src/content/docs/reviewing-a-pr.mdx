@@ -93,6 +93,14 @@ To comment on the symbol you are on, press <Kbd keys="Enter" />: in the file tre
 
 If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it and go back. When everything is viewed, Gnosis shows **Everything viewed** with a button to review the PR.
 
+### Peek at a symbol
+
+<Prerelease /> To look at a symbol without leaving your place, select it in the file tree and press <Kbd keys="Space" />, or hold the pointer over it. A panel shows its changes, as the diff shows them, and the changed functions and classes in this PR that call it.
+
+- Press <Kbd keys="Enter" /> to go to the symbol, <Kbd keys="v" /> to mark it as viewed, or <Kbd keys="Esc" /> to close the panel.
+- Use <Kbd keys="↑" /> and <Kbd keys="↓" /> to choose a caller, and <Kbd keys="Enter" /> to peek at it. Press <Kbd keys="Backspace" /> to go back.
+- Gnosis only looks in the files that it has read. To look in every file, select **Look in all files**. A name that more than one changed symbol uses is not matched.
+
 ### After the author pushes
 
 <Prerelease /> When the file tree shows symbols, a new push keeps your marks on the code that did not change. Gnosis compares each symbol you marked as viewed with the new version of the PR. Changes to spaces and blank lines do not count.

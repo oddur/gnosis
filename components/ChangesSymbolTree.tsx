@@ -14,11 +14,14 @@ import { definitionNoun } from '../lib/hunk-scopes';
 import { peekReviewTarget, setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
+import { SymbolPeek, type PeekView } from './SymbolPeek';
+import { callerCoverage, findCallers, type CallerFile } from '../lib/review-peek';
+import type { DiffAppearance } from '../lib/review-diff';
 import { readingLabel, usePaging } from '../lib/review-paging';
-import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { FILE_STOP, itemCounts, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, topLevelName, treeSymbolKind } from '../lib/tree-symbols';
+import { FILE_STOP, itemCounts, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
-import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
+import { loadTreeSymbols, treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
 export interface SymbolTreeEntry extends ChangeTreeEntry {
   /** The file as the diff reads it: set for every file, so the tree can tell which have symbols. */
@@ -53,6 +56,14 @@ const changedItem = (added: number, deleted: number, rest: string) => ({
   title: `Changed since you viewed it · +${added} −${deleted}. ${rest}`,
 });
 
+/** A hover on a symbol row this long opens its peek (components/SymbolPeek.tsx). */
+const HOVER_PEEK_MS = 500;
+/** A hover peek stays this long after the pointer leaves the row and the popover, so it can travel into it. */
+const PEEK_GRACE_MS = 250;
+/** "Look in all files": files read at once, and how long each may take. */
+const LOOK_ALL_LANES = 3;
+const LOOK_ALL_WAIT_MS = 10_000;
+
 /** How long a chosen symbol stays lit while the diff scrolls to it, if the diff never says it arrived. */
 const HOLD_MS = 1_500;
 
@@ -82,6 +93,8 @@ export function ChangesSymbolTree({
   onReviewKey,
   onCommentKey,
   onReviewCurrent,
+  peekTheme,
+  peekAppearance,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -105,6 +118,9 @@ export function ChangesSymbolTree({
    * a symbol row) and moves on to the next unviewed item, as V does anywhere in Changes.
    */
   onReviewKey?: (tick: { key: string; ids: string[]; viewed: boolean; file: boolean }) => void;
+  /** A peek's diff theme and appearance (components/SymbolPeek.tsx), as Changes draws its diffs. */
+  peekTheme?: string;
+  peekAppearance?: DiffAppearance;
   /** Enter on the row of the item under review comments on it (PrChangesView); true when it did. */
   onCommentKey?: (item: { key: string; id: string }) => boolean;
   /** V on a row with nothing of its own to mark (a folder, a note): Changes' own V, on the item under review. */
@@ -629,8 +645,153 @@ export function ChangesSymbolTree({
   /** A symbol reads as ticked when it is, or when its file is Viewed. */
   const symbolOn = (key: string, fileKey: string, id: string) => !!entryOf(key)?.viewed || progress.isSymbolViewed(fileKey, id);
   const selectedFiles = selectedTreeFiles(entries, mapped(selectedPaths), matchingPaths);
+  // ── Peek (components/SymbolPeek.tsx): Space on a row, or a hover, shows the item's own hunks and its changed callers,
+  // without moving the review, the light or the diff. ──
+  const [peek, setPeek] = useState<{ stack: { key: string; id: string }[]; focus: boolean; path: string; anchor: Element }>();
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** What a row peeks at: a symbol (not a move's old copy), the top level, or a file without symbols. */
+  const peekItemOf = (row: TreeRow | undefined): { key: string; id: string } | undefined => {
+    if (!row) return undefined;
+    if (row.type === 'symbol') return row.node.moveAway ? undefined : { key: row.key, id: row.node.id };
+    if (row.type === 'top') return { key: row.key, id: TOP_LEVEL_ID };
+    if (row.type === 'file' && (!row.folder || known.get(row.key)?.state === 'none')) return { key: row.key, id: FILE_STOP };
+    return undefined;
+  };
+  const rowElement = (event: Event) => event.composedPath().find((node): node is Element => node instanceof Element && node.hasAttribute('data-item-path'));
+  const openPeek = (item: { key: string; id: string }, path: string, anchor: Element, focus: boolean) => {
+    clearTimeout(closeTimer.current);
+    setPeek({ stack: [item], focus, path, anchor });
+  };
+  const closePeek = (returnFocus = peek?.focus) => {
+    clearTimeout(closeTimer.current);
+    const path = peek?.path;
+    setPeek(undefined);
+    if (returnFocus && path) focusWhenDrawn(path);
+  };
+  // A hover peek closes a moment after the pointer leaves the row and the popover, so it can travel into it.
+  const leaveSoon = () => {
+    clearTimeout(hoverTimer.current);
+    if (!peek || peek.focus) return;
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setPeek((open) => (open && !open.focus ? undefined : open)), PEEK_GRACE_MS);
+  };
+  useEffect(() => () => {
+    clearTimeout(hoverTimer.current);
+    clearTimeout(closeTimer.current);
+  }, []);
+  const peekView = (item: { key: string; id: string }): PeekView | undefined => {
+    const entry = entryOf(item.key);
+    const source = entry?.source;
+    if (!entry || !source) return undefined;
+    const symbols = known.get(item.key);
+    const ready = symbols?.state === 'ready' ? symbols : undefined;
+    const fileViewed = entry.viewed;
+    const base = { key: item.key, id: item.id, snapshot: source.snapshot, file: source.file };
+    const look = (text: string, color?: string) => ({ text, color });
+    if (item.id === FILE_STOP)
+      return {
+        ...base,
+        name: item.key.slice(item.key.lastIndexOf('/') + 1),
+        icon: 'note',
+        added: entry.additions,
+        deleted: entry.deletions,
+        state: fileViewed ? look('✓ Viewed') : isUpdated(source.fileKey, FILE_STOP) ? look('Changed', CHANGED_COLOR) : look(''),
+        hunks: {},
+      };
+    if (item.id === TOP_LEVEL_ID) {
+      const top = ready?.top;
+      if (!top) return undefined;
+      const viewed = fileViewed || progress.isSymbolViewed(source.fileKey, TOP_LEVEL_ID);
+      return { ...base, name: topLevelName(top), icon: top.imports ? 'imports' : 'top', added: top.added, deleted: top.deleted, state: viewed ? look('✓ Viewed') : look(''), hunks: { keys: top.lines } };
+    }
+    const node = ready && treeOrder(ready.nodes).find((one) => one.id === item.id);
+    if (!node) return undefined;
+    const body = isBody(node);
+    // A Body's hunks are its container's; a symbol's, those over its definition on its side.
+    const definition = body ? (node.symbol?.parents.at(-1) ?? node.definition) : node.definition;
+    const side = node.symbol?.side ?? 'after';
+    const share = readingNow(item.key, item.id);
+    const viewed = rolledUp(node, (id) => progress.isSymbolViewed(source.fileKey, id), fileViewed);
+    const state =
+      viewed ? look('✓ Viewed')
+      : share !== undefined ? look(readingLabel(share).text, readingLabel(share).full ? CHANGED_COLOR : undefined)
+      : isUpdated(source.fileKey, item.id) ? look('Changed', CHANGED_COLOR)
+      : look('');
+    return {
+      ...base,
+      name: body ? node.definition.crumb : node.definition.name,
+      icon: body ? 'top' : treeSymbolKind(node.definition.kind),
+      added: node.added,
+      deleted: node.deleted,
+      state,
+      hunks: { side, start: definition.start, end: definition.end },
+    };
+  };
+  const peekFiles = (): CallerFile[] =>
+    [...known].flatMap(([key, value]) => (value.state === 'ready' ? [{ key, nodes: value.nodes, calls: value.calls }] : []));
+  const peekCoverage = () => callerCoverage([...supported.keys()].map((key) => known.get(key)?.state));
+  // "Look in all files": the files whose symbols are not known yet, read and parsed as a file on screen is, a few at a
+  // time; the callers list fills in as they land.
+  const lookAll = () => {
+    const waiting = [...supported].filter(([key]) => known.get(key)?.state === 'loading').map(([, source]) => source);
+    let next = 0;
+    const run = async () => {
+      while (next < waiting.length) await loadTreeSymbols(waiting[next++], codeSettings, noiseFilter, LOOK_ALL_WAIT_MS);
+    };
+    for (let lane = 0; lane < LOOK_ALL_LANES; lane++) void run();
+  };
+  const peekGo = (item: { key: string; id: string }) => {
+    closePeek(false);
+    if (item.id === FILE_STOP) {
+      current.current.onSelect(item.key);
+      return;
+    }
+    const symbols = known.get(item.key);
+    const ready = symbols?.state === 'ready' ? symbols : undefined;
+    const target = item.id === TOP_LEVEL_ID ? ready?.top : ready && treeOrder(ready.nodes).find((one) => one.id === item.id);
+    const symbol = target && rowDestination(target);
+    if (!symbol) return;
+    setHeld({ key: item.key, id: item.id });
+    setTreeCursor(item.key, item.id);
+    setReviewTarget({ key: item.key, id: item.id });
+    onGoToSymbol(item.key, symbol);
+  };
+  const peekTick = (item: { key: string; id: string }) => {
+    const source = supported.get(item.key);
+    if (item.id === FILE_STOP) void onSetViewed?.([item.key], true);
+    else if (source) {
+      const symbols = known.get(item.key);
+      const node = symbols?.state === 'ready' ? treeOrder(symbols.nodes).find((one) => one.id === item.id) : undefined;
+      const ids = item.id === TOP_LEVEL_ID ? [TOP_LEVEL_ID] : node ? reviewIds(node) : [];
+      if (ids.length) void markReviewSymbols(source.fileKey, ids, true);
+    }
+    closePeek();
+  };
+  const peeking = peek?.stack.at(-1);
+  const peekShown = peeking && peekView(peeking);
   return (
-    <div className="file-tree-selection-workspace">
+    <div className="file-tree-selection-workspace" onPointerLeave={leaveSoon}>
+      {peek && peeking && peekShown && (
+        <SymbolPeek
+          view={peekShown}
+          anchor={peek.anchor}
+          focus={peek.focus}
+          callers={findCallers(peeking, peekFiles())}
+          coverage={peekCoverage()}
+          onLookAll={lookAll}
+          canBack={peek.stack.length > 1}
+          onBack={() => setPeek((open) => open && { ...open, stack: open.stack.slice(0, -1) })}
+          onPeek={(caller) => setPeek((open) => open && { ...open, stack: [...open.stack, { key: caller.key, id: caller.id }] })}
+          onGo={(caller) => peekGo(caller ? { key: caller.key, id: caller.id } : peeking)}
+          onTick={() => peekTick(peeking)}
+          onClose={() => closePeek()}
+          onPointerEnter={() => clearTimeout(closeTimer.current)}
+          onPointerLeave={leaveSoon}
+          theme={peekTheme ?? 'pierre-dark'}
+          appearance={peekAppearance}
+        />
+      )}
       {/* A multiple selection floats over the tree's foot, so selecting moves no row; the range tip is in the menu. */}
       {selectedFiles.length > 1 && (
         <div className="file-tree-selection-status">
@@ -709,8 +870,16 @@ export function ChangesSymbolTree({
           if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
         }}
         onPointerOver={(event) => {
-          const row = rowAt(rowPath(event.nativeEvent));
+          const path = rowPath(event.nativeEvent);
+          const row = rowAt(path);
           if (row && row.type !== 'folder') onPreview?.(row.key);
+          // A hover peek: after HOVER_PEEK_MS on a symbol row; another row's hover moves it there.
+          clearTimeout(hoverTimer.current);
+          const item = row?.type === 'symbol' || row?.type === 'top' ? peekItemOf(row) : undefined;
+          const element = rowElement(event.nativeEvent);
+          if (peek && !peek.focus && peek.path !== path) leaveSoon();
+          if (item && path && element && (!peek || !peek.focus) && peek?.path !== path)
+            hoverTimer.current = setTimeout(() => openPeek(item, path, element, false), HOVER_PEEK_MS);
         }}
         onFocusCapture={() => {
           const row = rowAt(model.getFocusedPath());
@@ -730,6 +899,18 @@ export function ChangesSymbolTree({
         }}
         onKeyDownCapture={(event) => {
           if (event.nativeEvent.composedPath().some((node) => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;
+          // Space peeks at the row's item (Space in the diff keeps scrolling: this is the tree's own key).
+          if (event.key === ' ' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            const path = rowPath(event.nativeEvent) ?? model.getFocusedPath();
+            const item = peekItemOf(rowAt(path));
+            const element = rowElement(event.nativeEvent);
+            if (item && path && element) {
+              event.preventDefault();
+              event.stopPropagation();
+              openPeek(item, path, element, true);
+              return;
+            }
+          }
           if (event.key === 'Escape' && model.getSelectedPaths().length > 1) {
             event.preventDefault();
             event.stopPropagation();

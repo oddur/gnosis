@@ -5,7 +5,8 @@ import { patchOf } from './syntax-scope';
  * `?tree-symbols`: the Changes tree's symbol rows (Settings › Review, Beta; tests/tree-symbols-browser.ts). The PR
  * changes `src/symbols/store.ts`: a new import at the top, `flush` inside an unchanged class `Store`, `gone` removed and
  * `added` added. In the tree the file expands to Imports, then Store › flush, gone and added. It also changes
- * `src/symbols/tasks.ts`, right after it in the tree: `start` and `stop` change, for `n` to walk on into the next file.
+ * `src/symbols/tasks.ts`, right after it in the tree: `start` and `stop` change, for `n` to walk on into the next file;
+ * `start`'s change calls `flush`, for a peek's callers.
  */
 export const TREE_SYMBOLS_FILE = 'src/symbols/store.ts';
 export const TREE_SYMBOLS_NEXT_FILE = 'src/symbols/tasks.ts';
@@ -61,7 +62,8 @@ const after = [
 ];
 
 const tasksBefore = ['export function start() {', '  return 1;', '}', '', ...filler.map((line) => line.replace('pad', 'wait')), '', 'export function stop() {', '  return 1;', '}'];
-const tasksAfter = tasksBefore.map((line) => (line === '  return 1;' ? '  return 2;' : line));
+// start's change calls store.ts's flush, its one definition among the changed symbols: a peek at flush lists start.
+const tasksAfter = tasksBefore.map((line, index) => (line === '  return 1;' ? (index === 1 ? '  return new Store().flush() + 1;' : '  return 2;') : line));
 
 const text = (lines: string[]) => `${lines.join('\n')}\n`;
 const longAfter = ['export function report(rows: number[]): number {', '  let total = 0;', ...Array.from({ length: 80 }, (_, i) => `  total += rows[${i}] ?? ${i};`), '  return total;', '}'];

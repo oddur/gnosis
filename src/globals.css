@@ -6369,3 +6369,24 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .pr-method-menu [role=menuitemradio][data-disabled] { color:var(--muted-foreground); }
 .pr-method-unavailable { margin-left:auto; padding-left:12px; color:var(--muted-foreground); font-size:var(--type-caption); font-weight:400; }
 .pr-method-menu [role=menuitemradio][data-state=checked]:has(.pr-method-unavailable)::after { content:none; }
+
+/* A peek at a symbol of the Changes tree (components/SymbolPeek.tsx): the popover's look, Changes' own diff inside. */
+.symbol-peek { z-index:50; width:min(760px, 60vw); max-height:min(60vh, var(--radix-popover-content-available-height)); display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:var(--shadow-md, 0 4px 16px rgb(0 0 0 / .18)); overflow:hidden; }
+.symbol-peek-header { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--type-caption); min-width:0; }
+.symbol-peek-icon { display:inline-flex; color:var(--muted-foreground); }
+.symbol-peek-name { font-family:var(--font-mono); white-space:nowrap; }
+.symbol-peek-file { color:var(--muted-foreground); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.symbol-peek-counts { display:inline-flex; gap:4px; font-variant-numeric:tabular-nums; margin-inline-start:auto; }
+.symbol-peek-state { color:var(--muted-foreground); white-space:nowrap; }
+.symbol-peek-body { overflow:auto; min-height:0; flex:1; }
+.symbol-peek-callers { padding:8px 12px 10px; border-top:1px solid var(--border); font-size:var(--type-caption); }
+.symbol-peek-callers h3 { margin:0 0 4px; font-size:inherit; font-weight:600; color:var(--muted-foreground); }
+.symbol-peek-callers ul { list-style:none; margin:0; padding:0; }
+.symbol-peek-caller { display:flex; align-items:center; gap:8px; padding:2px 4px; border-radius:var(--radius); cursor:pointer; min-width:0; }
+.symbol-peek-caller:hover, .symbol-peek-caller[aria-selected="true"] { background:var(--accent); color:var(--accent-foreground); }
+.symbol-peek-caller-name { font-family:var(--font-mono); white-space:nowrap; }
+.symbol-peek-call { font-family:var(--font-mono); color:var(--muted-foreground); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1; }
+.symbol-peek-note { margin:4px 0; color:var(--muted-foreground); font-size:var(--type-caption); }
+.symbol-peek-link { color:var(--foreground); text-decoration:underline; }
+.symbol-peek-footer { padding:6px 12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
+@media (prefers-reduced-motion: reduce) { .symbol-peek { animation:none; transition:none; } }

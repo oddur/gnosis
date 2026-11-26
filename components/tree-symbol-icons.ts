@@ -26,6 +26,9 @@ const LUCIDE: Record<TreeRowIcon, string> = {
   loading: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
   note: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
 };
+/** An icon's SVG markup, for a symbol shown outside the tree (a peek's header), in the tree's own drawing. */
+export const treeIconSvg = (icon: TreeRowIcon) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LUCIDE[icon]}</svg>`;
 const TINT_COLORS: Record<TreeRowTint, string> = {
   added: DIFF_STAT_COLORS.added,
   modified: DIFF_STAT_COLORS.modified,
