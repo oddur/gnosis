@@ -71,6 +71,14 @@ export function treeSymbolLook(): { icons: FileTreeIconConfig; css: string } {
     if (tint === 'context' || tint === 'muted')
       rules.push(`:is(${endsWith(code, true)}, ${endsWith(code, false)}) > [data-item-section="content"] { color:var(--muted-foreground); }`);
   }
+  // "Loading symbols…" turns its loader, as the app's spinners do (.loading-spinner): Pierre's sprite icons are still,
+  // and a still loader reads as stuck. Reduced motion keeps it still.
+  const loading = codes.filter(({ icon }) => icon === 'loading').map(({ code }) => endsWith(code, false));
+  if (loading.length) {
+    rules.push(`@keyframes gnosis-tree-loading-spin { to { transform: rotate(360deg); } }`);
+    rules.push(`:is(${loading.join(', ')}) > [data-item-section="icon"] svg { animation: gnosis-tree-loading-spin 1.1s linear infinite; transform-origin: 50% 50%; }`);
+    rules.push(`@media (prefers-reduced-motion: reduce) { :is(${loading.join(', ')}) > [data-item-section="icon"] svg { animation: none; } }`);
+  }
   // A file of symbols keeps its file-type icon, from Pierre's own set.
   const resolver = createFileTreeIconResolver({ set: 'complete', colored: true });
   const spriteSheet = getBuiltInSpriteSheet('complete');
