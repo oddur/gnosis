@@ -182,16 +182,28 @@
       "evidence": "(event.key === 'v' || event.key === 'V')"
     },
     {
+      "keys": "v",
+      "label": "Changes: mark the current symbol or file as viewed, and go to the next one",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "if (!event.repeat) void reviewAndMove();"
+    },
+    {
+      "keys": "⇧ V",
+      "label": "Changes: undo the last v",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "void undoTick();"
+    },
+    {
       "keys": "n",
       "label": "Changes: go to the next symbol that is not viewed",
       "source": "components/PrChangesView.tsx",
-      "evidence": "n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1))"
+      "evidence": "n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1)"
     },
     {
       "keys": "⇧ N",
       "label": "Changes: go to the previous symbol that is not viewed",
       "source": "components/PrChangesView.tsx",
-      "evidence": "N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1))"
+      "evidence": "N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1)"
     }
   ]
 }

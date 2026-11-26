@@ -5,7 +5,7 @@ import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
 import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline';
 import { symbolTree } from '../lib/tree-symbols';
-import { countedIds, fileAfterTick, folderProgress, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { FILE_STOP, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -54,7 +54,7 @@ void test('folders sum the files under them whose symbols are known', () => {
   });
 });
 
-void test('n and Shift+N walk unviewed symbols in the tree order, across files', () => {
+void test('n and Shift+N walk unviewed items in the tree order across files, a file without symbols being one stop', () => {
   const files: ReviewFile[] = [
     { key: 'a.ts', viewed: false, symbols: ready([node('a1'), node('a2')]) },
     { key: 'b.json', viewed: false },
@@ -62,33 +62,77 @@ void test('n and Shift+N walk unviewed symbols in the tree order, across files',
     { key: 'd.ts', viewed: false, symbols: ready([node('class:D', [node('class:D>d1'), node('class:D>d2', [], { quiet: true })], { context: true })]) },
     { key: 'e.ts', viewed: false, symbols: { state: 'none', reason: 'Too large to list symbols' } },
     { key: 'f.ts', viewed: false, symbols: ready([node('f1'), node('f2')]) },
+    { key: 'g.png', viewed: true },
   ];
   const viewed = new Set(['a.ts\u0000a2', 'f.ts\u0000f1']);
   const isViewed = (key: string, id: string) => viewed.has(`${key}\u0000${id}`);
   const next = (key: string, id?: string, direction: 1 | -1 = 1) => {
     const step = stepUnviewed(files, { key, id }, direction, isViewed);
-    return step.kind === 'go' ? `${step.key}:${step.id}` : step.kind;
+    return step.kind === 'go' ? `${step.key}:${step.id}` : step.kind === 'file' ? `${step.key} (file)` : step.kind;
   };
   // From a file's top, its first unviewed symbol.
   assert.equal(next('a.ts'), 'a.ts:a1');
-  // Past a viewed symbol, a file without symbols and a Viewed file, to a method under a context class.
-  assert.equal(next('a.ts', 'a1'), 'd.ts:class:D>d1');
+  // Past a viewed symbol, to the file without symbols: one stop of its own.
+  assert.equal(next('a.ts', 'a1'), 'b.json (file)');
+  // On it, the walk goes on past the Viewed file, to a method under a context class.
+  assert.equal(next('b.json', FILE_STOP), 'd.ts:class:D>d1');
   // From the context row itself, its first changed child.
   assert.equal(next('d.ts', 'class:D'), 'd.ts:class:D>d1');
-  // A quiet symbol and an unreadable file are passed.
-  assert.equal(next('d.ts', 'class:D>d1'), 'f.ts:f2');
+  // A quiet symbol is passed; a file whose symbols could not be listed is a stop.
+  assert.equal(next('d.ts', 'class:D>d1'), 'e.ts (file)');
+  assert.equal(next('e.ts', FILE_STOP), 'f.ts:f2');
+  // A Viewed file without symbols is skipped.
   assert.equal(next('f.ts', 'f2'), 'end');
   // Back the same way.
-  assert.equal(next('f.ts', 'f2', -1), 'd.ts:class:D>d1');
-  assert.equal(next('d.ts', 'class:D>d1', -1), 'a.ts:a1');
+  assert.equal(next('f.ts', 'f2', -1), 'e.ts (file)');
+  assert.equal(next('e.ts', FILE_STOP, -1), 'd.ts:class:D>d1');
+  assert.equal(next('d.ts', 'class:D>d1', -1), 'b.json (file)');
   assert.equal(next('a.ts', 'a1', -1), 'end');
   // From a file's top, back goes to the files before it, never into the file.
-  assert.equal(next('d.ts', undefined, -1), 'a.ts:a1');
+  assert.equal(next('d.ts', undefined, -1), 'b.json (file)');
   // A place the file does not list (the reader outside its symbols) is its top.
   assert.equal(next('f.ts', 'function:gone'), 'f.ts:f2');
   // From a file not in the list: from the start, or the end.
   assert.equal(next('missing.ts'), 'a.ts:a1');
   assert.equal(next('missing.ts', undefined, -1), 'f.ts:f2');
+  // What is left: a1, b.json, d1, e.ts and f2 (quiet d2 and the Viewed files are not).
+  assert.equal(itemsLeft(files, isViewed), 5);
+  assert.equal(itemsLeft([{ key: 'h.ts', viewed: false, symbols: { state: 'loading' } }], () => false), 1, 'A file still loading has something left');
+});
+
+void test('what V ticks: the item it went to while that is lit, else the one under the reading position, else nothing', () => {
+  const a = { key: 'a.ts', id: 'f' };
+  const b = { key: 'a.ts', id: 'g' };
+  // The last jump's item, still lit.
+  assert.deepEqual(currentItem({ last: a, lit: a, reading: b }), a);
+  // The reader scrolled on: the light follows them, and V ticks what they are reading.
+  assert.deepEqual(currentItem({ last: a, lit: b, reading: b }), b);
+  // A focused review row comes before the reading position.
+  assert.deepEqual(currentItem({ last: a, lit: b, focused: { key: 'b.json', id: FILE_STOP }, reading: b }), { key: 'b.json', id: FILE_STOP });
+  // Nothing taken to, and nothing under the reader: V ticks nothing.
+  assert.equal(currentItem({ last: a }), undefined);
+  assert.equal(currentItem({}), undefined);
+  // The reading position's item: a leaf, a container's Body, the top level, never a container.
+  const nodes = symbolTree([changed('class:C'), changed('class:C>m'), changed('function:f')]);
+  assert.equal(readingItem(nodes, undefined, 'class:C>m', false), 'class:C>m');
+  assert.equal(readingItem(nodes, undefined, 'class:C', false), bodyId('class:C'));
+  assert.equal(readingItem(symbolTree([changed('class:C'), changed('class:C>m')], undefined, [], undefined, new Set(['class:C'])), undefined, 'class:C', false), undefined, 'A container with no Body: nothing');
+  assert.equal(readingItem(nodes, top(), undefined, true), TOP_LEVEL_ID);
+  assert.equal(readingItem(nodes, undefined, undefined, true), undefined);
+});
+
+void test('Shift+V walks back through the V presses, newest first', () => {
+  const stack = createTickStack();
+  assert.equal(stack.pop(), undefined, 'Nothing to take back');
+  stack.push({ key: 'a.ts', id: 'f', ids: ['f'], markedFile: false });
+  stack.push({ key: 'b.json', id: FILE_STOP, ids: [], markedFile: true });
+  assert.equal(stack.size, 2);
+  assert.equal(stack.pop()?.key, 'b.json');
+  assert.equal(stack.pop()?.id, 'f');
+  assert.equal(stack.pop(), undefined);
+  stack.push({ key: 'a.ts', id: 'f', ids: ['f'], markedFile: false });
+  stack.clear();
+  assert.equal(stack.size, 0, 'Reset viewed and leaving Changes clear it');
 });
 
 void test('a file whose symbols are not known yet is read before the walk passes it', () => {

@@ -39,6 +39,16 @@ export function setTreeCursor(key: string, id: string) {
   treeCursor = { key, id, at: Date.now() };
 }
 export const peekTreeCursor = () => treeCursor;
+
+/**
+ * The review item the tree lights now: the one a jump holds until the diff arrives, else the one the reader is in. `V`
+ * ticks the item it last went to only while that is still the lit one (lib/tree-symbol-review.ts `currentItem`).
+ */
+let litItem: { key: string; id: string } | undefined;
+export function setLitItem(item: { key: string; id: string } | undefined) {
+  litItem = item;
+}
+export const peekLitItem = () => litItem;
 const subscribePlaces = (listener: () => void) => {
   placeListeners.add(listener);
   return () => placeListeners.delete(listener);

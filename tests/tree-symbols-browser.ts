@@ -21,6 +21,9 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  *   the end a notice says there are none after it.
  * - V on a file without symbols (an SVG) marks it Viewed, and again unviewed.
  * - Reset viewed clears every file and tick of these changes, and its toast's Undo puts them back.
+ * - Review with V: with Unviewed only, V from a file's top goes to its first item, then ticks each item and goes on,
+ *   lighting and focusing the next row, out of store.ts and through every file, files without symbols one stop each,
+ *   to "Everything viewed" with its Review PR action; Shift+V takes the last one back.
  * - Search matches a symbol's name.
  * - With the setting off, the tree is the plain file tree again.
  *
@@ -234,6 +237,49 @@ void app.whenReady().then(async () => {
     assert.ok((await rows()).some((r) => r.name === name), 'The matching symbol keeps its file');
     await search('');
     await wait("window.treeRows().some(r=>r.name==='worker.ts')");
+
+    // ── Review with V: Unviewed only and Symbols on, V ticks each item and goes on, to the end ──
+    await js(`document.querySelector('button[aria-label="Reset viewed"]:not(:disabled)')?.click()`);
+    await wait(`document.querySelector('button[aria-label="Reset viewed"]')?.disabled===true`);
+    await js("[...document.querySelectorAll('.changes-tree-controls label')].find(l=>l.textContent.includes('Unviewed only')).querySelector('input').click()");
+    const leftNow = () => js<number>(`(()=>{const e=document.querySelector('.changes-progress-left');return e?Number(e.textContent.replace(/\\D/g,'')):0})()`);
+    const activeFile = () => js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`);
+    const focusedRow = () => js<string>(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return e?window.treeName(e):''})()`);
+    const toastWith = (text: string) => `[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes(${JSON.stringify(text)}))`;
+    // From store.ts's first item, chosen in the tree.
+    await wait("!!window.treeRow('Imports')");
+    await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
+    await lit('Imports');
+    // Each V ticks the item it is on, lights the next, and puts the keyboard focus on its row.
+    for (const [ticked, next] of [['Imports', 'flush'], ['flush', 'gone'], ['gone', 'added']] as const) {
+      await press('v');
+      await lit(next);
+      await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(ticked)})?.decoration==='✓'`);
+      await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)===${JSON.stringify(next)}})()`);
+    }
+    // The last of store.ts: on into tasks.ts, and store.ts, Viewed, leaves the Unviewed only tree.
+    await press('v');
+    await lit('start');
+    await wait(`!window.treeRow(${JSON.stringify(name)})`);
+    assert.equal(await focusedRow(), 'start', 'Focus moved to the next row, not the tree top');
+    // On to the end: each V ticks one item. Files without symbols are stops of their own.
+    const visited: string[] = [];
+    for (let presses = 0; presses < 80 && !(await js<boolean>(toastWith('Everything viewed'))); presses++) {
+      const before = await leftNow();
+      await press('v');
+      await wait(`${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()`);
+      visited.push(await activeFile());
+    }
+    console.log('V walked through:', JSON.stringify(visited));
+    assert.ok(await js<boolean>(toastWith('Everything viewed')), 'V reaches the end');
+    assert.ok(visited.some((file) => file.endsWith('flow.svg')), 'An image is a stop of its own');
+    assert.ok(await js<boolean>(`[...document.querySelectorAll('.app-toast button')].some(b=>/^Review PR #\\d+$/.test(b.textContent.trim()))`), 'The end offers the review');
+    // Shift+V takes the last V back: one item left again, and the reader is back on it.
+    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'V',shiftKey:true,bubbles:true,cancelable:true}))");
+    await wait(`(()=>{const e=document.querySelector('.changes-progress-left');return !!e&&Number(e.textContent.replace(/\\D/g,''))===1})()`);
+    await press('v');
+    await wait('!document.querySelector(".changes-progress-left")');
+    await js("[...document.querySelectorAll('.changes-tree-controls label')].find(l=>l.textContent.includes('Unviewed only')).querySelector('input').click()");
 
     // ── The setting off: the plain tree ──
     await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));

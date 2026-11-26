@@ -35,11 +35,24 @@ import {
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
-import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported, type TreeSymbolSource } from '../lib/use-tree-symbols';
-import { countedIds, stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
-import { registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
-import { readingSymbol, rowDestination } from '../lib/tree-symbols';
+import { hasSymbolTarget, peekLitItem, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
+import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported } from '../lib/use-tree-symbols';
+import {
+  FILE_STOP,
+  countedIds,
+  createTickStack,
+  currentItem,
+  itemsLeft,
+  readingItem,
+  reviewStops,
+  stepUnviewed,
+  type ReviewFile,
+  type ReviewItem,
+  type ReviewPlace,
+  type ReviewTick,
+} from '../lib/tree-symbol-review';
+import { markReviewSymbols, registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
+import { readingSymbol, rowDestination, type TopLevelChanges, type TreeSymbolNode } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import { toast } from './ui/toast';
 import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
@@ -598,7 +611,7 @@ export function PrChangesView({
    * click on its tree row does. A file on the way whose symbols are not known yet is read and parsed then, at the top
    * priority, for NAV_LOAD_MS at most; files further on are not read before the walk gets to them.
    */
-  const [treeReveal, setTreeReveal] = useState<{ key: string; id: string; nonce: number }>();
+  const [treeReveal, setTreeReveal] = useState<{ key: string; id: string; nonce: number; focus?: boolean }>();
   // Where the last `n` went: the next press starts there while the diff is still on its way.
   const navCursor = useRef<ReviewPlace & { at: number }>(undefined);
   const navRun = useRef(0);
@@ -617,10 +630,50 @@ export function PrChangesView({
     // Outside every definition: the file's top-level changes, when it has them.
     return { key: entry.key, id: place?.length ? readingSymbol(known.nodes, place) : known.top ? TOP_LEVEL_ID : undefined };
   };
-  async function stepSymbol(direction: 1 | -1) {
+  /** The files of the walk, in the tree's order, as the caches have them now (`read`: what this press read). */
+  const reviewFiles = (list: readonly Entry[], read: ReadonlyMap<string, FileSymbols> = new Map()) =>
+    list.map((e): ReviewFile & { fileKey: string } => {
+      const source = { fileKey: viewKey(e), snapshot: e.snapshot, file: e.file };
+      return {
+        key: e.key,
+        fileKey: source.fileKey,
+        viewed: progress.isFileViewed(source.fileKey),
+        symbols: treeSymbolsSupported(source, codeSettings) ? (read.get(e.key) ?? peekTreeSymbols(source, codeSettings, noiseFilter)) : undefined,
+      };
+    });
+  /** Goes to a file without symbols, a stop of its own: selected, at its top, its row lit by the selection. */
+  function goToFileStop(key: string, focus: boolean) {
+    navCursor.current = { key, id: FILE_STOP, at: Date.now() };
+    setTreeReveal((previous) => ({ key, id: FILE_STOP, nonce: (previous?.nonce ?? 0) + 1, focus }));
+    void select(key);
+    if (focus) keepFocusInWorkspace();
+  }
+  /** Goes to a review item: a symbol, a Body, or the file's top level, which go to their first changed line. */
+  function goToItem(key: string, id: string, target: TreeSymbolNode | TopLevelChanges | undefined, focus: boolean) {
+    const symbol = target && rowDestination(target);
+    if (!symbol) return;
+    navCursor.current = { key, id, at: Date.now() };
+    setTreeReveal((previous) => ({ key, id, nonce: (previous?.nonce ?? 0) + 1, focus }));
+    goToSymbol(key, symbol);
+    if (focus) keepFocusInWorkspace();
+  }
+  /** V's focus goes to the next row (the tree does that); with no tree to take it, it stays in the diff. */
+  function keepFocusInWorkspace() {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const root = workspace.current;
+        if (root && !root.contains(document.activeElement)) root.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+      })
+    );
+  }
+  /**
+   * The next (`1`) or previous (`-1`) unviewed item from `from` (by default where the reader is), gone to. A file on
+   * the way whose symbols are not known yet is read first. `end` when there is none that way.
+   */
+  async function stepSymbol(direction: 1 | -1, { from: given, focus = false }: { from?: ReviewPlace; focus?: boolean } = {}): Promise<'went' | 'end' | 'stopped'> {
     const run = ++navRun.current;
-    const from = navFrom();
-    if (!from) return;
+    const from = given ?? navFrom();
+    if (!from) return 'stopped';
     // What this press read: a file that could not be read is passed, not read again.
     const read = new Map<string, FileSymbols>();
     let loadingToast: string | undefined;
@@ -633,43 +686,31 @@ export function PrChangesView({
     };
     try {
       for (let loads = 0; ; ) {
-        const sources = new Map<string, TreeSymbolSource>(visible.map((e) => [e.key, { fileKey: viewKey(e), snapshot: e.snapshot, file: e.file }]));
-        const files: ReviewFile[] = visible.map((e) => {
-          const source = sources.get(e.key) as TreeSymbolSource;
-          return {
-            key: e.key,
-            viewed: progress.isFileViewed(source.fileKey),
-            symbols: treeSymbolsSupported(source, codeSettings) ? (read.get(e.key) ?? peekTreeSymbols(source, codeSettings, noiseFilter)) : undefined,
-          };
-        });
-        const step = stepUnviewed(files, from, direction, (key, id) => progress.isSymbolViewed(sources.get(key)?.fileKey ?? '', id));
-        if (step.kind === 'end') {
-          toast.add({ title: direction === 1 ? 'No unviewed symbols after this' : 'No unviewed symbols before this', timeout: NOTICE_MS });
-          return;
-        }
+        const files = reviewFiles(visible, read);
+        const fileKeys = new Map(files.map((file) => [file.key, file.fileKey]));
+        const step = stepUnviewed(files, from, direction, (key, id) => progress.isSymbolViewed(fileKeys.get(key) ?? '', id));
+        if (step.kind === 'end') return 'end';
         if (step.kind === 'go') {
-          // A symbol, or the file's top-level changes, which go to their first changed line.
-          const target = step.node ?? step.top;
-          const symbol = target && rowDestination(target);
-          if (!symbol) return;
-          navCursor.current = { key: step.key, id: step.id, at: Date.now() };
-          setTreeReveal((previous) => ({ key: step.key, id: step.id, nonce: (previous?.nonce ?? 0) + 1 }));
-          goToSymbol(step.key, symbol);
-          return;
+          goToItem(step.key, step.id, step.node ?? step.top, focus);
+          return 'went';
         }
-        const source = sources.get(step.key);
-        if (!source) return;
+        if (step.kind === 'file') {
+          goToFileStop(step.key, focus);
+          return 'went';
+        }
+        const source = visible.find((e) => e.key === step.key);
+        if (!source) return 'stopped';
         if (++loads > NAV_MAX_LOADS) {
-          toast.add({ title: 'Still looking for unviewed symbols', description: `Press ${direction === 1 ? 'n' : 'Shift+N'} again to read further.`, timeout: NOTICE_MS });
-          return;
+          toast.add({ title: 'Still looking for unviewed symbols', description: 'Press the key again to read further.', timeout: NOTICE_MS });
+          return 'stopped';
         }
-        const value = await loadTreeSymbols(source, codeSettings, noiseFilter, NAV_LOAD_MS);
+        const value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
         // Another press, or the reader moved on: this one is over.
-        if (run !== navRun.current) return;
+        if (run !== navRun.current) return 'stopped';
         if (value.state === 'loading') {
           const name = step.key.slice(step.key.lastIndexOf('/') + 1);
-          toast.add({ title: `Still loading the symbols of ${name}`, description: `Press ${direction === 1 ? 'n' : 'Shift+N'} again in a moment.`, timeout: NOTICE_MS });
-          return;
+          toast.add({ title: `Still loading the symbols of ${name}`, description: 'Press the key again in a moment.', timeout: NOTICE_MS });
+          return 'stopped';
         }
         // The walk goes on from the same place: the file just read is now known.
         read.set(step.key, value);
@@ -677,6 +718,140 @@ export function PrChangesView({
     } finally {
       finish();
     }
+  }
+  // What is left to review, in stops of the walk (symbols, Body, Top level, files without symbols), for the toolbar.
+  const leftFiles = treeSymbols ? reviewFiles(allowed) : [];
+  const leftKeys = new Map(leftFiles.map((file) => [file.key, file.fileKey]));
+  const left = treeSymbols ? itemsLeft(leftFiles, (key, id) => progress.isSymbolViewed(leftKeys.get(key) ?? '', id)) : 0;
+  const endNotice = (direction: 1 | -1) =>
+    toast.add({ title: direction === 1 ? 'No unviewed items after this' : 'No unviewed items before this', timeout: NOTICE_MS });
+  /**
+   * V (Changes, symbol rows on): ticks the item the reader is on and goes on to the next unviewed one, as `n` does.
+   * What it ticks (lib/tree-symbol-review.ts `currentItem`): the item the last V, `n` or click went to while the tree
+   * still lights it; else the item under the reading position; else nothing, and V only goes on. On a tree row (its
+   * own V, `intent`), the row's file or the review items under it. Each V is kept for Shift+V to take back.
+   */
+  const ticks = useRef(createTickStack());
+  const lastTarget = (): ReviewItem | undefined => {
+    const nav = navCursor.current;
+    const row = peekTreeCursor();
+    const newest = nav && row ? (nav.at >= row.at ? nav : row) : (nav ?? row);
+    return newest?.id === undefined ? undefined : { key: newest.key, id: newest.id };
+  };
+  const currentReviewItem = (): ReviewItem | undefined => {
+    const last = lastTarget();
+    const fresh = !!navCursor.current && Date.now() - navCursor.current.at < NAV_CURSOR_MS;
+    const file = entry && reviewFiles([entry])[0];
+    // The tree lights an item; a file without symbols is lit by its selection; with no tree, a jump just made counts.
+    const lit =
+      file && (!file.symbols || file.symbols.state === 'none')
+        ? { key: file.key, id: FILE_STOP }
+        : (peekLitItem() ?? (fresh ? last : undefined));
+    let reading: ReviewItem | undefined;
+    if (entry && file?.symbols?.state === 'ready') {
+      const { place } = peekReadingPlace(file.fileKey);
+      const id = place ? readingItem(file.symbols.nodes, file.symbols.top, readingSymbol(file.symbols.nodes, place), place.length === 0) : undefined;
+      if (id) reading = { key: entry.key, id };
+    }
+    return currentItem({ last, lit, reading });
+  };
+  /** Ticks an item, and says what that did, or undefined when it was ticked already. */
+  async function tickItem(key: string, ids: readonly string[] | 'file'): Promise<ReviewTick | undefined> {
+    const target = entries.find((e) => e.key === key);
+    if (!target) return undefined;
+    const fileKey = viewKey(target);
+    if (progress.isFileViewed(fileKey)) return undefined;
+    if (ids === 'file') {
+      await progress.markFileViewed(fileKey, true);
+      return { key, id: FILE_STOP, ids: [], markedFile: true };
+    }
+    const fresh = ids.filter((id) => !progress.isSymbolViewed(fileKey, id));
+    if (!fresh.length) return undefined;
+    await markReviewSymbols(fileKey, fresh, true);
+    return { key, id: ids[ids.length - 1], ids: fresh, markedFile: progress.isFileViewed(fileKey) };
+  }
+  async function reviewAndMove(intent?: { key: string; ids: string[]; viewed: boolean; file: boolean }) {
+    let from: ReviewPlace | undefined;
+    let ticked: ReviewTick | undefined;
+    if (intent) {
+      const target = entries.find((e) => e.key === intent.key);
+      if (!target) return;
+      // V on a row that reads viewed takes it back, and stays.
+      if (!intent.viewed) {
+        releaseHeld({ only: viewKey(target) });
+        stream.current?.preservePosition();
+        if (intent.file) void progress.markFileViewed(viewKey(target), false);
+        else void markReviewSymbols(viewKey(target), intent.ids, false);
+        return;
+      }
+      ticked = await tickItem(intent.key, intent.file ? 'file' : intent.ids);
+      from = { key: intent.key, id: intent.file ? FILE_STOP : intent.ids.at(-1) };
+    } else {
+      const item = currentReviewItem();
+      if (item) {
+        ticked = await tickItem(item.key, item.id === FILE_STOP ? 'file' : [item.id]);
+        from = item;
+      }
+    }
+    if (ticked) ticks.current.push(ticked);
+    // The last item: everything is viewed. The review is next.
+    if (ticked) {
+      const all = reviewFiles(allowed);
+      const keys = new Map(all.map((file) => [file.key, file.fileKey]));
+      if (itemsLeft(all, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)) === 0) {
+        everythingViewed();
+        return;
+      }
+    }
+    const moved = await stepSymbol(1, { from, focus: true });
+    if (moved === 'end') endNotice(1);
+  }
+  // Leaving Changes (closed, or hidden by another tab) ends the run of V's that Shift+V walks back through.
+  useEffect(() => {
+    const stack = ticks.current;
+    return () => stack.clear();
+  }, []);
+  function everythingViewed() {
+    const number = entry?.snapshot.url.split('/').pop();
+    const reviewable = ownReview && subject.kind !== 'stack' && !!number;
+    const id = toast.add({
+      type: 'success',
+      title: 'Everything viewed',
+      ...(reviewable
+        ? {
+            actionProps: {
+              children: `Review PR #${number}`,
+              onClick: () => {
+                toast.close(id);
+                headerReview.current.openReview();
+              },
+            },
+          }
+        : {}),
+    });
+  }
+  /** Shift+V: takes back the newest V (its ticks, and the file it marked), and goes back to its item. */
+  async function undoTick() {
+    const tick = ticks.current.pop();
+    if (!tick) return;
+    const target = entries.find((e) => e.key === tick.key);
+    if (!target) return;
+    const fileKey = viewKey(target);
+    releaseHeld({ only: fileKey });
+    stream.current?.preservePosition();
+    if (tick.id === FILE_STOP) await progress.markFileViewed(fileKey, false);
+    else {
+      await markReviewSymbols(fileKey, tick.ids, false);
+      if (tick.markedFile && progress.isFileViewed(fileKey)) await progress.markFileViewed(fileKey, false);
+    }
+    if (tick.id === FILE_STOP) {
+      goToFileStop(tick.key, true);
+      return;
+    }
+    const symbols = reviewFiles([target])[0]?.symbols;
+    if (symbols?.state !== 'ready') return;
+    const stop = reviewStops(symbols.nodes, symbols.top).find((item) => item.id === tick.id);
+    if (stop) goToItem(tick.key, stop.id, stop.node ?? stop.top, true);
   }
   useEffect(
     () => () => {
@@ -709,9 +884,25 @@ export function PrChangesView({
     };
   }, []);
   // A held key does not race through the symbols: one step per press. A press while a file loads takes over.
+  const inTree = (event: KeyboardEvent) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('changes-file-tree'));
   const symbolKeys = {
-    n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1)),
-    N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1)),
+    n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1).then((moved) => moved === 'end' && endNotice(1))),
+    N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1).then((moved) => moved === 'end' && endNotice(-1))),
+    // V anywhere in Changes; a tree row's own V acts on the row (ChangesSymbolTree's onReviewKey).
+    v: (event: KeyboardEvent) => {
+      if (inTree(event)) return false;
+      if (!event.repeat) void reviewAndMove();
+    },
+    // Shift+V takes the last V back. Caps Lock's V without Shift is V.
+    V: (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (!event.shiftKey) {
+        if (inTree(event)) return false;
+        void reviewAndMove();
+        return;
+      }
+      void undoTick();
+    },
   };
   // Only with the tree's symbol rows on: otherwise `n` is not Changes' key.
   useKeyboardShortcuts(symbolKeys, { enabled: treeSymbols && visible.length > 0, capture: true, scope: workspace });
@@ -791,6 +982,8 @@ export function PrChangesView({
     for (const fileKey of allFileKeys) releaseHeld({ only: fileKey });
     stream.current?.preservePosition();
     const { snapshot, saved } = resetViewed(allFileKeys);
+    // Nothing left for Shift+V to take back.
+    ticks.current.clear();
     void saved;
     if (!snapshot.marks.length) return;
     const id = toast.add({
@@ -907,6 +1100,7 @@ export function PrChangesView({
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
+            {treeSymbols && left > 0 && <span className="changes-progress-left"> · {left} left</span>}
             {incomplete && ' · available files'}
             {quietNote && (
               <span
@@ -1126,6 +1320,7 @@ export function PrChangesView({
                     codeSettings={codeSettings}
                     noiseFilter={noiseFilter}
                     reveal={treeReveal}
+                    onReviewKey={(intent) => void reviewAndMove(intent)}
                   />
                 ) : (
                   <ChangesFileTree

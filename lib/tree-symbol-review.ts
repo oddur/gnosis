@@ -141,6 +141,8 @@ export interface ReviewPlace {
 export type ReviewStep =
   /** The next unviewed symbol: a symbol row's `node`, or the file's `top`-level changes. */
   | { kind: 'go'; key: string; id: string; node?: TreeSymbolNode; top?: TopLevelChanges }
+  /** A file without symbols (JSON, an image, a language without tags, a file too large or unreadable): one stop. */
+  | { kind: 'file'; key: string }
   /** A file on the way whose symbols are not known yet: read and parse it, then ask again. */
   | { kind: 'load'; key: string }
   /** No unviewed symbol that way. */
@@ -148,9 +150,10 @@ export type ReviewStep =
 
 /**
  * The next (`1`) or previous (`-1`) unviewed symbol from `from`, in the tree's order: the files in their order, each
- * file's symbols as its rows show them. Viewed files are skipped whole, and files without symbols are passed. A file
- * on the way whose symbols are still unknown stops the walk (`load`): the next symbol may be in it, so it is read
- * rather than guessed past. Nothing wraps around: the end says so.
+ * file's symbols as its rows show them. Viewed files are skipped whole, and a file without symbols is one stop of its
+ * own (`file`), which the walk passes once the reader is on it. A file on the way whose symbols are still unknown stops
+ * the walk (`load`): the next symbol may be in it, so it is read rather than guessed past. Nothing wraps around: the
+ * end says so.
  */
 export function stepUnviewed(
   files: readonly ReviewFile[],
@@ -160,7 +163,9 @@ export function stepUnviewed(
 ): ReviewStep {
   const start = files.findIndex((file) => file.key === from.key);
   const pick = (file: ReviewFile, after: number | undefined): ReviewStep | undefined => {
-    if (file.viewed || !file.symbols || file.symbols.state === 'none') return undefined;
+    if (file.viewed) return undefined;
+    // A file without symbols: a stop when the walk comes to it from another file, passed from the file itself.
+    if (!file.symbols || file.symbols.state === 'none') return after === undefined ? { kind: 'file', key: file.key } : undefined;
     if (file.symbols.state === 'loading') return { kind: 'load', key: file.key };
     const order = reviewStops(file.symbols.nodes, file.symbols.top);
     // From a row in this file: the rows past it. From the file's top: every row forward, none back.
@@ -228,4 +233,92 @@ export function fileAfterTick({
   if (fileViewed) return { others: [] };
   const done = counted.every((id) => ids.includes(id) || isViewed(id));
   return done ? { file: 'mark', others: [] } : { others: [] };
+}
+
+/** The id a file without symbols is known by as a stop of the walk: `@` never starts a real `kind:name` part. */
+export const FILE_STOP = '@file';
+
+/**
+ * How many stops of the walk are left: in each unviewed file, its counted items not ticked, or one for a file without
+ * symbols. A file whose symbols are still loading counts as one: something is left in it, how much is not known yet.
+ */
+export function itemsLeft(files: readonly ReviewFile[], isViewed: (key: string, id: string) => boolean): number {
+  let left = 0;
+  for (const file of files) {
+    if (file.viewed) continue;
+    const ids = countedIds(file.symbols);
+    if (ids) left += ids.filter((id) => !isViewed(file.key, id)).length;
+    else left += 1;
+  }
+  return left;
+}
+
+/** A review item the reader is on: a symbol, Body or top level by its id, or a file without symbols (FILE_STOP). */
+export interface ReviewItem {
+  key: string;
+  id: string;
+}
+/**
+ * The item `V` ticks, in order: the one the last `V`, `n` or click went to, while it is still the lit (or held) one;
+ * else the focused tree row, when it is a review item or a file; else the review item under the reading position.
+ * Else none: `V` then ticks nothing, and only goes to the next unviewed item. Never an item the reader was not taken
+ * to and is not on.
+ */
+export function currentItem({
+  last,
+  lit,
+  focused,
+  reading,
+}: {
+  last?: ReviewItem;
+  /** The item the tree lights now (held or followed), or the selected file when it has no symbols. */
+  lit?: ReviewItem;
+  focused?: ReviewItem;
+  reading?: ReviewItem;
+}): ReviewItem | undefined {
+  if (last && lit && last.key === lit.key && last.id === lit.id) return last;
+  return focused ?? reading;
+}
+
+/**
+ * The review item under the reading position, from the symbol row the place names (`readingSymbol`): a leaf is
+ * itself; a container is its Body when it has one (the reader is in its own lines), else none; the file's own lines
+ * are its top level when it has one.
+ */
+export function readingItem(nodes: readonly TreeSymbolNode[], top: TopLevelChanges | undefined, id: string | undefined, outside: boolean): string | undefined {
+  if (outside) return top ? TOP_LEVEL_ID : undefined;
+  if (id === undefined) return undefined;
+  const node = treeOrder(nodes).find((item) => item.id === id);
+  if (!node) return undefined;
+  if (reviewed(node)) return node.id;
+  const body = node.children.find((child) => child.id === `${node.id}>@body`);
+  return body && reviewed(body) ? body.id : undefined;
+}
+
+/** What one `V` did, for `Shift+V` to take back: the item it ticked, and whether that marked its file Viewed. */
+export interface ReviewTick extends ReviewItem {
+  /** The tick marked the file Viewed (its last item, or a file without symbols). */
+  markedFile: boolean;
+  /** The ids it ticked: one item, or everything under a container `v` ticked from the tree. */
+  ids: string[];
+}
+/** The session's `V`s, newest last. `Shift+V` takes the newest back; Reset viewed and leaving Changes clear it. */
+export function createTickStack() {
+  let ticks: ReviewTick[] = [];
+  return {
+    push: (tick: ReviewTick) => {
+      ticks = [...ticks, tick];
+    },
+    pop: (): ReviewTick | undefined => {
+      const last = ticks.at(-1);
+      ticks = ticks.slice(0, -1);
+      return last;
+    },
+    clear: () => {
+      ticks = [];
+    },
+    get size() {
+      return ticks.length;
+    },
+  };
 }

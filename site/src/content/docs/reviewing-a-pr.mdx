@@ -77,6 +77,16 @@ To turn this on or off, clear or select **Symbols** above the file tree, next to
 - Press <Kbd keys="n" /> to go to the next symbol that is not viewed. Press <Kbd keys="⇧ N" /> to go to the previous one. Gnosis starts at the symbol that you read, or at the symbol that you selected in the file tree. It skips viewed files and opens the file of the symbol in the file tree. If it must read the symbols of the next file first, it shows **Loading symbols…**. At the last symbol, it tells you that there are no more symbols after it.
 - To mark symbols as viewed while you scroll, turn on <Setting name="Mark a symbol viewed after you scroll through it" section="Review" />. A symbol is marked after all of its changed lines were on the screen and you stayed on it for a moment. Symbols that you scroll past quickly are not marked.
 
+### Review with V
+
+<Prerelease /> To review a PR one change at a time, turn on **Unviewed only** and **Symbols** above the file tree.
+
+1. Select the first symbol in the file tree, or press <Kbd keys="n" />.
+2. Read it, then press <Kbd keys="v" />. Gnosis marks it as viewed and goes to the next symbol that is not viewed. A file without symbols, such as a JSON file or an image, is one step.
+3. Press <Kbd keys="v" /> again until nothing is left. The toolbar shows how many items are left. When you mark the last symbol of a file, Gnosis marks the file as viewed and goes on to the next file.
+
+If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it and go back. When everything is viewed, Gnosis shows **Everything viewed** with a button to review the PR.
+
 ### Mark files as viewed
 
 Select the **Viewed** checkbox of a file when you finish it, or select the file in the file tree and press <Kbd keys="v" />. This works for every file, also files without symbols, such as JSON or Markdown files. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters. To start again, select **Reset viewed** under the file tree. This clears **Viewed** for every file and symbol in these changes, also the files that your filters hide. Select **Undo** in the message that shows to get them back.

@@ -11,10 +11,10 @@ import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
 import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
-import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
+import { setLitItem, setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { folderProgress, progressLabel, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { FILE_STOP, folderProgress, progressLabel, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -57,6 +57,7 @@ export function ChangesSymbolTree({
   codeSettings,
   noiseFilter,
   reveal,
+  onReviewKey,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -74,7 +75,12 @@ export function ChangesSymbolTree({
    * A symbol `n` or Shift+N went to (PrChangesView): its row is lit and selected as a click on it would, and its file
    * opens. A new `nonce` each time.
    */
-  reveal?: { key: string; id: string; nonce: number };
+  reveal?: { key: string; id: string; nonce: number; focus?: boolean };
+  /**
+   * V on a row, in place of ticking it here: PrChangesView ticks what the row names (a file, or the review items under
+   * a symbol row) and moves on to the next unviewed item, as V does anywhere in Changes.
+   */
+  onReviewKey?: (tick: { key: string; ids: string[]; viewed: boolean; file: boolean }) => void;
 }) {
   const progress = useFileProgress();
   // Which files list symbols: only their paths and revisions matter, not their decorations.
@@ -277,6 +283,13 @@ export function ChangesSymbolTree({
     // Resetting also refreshes Pierre's row decorations: counts, Viewed, quiet words.
     model.resetPaths({ preparedInput: prepared, initialExpandedPaths: openPaths(layout, open, closed.current) });
     applyStatus.current();
+    // Focus lost with the rows a rebuild dropped goes back to the row V went to.
+    const target = focusTarget.current;
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (target && lost) {
+      const path = target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
+      if (path) model.getItem(path)?.focus();
+    }
   }, [model, layout, prepared, entries, viewedSignature, progressSignature]);
   // The file and the symbol the reader is in.
   const readingFile = supported.get(selected);
@@ -324,6 +337,12 @@ export function ChangesSymbolTree({
     model.setGitStatus(status);
   };
   useEffect(() => applyStatus.current(), [model, readingPath]);
+  // The lit item, for `V` (PrChangesView): held until the diff arrives, then the one the reader is in.
+  const litId = held && !arrived && held.key === selected ? held.id : live.id;
+  useEffect(() => {
+    setLitItem(litId ? { key: selected, id: litId } : undefined);
+  }, [selected, litId]);
+  useEffect(() => () => setLitItem(undefined), []);
   const searched = useRef<unknown>(undefined);
   useEffect(() => {
     // Rows that came in during a search (a file's symbols landed) are matched too: Pierre matches the rows it had.
@@ -392,21 +411,29 @@ export function ChangesSymbolTree({
   }, [model, readingPath, revealSelected]);
   // A symbol `n` went to: lit at once and held until the diff arrives, as a click holds it. Its file opens; a file
   // being selected opens by itself, and one already selected that the reader closed opens again: they asked for it.
-  const revealing = useRef<{ key: string; id: string }>(undefined);
+  const revealing = useRef<{ key: string; id: string; focus?: boolean }>(undefined);
+  // The row V went to, which keeps keyboard focus across rebuilds: Unviewed only drops the rows just finished, and
+  // Pierre's focus would go with them, to the tree's top or the page.
+  const focusTarget = useRef<{ key: string; id: string }>(undefined);
+  const pathOf = (target: { key: string; id: string }) =>
+    target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
   useEffect(() => {
     if (!reveal) return;
-    setHeld({ key: reveal.key, id: reveal.id });
-    revealing.current = { key: reveal.key, id: reveal.id };
-    if (reveal.key === selected) folderOf(model.getItem(layout.pierreOf.get(reveal.key) ?? ''))?.expand();
+    // A file without symbols is lit by its selection; a symbol by the hold, until the diff arrives.
+    if (reveal.id !== FILE_STOP) setHeld({ key: reveal.key, id: reveal.id });
+    revealing.current = { key: reveal.key, id: reveal.id, focus: reveal.focus };
+    focusTarget.current = reveal.focus ? { key: reveal.key, id: reveal.id } : undefined;
+    if (reveal.key === selected && reveal.id !== FILE_STOP) folderOf(model.getItem(layout.pierreOf.get(reveal.key) ?? ''))?.expand();
   }, [reveal?.nonce]);
   // Its row is selected once it is listed and its file is the current one, so the current file's selection keeps it.
   useEffect(() => {
     const target = revealing.current;
     if (!target || target.key !== selected) return;
-    const path = layout.symbolPaths.get(symbolRowKey(target.key, target.id));
+    const path = pathOf(target);
     if (!path) return;
     revealing.current = undefined;
     if (model.getSelectedPaths().length <= 1) selectOnly(path);
+    if (target.focus) model.getItem(path)?.focus();
   }, [model, layout, selected, reveal?.nonce]);
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;
@@ -552,14 +579,23 @@ export function ChangesSymbolTree({
           // The arrow keys open and close a file as its chevron does; the reader's choice then stays.
           if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && row?.type === 'file' && auto.current === row.key) auto.current = undefined;
           // V marks the symbol Viewed, as its tick in the outline does.
-          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && row && row.type !== 'folder' && row.type !== 'note') {
+          // Shift+V takes back the last V: Changes' own key (PrChangesView), not the row's.
+          if ((event.key === 'v' || event.key === 'V') && !event.shiftKey && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey && row && row.type !== 'folder' && row.type !== 'note') {
             event.preventDefault();
             event.stopPropagation();
             // V on a file row marks the file, as its header's Viewed checkbox does, whatever it is (JSON, an image, a
-            // file with symbols); on a symbol row, the symbol, as its tick in the outline does.
+            // file with symbols); on a symbol row, the symbol, as its tick in the outline does. With Changes' V, it
+            // then moves on to the next unviewed item.
             if (row.type === 'file') {
               const entry = entryOf(row.key);
-              if (entry) void onSetViewed?.([row.key], !entry.viewed);
+              if (!entry) return;
+              if (onReviewKey) onReviewKey({ key: row.key, ids: [], viewed: !entry.viewed, file: true });
+              else void onSetViewed?.([row.key], !entry.viewed);
+            } else if (onReviewKey) {
+              const source = supported.get(row.key);
+              const ids = symbolIds(row);
+              if (source && ids.length)
+                onReviewKey({ key: row.key, ids, viewed: ids.some((id) => !symbolOn(row.key, source.fileKey, id)), file: false });
             } else markSymbols(row);
             return;
           }
