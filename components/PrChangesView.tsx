@@ -480,6 +480,7 @@ export function PrChangesView({
   // Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): off unless chosen, and only with the
   // tree's symbol rows.
   const autoViewSymbols = treeSymbols && preferences.autoViewSymbols === true;
+  const peekOnHover = preferences.peekOnHover !== false;
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -1223,16 +1224,17 @@ export function PrChangesView({
       },
     });
   }
-  function setTreeSymbols(on: boolean) {
+  // The tree's review checkboxes: each change loads the saved preferences, merges it in, and saves, one write at a time.
+  function setReviewPreference(patch: Partial<Preferences>, errorText: string) {
     setPreferenceError('');
     writes.current = writes.current
       .catch(() => {})
       .then(async () => {
-        const next = { ...(await window.electronAPI.loadPreferences()), treeSymbols: on };
+        const next = { ...(await window.electronAPI.loadPreferences()), ...patch };
         await window.electronAPI.savePreferences(next);
         preferencesUpdated(next);
       })
-      .catch(() => setPreferenceError('Could not save the file tree setting.'));
+      .catch(() => setPreferenceError(errorText));
   }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
@@ -1478,7 +1480,13 @@ export function PrChangesView({
                       </label>
                       {/* "Symbols", not "Show file symbols": the tree's default width fits both options on one line. */}
                       <label title="Show file symbols: expand a file to see the functions and classes its changes touch">
-                        <input type="checkbox" checked={treeSymbols} onChange={(e) => setTreeSymbols(e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          checked={treeSymbols}
+                          onChange={(e) =>
+                            setReviewPreference({ treeSymbols: e.target.checked }, 'Could not save the file tree setting.')
+                          }
+                        />
                         Symbols
                       </label>
                     </div>
@@ -1494,6 +1502,31 @@ export function PrChangesView({
                       <RotateCcw size={14} aria-hidden="true" />
                     </Button>
                   </div>
+                  {/* With symbols: how the tree reviews them, quieter and set in under "Symbols". */}
+                  {treeSymbols && (
+                    <div className="changes-tree-suboptions">
+                      <label title="Mark a symbol viewed after all its changed lines have been on screen for a moment">
+                        <input
+                          type="checkbox"
+                          checked={autoViewSymbols}
+                          onChange={(e) =>
+                            setReviewPreference({ autoViewSymbols: e.target.checked }, 'Could not save the auto-mark setting.')
+                          }
+                        />
+                        Auto-mark
+                      </label>
+                      <label title="Show a symbol's diff when you rest the pointer on it in the tree">
+                        <input
+                          type="checkbox"
+                          checked={peekOnHover}
+                          onChange={(e) =>
+                            setReviewPreference({ peekOnHover: e.target.checked }, 'Could not save the peek setting.')
+                          }
+                        />
+                        Peek on hover
+                      </label>
+                    </div>
+                  )}
                   {/* Once, until the first V or its ×: the review loop's key, where the reader starts. */}
                   {treeSymbols && vHint && (
                     <p className="changes-tree-hint" role="note">
@@ -1567,6 +1600,7 @@ export function PrChangesView({
                     onCommentKey={(item) => commentOnItem(item, 'tree')}
                     peekTheme={diffThemeName(prefs.codeTheme)}
                     peekAppearance={appearance}
+                    peekOnHover={peekOnHover}
                     onReviewCurrent={() => void reviewAndMove()}
                   />
                 ) : (

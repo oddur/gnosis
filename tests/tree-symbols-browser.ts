@@ -28,6 +28,8 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_MOVE_SOURCE, TR
  *   on its row; ⌘⇧↩ adds it and goes on as V does.
  * - Space peeks at a symbol: its own diff and the changed symbols calling it (start calls flush); Enter on a caller
  *   peeks at it, Backspace goes back, Esc closes with the keyboard back on the row, V marks it without moving on.
+ * - With Symbols on, a second row shows Auto-mark and Peek on hover; with Peek on hover off the setting is saved, the
+ *   tree reads it as off, and Space still peeks.
  * - Review with V: with Unviewed only, V from a file's top goes to its first item, then ticks each item and goes on,
  *   lighting and focusing the next row, out of store.ts and through every file, files without symbols one stop each,
  *   to "Everything viewed" with its Review PR action; Shift+V takes the last one back.
@@ -362,6 +364,23 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.symbol-peek')");
     await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
     assert.equal(await js<string>(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file??''`), activeBefore, 'and moves nothing');
+    // With Symbols on, a second row holds Auto-mark and Peek on hover. Off, a resting pointer opens no peek, and Space
+    // still does. The hover peek opens on a 400 ms timer, so "no peek opened" alone would need a fixed sleep; the
+    // step checks instead that the setting is saved and that the tree's hover handler reads it as off.
+    const subOption = (label: string) =>
+      `[...document.querySelectorAll('.changes-tree-suboptions label')].find(l=>l.textContent.trim()===${JSON.stringify(label)})?.querySelector('input')`;
+    await wait(`!!${subOption('Auto-mark')}&&${subOption('Peek on hover')}?.checked===true`);
+    await js(`${subOption('Peek on hover')}.click()`);
+    await wait('window.electronAPI.loadPreferences().then(p=>p.peekOnHover===false)');
+    await wait(`${subOption('Peek on hover')}?.checked===false&&document.querySelector('.changes-file-tree')?.dataset.peekOnHover==='false'`);
+    await spaceOn('flush');
+    await wait(peekOf('flush'));
+    await wait("!!document.activeElement?.closest('.symbol-peek')");
+    await keyIn('Escape');
+    await wait("!document.querySelector('.symbol-peek')");
+    await js(`${subOption('Peek on hover')}.click()`);
+    await wait('window.electronAPI.loadPreferences().then(p=>p.peekOnHover!==false)');
+    await wait(`document.querySelector('.changes-file-tree')?.dataset.peekOnHover==='true'`);
     // Back to nothing viewed for the walk below.
     await js(`document.querySelector('button[aria-label="Reset viewed"]:not(:disabled)')?.click()`);
     await wait(`document.querySelector('button[aria-label="Reset viewed"]')?.disabled===true`);

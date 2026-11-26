@@ -95,6 +95,7 @@ export function ChangesSymbolTree({
   onReviewCurrent,
   peekTheme,
   peekAppearance,
+  peekOnHover = true,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -121,6 +122,8 @@ export function ChangesSymbolTree({
   /** A peek's diff theme and appearance (components/SymbolPeek.tsx), as Changes draws its diffs. */
   peekTheme?: string;
   peekAppearance?: DiffAppearance;
+  /** Whether resting the pointer on a symbol row opens its peek (Preferences.peekOnHover); Space opens one either way. */
+  peekOnHover?: boolean;
   /** Enter on the row of the item under review comments on it (PrChangesView); true when it did. */
   onCommentKey?: (item: { key: string; id: string }) => boolean;
   /** V on a row with nothing of its own to mark (a folder, a note): Changes' own V, on the item under review. */
@@ -840,6 +843,8 @@ export function ChangesSymbolTree({
         } : undefined}
         className="changes-file-tree"
         aria-label="Changed files"
+        // Whether a resting pointer peeks, as the hover handler below reads it; the browser suite checks it.
+        data-peek-on-hover={peekOnHover ? 'true' : 'false'}
         onClickCapture={(event) => {
           readerChose.current = true;
           if (event.shiftKey || event.metaKey || event.ctrlKey) return;
@@ -884,12 +889,12 @@ export function ChangesSymbolTree({
           hoverPath.current = path ?? undefined;
           const row = rowAt(path);
           if (row && row.type !== 'folder') onPreview?.(row.key);
-          // A hover peek: after HOVER_PEEK_MS on a symbol row; another row's hover moves it there.
+          // A hover peek, unless turned off: after HOVER_PEEK_MS on a symbol row; another row's hover moves it there.
           clearTimeout(hoverTimer.current);
           const item = row?.type === 'symbol' || row?.type === 'top' ? peekItemOf(row) : undefined;
           const element = rowElement(event.nativeEvent);
           if (peek && !peek.focus && peek.path !== path) leaveSoon();
-          if (item && path && element && (!peek || !peek.focus) && peek?.path !== path)
+          if (peekOnHover && item && path && element && (!peek || !peek.focus) && peek?.path !== path)
             hoverTimer.current = setTimeout(() => openPeek(item, path, element, false), HOVER_PEEK_MS);
         }}
         onFocusCapture={() => {

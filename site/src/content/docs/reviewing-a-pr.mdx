@@ -65,6 +65,11 @@ Changes shows the diff of the PR. A file tree is on the left.
 
 To turn this on or off, clear or select **Symbols** above the file tree, next to **Unviewed only**. This is the same setting as <Setting name="Show changed symbols in the file tree" section="Review" />.
 
+When **Symbols** is selected, a second line of checkboxes shows under it:
+
+- **Auto-mark** is the same setting as <Setting name="Mark a symbol viewed after you scroll through it" section="Review" />.
+- **Peek on hover** is the same setting as <Setting name="Peek at a symbol when you rest the pointer on it" section="Review" />. See [Peek at a symbol](#peek-at-a-symbol).
+
 ### Review symbol by symbol
 
 <Prerelease /> When the file tree shows changed symbols, it also shows your progress through them.
@@ -99,6 +104,7 @@ If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it 
 
 - Press <Kbd keys="Enter" /> to go to the symbol, <Kbd keys="v" /> to mark it as viewed, or <Kbd keys="Esc" /> to close the panel.
 - Use <Kbd keys="↑" /> and <Kbd keys="↓" /> to choose a caller, and <Kbd keys="Enter" /> to peek at it. Press <Kbd keys="Backspace" /> to go back.
+- To stop the panel from opening when you hold the pointer over a symbol, clear **Peek on hover** above the file tree. <Kbd keys="Space" /> still opens it.
 - Gnosis only looks in the files that it has read. To look in every file, select **Look in all files**. A name that more than one changed function uses is not matched. For a class, struct or other type, the panel lists the callers of its changed methods.
 
 ### After the author pushes

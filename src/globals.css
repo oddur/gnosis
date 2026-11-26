@@ -2719,6 +2719,11 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-tree-options label { gap:6px;white-space:nowrap;cursor:pointer; }
 .changes-tree-options label:has(input:checked) { color:var(--foreground); }
 .changes-tree-options input { accent-color:var(--primary);margin:0; }
+/* With symbols, a second, quieter row under the first: how the tree reviews symbols, set in a little under "Symbols".
+   It stays muted when checked, a step below the view options. */
+.changes-tree-suboptions { display:flex;align-items:center;flex-wrap:wrap;column-gap:12px;row-gap:4px;min-width:0;padding-inline-start:8px;font-size:12px;line-height:16px;color:var(--muted-foreground); }
+.changes-tree-suboptions label { gap:6px;white-space:nowrap;cursor:pointer; }
+.changes-tree-suboptions input { accent-color:var(--primary);margin:0; }
 /* The one-time V tip (lib/review-hint.ts): one quiet line under the options, as small as they are. */
 .changes-tree-hint { display:flex;align-items:center;gap:6px;margin:0;font-size:12px;line-height:16px;color:var(--muted-foreground); }
 .changes-tree-hint > span { flex:1;min-width:0; }

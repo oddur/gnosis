@@ -467,6 +467,11 @@ export interface Preferences {
    * `treeSymbols`. See lib/symbol-auto-view.ts.
    */
   autoViewSymbols?: boolean;
+  /**
+   * Settings › Review › "Peek at a symbol when you rest the pointer on it" (Beta): on unless false, and only with
+   * `treeSymbols`. Off, resting the pointer on a symbol row opens no peek; Space still does. See lib/review-peek.ts.
+   */
+  peekOnHover?: boolean;
   /** Width of each chat surface's side panel, in pixels. See lib/chat-preferences.ts. */
   chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
   /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */
