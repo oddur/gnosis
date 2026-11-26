@@ -52,6 +52,19 @@ Changes shows the diff of the PR. A file tree is on the left.
 - For a Markdown file, choose **Preview** to read the rendered page, or **Source** to read the text.
 - For an image, Gnosis compares the old image with the new image.
 
+### Find the changed functions and classes
+
+<Prerelease /> A TypeScript, JavaScript, Python, Go, Rust, Java or C# file in the file tree has a chevron. Select the chevron to see the functions, classes and methods that the file's changes touch. The file you read opens by itself.
+
+- Select a symbol to go to it in the diff. As you scroll the diff, the file tree highlights the symbol that you read.
+- Changes outside every function and class show first, as **Imports** or **Top level**.
+- A class that is not changed, but has a changed method, shows in gray so you can open it.
+- Each symbol shows its added and removed lines. A symbol whose changes are only formatting or comments shows a short word, such as **Format**, instead.
+- To mark a symbol as viewed, select it and press <Kbd keys="v" />, or right-click it. This updates the outline above the diff too. It does not mark the file as viewed, so the file stays open.
+- The search box above the file tree also finds symbol names.
+
+To turn this off, go to <Setting name="Show changed symbols in the file tree" section="Review" />.
+
 ### Mark files as viewed
 
 Select the **Viewed** checkbox of a file when you finish it. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters.

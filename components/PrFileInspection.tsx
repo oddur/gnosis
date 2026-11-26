@@ -30,6 +30,7 @@ import { quietHeader } from '../lib/quiet-changes-header';
 import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
+import { usePendingSymbolJump } from '../lib/tree-symbol-sync';
 import { applyCodeIntelligence } from '../lib/use-syntax-contents';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { diffThemeName } from '../lib/diff-worker-pool';
@@ -86,8 +87,14 @@ export function PrFileInspection({
   briefSubject,
   onOpenBrief,
   onOpenFeedback,
+  symbolTree = false,
 }: {
   entry: ChangeFileEntry;
+  /**
+   * The diff is the Changes stream's: the file tree's symbol rows follow the reader here and jump here
+   * (lib/tree-symbol-sync.ts). Other views of a file, such as a feedback thread's, leave the tree alone.
+   */
+  symbolTree?: boolean;
   sourceLine?: number;
   /** Last line of a jump range; defaults to `sourceLine`. */
   sourceEndLine?: number;
@@ -116,6 +123,11 @@ export function PrFileInspection({
   // Jumping to a line must show it, without changing the reviewer's viewed progress.
   const [jumpedOpen, setJumpedOpen] = useState(false);
   const collapsed = viewed && !jumpedOpen && !focusThreadId;
+  // A symbol chosen in the file tree opens a file shown collapsed, as a jump to a line does: its diff takes the jump.
+  const symbolJump = usePendingSymbolJump(symbolTree ? activeKey : '');
+  useEffect(() => {
+    if (symbolJump && collapsed) setJumpedOpen(true);
+  }, [symbolJump, collapsed]);
   const opened = useRef(!collapsed);
   if (!collapsed) opened.current = true;
   const appearance = useDiffAppearance(prefs.diffAppearance);
@@ -860,6 +872,7 @@ export function PrFileInspection({
                     onMarkFileViewed: () => mark(false),
                   }}
                   stickyUnder={headerRef}
+                  symbolKey={symbolTree ? activeKey : undefined}
                   onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}

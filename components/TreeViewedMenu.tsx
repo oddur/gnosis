@@ -94,3 +94,75 @@ export function TreeViewedMenu({
     </Menu.Root>
   );
 }
+
+/**
+ * A symbol row's menu in the Changes tree (lib/tree-symbols.ts): marks the symbol Viewed, as its tick in the file's
+ * outline does, or a context row's changed symbols. Never the file: Viewed collapses the file, which would take the
+ * code away from under the reader.
+ */
+export function TreeSymbolMenu({
+  context,
+  label,
+  count,
+  viewed,
+  onSetViewed,
+}: {
+  context: ContextMenuOpenContext;
+  /** What the menu acts on, for its name: "function flush". */
+  label: string;
+  /** How many symbols it marks: more than one for a context row. */
+  count: number;
+  /** How many of them are viewed now. */
+  viewed: number;
+  onSetViewed: (viewed: boolean) => void;
+}) {
+  const id = useRef(Symbol('tree-symbol-menu'));
+  useEffect(() => {
+    const current = id.current;
+    setEntryMenuOpen(current, true);
+    return () => setEntryMenuOpen(current, false);
+  }, []);
+  const noun = count === 1 ? 'symbol' : `${count} symbols`;
+  const run = (value: boolean) => {
+    context.close();
+    onSetViewed(value);
+  };
+  return (
+    <Menu.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) context.close();
+      }}
+    >
+      <Menu.Portal>
+        <Menu.Positioner
+          className="entry-menu-positioner"
+          anchor={{ getBoundingClientRect: () => context.anchorRect }}
+          side="bottom"
+          align="start"
+          collisionPadding={12}
+        >
+          <Menu.Popup
+            className="entry-menu"
+            aria-label={`Actions for ${label}`}
+            data-file-tree-context-menu-root="true"
+            finalFocus={() => {
+              context.restoreFocus();
+              return false;
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <div className="px-2 py-1 text-xs text-muted-foreground">Viewed here keeps the file open</div>
+            <Menu.Item className="entry-menu-item" disabled={viewed === count} onClick={() => run(true)}>
+              Mark {noun} as viewed
+            </Menu.Item>
+            <Menu.Item className="entry-menu-item" disabled={viewed === 0} onClick={() => run(false)}>
+              Mark {noun} as unviewed
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}

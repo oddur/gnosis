@@ -33,7 +33,8 @@ export function mountLargeComparison(
   root.render(
     <PrChangesView
       subject={subject}
-      preferences={preferences}
+      // The plain file tree unless a suite asks for symbol rows (Settings › Review, Beta).
+      preferences={{ ...preferences, treeSymbols: preferences.treeSymbols ?? false }}
       commit={
         changes
           ? undefined

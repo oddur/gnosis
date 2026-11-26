@@ -1,4 +1,5 @@
 /** Controls shared by Settings panels. */
+import { Badge } from './ui/badge';
 
 // Quiet toggle switch — drops the bg-primary fill (now ink) and the
 // shadow-sm thumb in favor of a warm-amber active state and a flat
@@ -39,16 +40,26 @@ export function Toggle({
 export function SettingRow({
   label,
   description,
+  beta = false,
   children,
 }: {
   label: string;
   description?: string;
+  /** A setting still being tried out: a "Beta" tag beside its label. */
+  beta?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="settings-row flex items-center justify-between gap-4 py-1">
       <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="text-sm font-medium text-foreground">{label}</span>
+        <span className="text-sm font-medium text-foreground">
+          {label}
+          {beta && (
+            <Badge variant="outline" className="ml-2 align-middle text-[10px] uppercase tracking-wide text-muted-foreground">
+              Beta
+            </Badge>
+          )}
+        </span>
         {description && <span className="settings-description">{description}</span>}
       </div>
       <div className="shrink-0">{children}</div>

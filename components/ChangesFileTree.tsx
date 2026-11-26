@@ -6,17 +6,17 @@ import { selectedTreeFiles } from '../lib/tree-viewed-files';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
 // Lucide MessageSquare (ISC), used inside Pierre's shadow-DOM text decoration.
 const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></svg>')}")`;
-const decorationCSS = `
+export const decorationCSS = `
   [data-item-section="content"] { flex: 1 1 auto; }
   [data-item-section="decoration"] { flex: 0 0 auto; }
   [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
 `;
-const commentDecorationCSS = `
+export const commentDecorationCSS = `
   [data-item-section="decoration"] > span[title*="comment" i] > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
   [data-item-section="decoration"] > span[title*="comment" i] > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
 /** The tree's short word for a quiet file's label (#396); a file of mixed kinds is "Quiet". */
-const TREE_WORDS: Record<string, string> = {
+export const TREE_WORDS: Record<string, string> = {
   'Whitespace only': 'Spaces',
   'Formatting only': 'Format',
   Reformatted: 'Format',
@@ -33,6 +33,44 @@ export interface ChangeTreeEntry {
   commentError?: boolean;
   /** Every change is noise the reader hides (#396): "Formatting only", "Comments only" or "Formatting and comments". */
   quiet?: string;
+}
+/** A file row's counts, quiet word and comments, at the row's end (Pierre's decoration lane). */
+export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean) {
+  const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
+  // A file whose every change is quiet says so in a short word, muted, in place of its counts: the tree is narrow,
+  // and the full label and the counts stay in the tooltip and the file's header.
+  const quiet = !entry.viewed && entry.quiet ? (TREE_WORDS[entry.quiet] ?? 'Quiet') : undefined;
+  const count = entry.commentCount;
+  // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
+  // shown while comments load: a placeholder would be removed again for most files once they arrive,
+  // shifting every row's stats and file name.
+  const unavailable = count === undefined && !!entry.commentError;
+  const showCommentCount = showComments && (!!count || unavailable);
+  const comments = unavailable
+    ? 'Comments unavailable'
+    : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, in unresolved threads on the current diff`;
+  return {
+    text: `${quiet ?? changes}${showCommentCount ? ` · ${count ?? '—'}` : ''}`,
+    parts: [
+      ...(entry.viewed
+        ? [{ text: 'Viewed' }]
+        : quiet
+          ? [{ text: quiet, color: 'var(--muted-foreground)' }]
+          : [
+              { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
+              { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
+            ]),
+      ...(showCommentCount
+        ? [
+            {
+              text: count === undefined ? '—' : String(count),
+              color: count ? 'var(--foreground)' : undefined,
+            },
+          ]
+        : []),
+    ],
+    title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
+  };
 }
 export function ChangesFileTree({
   entries,
@@ -71,42 +109,7 @@ export function ChangesFileTree({
     fileTreeSearchMode: 'hide-non-matches',
     renderRowDecoration: ({ item }) => {
       const entry = current.current.entries.find((e) => e.key === item.path);
-      if (!entry) return null;
-      const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
-      // A file whose every change is quiet says so in a short word, muted, in place of its counts: the tree is narrow,
-      // and the full label and the counts stay in the tooltip and the file's header.
-      const quiet = !entry.viewed && entry.quiet ? (TREE_WORDS[entry.quiet] ?? 'Quiet') : undefined;
-      const count = entry.commentCount;
-      // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
-      // shown while comments load: a placeholder would be removed again for most files once they arrive,
-      // shifting every row's stats and file name.
-      const unavailable = count === undefined && !!entry.commentError;
-      const showCommentCount = showComments && (!!count || unavailable);
-      const comments = unavailable
-        ? 'Comments unavailable'
-        : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, in unresolved threads on the current diff`;
-      return {
-        text: `${quiet ?? changes}${showCommentCount ? ` · ${count ?? '—'}` : ''}`,
-        parts: [
-          ...(entry.viewed
-            ? [{ text: 'Viewed' }]
-            : quiet
-              ? [{ text: quiet, color: 'var(--muted-foreground)' }]
-              : [
-                  { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
-                  { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
-                ]),
-          ...(showCommentCount
-            ? [
-                {
-                  text: count === undefined ? '—' : String(count),
-                  color: count ? 'var(--foreground)' : undefined,
-                },
-              ]
-            : []),
-        ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
-      };
+      return entry ? fileRowDecoration(entry, showComments) : null;
     },
   });
   const selectedPaths = useFileTreeSelection(model);

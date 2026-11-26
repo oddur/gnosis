@@ -15,6 +15,7 @@ import { syntaxLargeContents, syntaxLargeFiles } from './syntax-large';
 import { NOISE_FILES, noiseFilterContents, noiseFilterFiles } from './noise-filter';
 import { MOVE_FILES, movedSymbolsContents, movedSymbolsFiles, movedSymbolsLargeContents, movedSymbolsLargeFiles } from './moved-symbols';
 import { NAV_TOPIC_FILES, breadcrumbNavContents, breadcrumbNavFiles } from './breadcrumb-nav';
+import { treeSymbolsContents, treeSymbolsFiles } from './tree-symbols';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -706,6 +707,9 @@ let prefs: Preferences = {
   model: DEFAULT_CLAUDE_MODEL,
   thinking: true,
   smartImports: true,
+  // The Changes tree's symbol rows (Beta) are on in the app; suites that drive the tree by its rows keep the plain tree,
+  // and `?tree-symbols` (tests/tree-symbols-browser.ts) turns them on. Settings › Review's toggle survives a reload.
+  treeSymbols: JSON.parse(sessionStorage.getItem('fixture-tree-symbols') ?? String(new URLSearchParams(location.search).has('tree-symbols'))) as boolean,
   reviewSuggestions: true,
   enableTools: false,
   enableWebResearch: false,
@@ -938,6 +942,7 @@ const mocks = {
       ...(new URLSearchParams(location.search).has('breadcrumb-nav') ? breadcrumbNavFiles : []),
       ...(new URLSearchParams(location.search).has('noise-filter') ? noiseFilterFiles : []),
       ...(new URLSearchParams(location.search).has('moved-symbols') ? movedSymbolsFiles : []),
+      ...(new URLSearchParams(location.search).has('tree-symbols') ? treeSymbolsFiles : []),
       ...(new URLSearchParams(location.search).has('moved-symbols-large') ? movedSymbolsLargeFiles() : []),
       // A file renamed into a long path, for the file header's left-collapsing path and its rename display.
       ...(new URLSearchParams(location.search).has('renamed-file') ? [{path:'src/transport/ECORuntime/Core/ECONemoConnector.cs',previousPath:'src/transport/Legacy/NemoConnector.cs',status:'renamed' as const,additions:1,deletions:1,changeId:'renamed-v1'}] : []),
@@ -960,7 +965,7 @@ const mocks = {
     return {...snapshot, comparison:selection,comparisonBase:parent,metadata:{...snapshot.metadata,baseSha:parent,headSha:selection.lastSha}};
   },
   getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
-    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? syntaxLargeContents(request.path) ?? breadcrumbNavContents(request.path) ?? noiseFilterContents(request.path) ?? movedSymbolsContents(request.path) ?? movedSymbolsLargeContents(request.path);
+    const gapFile = diffGapContents(request.path) ?? syntaxScopeContents(request.path) ?? syntaxLargeContents(request.path) ?? breadcrumbNavContents(request.path) ?? noiseFilterContents(request.path) ?? movedSymbolsContents(request.path) ?? movedSymbolsLargeContents(request.path) ?? treeSymbolsContents(request.path);
     if (gapFile) return Promise.resolve(gapFile);
     if (new URLSearchParams(location.search).has('markdown-review')) return Promise.resolve({ before: request.path.endsWith('/new.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownBefore }, after: request.path.endsWith('/removed.md') ? { kind: 'absent' as const } : { kind: 'text' as const, content: markdownAfter } });
     if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}
@@ -1108,6 +1113,7 @@ const mocks = {
     if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
     if (next.diffAppearance) sessionStorage.setItem('fixture-diff-appearance', JSON.stringify(next.diffAppearance));
+    if (next.treeSymbols !== undefined) sessionStorage.setItem('fixture-tree-symbols', JSON.stringify(next.treeSymbols));
     if (onboardingScenario) {
       sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
       sessionStorage.setItem('fixture-guest-mode', String(next.guestMode));
