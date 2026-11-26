@@ -23,6 +23,9 @@ export interface SymbolTreeEntry extends ChangeTreeEntry {
 
 const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renamed: 'renamed' } as const;
 
+/** How long a chosen symbol stays lit while the diff scrolls to it, if the diff never says it arrived. */
+const HOLD_MS = 1_500;
+
 /**
  * The Changes file tree with each file's changed symbols under it (Settings › Review, Beta): folder › file › class ›
  * method, in @pierre/trees as ChangesFileTree is, with the same rows for files and folders, the same Viewed menu,
@@ -32,6 +35,7 @@ const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renam
  * the reader leaves them. A symbol row takes the reader to the symbol as its outline does, and shares the outline's
  * Viewed ticks; the row the reader is in is lit as the diff scrolls (lib/tree-symbol-sync.ts).
  */
+
 export function ChangesSymbolTree({
   entries,
   selected,
@@ -217,14 +221,30 @@ export function ChangesSymbolTree({
   // The file and the symbol the reader is in.
   const readingFile = supported.get(selected);
   const place = useReadingPlace(readingFile?.fileKey);
-  const readingPath = useMemo(() => {
+  // A symbol the reader chose is lit at once, and stays lit while the diff scrolls to it: on the way, the diff names
+  // the places it passes (the file's top level, other symbols), which would flash in the tree for a frame. The hold
+  // ends when the diff arrives inside the symbol, or after HOLD_MS if it never says so.
+  const [held, setHeld] = useState<{ key: string; id: string } | undefined>();
+  const live = useMemo((): { path: string | undefined; id?: string } => {
     const known = symbols.get(selected);
-    if (!place || known?.state !== 'ready') return undefined;
+    if (!place || known?.state !== 'ready') return { path: undefined };
     // Outside every definition: the file's top-level row.
-    if (!place.length) return layout.paths.find((path) => { const row = layout.rows.get(path); return row?.type === 'top' && row.key === selected; });
+    if (!place.length) return { path: layout.paths.find((path) => { const row = layout.rows.get(path); return row?.type === 'top' && row.key === selected; }) };
     const id = readingSymbol(known.nodes, place);
-    return id ? layout.symbolPaths.get(symbolRowKey(selected, id)) : undefined;
+    return { path: id ? layout.symbolPaths.get(symbolRowKey(selected, id)) : undefined, id };
   }, [place, symbols, selected, layout]);
+  const arrived = !!held && held.key === selected && !!live.id && (live.id === held.id || live.id.startsWith(`${held.id}>`));
+  useEffect(() => {
+    if (!held) return;
+    // A symbol in another file waits for that file to be selected; the timer ends the hold either way.
+    if (arrived) {
+      setHeld(undefined);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(undefined), HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [held, arrived]);
+  const readingPath = held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path;
   applyStatus.current = () => {
     const status: GitStatusEntry[] = [];
     for (const e of entries) {
@@ -318,7 +338,10 @@ export function ChangesSymbolTree({
     if (!row || row.type === 'folder') return;
     if (row.type === 'symbol') {
       const symbol = destination(row.node);
-      if (symbol) onGoToSymbol(row.key, symbol);
+      if (symbol) {
+        setHeld({ key: row.key, id: row.node.id });
+        onGoToSymbol(row.key, symbol);
+      }
       return;
     }
     current.current.onSelect(row.key);
