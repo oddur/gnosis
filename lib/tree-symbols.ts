@@ -1,6 +1,6 @@
 import type { GapHunk } from './diff-gaps';
 import type { MoveMark } from './moved-symbols-store';
-import type { ChangedSymbol, SymbolChange } from './symbol-outline';
+import { TOP_LEVEL_ID, type ChangedSymbol, type SymbolChange } from './symbol-outline';
 import type { DefinitionKind, SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -128,6 +128,35 @@ export interface TopLevelChanges {
   deleted: number;
   /** Every one of them is an import (or a blank line among imports): the row reads "Imports". */
   imports: boolean;
+  /** Each changed line, `a12` (new line 12) or `b7` (old line 7), wherever in the file: what a scroll must show. */
+  lines: string[];
+  /** The first of them in the diff's order, on its side: where going to them lands. */
+  first: { side: 'after' | 'before'; line: number };
+  /** Every one of them is quiet (formatting or comments the reader hides): not counted, as a quiet symbol is not. */
+  quiet?: boolean;
+}
+
+/** What the top-level row and its outline entry are called. */
+export const topLevelName = (top: Pick<TopLevelChanges, 'imports'>) => (top.imports ? 'Imports' : 'Top level');
+
+/**
+ * A file's top-level changes as one more symbol of its outline, under TOP_LEVEL_ID: ticked, counted and gone to like
+ * the others. Going to it lands on its first changed line.
+ */
+export function topLevelSymbol(top: TopLevelChanges): ChangedSymbol {
+  const name = topLevelName(top);
+  const { line } = top.first;
+  return {
+    id: TOP_LEVEL_ID,
+    // Marked as the outline marks a symbol: only added lines, only deleted ones, or both.
+    change: top.deleted === 0 ? 'added' : top.added === 0 ? 'removed' : 'modified',
+    definition: { kind: 'module', name, label: name, crumb: name, start: line, end: line, signatureEnd: line },
+    side: top.first.side,
+    parents: [],
+    first: top.first,
+    added: top.added,
+    deleted: top.deleted,
+  };
 }
 
 /** The smallest definition holding `line`; as lib/symbol-outline.ts finds it, so the two count the same lines. */
@@ -143,33 +172,43 @@ function inside(definitions: readonly SyntaxDefinition[], line: number) {
  */
 export function topLevelChanges(
   hunks: readonly Pick<GapHunk, 'oldStart' | 'newStart' | 'rows'>[],
-  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] }
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  /** Lines left out, as `changedSymbols()` leaves them: quiet ones the reader hides. */
+  skip?: (side: 'before' | 'after', line: number) => boolean
 ): TopLevelChanges | undefined {
   const after = definitions.after ?? [];
   const before = definitions.before;
   let added = 0,
     deleted = 0;
   const texts: string[] = [];
+  const lines: string[] = [];
+  let first: TopLevelChanges['first'] | undefined;
   for (const hunk of hunks) {
     let oldLine = hunk.oldStart,
       newLine = hunk.newStart;
     for (const row of hunk.rows) {
-      if (row.type === '+' && !inside(after, newLine)) {
+      if (skip && row.type !== ' ' && skip(row.type === '+' ? 'after' : 'before', row.type === '+' ? newLine : oldLine)) {
+        // Left out: counted as unchanged.
+      } else if (row.type === '+' && !inside(after, newLine)) {
         added++;
         texts.push(row.text);
+        lines.push(`a${newLine}`);
+        first ??= { side: 'after', line: newLine };
       } else if (
         row.type === '-' &&
         !(before ? inside(before, oldLine) : inside(after, Math.max(1, newLine - 1)) || inside(after, newLine))
       ) {
         deleted++;
         texts.push(row.text);
+        lines.push(`b${oldLine}`);
+        first ??= { side: 'before', line: oldLine };
       }
       if (row.type !== '+') oldLine++;
       if (row.type !== '-') newLine++;
     }
   }
-  if (!added && !deleted) return undefined;
-  return { added, deleted, imports: importLines(texts) };
+  if (!first) return undefined;
+  return { added, deleted, imports: importLines(texts), lines, first };
 }
 
 // An import in any of the tree's languages: `import`, `from x import`, `use`, `using`, `extern crate`, `require(…)`,

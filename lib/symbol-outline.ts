@@ -201,13 +201,23 @@ function collectSymbols(
     }));
 }
 
+/**
+ * The id of a file's top-level changes (imports, statements outside every definition) when they take part in review
+ * like a symbol: their Viewed tick is kept under it beside the symbols' (lib/file-view-progress.ts). Real ids are
+ * `kind:name` paths, so `@` can never start one.
+ */
+export const TOP_LEVEL_ID = '@top';
+export const isTopLevel = (symbol: Pick<ChangedSymbol, 'id'>) => symbol.id === TOP_LEVEL_ID;
+
 const PLURALS: Record<string, string> = { class: 'classes', property: 'properties', entry: 'entries' };
 const plural = (noun: string, n: number) => (n === 1 ? noun : (PLURALS[noun] ?? `${noun}s`));
 /**
  * What a file's changes touch, in words: "Changes 3 functions", "Changes 2 functions and 1 class", "Adds 1 test".
  * Kinds are counted in the order they first appear.
  */
-export function outlineSummary(symbols: readonly ChangedSymbol[]): string {
+export function outlineSummary(all: readonly ChangedSymbol[]): string {
+  // The top-level entry is no function or class: the summary names the definitions only.
+  const symbols = all.filter((symbol) => !isTopLevel(symbol));
   if (!symbols.length) return 'No functions or classes changed';
   const counts = new Map<string, number>();
   for (const symbol of symbols) {

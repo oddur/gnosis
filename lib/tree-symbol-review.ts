@@ -1,5 +1,6 @@
+import { TOP_LEVEL_ID } from './symbol-outline';
 import type { FileSymbols } from './tree-symbol-paths';
-import type { TreeSymbolNode } from './tree-symbols';
+import type { TopLevelChanges, TreeSymbolNode } from './tree-symbols';
 
 /**
  * The Changes tree as a review list (Settings › Review, Beta): how many of each file's changed symbols are Viewed, the
@@ -7,7 +8,9 @@ import type { TreeSymbolNode } from './tree-symbols';
  *
  * A symbol counts as the outline counts it (components/DiffOutline.tsx): a changed symbol with a change that shows.
  * Context rows (an unchanged class around a changed method) and symbols whose every change is quiet are not counted, so
- * the tree's `2/5` and the outline's "2/5 viewed" agree, and "every symbol viewed" means the same in both.
+ * the tree's `2/5` and the outline's "2/5 viewed" agree, and "every symbol viewed" means the same in both. A file's
+ * top-level changes (its Imports or Top level row) count as one more symbol, under TOP_LEVEL_ID, first in the file,
+ * unless every one of them is quiet.
  */
 
 /** A symbol the review counts: changed, with a change that shows. */
@@ -29,14 +32,35 @@ export interface SymbolProgress {
   total: number;
 }
 
+/** One stop of the review in a file: its top-level changes, or a symbol row. */
+export interface ReviewStop {
+  id: string;
+  /** Counted and walked to; a context row or a quiet symbol only marks a place. */
+  counted: boolean;
+  node?: TreeSymbolNode;
+  top?: TopLevelChanges;
+}
+/** A file's stops in the tree's order: its top-level changes first, then its symbols. */
+export function reviewStops(nodes: readonly TreeSymbolNode[], top?: TopLevelChanges): ReviewStop[] {
+  return [
+    ...(top ? [{ id: TOP_LEVEL_ID, counted: !top.quiet, top }] : []),
+    ...treeOrder(nodes).map((node) => ({ id: node.id, counted: reviewed(node), node })),
+  ];
+}
+
 /** How many of a file's counted symbols are Viewed. A Viewed file has every one viewed, as its outline shows. */
-export function symbolProgress(nodes: readonly TreeSymbolNode[], isViewed: (id: string) => boolean, fileViewed = false): SymbolProgress {
+export function symbolProgress(
+  nodes: readonly TreeSymbolNode[],
+  isViewed: (id: string) => boolean,
+  fileViewed = false,
+  top?: TopLevelChanges
+): SymbolProgress {
   let viewed = 0,
     total = 0;
-  for (const node of treeOrder(nodes)) {
-    if (!reviewed(node)) continue;
+  for (const stop of reviewStops(nodes, top)) {
+    if (!stop.counted) continue;
     total++;
-    if (fileViewed || isViewed(node.id)) viewed++;
+    if (fileViewed || isViewed(stop.id)) viewed++;
   }
   return { viewed, total };
 }
@@ -89,8 +113,8 @@ export interface ReviewPlace {
   id?: string;
 }
 export type ReviewStep =
-  /** The next unviewed symbol. */
-  | { kind: 'go'; key: string; node: TreeSymbolNode }
+  /** The next unviewed symbol: a symbol row's `node`, or the file's `top`-level changes. */
+  | { kind: 'go'; key: string; id: string; node?: TreeSymbolNode; top?: TopLevelChanges }
   /** A file on the way whose symbols are not known yet: read and parse it, then ask again. */
   | { kind: 'load'; key: string }
   /** No unviewed symbol that way. */
@@ -112,12 +136,12 @@ export function stepUnviewed(
   const pick = (file: ReviewFile, after: number | undefined): ReviewStep | undefined => {
     if (file.viewed || !file.symbols || file.symbols.state === 'none') return undefined;
     if (file.symbols.state === 'loading') return { kind: 'load', key: file.key };
-    const order = treeOrder(file.symbols.nodes);
+    const order = reviewStops(file.symbols.nodes, file.symbols.top);
     // From a row in this file: the rows past it. From the file's top: every row forward, none back.
     const first = after === undefined ? (direction === 1 ? 0 : order.length - 1) : after + direction;
     for (let i = first; i >= 0 && i < order.length; i += direction) {
-      const node = order[i];
-      if (reviewed(node) && !isViewed(file.key, node.id)) return { kind: 'go', key: file.key, node };
+      const { id, counted, node, top } = order[i];
+      if (counted && !isViewed(file.key, id)) return { kind: 'go', key: file.key, id, node, top };
     }
     return undefined;
   };
@@ -125,7 +149,7 @@ export function stepUnviewed(
     const file = files[start];
     let at: number | undefined;
     if (from.id !== undefined && file.symbols?.state === 'ready') {
-      const index = treeOrder(file.symbols.nodes).findIndex((node) => node.id === from.id);
+      const index = reviewStops(file.symbols.nodes, file.symbols.top).findIndex((stop) => stop.id === from.id);
       if (index >= 0) at = index;
     }
     // At the file's top, nothing in it comes before the reader.

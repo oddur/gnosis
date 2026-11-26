@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ChangedSymbol } from '../lib/symbol-outline';
 import type { SyntaxDefinition } from '../lib/syntax-scope';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
-import type { TreeSymbolNode } from '../lib/tree-symbols';
-import { folderProgress, progressLabel, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
+import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
+import { folderProgress, progressLabel, reviewStops, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -66,7 +66,7 @@ void test('n and Shift+N walk unviewed symbols in the tree order, across files',
   const isViewed = (key: string, id: string) => viewed.has(`${key}\u0000${id}`);
   const next = (key: string, id?: string, direction: 1 | -1 = 1) => {
     const step = stepUnviewed(files, { key, id }, direction, isViewed);
-    return step.kind === 'go' ? `${step.key}:${step.node.id}` : step.kind;
+    return step.kind === 'go' ? `${step.key}:${step.id}` : step.kind;
   };
   // From a file's top, its first unviewed symbol.
   assert.equal(next('a.ts'), 'a.ts:a1');
@@ -103,7 +103,7 @@ void test('a file whose symbols are not known yet is read before the walk passes
   // Once read, the walk goes on through it.
   const known = files.map((file) => (file.key === 'c.ts' ? { ...file, symbols: ready([]) } : file));
   const step = stepUnviewed(known, { key: 'a.ts', id: 'a1' }, 1, () => false);
-  assert.equal(step.kind === 'go' && step.node.id, 'd1');
+  assert.equal(step.kind === 'go' && step.id, 'd1');
   // The reader's own file, still loading, is read too.
   assert.deepEqual(stepUnviewed(files, { key: 'c.ts' }, 1, () => false), { kind: 'load', key: 'c.ts' });
 });
@@ -173,4 +173,50 @@ void test('a symbol scrolled off before the dwell, unticked, or with lines the d
   // No range: nothing of the diff on screen.
   const away = createAutoViewer([{ id: 'f', lines: ['a1'] }], positions, () => true);
   for (let at = 0; at < 6_000; at += 400) assert.deepEqual(away.look({ at, fast: false }), []);
+});
+
+const top = (quiet = false): TopLevelChanges => ({ added: 2, deleted: 0, imports: true, lines: ['a1', 'a40'], first: { side: 'after', line: 1 }, quiet: quiet || undefined });
+
+void test("a file's top-level changes count as one more symbol, first in the file, unless they are all quiet", () => {
+  const nodes = [node('a1'), node('a2')];
+  assert.deepEqual(reviewStops(nodes, top()).map((stop) => [stop.id, stop.counted]), [[TOP_LEVEL_ID, true], ['a1', true], ['a2', true]]);
+  assert.deepEqual(symbolProgress(nodes, () => false, false, top()), { viewed: 0, total: 3 });
+  assert.deepEqual(symbolProgress(nodes, (id) => id === TOP_LEVEL_ID, false, top()), { viewed: 1, total: 3 });
+  // Without top-level changes, or with only quiet ones, the count is the symbols'.
+  assert.deepEqual(symbolProgress(nodes, () => false), { viewed: 0, total: 2 });
+  assert.deepEqual(symbolProgress(nodes, () => true, false, top(true)), { viewed: 2, total: 2 });
+  // A file of top-level changes only still has something to review.
+  assert.deepEqual(symbolProgress([], () => false, false, top()), { viewed: 0, total: 1 });
+  // The folder sums them in.
+  assert.deepEqual(folderProgress(new Map([['src/a.ts', symbolProgress(nodes, () => false, false, top())]])).get('src/'), { viewed: 0, total: 3 });
+});
+
+void test('n stops at the top level first in each file, and Shift+N comes back to it', () => {
+  const files: ReviewFile[] = [
+    { key: 'a.ts', viewed: false, symbols: { state: 'ready', nodes: [node('a1')], top: top() } },
+    { key: 'b.ts', viewed: false, symbols: { state: 'ready', nodes: [node('b1')], top: top() } },
+    { key: 'c.ts', viewed: false, symbols: { state: 'ready', nodes: [node('c1')], top: top(true) } },
+  ];
+  const at = (key: string, id?: string, direction: 1 | -1 = 1, viewed: string[] = []) => {
+    const step = stepUnviewed(files, { key, id }, direction, (file, symbol) => viewed.includes(`${file}:${symbol}`));
+    return step.kind === 'go' ? `${step.key}:${step.id}${step.top ? ' (top)' : ''}` : step.kind;
+  };
+  assert.equal(at('a.ts'), `a.ts:${TOP_LEVEL_ID} (top)`);
+  assert.equal(at('a.ts', TOP_LEVEL_ID), 'a.ts:a1');
+  assert.equal(at('a.ts', 'a1'), `b.ts:${TOP_LEVEL_ID} (top)`);
+  assert.equal(at('a.ts', 'a1', 1, [`b.ts:${TOP_LEVEL_ID}`]), 'b.ts:b1');
+  // Quiet top-level changes are passed.
+  assert.equal(at('b.ts', 'b1'), 'c.ts:c1');
+  assert.equal(at('b.ts', 'b1', -1), `b.ts:${TOP_LEVEL_ID} (top)`);
+  assert.equal(at('b.ts', TOP_LEVEL_ID, -1), 'a.ts:a1');
+});
+
+void test('scattered top-level lines must all be seen: imports at the top and a statement far below', () => {
+  const positions = new Map([['a1', 0], ['a2', 1], ['a40', 39]]);
+  const viewer = createAutoViewer([{ id: TOP_LEVEL_ID, lines: ['a1', 'a40'] }], positions, () => true);
+  // The imports on screen for a long while: the far statement is not seen yet.
+  for (let at = 0; at <= 3_000; at += 400) assert.deepEqual(viewer.look({ at, range: [0, 20], fast: false }), []);
+  // Read on down to it: ticked once it has been on screen in two looks.
+  assert.deepEqual(viewer.look({ at: 3_400, range: [30, 45], fast: false }), []);
+  assert.deepEqual(viewer.look({ at: 3_800, range: [30, 45], fast: false }), [TOP_LEVEL_ID]);
 });

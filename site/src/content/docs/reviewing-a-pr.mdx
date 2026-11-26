@@ -69,7 +69,7 @@ To turn this off, go to <Setting name="Show changed symbols in the file tree" se
 
 <Prerelease /> When the file tree shows changed symbols, it also shows your progress through them.
 
-- After you mark a symbol of a file as viewed, the file shows how many of its changed symbols are viewed, such as **2/5**, instead of its added and removed lines. Symbols with only formatting or comment changes do not count.
+- After you mark a symbol of a file as viewed, the file shows how many of its changed symbols are viewed, such as **2/5**, instead of its added and removed lines. Symbols with only formatting or comment changes do not count. The **Imports** or **Top level** row counts as one more symbol: mark it as viewed with <Kbd keys="v" />, right-click, or its tick in the outline above the diff.
 - When all of the changed symbols of a file are viewed, the file shows a gray check, such as **✓ 5/5**. Gnosis does not mark the file as viewed. To do that, right-click the file and select **Mark file as viewed**.
 - A folder shows the total for its files, for the files whose symbols Gnosis has read.
 - Press <Kbd keys="n" /> to go to the next symbol that is not viewed. Press <Kbd keys="⇧ N" /> to go to the previous one. Gnosis starts at the symbol that you read, or at the symbol that you selected in the file tree. It skips viewed files and opens the file of the symbol in the file tree. If it must read the symbols of the next file first, it shows **Loading symbols…**. At the last symbol, it tells you that there are no more symbols after it.

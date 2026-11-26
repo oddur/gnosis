@@ -34,7 +34,8 @@ import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-synt
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
-import { changedSymbolLines, changedSymbols } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, changedSymbolLines, changedSymbols } from '../lib/symbol-outline';
+import { topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
 import type { MoveMark } from '../lib/moved-symbols-store';
@@ -489,27 +490,29 @@ export function useDiffFileModel({
   // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then. When
   // the old side is on its way, the outline waits for it, in the same bar, so its removed symbols are not first listed
   // as modified ones: it parses right behind the after side, after the breadcrumbs have shown.
-  const symbols = useMemo(
-    () =>
-      fileDefinitions.after && !definitions.beforeParsing && baseHunks
-        ? changedSymbols(baseHunks, fileDefinitions, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))
-        : undefined,
-    [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]
-  );
-  // Each listed symbol's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):
-  // the same lines the outline counts, quiet ones left out.
-  const symbolLines = useMemo(
-    () =>
-      symbols && fileDefinitions.after && baseHunks
-        ? changedSymbolLines(baseHunks, fileDefinitions, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))
-        : undefined,
-    [symbols, baseHunks, fileDefinitions, quietLines]
-  );
-  // Symbols whose every change is hidden, for the outline's quiet note.
+  // The file's top-level changes (imports, statements outside every definition) lead the list as one more entry, under
+  // TOP_LEVEL_ID, so they are ticked, counted and gone to like a symbol, here and in the Changes tree alike.
+  const listed = useMemo(() => {
+    if (!fileDefinitions.after || definitions.beforeParsing || !baseHunks) return undefined;
+    const skip = quietLines && ((side: 'before' | 'after', line: number) => quietLines.has(`${side[0]}${line}`));
+    const top = topLevelChanges(baseHunks, fileDefinitions, skip);
+    const own = changedSymbols(baseHunks, fileDefinitions, skip) ?? [];
+    return { own, top, symbols: top ? [topLevelSymbol(top), ...own] : own, lines: changedSymbolLines(baseHunks, fileDefinitions, skip) };
+  }, [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]);
+  const symbols = listed?.symbols;
+  // Each listed entry's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):
+  // the same lines the outline counts, quiet ones left out; the top level's wherever in the file they are.
+  const symbolLines = useMemo(() => {
+    if (!listed?.lines) return undefined;
+    const lines = new Map(listed.lines);
+    if (listed.top) lines.set(TOP_LEVEL_ID, listed.top.lines);
+    return lines;
+  }, [listed]);
+  // Symbols whose every change is hidden, for the outline's quiet note: definitions only.
   const quietSymbols = useMemo(() => {
-    if (!symbols || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
-    return Math.max(0, (changedSymbols(baseHunks, fileDefinitions)?.length ?? 0) - symbols.length);
-  }, [symbols, quietLines, fileDefinitions, baseHunks]);
+    if (!listed || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
+    return Math.max(0, (changedSymbols(baseHunks, fileDefinitions)?.length ?? 0) - listed.own.length);
+  }, [listed, quietLines, fileDefinitions, baseHunks]);
   // An added or deleted file's bar waits from the first render, as its patch parses, so nothing moves when it lands.
   const outlinePending =
     !symbols &&

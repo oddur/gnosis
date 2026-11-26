@@ -9,10 +9,10 @@ import { selectedTreeFiles } from '../lib/tree-viewed-files';
 import { useFileProgress } from '../lib/file-view-progress';
 import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
-import type { ChangedSymbol } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
-import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
+import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, topLevelName, topLevelSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
 import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
@@ -122,7 +122,7 @@ export function ChangesSymbolTree({
     const source = supported.get(e.key);
     const value = known.get(e.key);
     if (source && value?.state === 'ready')
-      fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed));
+      fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed, value.top));
   }
   const folderSums = folderProgress(fileProgress);
   const progressSignature = [...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n');
@@ -167,6 +167,14 @@ export function ChangesSymbolTree({
       }
       if (row.type === 'top') {
         const { added, deleted, imports } = row.top;
+        // Ticked like a symbol, under the top level's own id (lib/tree-symbol-review.ts).
+        const topSource = current.current.supported.get(row.key);
+        if (entryOf(row.key)?.viewed || (!!topSource && current.current.progress.isSymbolViewed(topSource.fileKey, TOP_LEVEL_ID)))
+          return { text: 'Viewed', parts: [{ text: 'Viewed' }], title: `${topLevelName(row.top)}: viewed` };
+        if (row.top.quiet) {
+          const word = 'Quiet';
+          return { text: word, parts: [{ text: word, color: 'var(--muted-foreground)' }], title: `${added} additions, ${deleted} deletions, every one quiet` };
+        }
         return {
           text: `+${added} −${deleted}`,
           parts: [
@@ -266,7 +274,10 @@ export function ChangesSymbolTree({
     const known = symbols.get(selected);
     if (!place || known?.state !== 'ready') return { path: undefined };
     // Outside every definition: the file's top-level row.
-    if (!place.length) return { path: layout.paths.find((path) => { const row = layout.rows.get(path); return row?.type === 'top' && row.key === selected; }) };
+    if (!place.length) {
+      const path = layout.symbolPaths.get(symbolRowKey(selected, TOP_LEVEL_ID));
+      return { path, id: path ? TOP_LEVEL_ID : undefined };
+    }
     const id = readingSymbol(known.nodes, place);
     return { path: id ? layout.symbolPaths.get(symbolRowKey(selected, id)) : undefined, id };
   }, [place, symbols, selected, layout]);
@@ -400,11 +411,19 @@ export function ChangesSymbolTree({
       }
       return;
     }
+    if (row.type === 'top') {
+      // The file's top-level changes go to their first changed line, as a symbol row goes to its symbol.
+      setHeld({ key: row.key, id: TOP_LEVEL_ID });
+      setTreeCursor(row.key, TOP_LEVEL_ID);
+      onGoToSymbol(row.key, topLevelSymbol(row.top));
+      return;
+    }
     current.current.onSelect(row.key);
   };
-  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? changedIds(row.node) : []);
+  /** What V and the Viewed menu tick for a row: a symbol's changed symbols, or the file's top-level changes. */
+  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? changedIds(row.node) : row?.type === 'top' ? [TOP_LEVEL_ID] : []);
   const markSymbols = (row: TreeRow | undefined, viewed?: boolean) => {
-    const source = row?.type === 'symbol' ? supported.get(row.key) : undefined;
+    const source = row?.type === 'symbol' || row?.type === 'top' ? supported.get(row.key) : undefined;
     const ids = symbolIds(row);
     if (!source || !ids.length) return;
     const now = ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length;
@@ -428,14 +447,15 @@ export function ChangesSymbolTree({
         model={model}
         renderContextMenu={onSetViewed ? (item, context) => {
           const row = rowAt(item.path);
-          if (row?.type === 'symbol') {
+          if (row?.type === 'symbol' || row?.type === 'top') {
             const source = supported.get(row.key);
             const ids = symbolIds(row);
             if (!source || !ids.length) return null;
             return (
               <TreeSymbolMenu
                 context={context}
-                label={`${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
+                label={row.type === 'top' ? topLevelName(row.top) : `${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
+                what={row.type === 'top' ? (row.top.imports ? 'imports' : 'top-level changes') : undefined}
                 count={ids.length}
                 viewed={ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length}
                 onSetViewed={(viewed) => markSymbols(row, viewed)}
@@ -504,7 +524,8 @@ export function ChangesSymbolTree({
           const row = rowAt(model.getFocusedPath());
           if (row && row.type !== 'folder') onPreview?.(row.key);
           // A symbol row moved to with the keys is where `n` starts from, as one chosen is.
-          if (row?.type === 'symbol' && TREE_MOVES.has(event.key)) setTreeCursor(row.key, row.node.id);
+          if ((row?.type === 'symbol' || row?.type === 'top') && TREE_MOVES.has(event.key))
+            setTreeCursor(row.key, row.type === 'top' ? TOP_LEVEL_ID : row.node.id);
         }}
         onKeyDownCapture={(event) => {
           if (event.nativeEvent.composedPath().some((node) => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;
@@ -522,7 +543,7 @@ export function ChangesSymbolTree({
           // The arrow keys open and close a file as its chevron does; the reader's choice then stays.
           if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && row?.type === 'file' && auto.current === row.key) auto.current = undefined;
           // V marks the symbol Viewed, as its tick in the outline does.
-          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && row?.type === 'symbol') {
+          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && (row?.type === 'symbol' || row?.type === 'top')) {
             event.preventDefault();
             event.stopPropagation();
             markSymbols(row);

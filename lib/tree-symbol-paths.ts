@@ -1,4 +1,5 @@
-import { treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
+import { TOP_LEVEL_ID } from './symbol-outline';
+import { topLevelName, treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
 
 /**
  * The Changes file tree's paths for @pierre/trees when it lists changed symbols (lib/tree-symbols.ts). Pierre builds
@@ -170,8 +171,12 @@ export function symbolTreePaths(
     const before = out.paths.length;
     if (known?.state === 'ready') {
       // Imports and top-level statements head the file, as they do in its source: first, then the symbols.
-      if (known.top)
-        leaf(`${path}${known.top.imports ? 'Imports' : 'Top level'}${rowCode(known.top.imports ? 'imports' : 'top', 'muted')}`, { type: 'top', key, top: known.top });
+      if (known.top) {
+        const top = `${path}${topLevelName(known.top)}${rowCode(known.top.imports ? 'imports' : 'top', 'muted')}`;
+        // Found by its review id as a symbol's row is: it is lit, ticked and gone to the same way.
+        out.symbolPaths.set(symbolRowKey(key, TOP_LEVEL_ID), top);
+        leaf(top, { type: 'top', key, top: known.top });
+      }
       emitNodes(key, path, known.nodes);
       if (out.paths.length === before && expanded.has(key)) note('No symbols changed', false);
     } else if (expanded.has(key)) note(known?.state === 'none' ? known.reason : TEXT.loading, known?.state !== 'none');

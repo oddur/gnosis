@@ -103,6 +103,7 @@ export function TreeViewedMenu({
 export function TreeSymbolMenu({
   context,
   label,
+  what,
   count,
   viewed,
   onSetViewed,
@@ -110,6 +111,8 @@ export function TreeSymbolMenu({
   context: ContextMenuOpenContext;
   /** What the menu acts on, for its name: "function flush". */
   label: string;
+  /** What the actions name, in place of "symbol": "top-level changes". */
+  what?: string;
   /** How many symbols it marks: more than one for a context row. */
   count: number;
   /** How many of them are viewed now. */
@@ -122,7 +125,7 @@ export function TreeSymbolMenu({
     setEntryMenuOpen(current, true);
     return () => setEntryMenuOpen(current, false);
   }, []);
-  const noun = count === 1 ? 'symbol' : `${count} symbols`;
+  const noun = what ?? (count === 1 ? 'symbol' : `${count} symbols`);
   const run = (value: boolean) => {
     context.close();
     onSetViewed(value);

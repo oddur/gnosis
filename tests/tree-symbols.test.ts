@@ -6,7 +6,7 @@ import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import type { GapHunk } from '../lib/diff-gaps';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { changedSymbols } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, changedSymbols, outlineSummary } from '../lib/symbol-outline';
 import {
   changedIds,
   matchingSymbols,
@@ -15,6 +15,7 @@ import {
   readingSymbol,
   symbolTree,
   topLevelChanges,
+  topLevelSymbol,
   type TreeSymbolNode,
 } from '../lib/tree-symbols';
 import { FILE_MARK, NAME_SLASH, rowCodes, symbolRowKey, symbolTreePaths, type FileSymbols } from '../lib/tree-symbol-paths';
@@ -111,7 +112,10 @@ void test('changes outside every definition make the first row, and the rows add
   const { hunks, definitions, all } = await file();
   const top = topLevelChanges(hunks, definitions);
   // A multi-line import reads as imports.
-  assert.deepEqual(top, { added: 3, deleted: 0, imports: true });
+  assert.ok(top);
+  assert.deepEqual({ added: top.added, deleted: top.deleted, imports: top.imports }, { added: 3, deleted: 0, imports: true });
+  assert.equal(top.lines.length, 3, 'Each changed top-level line is named, for the scrolled-through ticks');
+  assert.deepEqual(top.first, { side: 'after', line: Number(top.lines[0].slice(1)) });
   const sum = (nodes: readonly TreeSymbolNode[]): [number, number] =>
     nodes.reduce<[number, number]>((total, node) => {
       const [a, d] = sum(node.children);
@@ -123,8 +127,23 @@ void test('changes outside every definition make the first row, and the rows add
   assert.equal(deleted + top.deleted, changed.filter((row) => row.type === '-').length);
   // Top-level code that is not an import is "Top level".
   const code = topLevelChanges(hunksOf(['const a = 1;'], ['const a = 2;']), { after: [], before: [] });
-  assert.deepEqual(code, { added: 1, deleted: 1, imports: false });
+  assert.deepEqual(code, { added: 1, deleted: 1, imports: false, lines: ['b1', 'a1'], first: { side: 'before', line: 1 } });
   assert.equal(topLevelChanges(hunksOf(['x'], ['x']), { after: [] }), undefined);
+  // Quiet lines are left out as the outline leaves them out; all quiet is none.
+  const quiet = (side: 'before' | 'after') => side === 'before';
+  assert.deepEqual(topLevelChanges(hunksOf(['const a = 1;'], ['const a = 2;']), { after: [], before: [] }, quiet), {
+    added: 1,
+    deleted: 0,
+    imports: false,
+    lines: ['a1'],
+    first: { side: 'after', line: 1 },
+  });
+  assert.equal(topLevelChanges(hunksOf(['const a = 1;'], ['const a = 2;']), { after: [], before: [] }, () => true), undefined);
+  // As an outline entry: ticked under its own id, going to its first changed line, and named by no summary.
+  const entry = topLevelSymbol(code);
+  assert.deepEqual([entry.id, entry.change, entry.side, entry.definition.name, entry.definition.start], [TOP_LEVEL_ID, 'modified', 'before', 'Top level', 1]);
+  assert.equal(outlineSummary([entry]), 'No functions or classes changed');
+  assert.equal(topLevelSymbol({ ...code, deleted: 0 }).change, 'added');
 });
 
 void test('an added class folds its methods; quiet and moved symbols say so', async () => {
@@ -182,7 +201,7 @@ void test('paths: files keep the diff order, folders flatten as Pierre does, fil
   const nodes = symbolTree(all);
   const keys = ['a/b/c/x.ts', 'a/b/c/y.json', 'lib/store.ts', 'one/only.ts', 'readme.md'];
   const symbols = new Map<string, FileSymbols>([
-    ['lib/store.ts', { state: 'ready', nodes, top: { added: 1, deleted: 0, imports: true } }],
+    ['lib/store.ts', { state: 'ready', nodes, top: { added: 1, deleted: 0, imports: true, lines: ['a2'], first: { side: 'after', line: 2 } } }],
     ['a/b/c/x.ts', { state: 'loading' }],
     ['one/only.ts', { state: 'none', reason: 'Too large to list symbols' }],
   ]);
@@ -212,6 +231,8 @@ void test('paths: files keep the diff order, folders flatten as Pierre does, fil
   const flush = layout.symbolPaths.get(symbolRowKey('lib/store.ts', nodes[0].children[0].id));
   assert.ok(flush);
   assert.equal(layout.rows.get(flush)?.type, 'symbol');
+  // The Imports row is found by its review id, as a symbol's row is.
+  assert.equal(layout.rows.get(layout.symbolPaths.get(symbolRowKey('lib/store.ts', TOP_LEVEL_ID)) ?? '')?.type, 'top');
   // A directory is known by what stays the same, for keeping it open across rebuilds.
   assert.ok(layout.directories.has(symbolRowKey('lib/store.ts', nodes[0].id)));
   assert.ok(layout.directories.has('lib/store.ts'));

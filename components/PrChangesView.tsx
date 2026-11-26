@@ -38,10 +38,10 @@ import { ChangesSymbolTree } from './ChangesSymbolTree';
 import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported, type TreeSymbolSource } from '../lib/use-tree-symbols';
 import { stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
-import { readingSymbol } from '../lib/tree-symbols';
+import { readingSymbol, topLevelSymbol } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import { toast } from './ui/toast';
-import type { ChangedSymbol } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
 import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
 import { patchBounds } from '../lib/chat-citations';
@@ -601,7 +601,9 @@ export function PrChangesView({
     const row = peekTreeCursor();
     if (row && row.at > at && visible.some((e) => e.key === row.key)) return row;
     const known = place && treeSymbolsSupported(entry, codeSettings) ? peekTreeSymbols({ fileKey, snapshot: entry.snapshot, file: entry.file }, codeSettings, noiseFilter) : undefined;
-    return { key: entry.key, id: known?.state === 'ready' ? readingSymbol(known.nodes, place) : undefined };
+    if (known?.state !== 'ready') return { key: entry.key };
+    // Outside every definition: the file's top-level changes, when it has them.
+    return { key: entry.key, id: place?.length ? readingSymbol(known.nodes, place) : known.top ? TOP_LEVEL_ID : undefined };
   };
   async function stepSymbol(direction: 1 | -1) {
     const run = ++navRun.current;
@@ -634,10 +636,11 @@ export function PrChangesView({
           return;
         }
         if (step.kind === 'go') {
-          const symbol = step.node.symbol;
+          // A symbol, or the file's top-level changes, which go to their first changed line.
+          const symbol = step.node?.symbol ?? (step.top && topLevelSymbol(step.top));
           if (!symbol) return;
-          navCursor.current = { key: step.key, id: step.node.id, at: Date.now() };
-          setTreeReveal((previous) => ({ key: step.key, id: step.node.id, nonce: (previous?.nonce ?? 0) + 1 }));
+          navCursor.current = { key: step.key, id: step.id, at: Date.now() };
+          setTreeReveal((previous) => ({ key: step.key, id: step.id, nonce: (previous?.nonce ?? 0) + 1 }));
           goToSymbol(step.key, symbol);
           return;
         }

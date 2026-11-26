@@ -163,7 +163,7 @@ function peekFileSymbols(
         }
         return noiseLabel(kinds);
       }),
-      top: topLevelChanges(gapHunks, fileDefinitions),
+      top: treeTop(gapHunks, fileDefinitions, quietLines),
     },
   };
   made.delete(fileKey);
@@ -225,6 +225,17 @@ export async function loadTreeSymbols(
     if (outcome.kind === 'late') return { state: 'loading' };
   }
   return peekFileSymbols(source, settings, filter, undefined).value;
+}
+
+/** A file's top-level changes, marked quiet when every one of them is a quiet line, as a quiet symbol is. */
+function treeTop(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  quiet: ReadonlySet<string> | undefined
+) {
+  const top = topLevelChanges(hunks, definitions);
+  if (!top || !quiet) return top;
+  return topLevelChanges(hunks, definitions, (side, line) => quiet.has(`${side[0]}${line}`)) ? top : { ...top, quiet: true };
 }
 
 /**

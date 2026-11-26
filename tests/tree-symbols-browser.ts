@@ -13,8 +13,9 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  * - Clicking the file's name opens it; only its chevron expands and collapses it.
  * - Clicking a symbol scrolls the diff to it and lights its row.
  * - V marks the symbol Viewed: the file's outline ticks it, and the file itself stays unviewed.
- * - The file row then shows its progress, 1/3, and its folder the sum of what is known; all viewed shows ✓ 3/3, and
- *   the file stays unviewed.
+ * - The file row then shows its progress, 1/4 (Imports counts as one), as the outline does, and its folder the sum of
+ *   what is known; V on Imports ticks it in the tree and the outline; all viewed shows ✓ 4/4, and the file stays
+ *   unviewed.
  * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
  *   the end a notice says there are none after it.
  * - Search matches a symbol's name.
@@ -134,9 +135,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'The file stays open');
 
     // ── The file row shows how many of its symbols are viewed; its folder sums what is known ──
-    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='1/3'`);
+    // The file's top-level changes (Imports) count as one more: flush, gone, added and Imports.
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='1/4'`);
+    const outlineProgress = () => js<string>(`document.querySelector(${JSON.stringify(fileRow + ' .diff-outline-end')})?.textContent.trim()??''`);
+    await wait(`document.querySelector(${JSON.stringify(fileRow + ' .diff-outline-end')})?.textContent.trim()==='1/4 viewed'`);
     // tasks.ts counts towards the folder once its symbols are known (the prefetch may not have read it yet).
-    await wait("/^1\\/(3|5)$/.test(window.treeRows().find(r=>r.name==='symbols')?.decoration??'')");
+    await wait("/^1\\/(4|6)$/.test(window.treeRows().find(r=>r.name==='symbols')?.decoration??'')");
 
     // ── n and Shift+N: the next and previous unviewed symbol, across files ──
     const press = (key: string) =>
@@ -171,13 +175,16 @@ void app.whenReady().then(async () => {
     await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed symbols after this'))");
     assert.equal((await rows()).find((r) => r.name === 'stop')?.lit, true, 'Nothing wraps around');
 
-    // ── Every symbol viewed: a check on the file, which stays unviewed ──
-    for (const symbol of ['gone', 'added']) {
+    // ── Every symbol viewed, Imports too: a check on the file, which stays unviewed ──
+    for (const symbol of ['Imports', 'gone', 'added']) {
       await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='Viewed'`);
     }
-    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='✓ 3/3'`);
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='✓ 4/4'`);
+    // The outline counts the same, Imports included, and offers to mark the file.
+    await wait(`/^All viewed\\s*Mark file viewed$/.test(document.querySelector(${JSON.stringify(fileRow + ' .diff-outline-end')})?.textContent.trim()??'')`);
+    console.log('Outline after every tick:', await outlineProgress());
     assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'The file stays open, not Viewed');
 
     // ── Search matches a symbol's name ──
