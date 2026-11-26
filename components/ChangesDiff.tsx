@@ -966,7 +966,7 @@ function followReader(
   scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined,
   file: string,
   /** Hears the definitions around the reader's line whenever they change: the Changes tree follows them. */
-  onPlace?: (chain: readonly SyntaxDefinition[]) => void
+  onPlace?: (chain: readonly SyntaxDefinition[], line?: string) => void
 ): boolean {
   const where = bar.querySelector<HTMLElement>('.diff-gap-where');
   const section = bar.parentElement;
@@ -992,7 +992,7 @@ function followReader(
   const key = `${point.side}:${number}:${scopeKey}`;
   // Told on every look, not only when the place changes: a header that pins again on the line it left must say so
   // again, after the place was cleared while nothing was pinned. The listener drops repeats.
-  if (chain) onPlace?.(chain);
+  if (chain) onPlace?.(chain, `${point.side === 'before' ? 'b' : 'a'}${point.line}`);
   if (bar.getAttribute('data-live-key') === key) return true;
   bar.setAttribute('data-live-key', key);
   const lineSlot = bar.querySelector('.diff-gap-live-line');
@@ -1976,7 +1976,7 @@ export function ChangesDiff<A>({
     let frame = 0;
     let listening = false;
     const treeKey = latestSymbolKey.current;
-    const place = treeKey ? (chain: readonly SyntaxDefinition[]) => setReadingPlace(treeKey, chain) : undefined;
+    const place = treeKey ? (chain: readonly SyntaxDefinition[], line?: string) => setReadingPlace(treeKey, chain, line) : undefined;
     // Frames left to look again for a place a probe could not name (MISSED_PROBES).
     let retries = 0;
     const probe = () => {

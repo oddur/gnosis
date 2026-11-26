@@ -259,24 +259,25 @@ export interface ReviewItem {
   id: string;
 }
 /**
- * The item `V` ticks, in order: the one the last `V`, `n` or click went to, while it is still the lit (or held) one;
- * else the focused tree row, when it is a review item or a file; else the review item under the reading position.
- * Else none: `V` then ticks nothing, and only goes to the next unviewed item. Never an item the reader was not taken
- * to and is not on.
+ * The item `V` ticks: the one the reader was taken to (by V, n, Shift+V or a tree row), until they move on their own
+ * (`moved`: a wheel, a touch, the pointer or a scroll key in the diff); else the focused tree row, when it is a review
+ * item or a file; else the review item under the reading position. Else none: `V` then ticks nothing, and only goes to
+ * the next unviewed item. Never an item the reader was not taken to and is not on. Where the reading place says the
+ * reader is does not matter while a target holds: a jump to a top-level line between two functions lands with one of
+ * them named by the pinned crumb, which is not what the reader was taken to.
  */
 export function currentItem({
-  last,
-  lit,
+  target,
+  moved = false,
   focused,
   reading,
 }: {
-  last?: ReviewItem;
-  /** The item the tree lights now (held or followed), or the selected file when it has no symbols. */
-  lit?: ReviewItem;
+  target?: ReviewItem;
+  moved?: boolean;
   focused?: ReviewItem;
   reading?: ReviewItem;
 }): ReviewItem | undefined {
-  if (last && lit && last.key === lit.key && last.id === lit.id) return last;
+  if (target && !moved) return target;
   return focused ?? reading;
 }
 
@@ -285,7 +286,15 @@ export function currentItem({
  * itself; a container is its Body when it has one (the reader is in its own lines), else none; the file's own lines
  * are its top level when it has one.
  */
-export function readingItem(nodes: readonly TreeSymbolNode[], top: TopLevelChanges | undefined, id: string | undefined, outside: boolean): string | undefined {
+export function readingItem(
+  nodes: readonly TreeSymbolNode[],
+  top: TopLevelChanges | undefined,
+  id: string | undefined,
+  outside: boolean,
+  /** The line at the reading position (`a12`, `b7`): a changed top-level line is the top level's, whatever is named. */
+  line?: string
+): string | undefined {
+  if (top && line && top.lines.includes(line)) return TOP_LEVEL_ID;
   if (outside) return top ? TOP_LEVEL_ID : undefined;
   if (id === undefined) return undefined;
   const node = treeOrder(nodes).find((item) => item.id === id);
@@ -321,4 +330,13 @@ export function createTickStack() {
       return ticks.length;
     },
   };
+}
+
+/**
+ * What V and the Viewed menu tick for a tree row: a symbol row's review items (a leaf or Body itself, everything under
+ * a container), or exactly the file's top level for its Imports or Top level row.
+ */
+export function rowReviewIds(row: { type: 'symbol'; node: TreeSymbolNode } | { type: 'top' } | { type: string }): string[] {
+  if (row.type === 'top') return [TOP_LEVEL_ID];
+  return row.type === 'symbol' && 'node' in row ? reviewIds(row.node) : [];
 }

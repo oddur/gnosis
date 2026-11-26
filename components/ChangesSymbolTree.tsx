@@ -11,10 +11,10 @@ import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
 import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
-import { setLitItem, setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
+import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { FILE_STOP, folderProgress, progressLabel, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { FILE_STOP, folderProgress, progressLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -325,7 +325,11 @@ export function ChangesSymbolTree({
     const timer = setTimeout(() => setHeld(undefined), HOLD_MS);
     return () => clearTimeout(timer);
   }, [held, arrived]);
-  const readingPath = held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path;
+  // The item the reader was taken to stays lit until they move on their own, whatever the pinned crumb names: a jump to
+  // a top-level line between two functions lands with one of them named. Then the light follows the reader.
+  const target = useReviewTarget();
+  const targetPath = target && target.key === selected && target.id !== FILE_STOP ? layout.symbolPaths.get(symbolRowKey(target.key, target.id)) : undefined;
+  const readingPath = targetPath ?? (held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path);
   applyStatus.current = () => {
     const status: GitStatusEntry[] = [];
     for (const e of entries) {
@@ -337,12 +341,6 @@ export function ChangesSymbolTree({
     model.setGitStatus(status);
   };
   useEffect(() => applyStatus.current(), [model, readingPath]);
-  // The lit item, for `V` (PrChangesView): held until the diff arrives, then the one the reader is in.
-  const litId = held && !arrived && held.key === selected ? held.id : live.id;
-  useEffect(() => {
-    setLitItem(litId ? { key: selected, id: litId } : undefined);
-  }, [selected, litId]);
-  useEffect(() => () => setLitItem(undefined), []);
   const searched = useRef<unknown>(undefined);
   useEffect(() => {
     // Rows that came in during a search (a file's symbols landed) are matched too: Pierre matches the rows it had.
@@ -442,6 +440,8 @@ export function ChangesSymbolTree({
       if (symbol) {
         setHeld({ key: row.key, id: row.node.id });
         setTreeCursor(row.key, row.node.id);
+        // The row the reader chose is where they are, until they move on (lib/tree-symbol-sync.ts).
+        setReviewTarget(reviewed(row.node) ? { key: row.key, id: row.node.id } : undefined);
         onGoToSymbol(row.key, symbol);
       }
       return;
@@ -450,14 +450,17 @@ export function ChangesSymbolTree({
       // The file's top-level changes go to their first changed line, as a symbol row goes to its symbol.
       setHeld({ key: row.key, id: TOP_LEVEL_ID });
       setTreeCursor(row.key, TOP_LEVEL_ID);
+      setReviewTarget({ key: row.key, id: TOP_LEVEL_ID });
       const symbol = rowDestination(row.top);
       if (symbol) onGoToSymbol(row.key, symbol);
       return;
     }
+    // A file chosen: a file without symbols is one stop, the reader's target; a file with symbols is no item itself.
+    setReviewTarget(row.type === 'file' && !row.folder ? { key: row.key, id: FILE_STOP } : undefined);
     current.current.onSelect(row.key);
   };
   /** What V and the Viewed menu tick for a row: a symbol's changed symbols, or the file's top-level changes. */
-  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? reviewIds(row.node) : row?.type === 'top' ? [TOP_LEVEL_ID] : []);
+  const symbolIds = (row: TreeRow | undefined) => (row ? rowReviewIds(row) : []);
   const markSymbols = (row: TreeRow | undefined, viewed?: boolean) => {
     if (row?.type !== 'symbol' && row?.type !== 'top') return;
     const source = supported.get(row.key);
@@ -560,8 +563,12 @@ export function ChangesSymbolTree({
           const row = rowAt(model.getFocusedPath());
           if (row && row.type !== 'folder') onPreview?.(row.key);
           // A symbol row moved to with the keys is where `n` starts from, as one chosen is.
-          if ((row?.type === 'symbol' || row?.type === 'top') && TREE_MOVES.has(event.key))
-            setTreeCursor(row.key, row.type === 'top' ? TOP_LEVEL_ID : row.node.id);
+          if ((row?.type === 'symbol' || row?.type === 'top') && TREE_MOVES.has(event.key)) {
+            const id = row.type === 'top' ? TOP_LEVEL_ID : row.node.id;
+            setTreeCursor(row.key, id);
+            // Moving to a row with the keys is choosing it: a review item becomes the target, a container ends it.
+            setReviewTarget(row.type === 'top' || reviewed(row.node) ? { key: row.key, id } : undefined);
+          }
         }}
         onKeyDownCapture={(event) => {
           if (event.nativeEvent.composedPath().some((node) => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;

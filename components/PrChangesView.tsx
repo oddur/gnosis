@@ -35,7 +35,7 @@ import {
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { hasSymbolTarget, peekLitItem, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
+import { hasSymbolTarget, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewTarget } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported } from '../lib/use-tree-symbols';
 import {
   FILE_STOP,
@@ -75,6 +75,8 @@ import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { countRender } from '../lib/render-count';
 import { openDiffComments } from '../lib/response-needed';
 
+/** Keys that scroll the diff when it has focus: pressing one there is the reader moving on their own. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 /** How long the place `n` went to stays where the next `n` starts, while the diff scrolls there. */
 const NAV_CURSOR_MS = 1_500;
 /** How long `n` waits for one file's symbols to be read and parsed. */
@@ -616,6 +618,9 @@ export function PrChangesView({
   const navCursor = useRef<ReviewPlace & { at: number }>(undefined);
   const navRun = useRef(0);
   const navFrom = (): ReviewPlace | undefined => {
+    // The item the reader was taken to, until they move on their own.
+    const target = peekReviewTarget();
+    if (target && visible.some((e) => e.key === target.key)) return target;
     const now = Date.now();
     const cursor = navCursor.current;
     if (cursor && now - cursor.at < NAV_CURSOR_MS && visible.some((e) => e.key === cursor.key)) return cursor;
@@ -644,6 +649,7 @@ export function PrChangesView({
   /** Goes to a file without symbols, a stop of its own: selected, at its top, its row lit by the selection. */
   function goToFileStop(key: string, focus: boolean) {
     navCursor.current = { key, id: FILE_STOP, at: Date.now() };
+    setReviewTarget({ key, id: FILE_STOP });
     setTreeReveal((previous) => ({ key, id: FILE_STOP, nonce: (previous?.nonce ?? 0) + 1, focus }));
     void select(key);
     if (focus) keepFocusInWorkspace();
@@ -653,6 +659,7 @@ export function PrChangesView({
     const symbol = target && rowDestination(target);
     if (!symbol) return;
     navCursor.current = { key, id, at: Date.now() };
+    setReviewTarget({ key, id });
     setTreeReveal((previous) => ({ key, id, nonce: (previous?.nonce ?? 0) + 1, focus }));
     goToSymbol(key, symbol);
     if (focus) keepFocusInWorkspace();
@@ -727,34 +734,45 @@ export function PrChangesView({
     toast.add({ title: direction === 1 ? 'No unviewed items after this' : 'No unviewed items before this', timeout: NOTICE_MS });
   /**
    * V (Changes, symbol rows on): ticks the item the reader is on and goes on to the next unviewed one, as `n` does.
-   * What it ticks (lib/tree-symbol-review.ts `currentItem`): the item the last V, `n` or click went to while the tree
-   * still lights it; else the item under the reading position; else nothing, and V only goes on. On a tree row (its
-   * own V, `intent`), the row's file or the review items under it. Each V is kept for Shift+V to take back.
+   * What it ticks (lib/tree-symbol-review.ts `currentItem`): the item V, `n`, Shift+V or a tree row took the reader to,
+   * until they move on their own (lib/tree-symbol-sync.ts `readerMoved`); else the item under the reading position;
+   * else nothing, and V only goes on. On a tree row (its own V, `intent`), the row's file or the review items under
+   * it. Each V is kept for Shift+V to take back.
    */
   const ticks = useRef(createTickStack());
-  const lastTarget = (): ReviewItem | undefined => {
-    const nav = navCursor.current;
-    const row = peekTreeCursor();
-    const newest = nav && row ? (nav.at >= row.at ? nav : row) : (nav ?? row);
-    return newest?.id === undefined ? undefined : { key: newest.key, id: newest.id };
-  };
   const currentReviewItem = (): ReviewItem | undefined => {
-    const last = lastTarget();
-    const fresh = !!navCursor.current && Date.now() - navCursor.current.at < NAV_CURSOR_MS;
-    const file = entry && reviewFiles([entry])[0];
-    // The tree lights an item; a file without symbols is lit by its selection; with no tree, a jump just made counts.
-    const lit =
-      file && (!file.symbols || file.symbols.state === 'none')
-        ? { key: file.key, id: FILE_STOP }
-        : (peekLitItem() ?? (fresh ? last : undefined));
+    const target = peekReviewTarget();
     let reading: ReviewItem | undefined;
-    if (entry && file?.symbols?.state === 'ready') {
-      const { place } = peekReadingPlace(file.fileKey);
-      const id = place ? readingItem(file.symbols.nodes, file.symbols.top, readingSymbol(file.symbols.nodes, place), place.length === 0) : undefined;
+    const file = entry && reviewFiles([entry])[0];
+    if (!target && entry && file?.symbols?.state === 'ready') {
+      const { place, line } = peekReadingPlace(file.fileKey);
+      const id = place ? readingItem(file.symbols.nodes, file.symbols.top, readingSymbol(file.symbols.nodes, place), place.length === 0, line) : undefined;
       if (id) reading = { key: entry.key, id };
     }
-    return currentItem({ last, lit, reading });
+    return currentItem({ target, reading });
   };
+  // The reader moving on their own ends the target: their wheel, touch or pointer in the diff, or a key that scrolls
+  // it. The jumps' own scrolls come with none of these, so they never end it; neither does the reading place changing.
+  useEffect(() => {
+    const root = workspace.current;
+    if (!root) return;
+    const inDiff = (event: Event) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('commit-diff-stream'));
+    const moved = (event: Event) => {
+      if (inDiff(event)) readerMoved();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && inDiff(event)) readerMoved();
+    };
+    const types = ['wheel', 'touchstart', 'pointerdown'] as const;
+    for (const type of types) root.addEventListener(type, moved, { capture: true, passive: true });
+    root.addEventListener('keydown', key, { capture: true });
+    return () => {
+      for (const type of types) root.removeEventListener(type, moved, { capture: true });
+      root.removeEventListener('keydown', key, { capture: true });
+      // Leaving Changes leaves no target behind.
+      readerMoved();
+    };
+  }, []);
   /** Ticks an item, and says what that did, or undefined when it was ticked already. */
   async function tickItem(key: string, ids: readonly string[] | 'file'): Promise<ReviewTick | undefined> {
     const target = entries.find((e) => e.key === key);

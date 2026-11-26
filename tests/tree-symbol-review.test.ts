@@ -5,7 +5,7 @@ import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
 import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline';
 import { symbolTree } from '../lib/tree-symbols';
-import { FILE_STOP, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { FILE_STOP, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -100,25 +100,43 @@ void test('n and Shift+N walk unviewed items in the tree order across files, a f
   assert.equal(itemsLeft([{ key: 'h.ts', viewed: false, symbols: { state: 'loading' } }], () => false), 1, 'A file still loading has something left');
 });
 
-void test('what V ticks: the item it went to while that is lit, else the one under the reading position, else nothing', () => {
-  const a = { key: 'a.ts', id: 'f' };
-  const b = { key: 'a.ts', id: 'g' };
-  // The last jump's item, still lit.
-  assert.deepEqual(currentItem({ last: a, lit: a, reading: b }), a);
-  // The reader scrolled on: the light follows them, and V ticks what they are reading.
-  assert.deepEqual(currentItem({ last: a, lit: b, reading: b }), b);
-  // A focused review row comes before the reading position.
-  assert.deepEqual(currentItem({ last: a, lit: b, focused: { key: 'b.json', id: FILE_STOP }, reading: b }), { key: 'b.json', id: FILE_STOP });
+void test('what V ticks: the item the reader was taken to, until they move on their own; then the one they read', () => {
+  const top = { key: 'a.ts', id: TOP_LEVEL_ID };
+  const neighbour = { key: 'a.ts', id: 'function:g' };
+  // A jump to the top level lands with the neighbouring function named by the pinned crumb: the target still holds.
+  assert.deepEqual(currentItem({ target: top, reading: neighbour }), top);
+  // The reader scrolled on their own: what they read is current.
+  assert.deepEqual(currentItem({ target: top, moved: true, reading: neighbour }), neighbour);
+  // With no target, a focused review row comes before the reading position.
+  assert.deepEqual(currentItem({ focused: { key: 'b.json', id: FILE_STOP }, reading: neighbour }), { key: 'b.json', id: FILE_STOP });
   // Nothing taken to, and nothing under the reader: V ticks nothing.
-  assert.equal(currentItem({ last: a }), undefined);
   assert.equal(currentItem({}), undefined);
-  // The reading position's item: a leaf, a container's Body, the top level, never a container.
-  const nodes = symbolTree([changed('class:C'), changed('class:C>m'), changed('function:f')]);
+  assert.equal(currentItem({ target: top, moved: true }), undefined);
+});
+
+void test('the item under the reading position: a leaf, a Body, the top level, never a neighbour of a top-level line', () => {
+  const nodes = symbolTree([changed('class:C'), changed('class:C>m'), changed('function:f'), changed('function:g')]);
   assert.equal(readingItem(nodes, undefined, 'class:C>m', false), 'class:C>m');
+  // In the class's own lines: its Body.
   assert.equal(readingItem(nodes, undefined, 'class:C', false), bodyId('class:C'));
   assert.equal(readingItem(symbolTree([changed('class:C'), changed('class:C>m')], undefined, [], undefined, new Set(['class:C'])), undefined, 'class:C', false), undefined, 'A container with no Body: nothing');
-  assert.equal(readingItem(nodes, top(), undefined, true), TOP_LEVEL_ID);
+  // Outside every definition: the top level.
+  const imports = top();
+  assert.equal(readingItem(nodes, imports, undefined, true), TOP_LEVEL_ID);
   assert.equal(readingItem(nodes, undefined, undefined, true), undefined);
+  // A changed top-level line between f and g, with g named by the place: the top level's, not g's.
+  assert.equal(readingItem(nodes, imports, 'function:g', false, 'a40'), TOP_LEVEL_ID);
+  assert.equal(readingItem(nodes, imports, 'function:g', false, 'a41'), 'function:g', 'A line of g is g');
+});
+
+void test("a tree row's V ticks exactly its item: the top level, a Body, a leaf, or all under a container", () => {
+  const nodes = symbolTree([changed('class:C'), changed('class:C>m')]);
+  const [body, m] = nodes[0].children;
+  assert.deepEqual(rowReviewIds({ type: 'top' }), [TOP_LEVEL_ID]);
+  assert.deepEqual(rowReviewIds({ type: 'symbol', node: body }), [bodyId('class:C')]);
+  assert.deepEqual(rowReviewIds({ type: 'symbol', node: m }), ['class:C>m']);
+  assert.deepEqual(rowReviewIds({ type: 'symbol', node: nodes[0] }), [bodyId('class:C'), 'class:C>m']);
+  assert.deepEqual(rowReviewIds({ type: 'file' }), []);
 });
 
 void test('Shift+V walks back through the V presses, newest first', () => {
