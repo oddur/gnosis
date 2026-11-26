@@ -56,6 +56,13 @@ export interface TreeSymbolNode {
   /** Where the symbol moved from or to (#398), in words for its tooltip. */
   moved?: string;
   /**
+   * The old copy of a symbol that moved (or was renamed) and is reviewed at its new copy (`moveInto` there): no item
+   * of its own. It reads viewed with the new copy (`movedMirrorId`), and goes to it.
+   */
+  moveAway?: MoveMark;
+  /** The new copy of a moved or renamed symbol: one item for the move, its tick also the old copy's. */
+  moveInto?: MoveMark;
+  /**
    * Its own changed lines are all trivial (blank, brackets, quiet; lib/symbol-outline.ts `trivialSymbols`): with a
    * changed symbol under it, it is a context row for review (lib/tree-symbol-review.ts).
    */
@@ -108,6 +115,8 @@ export function symbolTree(
       deleted: symbol.deleted,
       quiet: shownIds.has(symbol.id) ? undefined : quietLabel(symbol),
       moved: move && moveWords(move),
+      moveAway: move?.side === 'before' ? move : undefined,
+      moveInto: move?.side === 'after' ? move : undefined,
       trivial: trivial.has(symbol.id) || undefined,
     };
     const known = nodes.get(symbol.id);
@@ -121,7 +130,8 @@ export function symbolTree(
   }
   // A container (a symbol with a changed symbol under it) is no review item of its own: its own changed lines, unless
   // trivial, are a Body row first under it, as the file's top level is first under the file (lib/tree-symbol-review.ts).
-  const changedUnder = (node: TreeSymbolNode): boolean => node.children.some((child) => (!!child.symbol && !child.quiet) || changedUnder(child));
+  const changedUnder = (node: TreeSymbolNode): boolean =>
+    node.children.some((child) => (!!child.symbol && !child.quiet && !child.moveAway) || changedUnder(child));
   const addBodies = (nodes: TreeSymbolNode[]) => {
     for (const node of nodes) {
       addBodies(node.children);
@@ -132,6 +142,22 @@ export function symbolTree(
   };
   addBodies(roots);
   return roots;
+}
+
+/**
+ * A moved symbol is one review item, its new copy (#398's matcher reports only confident moves: an ambiguous one,
+ * such as one source with several destinations, is no move, and both copies stay items). Ticking the new copy ticks
+ * the old one too, under this id in the old file: its line there, as the move names it from both ends.
+ */
+export const MOVED_PREFIX = '@moved:';
+export const movedMirrorId = (start: number) => `${MOVED_PREFIX}${start}`;
+/** The symbols that are old copies of moves, by id: `changedSymbols()`'s removed symbols the marks say moved away. */
+export function movedAwayIds(symbols: readonly ChangedSymbol[], marks: readonly MoveMark[]): Set<string> {
+  return new Set(
+    symbols
+      .filter((symbol) => marks.some((mark) => mark.side === 'before' && symbol.side === 'before' && mark.start === symbol.definition.start && mark.name === symbol.definition.name))
+      .map((symbol) => symbol.id)
+  );
 }
 
 /** A move in words, for a symbol row's tooltip: "Moved from lib/store.ts, line 12", "Renamed from flushAll". */

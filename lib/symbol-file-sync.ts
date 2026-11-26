@@ -20,6 +20,10 @@ import { fileAfterTick } from './tree-symbol-review';
 export interface CountedSymbols {
   ids: readonly string[];
   prints?: Readonly<Record<string, string>>;
+  /** Moves (lib/tree-symbol-review.ts `moveMirrors`): each new copy's old copy, which its tick ticks too. */
+  into?: Readonly<Record<string, { file: string; id: string }>>;
+  /** The mirror ids of this file's old copies: its Viewed follows them as well as its items. */
+  away?: readonly string[];
 }
 const counters = new Map<string, () => CountedSymbols | undefined>();
 const syncListeners = new Set<() => void>();
@@ -49,7 +53,8 @@ export function useSymbolFileSync(fileKey: string): boolean {
 /** Ticks or unticks symbols of a file, and marks or unmarks the file as its ticks then say. */
 export async function markReviewSymbols(fileKey: string, ids: readonly string[], viewed: boolean): Promise<boolean> {
   const known = counters.get(fileKey)?.();
-  const counted = known?.ids;
+  // The file follows its items and its moved-away old copies, which read viewed with their new copies.
+  const counted = known && [...known.ids, ...(known.away ?? [])];
   // Each tick saves what its item reads, so it can carry to the file's next revision.
   const prints = known?.prints;
   const fileViewed = isFileViewed(fileKey);
@@ -65,6 +70,19 @@ export async function markReviewSymbols(fileKey: string, ids: readonly string[],
   } else if (plan.file === 'unmark') {
     releaseOne(fileKey);
     saved.push(markFileViewed(fileKey, false));
+  }
+  // A moved symbol's tick is its old copy's too, in the old file, which then follows its own items and old copies:
+  // a file whose content all moved is Viewed once every new copy is. The reader is not on it: no hold-open.
+  for (const id of ids) {
+    const mirror = known?.into?.[id];
+    if (!mirror) continue;
+    saved.push(markSymbolsViewed(mirror.file, [mirror.id], viewed));
+    const old = counters.get(mirror.file)?.();
+    if (!old) continue;
+    const all = [...old.ids, ...(old.away ?? [])];
+    const done = all.length > 0 && all.every((other) => isSymbolViewed(mirror.file, other));
+    if (viewed && done && !isFileViewed(mirror.file)) saved.push(markFileViewed(mirror.file, true));
+    if (!viewed && isFileViewed(mirror.file)) saved.push(markFileViewed(mirror.file, false));
   }
   return (await Promise.all(saved)).every(Boolean);
 }

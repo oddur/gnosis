@@ -15,8 +15,8 @@ import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
 import { usePaging } from '../lib/review-paging';
-import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { FILE_STOP, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
+import { FILE_STOP, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -174,7 +174,15 @@ export function ChangesSymbolTree({
   }, [known, supported]);
   // An item V is paging through reads "Reading 40%" until it is ticked (lib/review-paging.ts).
   const pagingNow = usePaging();
-  const progressSignature = `${carried}\n${pagingNow ? `${pagingNow.key}:${pagingNow.id}:${pagingNow.share}` : ''}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
+  // Old copies of moves read viewed with their new copies, in other files: their rows refresh when those are ticked.
+  let movedSignature = '';
+  for (const [key, value] of symbols) {
+    const source = supported.get(key);
+    if (value.state !== 'ready' || !source) continue;
+    for (const node of treeOrder(value.nodes))
+      if (node.moveAway) movedSignature += isSymbolViewed(source.fileKey, movedMirrorId(node.definition.start)) ? '1' : '0';
+  }
+  const progressSignature = `${carried}\n${movedSignature}\n${pagingNow ? `${pagingNow.key}:${pagingNow.id}:${pagingNow.share}` : ''}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
   const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow });
   current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow };
   /** The share seen of the item V is paging through, if it is this row's. */
@@ -252,6 +260,18 @@ export function ChangesSymbolTree({
       const source = current.current.supported.get(row.key);
       // Viewed once every review item under the row is ticked, itself included (lib/tree-symbol-review.ts).
       const done = rolledUp(node, (id) => !!source && current.current.progress.isSymbolViewed(source.fileKey, id), !!entryOf(row.key)?.viewed);
+      if (node.moveAway) {
+        // The old copy of a move: reviewed at its new copy, and viewed with it (lib/tree-symbols.ts `movedMirrorId`).
+        const away = node.moveAway;
+        const seen = !!entryOf(row.key)?.viewed || (!!source && current.current.progress.isSymbolViewed(source.fileKey, movedMirrorId(node.definition.start)));
+        const where = away.sameFile ? `line ${away.other.start}` : `${away.other.diffPath}, line ${away.other.start}`;
+        const text = seen ? '✓ moved' : 'Moved';
+        return {
+          text,
+          parts: [{ text, color: 'var(--muted-foreground)' }],
+          title: `${away.renamed && away.sameFile ? `Renamed to ${away.other.name}` : `Moved to ${where}`}: reviewed there${seen ? ', viewed' : ''}`,
+        };
+      }
       if (!reviewed(node) && !node.quiet) {
         // A container (or a context row): no tick of its own. It reads as viewed once everything under it is, its
         // Body included; its own lines' counts are on its Body row.
@@ -501,6 +521,24 @@ export function ChangesSymbolTree({
   }, [model, layout, selected, reveal?.nonce]);
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;
+    if (row.type === 'symbol' && row.node.moveAway) {
+      // A moved symbol's old copy goes to its new copy, which is the move's one item.
+      const away = row.node.moveAway;
+      const target = current.current.entries.find((e) => e.source?.fileKey === away.other.file);
+      const { other } = away;
+      if (target)
+        onGoToSymbol(target.key, {
+          id: '',
+          change: 'added',
+          definition: { kind: other.kind, name: other.name, label: other.label, crumb: other.label, start: other.start, end: other.end, signatureEnd: other.signatureEnd },
+          side: other.side,
+          parents: [],
+          first: { side: other.side, line: other.start },
+          added: 0,
+          deleted: 0,
+        });
+      return;
+    }
     if (row.type === 'symbol') {
       const symbol = rowDestination(row.node);
       if (symbol) {

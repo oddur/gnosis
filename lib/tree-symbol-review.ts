@@ -1,6 +1,6 @@
 import { TOP_LEVEL_ID } from './symbol-outline';
 import type { FileSymbols } from './tree-symbol-paths';
-import type { TopLevelChanges, TreeSymbolNode } from './tree-symbols';
+import { movedMirrorId, type TopLevelChanges, type TreeSymbolNode } from './tree-symbols';
 
 /**
  * The Changes tree as a review list (Settings › Review, Beta): how many of each file's changed symbols are Viewed, the
@@ -14,7 +14,7 @@ import type { TopLevelChanges, TreeSymbolNode } from './tree-symbols';
  */
 
 /** A changed symbol with a change that shows. */
-const changedNode = (node: TreeSymbolNode) => !!node.symbol && !node.quiet;
+const changedNode = (node: TreeSymbolNode) => !!node.symbol && !node.quiet && !node.moveAway;
 const changedBelow = (node: TreeSymbolNode): boolean => node.children.some((child) => changedNode(child) || changedBelow(child));
 /**
  * A review item: a changed leaf with a change that shows, the file's top level, or a container's Body (its own changed
@@ -364,4 +364,18 @@ export function createTickStack() {
 export function rowReviewIds(row: { type: 'symbol'; node: TreeSymbolNode } | { type: 'top' } | { type: string }): string[] {
   if (row.type === 'top') return [TOP_LEVEL_ID];
   return row.type === 'symbol' && 'node' in row ? reviewIds(row.node) : [];
+}
+
+/**
+ * Moves across the file's items (lib/tree-symbols.ts `movedMirrorId`): each new copy's id with the old copy's file and
+ * mirror id, which its tick also ticks; and the mirror ids of this file's old copies, which its Viewed follows too.
+ */
+export function moveMirrors(nodes: readonly TreeSymbolNode[]): { into: Record<string, { file: string; id: string }>; away: string[] } {
+  const into: Record<string, { file: string; id: string }> = {};
+  const away: string[] = [];
+  for (const node of treeOrder(nodes)) {
+    if (node.moveInto && reviewed(node)) into[node.id] = { file: node.moveInto.other.file, id: movedMirrorId(node.moveInto.other.start) };
+    if (node.moveAway) away.push(movedMirrorId(node.definition.start));
+  }
+  return { into, away };
 }

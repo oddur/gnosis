@@ -2,7 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
-import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbols';
+import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_MOVE_SOURCE, TREE_SYMBOLS_MOVE_TARGET, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbols';
 
 /**
  * The Changes tree's changed symbols (Settings › Review, Beta; components/ChangesSymbolTree.tsx). `?tree-symbols`
@@ -20,6 +20,8 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_NEXT_FILE } fro
  *   ticked, but it stays open while the reader is on it, and collapses once n takes them on to the next file.
  * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
  *   the end a notice says there are none after it.
+ * - A function moved across files is one item, its new copy: the old copy reads "Moved", goes to the new copy, and
+ *   reads "✓ moved" once V ticks the new one.
  * - V on a file without symbols (an SVG) marks it Viewed, and again unviewed.
  * - Reset viewed clears every file and tick of these changes, and its toast's Undo puts them back.
  * - Review with V: with Unviewed only, V from a file's top goes to its first item, then ticks each item and goes on,
@@ -183,7 +185,7 @@ void app.whenReady().then(async () => {
     const atEnd = "[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed items after this'))";
     const litName = () => js<string | undefined>(`window.treeRows().find(r=>r.lit)?.name`);
     const walked: string[] = [];
-    for (let step = 0; step < 20 && !(await js<boolean>(atEnd)); step++) {
+    for (let step = 0; step < 40 && !(await js<boolean>(atEnd)); step++) {
       const before = await litName();
       await press('n');
       await wait(`${atEnd}||window.treeRows().find(r=>r.lit)?.name!==${JSON.stringify(before ?? '')}`);
@@ -224,6 +226,26 @@ void app.whenReady().then(async () => {
     await lit('start');
     // Collapsed, or no longer mounted at all (the stream keeps only rows near the view): either way, not held open.
     await wait(`(()=>{const b=document.querySelector(${JSON.stringify(fileRow + ' .commit-stream-file-body')});return !b||b.hidden})()`);
+
+    // ── A moved function is one item, its new copy; the old copy reads Moved, goes there, and is viewed with it ──
+    const sourceName = TREE_SYMBOLS_MOVE_SOURCE.slice(TREE_SYMBOLS_MOVE_SOURCE.lastIndexOf('/') + 1);
+    const moveRows = () => js<{ decoration: string; level: number }[]>("window.treeRows().filter(r=>r.name==='parseHeader')");
+    await js(`window.treeRow(${JSON.stringify(sourceName)}).querySelector('[data-item-section=content]').click()`);
+    await wait(`window.treeRow(${JSON.stringify(sourceName)})?.getAttribute('aria-expanded')==='true'`);
+    // The match lands once both files are read and fingerprinted.
+    await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='Moved')");
+    console.log('Moved rows:', JSON.stringify(await moveRows()));
+    // Choosing the old copy goes to the new copy.
+    await js("window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&e.querySelector('[data-item-section=decoration]')?.textContent.trim()==='Moved').querySelector('[data-item-section=content]').click()");
+    await wait(`document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file===${JSON.stringify(TREE_SYMBOLS_MOVE_TARGET)}`);
+    // V on the new copy ticks it, and the old copy with it.
+    await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration!=='Moved'&&r.decoration!=='✓ moved')");
+    await js(
+      "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))})()"
+    );
+    if ((await js<string | null>(`window.treeRow(${JSON.stringify(sourceName)})?.getAttribute('aria-expanded')??null`)) === 'false')
+      await js(`window.treeRow(${JSON.stringify(sourceName)}).querySelector('[data-item-section=icon]').click()`);
+    await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')");
 
     // ── V on a file without symbols marks the file, as its header's checkbox does ──
     const pressV = (row: string) =>

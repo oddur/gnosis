@@ -295,7 +295,13 @@ export function visibleSymbols(all: readonly Pick<ChangedSymbol, 'id'>[], shown:
  * no item; its own lines are its Body item in its place, unless they are trivial (`trivial`, from `trivialSymbols`),
  * when they are nothing to read. Leaves stay as they are.
  */
-export function reviewItems(symbols: readonly ChangedSymbol[], trivial: ReadonlySet<string>): ChangedSymbol[] {
+export function reviewItems(
+  all: readonly ChangedSymbol[],
+  trivial: ReadonlySet<string>,
+  /** Old copies of moves (`movedAwayIds`): reviewed at their new copies, no items here. */
+  movedAway: ReadonlySet<string> = new Set()
+): ChangedSymbol[] {
+  const symbols = all.filter((symbol) => !movedAway.has(symbol.id));
   return symbols.flatMap((symbol) => {
     const container = symbols.some((other) => other.id.startsWith(`${symbol.id}>`));
     if (!container) return [symbol];

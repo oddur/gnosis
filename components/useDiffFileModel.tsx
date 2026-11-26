@@ -35,7 +35,7 @@ import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intellig
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols, visibleSymbols } from '../lib/symbol-outline';
-import { topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
+import { movedAwayIds, topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
 import { isUpdated, useCarry } from '../lib/symbol-carry';
 import { progressVersion, useFileProgress } from '../lib/file-view-progress';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
@@ -505,14 +505,15 @@ export function useDiffFileModel({
     const own = all.filter((symbol) => visible.has(symbol.id));
     // The review items, as the Changes tree has them: a container is none; its own lines, unless trivial (a brace or a
     // blank line between its changed methods, or quiet), are its Body item.
-    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, undefined, skip));
+    // A moved symbol is one item, its new copy: the old copy here is none (lib/tree-symbols.ts `movedAwayIds`).
+    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, undefined, skip), movedAwayIds(own, moves?.marks ?? []));
     const lines = changedSymbolLines(baseHunks, fileDefinitions);
     // The lines a scroll must show: the quiet ones are hidden.
     if (lines && quietLines) for (const [id, keys] of lines) lines.set(id, keys.filter((key) => !quietLines.has(key)));
     // A body's lines are its container's own.
     for (const item of items) if (lines && isBody(item)) lines.set(item.id, lines.get(bodyOwner(item.id)) ?? []);
     return { own, top, symbols: top ? [topLevelSymbol(top), ...items] : items, lines };
-  }, [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]);
+  }, [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines, moves]);
   const symbols = listed?.symbols;
   // Each listed entry's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):
   // the same lines the outline counts, quiet ones left out; the top level's wherever in the file they are.

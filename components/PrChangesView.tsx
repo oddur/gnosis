@@ -41,6 +41,7 @@ import {
   FILE_STOP,
   countedIds,
   createTickStack,
+  moveMirrors,
   currentItem,
   itemsLeft,
   readingItem,
@@ -975,7 +976,8 @@ export function PrChangesView({
         if (!treeSymbolsSupported(source, settings)) return undefined;
         const symbols = peekTreeSymbols(source, settings, filter);
         const ids = countedIds(symbols);
-        return ids && { ids, prints: symbols.state === 'ready' ? symbols.prints : undefined };
+        if (!ids || symbols.state !== 'ready') return undefined;
+        return { ids, prints: symbols.prints, ...moveMirrors(symbols.nodes) };
       });
     });
     return () => stops.forEach((stop) => stop());
