@@ -1133,7 +1133,7 @@ export function PrChangesView({
             {treeSymbols && left > 0 && <span className="changes-progress-left"> · {left} left</span>}
             {updated > 0 && (
               <span className="changes-progress-updated" title="Changed since you viewed them, in an earlier revision">
-                {' '}· {updated} updated
+                {' '}· {updated} changed
               </span>
             )}
             {incomplete && ' · available files'}

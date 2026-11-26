@@ -36,6 +36,8 @@ import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
 import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols } from '../lib/symbol-outline';
 import { topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
+import { isUpdated, useCarry } from '../lib/symbol-carry';
+import { progressVersion, useFileProgress } from '../lib/file-view-progress';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
 import type { MoveMark } from '../lib/moved-symbols-store';
@@ -514,6 +516,16 @@ export function useDiffFileModel({
     if (listed.top) lines.set(TOP_LEVEL_ID, listed.top.lines);
     return lines;
   }, [listed]);
+  // The lines of items that changed since the reader viewed them in an earlier revision (lib/symbol-carry.ts): their
+  // hunks' headers say so, in Changes and in Explanation topics alike.
+  const carry = useCarry();
+  // A tick ends an item's Changed: this renders again on ticks.
+  useFileProgress();
+  const changedLines = useMemo(() => {
+    const out = new Set<string>();
+    for (const symbol of symbols ?? []) if (isUpdated(fileKey, symbol.id)) for (const line of symbolLines?.get(symbol.id) ?? []) out.add(line);
+    return out.size ? out : undefined;
+  }, [symbols, symbolLines, fileKey, carry, progressVersion()]);
   // Symbols whose every change is hidden, for the outline's quiet note: definitions only.
   const quietSymbols = useMemo(() => {
     if (!listed || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
@@ -657,6 +669,7 @@ export function useDiffFileModel({
     collapseScope,
     symbols,
     symbolLines,
+    changedLines,
     quietSymbols,
     outlinePending,
     noise: diffNoise,

@@ -377,6 +377,7 @@ export function ReviewDiff({
             markFileLabel,
           }}
           stickyUnder={stickyUnder}
+          changedLines={model.changedLines}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
           lineCount={model.lineCount}
           plainGaps={plainGaps}

@@ -84,7 +84,8 @@ function Updated() {
   return (
     <span className="diff-outline-updated" title="Changed since you viewed it">
       <RefreshCw size={12} aria-hidden="true" />
-      <span className="sr-only">Changed since you viewed it</span>
+      Changed
+      <span className="sr-only"> since you viewed it</span>
     </span>
   );
 }

@@ -5,7 +5,7 @@ import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
 import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline';
 import { symbolTree } from '../lib/tree-symbols';
-import { FILE_STOP, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { FILE_STOP, folderSums, rowLabel, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -458,4 +458,19 @@ void test('scrolled-through ticks stand aside while the reader steps with V or n
   interrupted.look({ at: 1_200, range: [0, 1], fast: false, paused: true });
   assert.deepEqual(interrupted.look({ at: 1_600, range: [0, 1], fast: false }), []);
   assert.deepEqual(interrupted.look({ at: 2_000, range: [0, 1], fast: false }), []);
+});
+
+void test('a row with items changed since the reader viewed them reads "N changed" first; folders sum them', () => {
+  // Changed comes before the progress and the counts, and goes once none are left.
+  assert.deepEqual(rowLabel({ viewed: 2, total: 5 }, 2), { kind: 'changed', text: '2 changed' });
+  assert.deepEqual(rowLabel({ viewed: 0, total: 5 }, 1), { kind: 'changed', text: '1 changed' });
+  assert.deepEqual(rowLabel(undefined, 3), { kind: 'changed', text: '3 changed' });
+  assert.deepEqual(rowLabel({ viewed: 2, total: 5 }, 0), { kind: 'some', text: '2/5' });
+  assert.deepEqual(rowLabel({ viewed: 0, total: 5 }), { kind: 'none' }, 'Nothing changed, nothing viewed: the counts');
+  assert.deepEqual(rowLabel({ viewed: 5, total: 5 }), { kind: 'all', text: '✓ 5/5' });
+  // Folders roll up, files with none add nothing.
+  assert.deepEqual(
+    Object.fromEntries(folderSums(new Map([['src/lib/a.ts', 2], ['src/b.ts', 1], ['src/c.ts', 0], ['top.json', 4]]))),
+    { 'src/': 3, 'src/lib/': 2 }
+  );
 });

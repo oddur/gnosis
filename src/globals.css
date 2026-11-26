@@ -2061,7 +2061,9 @@ button.diff-gap-crumb:hover { text-decoration:underline; text-decoration-color:v
 .diff-outline [data-viewed] > .diff-outline-go { color:var(--outline-muted); }
 .diff-outline-check { flex:none; color:var(--outline-muted); }
 /* Changed since the reader viewed it, in an earlier revision (lib/symbol-carry.ts). */
-.diff-outline-updated { flex:none; display:inline-flex; color:var(--outline-muted); }
+.diff-outline-updated { flex:none; display:inline-flex; align-items:center; gap:3px; color:var(--color-info); font-size:12px; }
+/* A hunk of an item changed since the reader viewed it: beside its counts and lines, in the same ink, quieter. */
+.diff-gap-since { color:var(--color-info); opacity:.85; font-size:12px; white-space:nowrap; margin-inline-end:8px; }
 .diff-outline-more { position:relative; padding:0; color:var(--outline-muted); font:inherit; text-decoration:underline; text-decoration-color:var(--outline-line); text-underline-offset:3px; }
 .diff-outline-more:hover { color:var(--outline-fg); }
 .diff-outline-more::after { content:''; position:absolute; inset:50% -3px auto; height:24px; translate:0 -50%; }

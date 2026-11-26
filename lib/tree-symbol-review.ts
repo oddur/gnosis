@@ -126,6 +126,24 @@ export function progressLabel(progress: SymbolProgress | undefined): ProgressLab
   return progress.viewed >= progress.total ? { kind: 'all', text: `✓ ${text}` } : { kind: 'some', text };
 }
 
+/**
+ * A file or folder row's reading, with items that changed since the reader viewed them (lib/symbol-carry.ts) first:
+ * "2 changed" until none are left, then its progress as `progressLabel` reads it (or its counts, `none`).
+ */
+export type RowLabel = ProgressLabel | { kind: 'changed'; text: string };
+export function rowLabel(progress: SymbolProgress | undefined, changed = 0): RowLabel {
+  return changed > 0 ? { kind: 'changed', text: `${changed} changed` } : progressLabel(progress);
+}
+/** Each folder's sum of a count of its files (changed items, say), by folder path with a trailing slash. */
+export function folderSums(files: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [key, count] of files) {
+    if (!count) continue;
+    for (let at = key.indexOf('/'); at >= 0; at = key.indexOf('/', at + 1)) out.set(key.slice(0, at + 1), (out.get(key.slice(0, at + 1)) ?? 0) + count);
+  }
+  return out;
+}
+
 /** A file of the review list, in the tree's order. */
 export interface ReviewFile {
   key: string;

@@ -448,12 +448,15 @@ function HeaderRow({
   counts,
   live,
   action,
+  since,
 }: {
   gutter?: ReactNode;
   location?: ReactNode;
   controls?: ReactNode;
   range?: HunkRange;
   counts?: HunkCounts;
+  /** The hunk holds an item that changed since the reader viewed it (lib/symbol-carry.ts). */
+  since?: boolean;
   /** The bar heads a hunk, and pins: it has the slots the reader's location is written into. */
   live?: boolean;
   /** What acts on the breadcrumb's definition ("Show whole function"), right after it. */
@@ -471,6 +474,7 @@ function HeaderRow({
       <span className="diff-gap-controls">{controls}</span>
       {(range || counts) && (
         <span className="diff-gap-end">
+          {since && <span className="diff-gap-since">Changed since you viewed</span>}
           {counts && <CountsLabel counts={counts} />}
           <span className="diff-gap-lines">
             {range && <RangeLabel range={range} />}
@@ -801,12 +805,14 @@ function GapBar({
   note,
   range,
   counts,
+  since,
   onShowDefinition,
   plain,
   onCollapseScope,
   onShowElsewhere,
   onOpenHidden,
 }: {
+  since?: boolean;
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
@@ -915,6 +921,7 @@ function GapBar({
         }
         range={range}
         counts={counts}
+        since={since}
         live
         action={<ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
       />
@@ -1498,6 +1505,7 @@ export function ChangesDiff<A>({
   explained,
   symbolKey,
   autoView,
+  changedLines,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1566,6 +1574,11 @@ export function ChangesDiff<A>({
    * symbols with their changed lines, ticked Viewed once the reader has read them (lib/symbol-auto-view.ts).
    */
   autoView?: { fileKey: string; symbols: readonly AutoViewSymbol[] };
+  /**
+   * Lines of items that changed since the reader viewed them (`a12`, `b7`; lib/symbol-carry.ts): the headers of their
+   * hunks say so. Changes and Explanation topics pass the same, from the file's model.
+   */
+  changedLines?: ReadonlySet<string>;
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1669,6 +1682,25 @@ export function ChangesDiff<A>({
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
+  // Hunks holding a line of an item changed since the reader viewed it.
+  const sinceHunks = useMemo(() => {
+    const out = new Set<string>();
+    if (!changedLines?.size) return out;
+    for (const part of parts) {
+      if (part.kind !== 'hunk') continue;
+      let oldLine = part.hunk.oldStart,
+        newLine = part.hunk.newStart;
+      for (const row of part.hunk.rows) {
+        if ((row.type === '+' && changedLines.has(`a${newLine}`)) || (row.type === '-' && changedLines.has(`b${oldLine}`))) {
+          out.add(part.key);
+          break;
+        }
+        if (row.type !== '+') oldLine++;
+        if (row.type !== '-') newLine++;
+      }
+    }
+    return out;
+  }, [parts, changedLines]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
   const progressive = slices.length > MANY_DIFFS || (slices.length > 1 && slices.some((slice) => slice.key.includes(':')));
@@ -2364,6 +2396,7 @@ export function ChangesDiff<A>({
           note={scopeNote}
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
+          since={next?.kind === 'hunk' && sinceHunks.has(next.key)}
           onShowDefinition={onShowDefinition}
           plain={plainGaps}
           onCollapseScope={onCollapseScope}
@@ -2418,6 +2451,7 @@ export function ChangesDiff<A>({
             action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
             range={block.range}
             counts={block.counts}
+            since={sinceHunks.has(block.key)}
             live
           />
         </div>

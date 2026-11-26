@@ -3,7 +3,9 @@ import { DIFF_STAT_COLORS } from './DiffStats';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
 import { selectedTreeFiles } from '../lib/tree-viewed-files';
-import { progressLabel, type SymbolProgress } from '../lib/tree-symbol-review';
+import { rowLabel, type SymbolProgress } from '../lib/tree-symbol-review';
+/** Items that changed since the reader viewed them (lib/symbol-carry.ts): the panel's info ink, apart from the diff's. */
+export const CHANGED_COLOR = 'var(--color-info)';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
 // Lucide MessageSquare (ISC), used inside Pierre's shadow-DOM text decoration.
 const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></svg>')}")`;
@@ -40,8 +42,14 @@ export interface ChangeTreeEntry {
  * rows, `symbols` is how many of the file's changed symbols are Viewed, once they are known: from the first one viewed
  * it takes the counts' place (lib/tree-symbol-review.ts).
  */
-export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean, symbols?: SymbolProgress) {
-  const progress = entry.viewed ? undefined : progressLabel(symbols);
+export function fileRowDecoration(
+  entry: ChangeTreeEntry,
+  showComments: boolean,
+  symbols?: SymbolProgress,
+  /** Items that changed since the reader viewed them (lib/symbol-carry.ts): "2 changed" before the progress. */
+  changed = 0
+) {
+  const progress = entry.viewed ? undefined : rowLabel(symbols, changed);
   const reviewing = progress && progress.kind !== 'none' ? progress : undefined;
   const changes = entry.viewed ? 'Viewed' : (reviewing?.text ?? `+${entry.additions} −${entry.deletions}`);
   // A file whose every change is quiet says so in a short word, muted, in place of its counts: the tree is narrow,
@@ -62,8 +70,14 @@ export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean,
       ...(entry.viewed
         ? [{ text: 'Viewed' }]
         : reviewing
-          ? // Every symbol viewed: a muted check, the outline's "All viewed". Marking the file stays the reader's.
-            [reviewing.kind === 'all' ? { text: reviewing.text, color: 'var(--muted-foreground)' } : { text: reviewing.text }]
+          ? // Changed since viewed, in the info colour; every symbol viewed, a muted check, the outline's "All viewed".
+            [
+              reviewing.kind === 'changed'
+                ? { text: reviewing.text, color: CHANGED_COLOR }
+                : reviewing.kind === 'all'
+                  ? { text: reviewing.text, color: 'var(--muted-foreground)' }
+                  : { text: reviewing.text },
+            ]
           : quiet
           ? [{ text: quiet, color: 'var(--muted-foreground)' }]
           : [
@@ -79,7 +93,7 @@ export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean,
           ]
         : []),
     ],
-    title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${symbols && reviewing ? `. ${symbols.viewed} of ${symbols.total} changed symbols viewed${reviewing.kind === 'all' ? '; right-click to mark the file as viewed' : ''}` : ''}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
+    title: `${reviewing?.kind === 'changed' ? `${reviewing.text} since you viewed them. ` : ''}${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${symbols && reviewing && symbols.total ? `. ${symbols.viewed} of ${symbols.total} changed symbols viewed${reviewing.kind === 'all' ? '; right-click to mark the file as viewed' : ''}` : ''}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
   };
 }
 export function ChangesFileTree({

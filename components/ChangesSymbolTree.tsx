@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
 import { preparePresortedFileTreeInput, type ContextMenuItem, type FileTreeDirectoryHandle, type FileTreeItemHandle, type GitStatusEntry } from '@pierre/trees';
 import { TreeSymbolMenu, TreeViewedMenu } from './TreeViewedMenu';
-import { TREE_WORDS, commentDecorationCSS, decorationCSS, fileRowDecoration, type ChangeTreeEntry } from './ChangesFileTree';
+import { CHANGED_COLOR, TREE_WORDS, commentDecorationCSS, decorationCSS, fileRowDecoration, type ChangeTreeEntry } from './ChangesFileTree';
 import { DIFF_STAT_COLORS } from './DiffStats';
 import { treeSymbolLook } from './tree-symbol-icons';
 import { selectedTreeFiles } from '../lib/tree-viewed-files';
@@ -13,9 +13,9 @@ import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
-import { ensureCarried, isUpdated, useCarry } from '../lib/symbol-carry';
+import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { FILE_STOP, folderProgress, progressLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { FILE_STOP, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -32,13 +32,15 @@ const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renam
  */
 const VIEWED_MARK = '✓';
 
-/** The mark of an item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts). */
-const UPDATED_MARK = '↻';
-const withUpdated = <T extends { text: string; parts: { text: string; color?: string }[]; title: string }>(decoration: T): T => ({
-  ...decoration,
-  text: `${UPDATED_MARK} ${decoration.text}`,
-  parts: [{ text: UPDATED_MARK, color: 'var(--muted-foreground)' }, ...decoration.parts],
-  title: `Changed since you viewed it. ${decoration.title}`,
+/**
+ * An item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts): "↻ Changed" in the
+ * info ink in place of its counts, which move to the tooltip. The glyph reads at 12 px where a dot reads as a bullet.
+ */
+const CHANGED_TEXT = '↻ Changed';
+const changedItem = (added: number, deleted: number, rest: string) => ({
+  text: CHANGED_TEXT,
+  parts: [{ text: CHANGED_TEXT, color: CHANGED_COLOR }],
+  title: `Changed since you viewed it · +${added} −${deleted}. ${rest}`,
 });
 
 /** How long a chosen symbol stays lit while the diff scrolls to it, if the diff never says it arrived. */
@@ -148,6 +150,9 @@ export function ChangesSymbolTree({
       fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed, value.top));
   }
   const folderSums = folderProgress(fileProgress);
+  // Items changed since the reader viewed them, per file and summed per folder: "2 changed" first on their rows.
+  const fileChanged = new Map(entries.flatMap((e) => (e.source ? [[e.key, updatedCount([e.source.fileKey])] as const] : [])));
+  const folderChanged = sumFolders(fileChanged);
   // Carry-over (lib/symbol-carry.ts): a file's ticks come over from its earlier revisions once its symbols are known,
   // and the rows mark what changed since the reader viewed it.
   const carried = useCarry();
@@ -158,8 +163,8 @@ export function ChangesSymbolTree({
     }
   }, [known, supported]);
   const progressSignature = `${carried}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
-  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums });
-  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums };
+  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged });
+  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged };
   const rowAt = (path: string | null | undefined): TreeRow | undefined => (path ? current.current.layout.rows.get(path) : undefined);
   /** What the menus, the selection count and the Viewed actions know a row by: a file's key, a folder's path. */
   const appPath = (path: string): string | undefined => {
@@ -185,15 +190,17 @@ export function ChangesSymbolTree({
       if (row.type === 'file') {
         const entry = entryOf(row.key);
         if (!entry) return null;
-        const decoration = fileRowDecoration(entry, showComments, current.current.fileProgress.get(row.key));
-        // A file without symbols whose patch changed since the reader viewed it.
+        // A file without symbols whose patch changed since the reader viewed it is one changed item.
         const fileKey = entry.source?.fileKey;
-        return !row.folder && fileKey && isUpdated(fileKey, FILE_STOP) ? withUpdated(decoration) : decoration;
+        if (!row.folder && fileKey && isUpdated(fileKey, FILE_STOP)) return changedItem(entry.additions, entry.deletions, row.key);
+        return fileRowDecoration(entry, showComments, current.current.fileProgress.get(row.key), current.current.fileChanged.get(row.key));
       }
       if (row.type === 'folder') {
-        // The files under it whose symbols are known, summed; nothing until one of their symbols is viewed.
+        // The files under it whose symbols are known, summed; nothing until one of their symbols is viewed. Items
+        // changed since the reader viewed them come first.
         const sum = current.current.folderSums.get(row.path);
-        const label = progressLabel(sum);
+        const label = rowLabel(sum, current.current.folderChanged.get(row.path));
+        if (label.kind === 'changed') return { text: label.text, parts: [{ text: label.text, color: CHANGED_COLOR }], title: `${label.text} since you viewed them, in the files here` };
         if (!sum || label.kind === 'none') return null;
         return {
           text: label.text,
@@ -219,7 +226,7 @@ export function ChangesSymbolTree({
           ],
           title: `${added} additions, ${deleted} deletions ${imports ? 'to imports' : 'outside every function and class'}`,
         };
-        return topSource && isUpdated(topSource.fileKey, TOP_LEVEL_ID) ? withUpdated(counts) : counts;
+        return topSource && isUpdated(topSource.fileKey, TOP_LEVEL_ID) ? changedItem(added, deleted, counts.title) : counts;
       }
       if (row.type !== 'symbol') return null;
       const { node } = row;
@@ -252,7 +259,7 @@ export function ChangesSymbolTree({
         ],
         title: `${spoken}. ${viewed ? 'Viewed' : `${node.added} additions, ${node.deleted} deletions`}${node.quiet ? `. ${node.quiet}: every change is quiet` : ''}${node.moved ? `. ${node.moved}` : ''}`,
       };
-      return !viewed && source && isUpdated(source.fileKey, node.id) ? withUpdated(decoration) : decoration;
+      return !viewed && source && isUpdated(source.fileKey, node.id) ? changedItem(node.added, node.deleted, spoken) : decoration;
     },
   });
   const selectedPaths = useFileTreeSelection(model);

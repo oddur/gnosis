@@ -918,6 +918,7 @@ export function PrFileInspection({
                   stickyUnder={headerRef}
                   symbolKey={symbolTree ? activeKey : undefined}
                   autoView={symbolTree ? autoView : undefined}
+                  changedLines={model.changedLines}
                   onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}
