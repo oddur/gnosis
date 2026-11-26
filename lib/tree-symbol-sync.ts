@@ -140,3 +140,20 @@ export function usePendingSymbolJump(fileKey: string): boolean {
     return !!jump && Date.now() - jump.at < JUMP_WAIT_MS;
   });
 }
+
+/** The file the review target is in, by revision key (PrChangesView): its outline says "Enter to comment" on it. */
+let targetFile: string | undefined;
+export function setReviewFile(fileKey: string | undefined) {
+  if (targetFile === fileKey) return;
+  targetFile = fileKey;
+  targetChanged();
+}
+export function useReviewFile(): string | undefined {
+  return useSyncExternalStore(
+    (listener) => {
+      targetListeners.add(listener);
+      return () => targetListeners.delete(listener);
+    },
+    () => targetFile
+  );
+}

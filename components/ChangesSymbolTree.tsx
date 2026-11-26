@@ -77,6 +77,7 @@ export function ChangesSymbolTree({
   noiseFilter,
   reveal,
   onReviewKey,
+  onCommentKey,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -100,6 +101,8 @@ export function ChangesSymbolTree({
    * a symbol row) and moves on to the next unviewed item, as V does anywhere in Changes.
    */
   onReviewKey?: (tick: { key: string; ids: string[]; viewed: boolean; file: boolean }) => void;
+  /** Enter on the row of the item under review comments on it (PrChangesView); true when it did. */
+  onCommentKey?: (item: { key: string; id: string }) => boolean;
 }) {
   const progress = useFileProgress();
   // Which files list symbols: only their paths and revisions matter, not their decorations.
@@ -174,6 +177,8 @@ export function ChangesSymbolTree({
   }, [known, supported]);
   // An item V is paging through reads "Reading 40%" until it is ticked (lib/review-paging.ts).
   const pagingNow = usePaging();
+  // The item under review: lit while it holds, and its row offers Enter to comment (lib/review-comment.ts).
+  const target = useReviewTarget();
   // Old copies of moves read viewed with their new copies, in other files: their rows refresh when those are ticked.
   let movedSignature = '';
   for (const [key, value] of symbols) {
@@ -182,9 +187,9 @@ export function ChangesSymbolTree({
     for (const node of treeOrder(value.nodes))
       if (node.moveAway) movedSignature += isSymbolViewed(source.fileKey, movedMirrorId(node.definition.start)) ? '1' : '0';
   }
-  const progressSignature = `${carried}\n${movedSignature}\n${pagingNow ? `${pagingNow.key}:${pagingNow.id}:${pagingNow.share}` : ''}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
-  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow });
-  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow };
+  const progressSignature = `${carried}\n${target ? `${target.key}\u0000${target.id}` : ''}\n${movedSignature}\n${pagingNow ? `${pagingNow.key}:${pagingNow.id}:${pagingNow.share}` : ''}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
+  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow, target });
+  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums, fileChanged, folderChanged, pagingNow, target };
   /** The share seen of the item V is paging through, if it is this row's. */
   const readingNow = (key: string, id: string) => {
     const now = current.current.pagingNow;
@@ -209,7 +214,11 @@ export function ChangesSymbolTree({
     icons: look.icons,
     unsafeCSS: decorationCSS + (showComments ? commentDecorationCSS : '') + look.css,
     fileTreeSearchMode: 'hide-non-matches',
-    renderRowDecoration: ({ item }) => {
+    renderRowDecoration: ({ item }) => withCommentHint(item.path, decorate(item.path)),
+  });
+  /** Each row's decoration: its counts, progress, Viewed, Changed or Reading. */
+  function decorate(path: string) {
+    const item = { path };
       const row = rowAt(item.path);
       if (!row) return null;
       if (row.type === 'file') {
@@ -301,8 +310,15 @@ export function ChangesSymbolTree({
       const share = viewed ? undefined : readingNow(row.key, node.id);
       if (share !== undefined) return reading(share, spoken);
       return !viewed && source && isUpdated(source.fileKey, node.id) ? changedItem(node.added, node.deleted, spoken) : decoration;
-    },
-  });
+  }
+  /** The row of the item under review also says Enter comments on it. */
+  function withCommentHint<T extends { title: string }>(path: string, decoration: T | null): T | null {
+    const row = rowAt(path);
+    const target = current.current.target;
+    if (!decoration || !row || !target || (row.type !== 'symbol' && row.type !== 'top' && row.type !== 'file') || row.key !== target.key) return decoration;
+    const id = row.type === 'symbol' ? row.node.id : row.type === 'top' ? TOP_LEVEL_ID : FILE_STOP;
+    return id === target.id ? { ...decoration, title: `${decoration.title} · Enter to comment` } : decoration;
+  }
   const selectedPaths = useFileTreeSelection(model);
   const [matchingPaths, setMatchingPaths] = useState<ReadonlySet<string>>();
   const selectOnly = (path?: string) => {
@@ -403,7 +419,6 @@ export function ChangesSymbolTree({
   }, [held, arrived]);
   // The item the reader was taken to stays lit until they move on their own, whatever the pinned crumb names: a jump to
   // a top-level line between two functions lands with one of them named. Then the light follows the reader.
-  const target = useReviewTarget();
   const targetPath = target && target.key === selected && target.id !== FILE_STOP ? layout.symbolPaths.get(symbolRowKey(target.key, target.id)) : undefined;
   const readingPath = targetPath ?? (held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path);
   applyStatus.current = () => {
@@ -708,6 +723,14 @@ export function ChangesSymbolTree({
               if (source && ids.length)
                 onReviewKey({ key: row.key, ids, viewed: ids.some((id) => !symbolOn(row.key, source.fileKey, id)), file: false });
             } else markSymbols(row);
+            return;
+          }
+          // Enter on the item under review (its row lit, its target held) comments on it: Enter to go, Enter again to
+          // comment. On any other row it goes there, as always.
+          const item = row?.type === 'symbol' && reviewed(row.node) ? { key: row.key, id: row.node.id } : row?.type === 'top' ? { key: row.key, id: TOP_LEVEL_ID } : row?.type === 'file' && !row.folder ? { key: row.key, id: FILE_STOP } : undefined;
+          if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && item && target?.key === item.key && target.id === item.id && onCommentKey?.(item)) {
+            event.preventDefault();
+            event.stopPropagation();
             return;
           }
           if (event.key === 'Enter' && row && row.type !== 'folder') {

@@ -188,6 +188,18 @@
       "evidence": "if (!event.repeat) void reviewAndMove();"
     },
     {
+      "keys": "Enter",
+      "label": "Changes: comment on the current symbol or file",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "if (!item || !commentOnItem(item, 'diff')) return false;"
+    },
+    {
+      "keys": "⌘ ⇧ Enter",
+      "label": "In a comment opened with Enter: add it and go on",
+      "source": "components/ChangesCommentComposer.tsx",
+      "evidence": "if (e.shiftKey && reviewCommentOpen()) {"
+    },
+    {
       "keys": "⇧ V",
       "label": "Changes: undo the last v",
       "source": "components/PrChangesView.tsx",

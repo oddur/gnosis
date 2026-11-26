@@ -35,7 +35,7 @@ import {
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { hasSymbolTarget, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewTarget } from '../lib/tree-symbol-sync';
+import { hasSymbolTarget, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewFile, setReviewTarget } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported } from '../lib/use-tree-symbols';
 import {
   FILE_STOP,
@@ -54,6 +54,8 @@ import {
 } from '../lib/tree-symbol-review';
 import { ensureCarried, updatedCount, useCarry } from '../lib/symbol-carry';
 import { markSeen, pageStep, pagerOf, seenShare, setPaging } from '../lib/review-paging';
+import { commentAnchor, openReviewComment, peekLineSelection } from '../lib/review-comment';
+import { patchHunks } from '../lib/semantic-noise';
 import { markReviewSymbols, registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
 import { readingSymbol, rowDestination, type TopLevelChanges, type TreeSymbolNode } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
@@ -914,6 +916,35 @@ export function PrChangesView({
     const stack = ticks.current;
     return () => stack.clear();
   }, []);
+  /**
+   * Enter: a comment on the item under review (lib/review-comment.ts), in the inline composer of its file, which must
+   * be the selected one, as it is once V, n or a click went there. On the lines the reader selected, if any; else over
+   * the item's changed lines (`commentAnchor`). Closing the composer hands the keyboard back to the tree row or the diff,
+   * or, with ⌘⇧↩, ticks the item and goes on as V does. False when there is nothing to comment on.
+   */
+  function commentOnItem(item: ReviewItem, returnTo: 'tree' | 'diff'): boolean {
+    const target = entries.find((e) => e.key === item.key);
+    if (!target || entry?.key !== item.key || !comments.canComment) return false;
+    const fileKey = viewKey(target);
+    let range = peekLineSelection(fileKey);
+    if (!range) {
+      const lines = item.id === FILE_STOP ? undefined : pagerOf(fileKey)?.lines(item.id);
+      if (item.id !== FILE_STOP && !lines?.length) return false;
+      const anchor = commentAnchor({ lines, first: item.id === TOP_LEVEL_ID, hunks: patchHunks(target.file.patch) });
+      if (!anchor) return false;
+      range = { side: anchor.side === 'LEFT' ? 'deletions' : 'additions', start: anchor.startLine ?? anchor.line, end: anchor.line };
+    }
+    openReviewComment((how) => {
+      if (how === 'next') {
+        void reviewAndMove({ key: item.key, ids: item.id === FILE_STOP ? [] : [item.id], viewed: true, file: item.id === FILE_STOP });
+        return;
+      }
+      if (returnTo === 'tree') setTreeReveal((previous) => ({ key: item.key, id: item.id, nonce: (previous?.nonce ?? 0) + 1, focus: true }));
+      else workspace.current?.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+    });
+    comments.begin(range);
+    return true;
+  }
   function everythingViewed() {
     const number = entry?.snapshot.url.split('/').pop();
     const reviewable = ownReview && subject.kind !== 'stack' && !!number;
@@ -992,7 +1023,20 @@ export function PrChangesView({
   }, []);
   // A held key does not race through the symbols: one step per press. A press while a file loads takes over.
   const inTree = (event: KeyboardEvent) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('changes-file-tree'));
+  // The selected file is where the review target is: its outline offers Enter to comment on it.
+  useEffect(() => setReviewFile(entry ? viewKey(entry) : undefined), [activeKey]);
+  /** Enter in the diff comments on the item under review: only on the diff itself or its code, not a control in it. */
+  const enterInDiff = (event: KeyboardEvent) => {
+    const path = event.composedPath();
+    if (!path.some((node) => node instanceof Element && node.classList.contains('commit-diff-stream'))) return false;
+    return !path.some((node) => node instanceof Element && node.matches('button, a, input, textarea, select, summary, [role=button], [contenteditable=true]'));
+  };
   const symbolKeys = {
+    Enter: (event: KeyboardEvent) => {
+      if (event.repeat || inTree(event) || !enterInDiff(event)) return false;
+      const item = currentReviewItem();
+      if (!item || !commentOnItem(item, 'diff')) return false;
+    },
     n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1).then((moved) => moved === 'end' && endNotice(1))),
     N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1).then((moved) => moved === 'end' && endNotice(-1))),
     // V anywhere in Changes; a tree row's own V acts on the row (ChangesSymbolTree's onReviewKey).
@@ -1433,6 +1477,7 @@ export function PrChangesView({
                     noiseFilter={noiseFilter}
                     reveal={treeReveal}
                     onReviewKey={(intent) => void reviewAndMove(intent)}
+                    onCommentKey={(item) => commentOnItem(item, 'tree')}
                   />
                 ) : (
                   <ChangesFileTree

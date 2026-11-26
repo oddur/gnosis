@@ -24,6 +24,8 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_LONG_FILE, TREE_SYMBOLS_MOVE_SOURCE, TR
  *   reads "✓ moved" once V ticks the new one.
  * - V on a file without symbols (an SVG) marks it Viewed, and again unviewed.
  * - Reset viewed clears every file and tick of these changes, and its toast's Undo puts them back.
+ * - Enter on the item under review opens the comment composer on its lines; ⌘↩ adds the draft and puts the keyboard back
+ *   on its row; ⌘⇧↩ adds it and goes on as V does.
  * - Review with V: with Unviewed only, V from a file's top goes to its first item, then ticks each item and goes on,
  *   lighting and focusing the next row, out of store.ts and through every file, files without symbols one stop each,
  *   to "Everything viewed" with its Review PR action; Shift+V takes the last one back.
@@ -295,6 +297,31 @@ void app.whenReady().then(async () => {
     await wait("!!window.treeRow('Imports')");
     await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
     await lit('Imports');
+    // ── Enter on the item under review comments on it; ⌘↩ adds the draft and hands the keyboard back ──
+    const composer = `${fileRow} .changes-comment-composer`;
+    const enterOn = (row: string) =>
+      js(`(()=>{const r=window.treeRow(${JSON.stringify(row)});r.focus();r.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,composed:true,cancelable:true}))})()`);
+    const typeComment = (text: string) =>
+      js(
+        `(()=>{const t=document.querySelector(${JSON.stringify(composer + ' textarea')});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,${JSON.stringify(text)});t.dispatchEvent(new Event('input',{bubbles:true}))})()`
+      );
+    const submitComment = (shift: boolean) =>
+      js(
+        `document.querySelector(${JSON.stringify(composer + ' textarea')}).dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,metaKey:true,shiftKey:${shift},bubbles:true,cancelable:true}))`
+      );
+    const drafts = () => js<number>(`document.querySelectorAll(${JSON.stringify(fileRow + ' .changes-pending-comment')}).length`);
+    const draftsBefore = await drafts();
+    await enterOn('Imports');
+    await wait(`!!document.querySelector(${JSON.stringify(composer)})`);
+    // On the import the item changed, the new file's line 2, with the keyboard in the composer.
+    assert.match(await js<string>(`document.querySelector(${JSON.stringify(composer + ' label')}).textContent`), /new line 2\b/);
+    await wait("document.activeElement?.tagName==='TEXTAREA'&&!!document.activeElement.closest('.changes-comment-composer')");
+    await typeComment('Is this import needed?');
+    await submitComment(false);
+    await wait(`!document.querySelector(${JSON.stringify(composer)})`);
+    await wait(`document.querySelectorAll(${JSON.stringify(fileRow + ' .changes-pending-comment')}).length===${draftsBefore + 1}`);
+    await wait("(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='Imports'})()");
+    assert.notEqual((await rows()).find((r) => r.name === 'Imports')?.decoration, '✓', 'A comment does not tick the item');
     // The reader closes the class and the folder above it: going on must open both again.
     const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
     await js("window.treeRow('Store').querySelector('[data-item-section=icon]').click()");
@@ -323,8 +350,13 @@ void app.whenReady().then(async () => {
       assert.deepEqual(changed, [...expectChanged[ticked]].sort(), `V on ${ticked} ticked ${ticked} only: ${JSON.stringify({ before, after })}`);
       await wait(`(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)===${JSON.stringify(next)}})()`);
     }
-    // The last of store.ts: on into tasks.ts, and store.ts, Viewed, leaves the Unviewed only tree.
-    await press('v');
+    // The last of store.ts, with a comment: ⌘⇧↩ adds it and goes on as V does, into tasks.ts; store.ts, Viewed, leaves
+    // the Unviewed only tree.
+    await enterOn('added');
+    await wait(`!!document.querySelector(${JSON.stringify(composer)})`);
+    assert.match(await js<string>(`document.querySelector(${JSON.stringify(composer + ' label')}).textContent`), /new lines \d+–\d+/, 'Over the function');
+    await typeComment('Name this for what it adds.');
+    await submitComment(true);
     await lit('start');
     await wait(`!window.treeRow(${JSON.stringify(name)})`);
     assert.equal(await focusedRow(), 'start', 'Focus moved to the next row, not the tree top');

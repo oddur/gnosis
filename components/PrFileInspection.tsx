@@ -32,6 +32,7 @@ import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
 import { usePendingSymbolJump } from '../lib/tree-symbol-sync';
 import { releaseHeld, useHeldOpen } from '../lib/symbol-file-sync';
+import { setLineSelection } from '../lib/review-comment';
 import { applyCodeIntelligence } from '../lib/use-syntax-contents';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { diffThemeName } from '../lib/diff-worker-pool';
@@ -176,6 +177,11 @@ export function PrFileInspection({
   const [fileAttempt, setFileAttempt] = useState(0);
   const unsupportedFiles = useRef(new Map<string, string>());
   const [range, setRange] = useState<SelectedLineRange | null>(null);
+  // Enter comments on the selected lines, when there are any (lib/review-comment.ts).
+  useEffect(() => {
+    setLineSelection(activeKey, range);
+    return () => setLineSelection(activeKey, null);
+  }, [activeKey, range]);
   const code = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
   const currentFile = useRef(activeKey);

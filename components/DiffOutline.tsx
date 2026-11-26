@@ -4,6 +4,7 @@ import { useFileProgress } from '../lib/file-view-progress';
 import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
 import { isUpdated, useCarry } from '../lib/symbol-carry';
 import { usePaging } from '../lib/review-paging';
+import { useReviewFile, useReviewTarget } from '../lib/tree-symbol-sync';
 import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
@@ -117,6 +118,10 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   useCarry();
   // The item V is paging through (lib/review-paging.ts): its chip says how much of it the reader has seen.
   const paging = usePaging();
+  // The item under review, if it is here: its chip says Enter comments on it (lib/review-comment.ts).
+  const target = useReviewTarget();
+  const reviewFile = useReviewFile();
+  const current = (symbol: ChangedSymbol) => !!target && reviewFile === fileKey && target.id === symbol.id;
   const readingShare = (symbol: ChangedSymbol) => (paging && paging.fileKey === fileKey && paging.id === symbol.id ? paging.share : undefined);
   const progress = useFileProgress();
   const listId = useId();
@@ -145,7 +150,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
       className="diff-outline-go"
       data-symbol={symbol.id}
       aria-label={`Go to ${isPseudo(symbol) ? named(symbol) : spokenSymbol(symbol)}`}
-      title={`Go to ${named(symbol)}`}
+      title={`Go to ${named(symbol)}${current(symbol) ? ' · Enter to comment' : ''}`}
       onClick={() => onGo(symbol)}
     >
       <SymbolName symbol={symbol} />
