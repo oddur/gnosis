@@ -84,6 +84,9 @@ export function treeSymbolLook(): { icons: FileTreeIconConfig; css: string } {
     rules.push(`${row} > [data-item-section="icon"] { width:auto; gap:2px; }`);
     rules.push(`${row} > [data-item-section="icon"]::after { ${afterIcon(maskOf(body, symbol[1]), color).replace('14px 14px', '16px 16px')} }`);
   }
+  // A row without children (a plain file, a leaf symbol, Top level) keeps an empty chevron column, so every icon at a
+  // depth sits in one column: rows with children show their chevron, then their icon.
+  rules.push(`[data-item-type="file"] > [data-item-section="icon"] { margin-inline-start:calc(var(--trees-icon-width) + 2px); }`);
   // The symbol the reader is in (lib/tree-symbol-sync.ts) carries the one status no file has here.
   rules.push(
     `[data-item-git-status="untracked"] { background:color-mix(in oklab, var(--trees-theme-list-active-selection-bg, var(--accent)) 55%, transparent); box-shadow:inset 2px 0 0 var(--trees-focus-ring-color); }`,
