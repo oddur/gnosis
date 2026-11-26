@@ -141,13 +141,19 @@ export interface Caller {
   call: ItemCall;
 }
 export type CallersResult =
-  /** The item has no name to call: the top level, a Body, a file. */
+  /** The item calls for no callers: the top level, a Body, a file, a type with no changed methods. */
   | { kind: 'none' }
-  /** The name is defined by more than one changed symbol across the files read: nothing is matched. */
+  /** The name is defined by more than one changed function or method across the files read: nothing is matched. */
   | { kind: 'ambiguous' }
-  | { kind: 'callers'; callers: Caller[] };
+  | { kind: 'callers'; callers: Caller[] }
+  /** A type (struct, impl, class, trait…): the callers of each changed method under it, by method. */
+  | { kind: 'methods'; methods: { id: string; name: string; result: Exclude<CallersResult, { kind: 'methods' } | { kind: 'none' }> }[] };
 
-const named = (node: TreeSymbolNode) => !!node.symbol && !node.moveAway && !node.id.endsWith('>@body');
+/** The kinds that are called: functions and methods. Types are named by `new X(` too, but are not callables here. */
+const CALLABLE = new Set(['function', 'method', 'test', 'macro']);
+const callable = (node: TreeSymbolNode) => CALLABLE.has(node.definition.kind);
+/** A changed function or method: what a call names, once. Old copies of moves and Bodies are no definitions. */
+const definesCall = (node: TreeSymbolNode) => !!node.symbol && !node.moveAway && !node.id.endsWith('>@body') && callable(node);
 function* walk(nodes: readonly TreeSymbolNode[]): Generator<TreeSymbolNode> {
   for (const node of nodes) {
     yield node;
@@ -155,19 +161,11 @@ function* walk(nodes: readonly TreeSymbolNode[]): Generator<TreeSymbolNode> {
   }
 }
 
-/**
- * The changed symbols that call an item, in this PR (fail closed): a symbol B calls A when one of B's changed lines
- * calls A's name, and that name is defined by exactly one changed symbol across the files read, same file or not. A
- * name with several definitions (overloads, `get`, `run`) matches nothing. Old copies of moves are not definitions.
- */
-export function findCallers(target: { key: string; id: string }, files: readonly CallerFile[]): CallersResult {
-  if (target.id === FILE_STOP || target.id.startsWith('@')) return { kind: 'none' };
-  const file = files.find((one) => one.key === target.key);
-  const node = file && [...walk(file.nodes)].find((one) => one.id === target.id);
-  if (!node || !named(node) || node.id.endsWith('>@body')) return { kind: 'none' };
+/** The callers of one callable, by the unique-name rule. */
+function callersOf(target: { key: string; id: string }, node: TreeSymbolNode, files: readonly CallerFile[]): Exclude<CallersResult, { kind: 'methods' } | { kind: 'none' }> {
   const name = node.definition.name;
   let definitions = 0;
-  for (const one of files) for (const other of walk(one.nodes)) if (named(other) && other.definition.name === name) definitions++;
+  for (const one of files) for (const other of walk(one.nodes)) if (definesCall(other) && other.definition.name === name) definitions++;
   if (definitions !== 1) return { kind: 'ambiguous' };
   const callers: Caller[] = [];
   for (const one of files)
@@ -178,6 +176,27 @@ export function findCallers(target: { key: string; id: string }, files: readonly
       if (call && caller) callers.push({ key: one.key, id, node: caller, call });
     }
   return { kind: 'callers', callers };
+}
+
+/**
+ * The changed symbols that call an item, in this PR (fail closed): a symbol B calls a function or method A when one of
+ * B's changed lines calls A's name, and that name is defined by exactly one changed function or method across the
+ * files read, same file or not. A name with several (overloads, `get`, `run`) matches nothing. Types do not count as
+ * definitions of a call's name, so a struct and its impl, one type, never make a name ambiguous. For a type, its
+ * changed methods' callers, method by method; nothing for the top level, a Body or a file.
+ */
+export function findCallers(target: { key: string; id: string }, files: readonly CallerFile[]): CallersResult {
+  if (target.id === FILE_STOP || target.id.startsWith('@') || target.id.endsWith('>@body')) return { kind: 'none' };
+  const file = files.find((one) => one.key === target.key);
+  const node = file && [...walk(file.nodes)].find((one) => one.id === target.id);
+  if (!node || node.moveAway) return { kind: 'none' };
+  if (callable(node)) return node.symbol ? callersOf(target, node, files) : { kind: 'none' };
+  const methods = [...walk(node.children)].filter(definesCall);
+  if (!methods.length) return { kind: 'none' };
+  return {
+    kind: 'methods',
+    methods: methods.map((method) => ({ id: method.id, name: method.definition.name, result: callersOf({ key: target.key, id: method.id }, method, files) })),
+  };
 }
 
 /** How many of the files that can list symbols have been read (their symbols known, or known to be none). */

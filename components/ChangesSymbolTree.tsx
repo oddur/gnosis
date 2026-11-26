@@ -18,7 +18,7 @@ import { SymbolPeek, type PeekView } from './SymbolPeek';
 import { callerCoverage, findCallers, type CallerFile } from '../lib/review-peek';
 import type { DiffAppearance } from '../lib/review-diff';
 import { readingLabel, usePaging } from '../lib/review-paging';
-import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, topLevelName, treeSymbolKind } from '../lib/tree-symbols';
+import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, rowName, topLevelName, treeSymbolKind } from '../lib/tree-symbols';
 import { FILE_STOP, itemCounts, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { loadTreeSymbols, treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
@@ -721,7 +721,7 @@ export function ChangesSymbolTree({
       : look('');
     return {
       ...base,
-      name: body ? node.definition.crumb : node.definition.name,
+      name: body ? node.definition.crumb : rowName(node),
       icon: body ? 'top' : treeSymbolKind(node.definition.kind),
       added: node.added,
       deleted: node.deleted,

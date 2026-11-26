@@ -4,7 +4,7 @@ import { callNames, callerCoverage, findCallers, itemCalls, peekHunks, type Call
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import type { SyntaxDefinition } from '../lib/syntax-scope';
 import { FILE_STOP } from '../lib/tree-symbol-review';
-import { symbolTree } from '../lib/tree-symbols';
+import { rowName, symbolTree } from '../lib/tree-symbols';
 
 /** Peek at a symbol: its own hunks, and its changed callers (lib/review-peek.ts). */
 
@@ -74,4 +74,49 @@ void test('a name defined by several changed symbols matches nothing; the top le
 
 void test('coverage counts the files read, of those that can list symbols', () => {
   assert.deepEqual(callerCoverage(['ready', 'loading', 'none', undefined]), { checked: 2, total: 4 });
+});
+
+/** A changed symbol of a kind, nested by id: `impl:Field>method:run`. */
+function kindSymbol(id: string, kind: SyntaxDefinition['kind'], start: number, end: number, crumb?: string): ChangedSymbol {
+  const parts = id.split('>');
+  const name = (parts.at(-1) ?? id).split(':')[1] ?? id;
+  const parents = parts.slice(0, -1).map((part) => {
+    const [parentKind, parentName] = part.split(':') as [SyntaxDefinition['kind'], string];
+    return { ...definition(parentName, 1, 99), kind: parentKind, crumb: parentKind === 'impl' ? `impl ${parentName}` : parentName };
+  });
+  return { ...symbol(name, start, end), id, definition: { ...definition(name, start, end), kind, crumb: crumb ?? name, crumbKeyword: kind === 'struct' ? 'struct' : kind === 'impl' ? 'impl' : undefined }, parents };
+}
+
+void test('callers only for functions and methods; a type lists its changed methods\' callers; a struct and its impl are one type', () => {
+  const lib = file(
+    'src/field.rs',
+    [kindSymbol('struct:Field', 'struct', 1, 4), kindSymbol('impl:Field', 'impl', 6, 20, 'impl Field'), kindSymbol('impl:Field>method:run', 'method', 8, 12)],
+    {},
+    {}
+  );
+  const main = file('src/main.rs', [kindSymbol('function:main', 'function', 1, 5)], { 'function:main': ['a2', 'a3'] }, { a2: 'let f = Field();', a3: 'f.run();' });
+  // A method: callers by its unique name.
+  const run = findCallers({ key: 'src/field.rs', id: 'impl:Field>method:run' }, [lib, main]);
+  assert.ok(run.kind === 'callers');
+  assert.deepEqual(run.callers.map((caller) => caller.id), ['function:main']);
+  // The struct is no callable: no "Called by", and with its impl it is never two definitions of a name.
+  assert.deepEqual(findCallers({ key: 'src/field.rs', id: 'struct:Field' }, [lib, main]), { kind: 'none' });
+  // The impl: its methods' callers, method by method.
+  const impl = findCallers({ key: 'src/field.rs', id: 'impl:Field' }, [lib, main]);
+  assert.ok(impl.kind === 'methods');
+  assert.deepEqual(impl.methods.map((method) => [method.name, method.result.kind === 'callers' ? method.result.callers.map((c) => c.id) : method.result.kind]), [['run', ['function:main']]]);
+  // Two callables with one name: not matched.
+  const other = file('src/other.rs', [kindSymbol('function:run', 'function', 1, 3)], {}, {});
+  assert.deepEqual(findCallers({ key: 'src/field.rs', id: 'impl:Field>method:run' }, [lib, main, other]), { kind: 'ambiguous' });
+});
+
+void test('an impl row reads with its keyword, and so does a name a sibling shares', () => {
+  const nodes = symbolTree([kindSymbol('struct:Field', 'struct', 1, 4, 'struct Field'), kindSymbol('impl:Field', 'impl', 6, 20, 'impl Display for Field')]);
+  assert.deepEqual(nodes.map((node) => rowName(node, nodes)), ['Field', 'impl Display for Field']);
+  const twins = symbolTree([kindSymbol('struct:Pair', 'struct', 1, 4, 'struct Pair'), (() => {
+    const twin = kindSymbol('struct:Pair#2', 'struct', 6, 9, 'struct Pair');
+    return { ...twin, definition: { ...twin.definition, name: 'Pair' } };
+  })()]);
+  assert.deepEqual(twins.map((node) => rowName(node, twins)), ['struct Pair', 'struct Pair']);
+  assert.equal(rowName(symbolTree([kindSymbol('function:go', 'function', 1, 3)])[0]), 'go');
 });

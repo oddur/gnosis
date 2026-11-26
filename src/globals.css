@@ -6381,6 +6381,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .symbol-peek-body { overflow:auto; min-height:0; flex:1; }
 /* A peek has no file header for hunk bars to pin under: pinned, they sat a header's height down, over the first line. */
 .symbol-peek .symbol-peek-body .changes-diff :is(.diff-gap, [data-hunk-header]) { position:static !important; top:auto !important; border-top-width:0; }
+/* One hunk in a peek: its bar would repeat the peek's header. */
+.symbol-peek-body[data-hunks="1"] .changes-diff [data-hunk-header] { display:none; }
 .symbol-peek:focus-visible { outline:2px solid var(--ring); outline-offset:-1px; }
 .symbol-peek-callers { padding:8px 12px 10px; border-top:1px solid var(--border); font-size:var(--type-caption); }
 .symbol-peek-callers h3 { margin:0 0 4px; font-size:inherit; font-weight:600; color:var(--muted-foreground); }
@@ -6393,3 +6395,4 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .symbol-peek-link { color:var(--foreground); text-decoration:underline; }
 .symbol-peek-footer { padding:6px 12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { .symbol-peek { animation:none; transition:none; } }
+.symbol-peek-method h4 { margin:4px 0 2px; font-family:var(--font-mono); font-size:inherit; font-weight:500; }

@@ -74,7 +74,49 @@ export function SymbolPeek({
   const contentRef = useRef<HTMLDivElement>(null);
   anchorRef.current = anchor;
   const [active, setActive] = useState(-1);
-  const list = callers.kind === 'callers' ? callers.callers : [];
+  // Every caller listed, in order, for the arrow keys: a type's are its methods' callers, method by method.
+  const list =
+    callers.kind === 'callers'
+      ? callers.callers
+      : callers.kind === 'methods'
+        ? callers.methods.flatMap((method) => (method.result.kind === 'callers' ? method.result.callers : []))
+        : [];
+  const title = callers.kind === 'methods' ? 'Calls into its methods, in this PR' : 'Called by, in this PR';
+  /** Callers as listbox options; their index is their place in `list`, where the arrow keys move. */
+  const callerList = (shown: readonly Caller[]) => (
+    <ul role="listbox" aria-label="Callers">
+      {shown.map((caller) => {
+        const index = list.indexOf(caller);
+        return (
+          <li
+            key={`${caller.key}:${caller.id}`}
+            id={`peek-caller-${index}`}
+            role="option"
+            aria-selected={index === active}
+            className="symbol-peek-caller"
+            onClick={() => onPeek(caller)}
+          >
+            <span className="symbol-peek-caller-name">{caller.node.definition.name}</span>
+            <span className="symbol-peek-file">{caller.key.slice(caller.key.lastIndexOf('/') + 1)}</span>
+            <code className="symbol-peek-call">{caller.call.text}</code>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Go to ${caller.node.definition.name}`}
+              title="Go there (Alt+Enter)"
+              tabIndex={-1}
+              onClick={(event) => {
+                event.stopPropagation();
+                onGo(caller);
+              }}
+            >
+              <CornerDownLeft size={12} aria-hidden="true" />
+            </Button>
+          </li>
+        );
+      })}
+    </ul>
+  );
   const hunks = useMemo<DiffHunk[]>(
     () => peekHunks(view.file.patch, view.hunks).map((hunk) => ({ filePath: view.file.path, hunkHeader: hunk.header, content: hunk.content, language: '', renderedHtml: '' })),
     [view.file.patch, view.file.path, view.hunks]
@@ -155,7 +197,8 @@ export function SymbolPeek({
               </span>
             )}
           </header>
-          <div className="symbol-peek-body">
+          {/* One hunk: its bar repeats what the header says, so it is hidden (globals.css); several keep theirs apart. */}
+          <div className="symbol-peek-body" data-hunks={hunks.length}>
             {hunks.length ? (
               <ReviewDiff
                 filePath={view.file.path}
@@ -165,6 +208,7 @@ export function SymbolPeek({
                 slideIndex={-1}
                 keyScope={`peek:${view.snapshot.url}`}
                 expandable={false}
+                outline={false}
                 plainGaps
                 theme={theme}
                 source={{
@@ -178,51 +222,40 @@ export function SymbolPeek({
             ) : (
               <p className="symbol-peek-note">Loading…</p>
             )}
-            <section className="symbol-peek-callers" aria-label="Called by, in this PR">
-              <h3>Called by, in this PR</h3>
-              {callers.kind === 'none' ? null : callers.kind === 'ambiguous' ? (
-                <p className="symbol-peek-note">Name used by several symbols; not matched</p>
-              ) : list.length ? (
-                <ul role="listbox" aria-label="Callers" aria-activedescendant={active >= 0 ? `peek-caller-${active}` : undefined}>
-                  {list.map((caller, index) => (
-                    <li
-                      key={`${caller.key}:${caller.id}`}
-                      id={`peek-caller-${index}`}
-                      role="option"
-                      aria-selected={index === active}
-                      className="symbol-peek-caller"
-                      onClick={() => onPeek(caller)}
-                    >
-                      <span className="symbol-peek-caller-name">{caller.node.definition.name}</span>
-                      <span className="symbol-peek-file">{caller.key.slice(caller.key.lastIndexOf('/') + 1)}</span>
-                      <code className="symbol-peek-call">{caller.call.text}</code>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Go to ${caller.node.definition.name}`}
-                        title="Go there (Alt+Enter)"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onGo(caller);
-                        }}
-                      >
-                        <CornerDownLeft size={12} aria-hidden="true" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="symbol-peek-note">No changed callers in this PR</p>
-              )}
-              {callers.kind !== 'none' && coverage.checked < coverage.total && (
-                <p className="symbol-peek-note">
-                  Checked {coverage.checked} of {coverage.total} changed files.{' '}
-                  <button type="button" className="symbol-peek-link" onClick={onLookAll}>
-                    Look in all files
-                  </button>
-                </p>
-              )}
-            </section>
+            {callers.kind !== 'none' && (
+              <section className="symbol-peek-callers" aria-label={title}>
+                <h3>{title}</h3>
+                {callers.kind === 'ambiguous' ? (
+                  <p className="symbol-peek-note">Name used by several symbols; not matched</p>
+                ) : callers.kind === 'methods' ? (
+                  // A type: its changed methods' callers, each under its method.
+                  callers.methods.map((method) => (
+                    <div key={method.id} className="symbol-peek-method">
+                      <h4>{method.name}</h4>
+                      {method.result.kind === 'ambiguous' ? (
+                        <p className="symbol-peek-note">Name used by several symbols; not matched</p>
+                      ) : method.result.callers.length ? (
+                        callerList(method.result.callers)
+                      ) : (
+                        <p className="symbol-peek-note">No changed callers</p>
+                      )}
+                    </div>
+                  ))
+                ) : list.length ? (
+                  callerList(list)
+                ) : (
+                  <p className="symbol-peek-note">No changed callers in this PR</p>
+                )}
+                {coverage.checked < coverage.total && (
+                  <p className="symbol-peek-note">
+                    Checked {coverage.checked} of {coverage.total} changed files.{' '}
+                    <button type="button" className="symbol-peek-link" onClick={onLookAll}>
+                      Look in all files
+                    </button>
+                  </p>
+                )}
+              </section>
+            )}
           </div>
           <footer className="symbol-peek-footer">Enter to go · V to mark viewed · Esc to close</footer>
         </Popover.Content>

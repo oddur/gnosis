@@ -1,6 +1,6 @@
 import { TOP_LEVEL_ID, isBody } from './symbol-outline';
 import { reviewed } from './tree-symbol-review';
-import { topLevelName, treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
+import { rowName, topLevelName, treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
 
 /**
  * The Changes file tree's paths for @pierre/trees when it lists changed symbols (lib/tree-symbols.ts). Pierre builds
@@ -149,7 +149,8 @@ export function symbolTreePaths(
       const body = isBody(node);
       const icon: TreeRowIcon = body ? 'top' : treeSymbolKind(node.definition.kind);
       const tint: TreeRowTint = body ? 'muted' : node.change === 'context' || (!node.quiet && !reviewed(node)) ? 'context' : node.change;
-      let segment = `${segmentName(node.definition.name)}${rowCode(icon, tint)}`;
+      // An impl block, or a name a sibling shares, reads with its keyword (`impl FieldCommand`).
+      let segment = `${segmentName(rowName(node, nodes))}${rowCode(icon, tint)}`;
       while (used.has(segment)) segment = `${segment.slice(0, -CODE_LENGTH)}${REPEAT}${segment.slice(-CODE_LENGTH)}`;
       used.add(segment);
       const row: TreeRow = { type: 'symbol', key: file, node };

@@ -81,6 +81,8 @@ interface Props {
   onMarkFileViewed?: () => void;
   /** The outline's mark button's words, when it marks a part (#564). */
   markFileLabel?: string;
+  /** False where something else names the code already (a peek's header): no outline above it. */
+  outline?: boolean;
 }
 
 /** The Pierre theme a topic's code was highlighted in, from its saved HTML: the file header and bars take its palette. */
@@ -126,6 +128,7 @@ export function ReviewDiff({
   fileViewed,
   onMarkFileViewed,
   markFileLabel,
+  outline = true,
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
   // Without the file's status, a topic whose saved hunks add (or delete) the whole file is an added (or deleted) file,
@@ -366,7 +369,9 @@ export function ReviewDiff({
           onCollapseScope={model.collapseScope}
           noise={model.noise}
           moves={model.moves}
-          outline={{
+          outline={
+            outline
+              ? {
             quiet: model.quietSymbols,
             symbols: model.symbols,
             pending: model.outlinePending,
@@ -375,7 +380,9 @@ export function ReviewDiff({
             fileViewed,
             onMarkFileViewed,
             markFileLabel,
-          }}
+                }
+              : undefined
+          }
           stickyUnder={stickyUnder}
           changedLines={model.changedLines}
           target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}

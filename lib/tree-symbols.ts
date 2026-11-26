@@ -352,3 +352,17 @@ export function rowDestination(node: TreeSymbolNode | TopLevelChanges): ChangedS
   const definition = first.id.startsWith(`${node.id}>`) ? (first.parents[depth] ?? node.definition) : node.definition;
   return { ...first, id: node.id, change: 'modified', definition, parents: first.parents.slice(0, depth) };
 }
+
+/**
+ * A symbol row's name. An impl block reads as the outline names it, its keyword first (`impl FieldCommand`,
+ * `impl Display for Field`), so it reads apart from `struct FieldCommand` beside it; any other symbol whose name a
+ * sibling's shows the same takes its keyword too (`fn`, `class`), and the rest read as their names.
+ */
+export function rowName(node: TreeSymbolNode, siblings: readonly TreeSymbolNode[] = []): string {
+  if (node.id.endsWith('>@body')) return node.definition.name;
+  const shown = (one: TreeSymbolNode) => (one.definition.kind === 'impl' ? one.definition.crumb || `impl ${one.definition.name}` : one.definition.name);
+  const own = shown(node);
+  const { crumbKeyword } = node.definition;
+  if (node.definition.kind !== 'impl' && crumbKeyword && siblings.some((other) => other !== node && shown(other) === own)) return `${crumbKeyword} ${own}`;
+  return own;
+}
