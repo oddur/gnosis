@@ -728,17 +728,27 @@ export function PrChangesView({
     }
   }
   // What is left to review, in stops of the walk (symbols, Body, Top level, files without symbols), for the toolbar.
-  const leftFiles = treeSymbols ? reviewFiles(allowed) : [];
-  const leftKeys = new Map(leftFiles.map((file) => [file.key, file.fileKey]));
-  const left = treeSymbols ? itemsLeft(leftFiles, (key, id) => progress.isSymbolViewed(leftKeys.get(key) ?? '', id)) : 0;
   // Re-review only what changed (lib/symbol-carry.ts): each file of a PR's new revision takes its earlier ticks once
-  // what it lists is known (files without symbols at once); the tree does the same for files whose parse lands.
-  useCarry();
+  // what it lists is known (files without symbols at once); the tree does the same for files whose parse lands. The
+  // walk's files, what is left and what changed are worked out again only when the files, the marks or a carry do.
+  const carryVersion = useCarry();
+  const allowedSignature = allowed.map((e) => e.key).join('\n');
+  const marksVersion = progressVersion();
+  const leftFiles = useMemo(
+    () => (treeSymbols ? reviewFiles(allowed) : []),
+    [treeSymbols, entries, allowedSignature, marksVersion, carryVersion, codeSettings, noiseFilter]
+  );
+  const { left, updated } = useMemo(() => {
+    const keys = new Map(leftFiles.map((file) => [file.key, file.fileKey]));
+    return {
+      left: itemsLeft(leftFiles, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)),
+      updated: updatedCount(leftFiles.map((file) => file.fileKey)),
+    };
+  }, [leftFiles]);
   useEffect(() => {
     if (!treeSymbols || commit || combined) return;
     for (const file of leftFiles) ensureCarried(file.fileKey, file.symbols);
-  });
-  const updated = treeSymbols ? updatedCount(leftFiles.map((file) => file.fileKey)) : 0;
+  }, [leftFiles]);
   const endNotice = (direction: 1 | -1) =>
     toast.add({ title: direction === 1 ? 'No unviewed items after this' : 'No unviewed items before this', timeout: NOTICE_MS });
   /**

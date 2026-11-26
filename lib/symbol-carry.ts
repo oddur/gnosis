@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { carryTicks, earlierTicks, filePrint, isFileViewed, isSymbolViewed } from './file-view-progress';
+import { carryTicks, earlierTicks, filePrint, isFileViewed, isRegistered, isSymbolViewed } from './file-view-progress';
 import { planCarry } from './review-prints';
 import { FILE_STOP, countedIds } from './tree-symbol-review';
 import type { FileSymbols } from './tree-symbol-paths';
@@ -28,7 +28,8 @@ const notify = () => {
  */
 export function ensureCarried(fileKey: string, symbols: FileSymbols | undefined) {
   if (done.has(fileKey)) return;
-  if (symbols?.state === 'loading') return;
+  // Not known yet, or its revision not registered yet (its path, rename and patch): tried again later.
+  if (symbols?.state === 'loading' || !isRegistered(fileKey)) return;
   done.add(fileKey);
   if (isFileViewed(fileKey)) return;
   const whole = filePrint(fileKey);

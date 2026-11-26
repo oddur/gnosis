@@ -103,14 +103,55 @@ void test('a new revision of a file takes the ticks that still read the same, an
   ensureCarried(second, symbols({ 'function:flush': 'v1:flush2', 'function:gone': 'v1:gone' }));
   assert.equal(progress.isSymbolViewed(second, 'function:gone'), false);
 
-  // Revision 3, renamed, every item the same as when last ticked: Viewed, with no reader on it.
+  // Revision 3, renamed: flush, ticked in revision 2 and the same, carries from the old path. gone was unticked in
+  // revision 2, after its tick in revision 1: the untick wins, and the old tick does not come back.
   progress.registerChangeProgress(snapshot('h3', [{ path: 'src/stores.ts', previousPath: 'src/store.ts', changeId: 'c3' }]));
   const third = fileRevisionKey(url, 'src/stores.ts', 'base', 'h3');
   ensureCarried(third, symbols({ 'function:flush': 'v1:flush2', 'function:gone': 'v1:gone' }));
   assert.equal(progress.isSymbolViewed(third, 'function:flush'), true, 'The rename carries from the old path');
-  // gone was unticked in revision 2, its newest tick: the tick from revision 1 is older, and is what carries.
-  assert.equal(progress.isSymbolViewed(third, 'function:gone'), true);
-  assert.equal(progress.isFileViewed(third), true, 'Everything carried: the file is Viewed');
+  assert.equal(progress.isSymbolViewed(third, 'function:gone'), false, 'An untick is not undone by the next push');
+  assert.equal(progress.isFileViewed(third), false);
+  // Ticked here, every item reads the same in revision 4: all carry, and the file is Viewed with no reader on it.
+  await progress.markSymbolsViewed(third, ['function:gone'], true, { 'function:gone': 'v1:gone' });
+  progress.registerChangeProgress(snapshot('h4', [{ path: 'src/stores.ts', changeId: 'c4' }]));
+  const fourth = fileRevisionKey(url, 'src/stores.ts', 'base', 'h4');
+  ensureCarried(fourth, symbols({ 'function:flush': 'v1:flush2', 'function:gone': 'v1:gone' }));
+  assert.equal(progress.isSymbolViewed(fourth, 'function:gone'), true);
+  assert.equal(progress.isFileViewed(fourth), true, 'Everything carried: the file is Viewed');
+});
+
+void test('Reset viewed is an untick: nothing it cleared carries to the next push, until Undo puts it back', async () => {
+  const progress = await import('../lib/file-view-progress');
+  const { ensureCarried } = await import('../lib/symbol-carry');
+  const { fileRevisionKey } = await import('../lib/pr-changes');
+  const url = 'https://github.com/o/r/pull/11';
+  const snapshot = (head: string, changeId: string) =>
+    ({ url, metadata: { baseSha: 'base', headSha: head }, files: [{ path: 'a.ts', status: 'modified', additions: 1, deletions: 0, changeId }] }) as unknown as Parameters<
+      typeof progress.registerChangeProgress
+    >[0];
+  const nodes = symbolTree([changed('function:f', 1, 3), changed('function:g', 5, 7)]);
+  progress.registerChangeProgress(snapshot('h1', 'c1'));
+  const first = fileRevisionKey(url, 'a.ts', 'base', 'h1');
+  await progress.markSymbolsViewed(first, ['function:f', 'function:g'], true, { 'function:f': 'v1:f', 'function:g': 'v1:g' });
+  const { snapshot: cleared } = progress.resetViewed([first]);
+  progress.registerChangeProgress(snapshot('h2', 'c2'));
+  const second = fileRevisionKey(url, 'a.ts', 'base', 'h2');
+  ensureCarried(second, { state: 'ready', nodes, prints: { 'function:f': 'v1:f', 'function:g': 'v1:g' } });
+  assert.equal(progress.isSymbolViewed(second, 'function:f'), false, 'Reset: nothing carries');
+  // Undo restores the ticks with their prints, so they carry again to a later revision.
+  await progress.restoreViewed(cleared);
+  progress.registerChangeProgress(snapshot('h3', 'c3'));
+  const third = fileRevisionKey(url, 'a.ts', 'base', 'h3');
+  ensureCarried(third, { state: 'ready', nodes, prints: { 'function:f': 'v1:f', 'function:g': 'v1:g' } });
+  assert.equal(progress.isSymbolViewed(third, 'function:f'), true);
+});
+
+void test('Unticking a symbol of a file marked Viewed by hand is remembered, so scrolling does not tick it again', async () => {
+  const progress = await import('../lib/file-view-progress');
+  const key = 'untick:file';
+  await progress.markFileViewed(key, true);
+  await progress.markSymbolsViewed(key, ['function:f'], false);
+  assert.equal(progress.wasSymbolUnticked(key, 'function:f'), true);
 });
 
 void test('ticks saved before prints, and files still loading, never carry', async () => {
@@ -132,4 +173,28 @@ void test('ticks saved before prints, and files still loading, never carry', asy
   ensureCarried(second, { state: 'ready', nodes, prints: { 'function:f': 'v1:f' } });
   assert.equal(progress.isSymbolViewed(second, 'function:f'), false, 'A tick with no print does not carry');
   assert.equal(isUpdated(second, 'function:f'), false, 'and is not Updated either: nothing is known of what it read');
+});
+
+void test('carry-over waits for the revision to be registered, and a file with no patch never carries', async () => {
+  const progress = await import('../lib/file-view-progress');
+  const { ensureCarried } = await import('../lib/symbol-carry');
+  const { fileRevisionKey } = await import('../lib/pr-changes');
+  const url = 'https://github.com/o/r/pull/12';
+  const snapshot = (head: string, files: { path: string; changeId: string; patch?: string }[]) =>
+    ({ url, metadata: { baseSha: 'base', headSha: head }, files: files.map((file) => ({ status: 'modified', additions: 1, deletions: 0, ...file })) }) as unknown as Parameters<
+      typeof progress.registerChangeProgress
+    >[0];
+  progress.registerChangeProgress(snapshot('h1', [{ path: 'a.json', changeId: 'a1', patch: '+1' }, { path: 'big.json', changeId: 'b1' }]));
+  await progress.markFilesViewed([fileRevisionKey(url, 'a.json', 'base', 'h1'), fileRevisionKey(url, 'big.json', 'base', 'h1')], true);
+  const second = fileRevisionKey(url, 'a.json', 'base', 'h2');
+  // Asked before the new revision is registered (the tree's effect runs before the view's): nothing yet, and not done.
+  ensureCarried(second, undefined);
+  assert.equal(progress.isFileViewed(second), false);
+  progress.registerChangeProgress(snapshot('h2', [{ path: 'a.json', changeId: 'a2', patch: '+1' }, { path: 'big.json', changeId: 'b2' }]));
+  ensureCarried(second, undefined);
+  assert.equal(progress.isFileViewed(second), true, 'Registered: the same patch carries');
+  // No patch on either side: a blob says nothing of the base, so nothing carries.
+  const big = fileRevisionKey(url, 'big.json', 'base', 'h2');
+  ensureCarried(big, undefined);
+  assert.equal(progress.isFileViewed(big), false);
 });

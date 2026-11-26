@@ -100,7 +100,9 @@ export function changedSymbolLines(
  * `,` (`}`, `});`, `},`, `{`). A class whose own changed lines are all such, between edited methods, is no review stop
  * of its own (lib/tree-symbol-review.ts).
  */
-const TRIVIAL_LINE = /^\s*(?:[{}()[\]]+\s*[;,]?\s*)*$/;
+// One character class, no nested quantifier: linear on any line (a nested one backtracked exponentially on a long run
+// of brackets followed by text). It also takes `;` or `,` between brackets, as `}; }`, which is no code either.
+const TRIVIAL_LINE = /^[\s{}()[\];,]*$/;
 export const trivialLine = (text: string) => TRIVIAL_LINE.test(text);
 
 /**
@@ -212,7 +214,9 @@ function collectSymbols(
   const folded = symbols.filter((symbol) => {
     if (symbol.change === 'modified') return true;
     const parts = symbol.id.split('>');
-    for (let depth = parts.length - 1; depth > 0; depth--) {
+    // Into the outermost ancestor of the same change, which folds into nothing itself: a nearer one may already be
+    // folded away, and what it took would be lost with it.
+    for (let depth = 1; depth < parts.length; depth++) {
       const ancestor = byId.get(parts.slice(0, depth).join('>'));
       if (ancestor && ancestor.change === symbol.change) {
         ancestor.added += symbol.added;
@@ -273,6 +277,17 @@ export function bodySymbol(container: ChangedSymbol): ChangedSymbol {
     side: container.first.side,
     parents: [...container.parents, container.definition],
   };
+}
+
+/**
+ * The symbols with a change that shows: from `all` (`changedSymbols()` with every line), those that `shown` (the same
+ * with quiet lines left out) lists, or lists something under. Added, modified and removed, and what folds into what,
+ * come from `all`: leaving a hidden comment out of an added class must not make it modified and unfold it. The tree
+ * and the outline both list exactly these, so their items, counts and ticks agree.
+ */
+export function visibleSymbols(all: readonly Pick<ChangedSymbol, 'id'>[], shown: readonly Pick<ChangedSymbol, 'id'>[]): Set<string> {
+  const ids = new Set(shown.map((symbol) => symbol.id));
+  return new Set(all.filter((symbol) => ids.has(symbol.id) || shown.some((other) => other.id.startsWith(`${symbol.id}>`))).map((symbol) => symbol.id));
 }
 
 /**

@@ -4,7 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { span } from './perf-spans';
 import { fileRevisionKey, type PrChanges } from './pr-changes';
 import { commitViewedKey } from './pr-commits';
-import { itemPrint, readSavedPrint, savedPrint, type EarlierTick } from './review-prints';
+import { UNTICKED, itemPrint, readSavedPrint, savedPrint, type EarlierTick } from './review-prints';
 export interface Progress {
   aliases: Record<string, string>;
   marks: Partial<Record<string, boolean>>;
@@ -71,20 +71,24 @@ function revisionsByPath(s: Progress): Map<string, string[]> {
 /** A renamed file's old path, by its revision key, as the PR's file list reports it. */
 const renamedFrom = new Map<string, string>();
 /** Each registered file revision's patch, for the print a file's Viewed mark saves: no read, nothing hashed till then. */
-const revisionFiles = new Map<string, { patch?: string; blobSha?: string }>();
-/** A whole file's print: its patch, else its blob; none without either. */
+const revisionFiles = new Map<string, { patch?: string }>();
+/**
+ * A whole file's print: its patch. None without one (a deferred or very large diff): a blob alone says nothing of the
+ * base, so such a file never carries (fail closed).
+ */
 export function filePrint(fileKey: string): string | undefined {
-  const file = revisionFiles.get(fileKey);
-  const text = file?.patch ?? (file?.blobSha ? `blob:${file.blobSha}` : undefined);
-  return text === undefined ? undefined : itemPrint(text);
+  const patch = revisionFiles.get(fileKey)?.patch;
+  return patch === undefined ? undefined : itemPrint(patch);
 }
+/** Whether a file revision is registered (`registerChangeProgress`): carry-over waits for it. */
+export const isRegistered = (fileKey: string) => revisionFiles.has(fileKey);
 export function registerChangeProgress(snapshot: PrChanges) {
   const store = load();
   let dirty = false;
   const patch: FileProgressPatch = { aliases: {}, marks: {} };
   for (const file of snapshot.files) {
     const revision = fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha);
-    revisionFiles.set(revision, { patch: file.patch, blobSha: file.blobSha });
+    revisionFiles.set(revision, { patch: file.patch });
     // A rename's earlier revisions are under its old path.
     if (file.previousPath && file.previousPath !== file.path) renamedFrom.set(revision, file.previousPath);
     const content = JSON.stringify([snapshot.url, file.path, file.changeId]);
@@ -115,7 +119,8 @@ export function markFilesViewed(keys: readonly string[], viewed: boolean) {
       s.marks[resolved] = viewed;
       marks[resolved] = viewed;
       // A file marked by hand keeps what its whole change read: its mark carries to a revision with the same patch.
-      const print = viewed ? filePrint(key) : undefined;
+      // Unmarked, it shadows its earlier revisions' marks, which then carry no more.
+      const print = viewed ? filePrint(key) : UNTICKED;
       if (print) prints[resolved] = (s.prints ??= {})[resolved] = savedPrint(print, Date.now());
     }
     // Clearing any file must also clear the completed-commit summary.
@@ -167,12 +172,15 @@ export function markSymbolsViewed(fileKey: string, symbolIds: readonly string[],
   const saved: Record<string, string> = {};
   const at = Date.now();
   for (const id of new Set(symbolIds)) {
+    // The reader unticked it, even if only its file's mark showed it ticked: scrolling must not tick it again.
+    if (!viewed) unticked.add(JSON.stringify([fileKey, id]));
     if (isSymbolViewed(fileKey, id) === viewed) continue;
     const key = symbolViewedKey(resolvedFile, id);
     s.marks[key] = viewed;
     marks[key] = viewed;
     if (viewed && prints?.[id]) saved[key] = (s.prints ??= {})[key] = savedPrint(prints[id], at);
-    if (!viewed) unticked.add(JSON.stringify([fileKey, id]));
+    // An untick shadows the earlier revisions' ticks of the item: none carries past it (`earlierTicks`).
+    if (!viewed) saved[key] = (s.prints ??= {})[key] = savedPrint(UNTICKED, at);
   }
   return Object.keys(marks).length ? changed({ aliases: {}, marks, prints: saved }) : Promise.resolve(true);
 }
@@ -221,6 +229,8 @@ export function viewedMarkKeys(state: Progress, fileKeys: readonly string[]): st
 export interface ViewedSnapshot {
   marks: string[];
   unticked: string[];
+  /** The cleared marks' prints, which the reset replaced with unticks: Undo puts them back. */
+  prints?: Record<string, string>;
 }
 /** Whether any file of the view reads as viewed or has a tick. */
 export const hasViewedMarks = (fileKeys: readonly string[]) => viewedMarkKeys(load(), fileKeys).length > 0;
@@ -238,22 +248,34 @@ export function resetViewed(fileKeys: readonly string[]): { snapshot: ViewedSnap
   const forgotten = [...unticked].filter((entry) => files.has((JSON.parse(entry) as [string, string])[0]));
   for (const entry of forgotten) unticked.delete(entry);
   const marks: Record<string, boolean> = {};
+  // Each cleared mark is an untick: its earlier revisions' ticks carry no more (`earlierTicks`).
+  const prints: Record<string, string> = {};
+  const previous: Record<string, string> = {};
+  const at = Date.now();
   for (const key of keys) {
     s.marks[key] = false;
     marks[key] = false;
+    previous[key] = s.prints?.[key] ?? '';
+    prints[key] = (s.prints ??= {})[key] = savedPrint(UNTICKED, at);
   }
-  return { snapshot: { marks: keys, unticked: forgotten }, saved: keys.length ? changed({ aliases: {}, marks }) : Promise.resolve(true) };
+  return {
+    snapshot: { marks: keys, unticked: forgotten, prints: previous },
+    saved: keys.length ? changed({ aliases: {}, marks, prints }) : Promise.resolve(true),
+  };
 }
 /** Puts back what `resetViewed` cleared. */
 export function restoreViewed(snapshot: ViewedSnapshot): Promise<boolean> {
   const s = load();
   const marks: Record<string, boolean> = {};
+  const prints: Record<string, string> = {};
   for (const key of snapshot.marks) {
     s.marks[key] = true;
     marks[key] = true;
+    // The prints the ticks had (none: a tick saved before prints, which never carries).
+    prints[key] = (s.prints ??= {})[key] = snapshot.prints?.[key] ?? '';
   }
   for (const entry of snapshot.unticked) unticked.add(entry);
-  return snapshot.marks.length ? changed({ aliases: {}, marks }) : Promise.resolve(true);
+  return snapshot.marks.length ? changed({ aliases: {}, marks, prints }) : Promise.resolve(true);
 }
 
 /**
@@ -274,20 +296,30 @@ export function earlierTicks(fileKey: string, ids: readonly string[]): Map<strin
   const own = s.aliases[fileKey] ?? fileKey;
   const paths = new Set([path, ...(renamedFrom.get(fileKey) ? [renamedFrom.get(fileKey) as string] : [])]);
   const index = revisionsByPath(s);
-  for (const revision of [...paths].flatMap((one) => index.get(`${url}\u0000${one}`) ?? [])) {
-    if (revision === fileKey) continue;
-    const resolved = s.aliases[revision] ?? revision;
-    // The same content is the same marks already.
-    if (resolved === own) continue;
-    for (const id of ids) {
-      const key = id === '@file' ? resolved : symbolViewedKey(resolved, id);
-      if (!s.marks[key]) continue;
-      const saved = readSavedPrint(s.prints?.[key]);
-      const tick: EarlierTick = saved ? { print: saved.print, at: saved.at } : { at: 0 };
-      const known = out.get(id);
-      if (!known || tick.at > known.at) out.set(id, tick);
+  const consider = (resolved: string, id: string, unticksOnly: boolean) => {
+    const key = id === '@file' ? resolved : symbolViewedKey(resolved, id);
+    const saved = readSavedPrint(s.prints?.[key]);
+    let tick: EarlierTick;
+    if (s.marks[key]) {
+      if (unticksOnly) return;
+      tick = saved && saved.print !== UNTICKED ? { print: saved.print, at: saved.at } : { at: saved?.at ?? 0 };
     }
+    // An untick, there or here: newer than a tick, it shadows it (no print: nothing carries, nothing is Changed).
+    else if (saved?.print === UNTICKED) tick = { at: saved.at };
+    else return;
+    const known = out.get(id);
+    if (!known || tick.at > known.at) out.set(id, tick);
+  };
+  const seen = new Set<string>([own]);
+  for (const revision of [...paths].flatMap((one) => index.get(`${url}\u0000${one}`) ?? [])) {
+    const resolved = s.aliases[revision] ?? revision;
+    // The same content is the same marks already; each content once.
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    for (const id of ids) consider(resolved, id, false);
   }
+  // This revision's own unticks: what the reader unticked here, or reset, never comes back.
+  for (const id of ids) consider(own, id, true);
   return out;
 }
 /**

@@ -42,6 +42,12 @@ function hash(text: string): string {
 /** An item's print: its text's hash, under this version. */
 export const itemPrint = (text: string) => `${PRINT_VERSION}:${hash(printText(text))}`;
 
+/**
+ * What an untick saves in place of a print (`savedPrint(UNTICKED, at)`): the item's earlier ticks stop carrying past
+ * it, after a restart or the next push alike.
+ */
+export const UNTICKED = '-';
+
 /** A print as saved with its tick: the print and when the tick was made, so the newest earlier tick wins. */
 export const savedPrint = (print: string, at: number) => `${print}@${at}`;
 export function readSavedPrint(value: string | undefined): { print: string; at: number } | undefined {

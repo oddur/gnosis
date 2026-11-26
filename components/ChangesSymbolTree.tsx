@@ -6,7 +6,7 @@ import { CHANGED_COLOR, TREE_WORDS, commentDecorationCSS, decorationCSS, fileRow
 import { DIFF_STAT_COLORS } from './DiffStats';
 import { treeSymbolLook } from './tree-symbol-icons';
 import { selectedTreeFiles } from '../lib/tree-viewed-files';
-import { useFileProgress } from '../lib/file-view-progress';
+import { isSymbolViewed, progressVersion, useFileProgress } from '../lib/file-view-progress';
 import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
 import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '../lib/symbol-outline';
@@ -142,20 +142,23 @@ export function ChangesSymbolTree({
   const prepared = useMemo(() => preparePresortedFileTreeInput(layout.paths), [pathSignature]);
   // Each file's progress through its changed symbols, once they are known, and each folder's sum of them: the rows'
   // `2/5` (lib/tree-symbol-review.ts). The outline's ticks, so a tick anywhere shows here.
-  const fileProgress = new Map<string, SymbolProgress>();
-  for (const e of entries) {
-    const source = supported.get(e.key);
-    const value = known.get(e.key);
-    if (source && value?.state === 'ready')
-      fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed, value.top));
-  }
-  const folderSums = folderProgress(fileProgress);
-  // Items changed since the reader viewed them, per file and summed per folder: "2 changed" first on their rows.
-  const fileChanged = new Map(entries.flatMap((e) => (e.source ? [[e.key, updatedCount([e.source.fileKey])] as const] : [])));
-  const folderChanged = sumFolders(fileChanged);
+  // Worked out again only when the files, what is known of them, the marks or a carry change.
+  const carried = useCarry();
+  const marksVersion = progressVersion();
+  const { fileProgress, folderSums, fileChanged, folderChanged } = useMemo(() => {
+    const fileProgress = new Map<string, SymbolProgress>();
+    for (const e of entries) {
+      const source = supported.get(e.key);
+      const value = known.get(e.key);
+      if (source && value?.state === 'ready')
+        fileProgress.set(e.key, symbolProgress(value.nodes, (id) => isSymbolViewed(source.fileKey, id), e.viewed, value.top));
+    }
+    // Items changed since the reader viewed them, per file and summed per folder: "2 changed" first on their rows.
+    const fileChanged = new Map(entries.flatMap((e) => (e.source ? [[e.key, updatedCount([e.source.fileKey])] as const] : [])));
+    return { fileProgress, folderSums: folderProgress(fileProgress), fileChanged, folderChanged: sumFolders(fileChanged) };
+  }, [entries, supported, known, marksVersion, carried]);
   // Carry-over (lib/symbol-carry.ts): a file's ticks come over from its earlier revisions once its symbols are known,
   // and the rows mark what changed since the reader viewed it.
-  const carried = useCarry();
   useEffect(() => {
     for (const [key, value] of known) {
       const source = supported.get(key);

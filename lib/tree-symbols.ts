@@ -1,6 +1,6 @@
 import type { GapHunk } from './diff-gaps';
 import type { MoveMark } from './moved-symbols-store';
-import { TOP_LEVEL_ID, bodySymbol, type ChangedSymbol, type SymbolChange } from './symbol-outline';
+import { TOP_LEVEL_ID, bodySymbol, visibleSymbols, type ChangedSymbol, type SymbolChange } from './symbol-outline';
 import type { DefinitionKind, SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -77,7 +77,8 @@ export function symbolTree(
   /** Symbols whose own changed lines are all trivial (`trivialSymbols`). */
   trivial: ReadonlySet<string> = new Set()
 ): TreeSymbolNode[] {
-  const shownIds = new Set(shown.map((symbol) => symbol.id));
+  // Quiet: no change of it shows, in it or under it (`visibleSymbols`), as the outline counts it.
+  const shownIds = visibleSymbols(all, shown);
   const roots: TreeSymbolNode[] = [];
   const nodes = new Map<string, TreeSymbolNode>();
   const place = (node: TreeSymbolNode, parent: TreeSymbolNode | undefined) => (parent ? parent.children : roots).push(node);

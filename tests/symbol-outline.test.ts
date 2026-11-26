@@ -258,3 +258,39 @@ void test('a class whose own changes are a blank line or a brace is a roll-up; a
   const addedDefinitions = { after: await parse('typescript', added), before: await parse('typescript', BEFORE) };
   assert.deepEqual(reviewItems(changedSymbols(addedHunks, addedDefinitions) ?? [], trivialSymbols(addedHunks, addedDefinitions)).map((symbol) => symbol.id), ['class:Queue']);
 });
+
+// With a backtracking pattern the first call would not return in any useful time: the test would hang, not fail.
+void test('a trivial-line check is linear: a long run of brackets with text after it is not trivial', () => {
+  assert.equal(trivialLine(`${'}'.repeat(200)} as const`), false);
+  assert.equal(trivialLine(`${'})'.repeat(200)};`), true);
+});
+
+void test('A nested function in a method of an added class folds into the class, with every line', async () => {
+  const after = [...BEFORE, '', 'export class Queue {', '  push(n: number) {', '    function inner() {', '      return n;', '    }', '    return inner();', '  }', '}'];
+  const hunks = hunksOf(BEFORE, after);
+  const definitions = { after: await parse('typescript', after), before: await parse('typescript', BEFORE) };
+  const symbols = changedSymbols(hunks, definitions);
+  assert.deepEqual(brief(symbols ?? []), [['class:Queue', 'added', 8, 0]], 'The class counts its method and the function in it');
+  assert.equal(changedSymbolLines(hunks, definitions)?.get('class:Queue')?.length, 8, 'and has all their lines');
+});
+
+void test('The tree and the outline list the same items when a hidden comment sits in an added class', async () => {
+  const { symbolTree } = await import('../lib/tree-symbols');
+  const { countedIds } = await import('../lib/tree-symbol-review');
+  const { visibleSymbols } = await import('../lib/symbol-outline');
+  const after = [...BEFORE, '', 'export class Queue {', '  // a note the reader hides', '  push(n: number) {', '    return n;', '  }', '}'];
+  const hunks = hunksOf(BEFORE, after);
+  // Without the old side, "added" needs every line of the class added: leaving the comment out must not unfold it.
+  const definitions = { after: await parse('typescript', after) };
+  const comment = after.indexOf('  // a note the reader hides') + 1;
+  const skip = (side: 'before' | 'after', line: number) => side === 'after' && line === comment;
+  const all = changedSymbols(hunks, definitions) ?? [];
+  const shown = changedSymbols(hunks, definitions, skip) ?? [];
+  assert.notDeepEqual(brief(all), brief(shown), 'The case: leaving the comment out changes the folding');
+  const trivial = trivialSymbols(hunks, definitions, undefined, skip);
+  const tree = countedIds({ state: 'ready', nodes: symbolTree(all, shown, [], undefined, trivial) });
+  const visible = visibleSymbols(all, shown);
+  const outline = reviewItems(all.filter((symbol) => visible.has(symbol.id)), trivial).map((symbol) => symbol.id);
+  assert.deepEqual(outline, tree);
+  assert.deepEqual(outline, ['class:Queue']);
+});

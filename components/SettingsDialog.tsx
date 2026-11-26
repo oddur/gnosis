@@ -821,7 +821,7 @@ export function SettingsDialog({
                 label="Mark a symbol viewed after you scroll through it"
                 description={
                   treeSymbols
-                    ? 'Tick a changed function or class Viewed once all of its changed lines have been on screen and you have stayed on it for a moment. It never marks the file, and a symbol you untick stays unticked.'
+                    ? 'Tick a changed function or class Viewed once all of its changed lines have been on screen and you have stayed on it for a moment. As with your own ticks, the last one marks the file viewed, and a symbol you untick stays unticked.'
                     : 'Turn on “Show changed symbols in the file tree” to use this.'
                 }
                 beta

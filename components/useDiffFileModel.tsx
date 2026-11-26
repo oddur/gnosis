@@ -34,7 +34,7 @@ import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-synt
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
-import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols, visibleSymbols } from '../lib/symbol-outline';
 import { topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
 import { isUpdated, useCarry } from '../lib/symbol-carry';
 import { progressVersion, useFileProgress } from '../lib/file-view-progress';
@@ -498,11 +498,17 @@ export function useDiffFileModel({
     if (!fileDefinitions.after || definitions.beforeParsing || !baseHunks) return undefined;
     const skip = quietLines && ((side: 'before' | 'after', line: number) => quietLines.has(`${side[0]}${line}`));
     const top = topLevelChanges(baseHunks, fileDefinitions, skip);
-    const own = changedSymbols(baseHunks, fileDefinitions, skip) ?? [];
+    // The same symbols as the Changes tree lists (lib/use-tree-symbols.ts): their kinds and folding from every line,
+    // the quiet lines only deciding which show; else a hidden comment could unfold an added class here alone.
+    const all = changedSymbols(baseHunks, fileDefinitions) ?? [];
+    const visible = visibleSymbols(all, skip ? (changedSymbols(baseHunks, fileDefinitions, skip) ?? []) : all);
+    const own = all.filter((symbol) => visible.has(symbol.id));
     // The review items, as the Changes tree has them: a container is none; its own lines, unless trivial (a brace or a
-    // blank line between its changed methods), are its Body item.
-    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, skip));
-    const lines = changedSymbolLines(baseHunks, fileDefinitions, skip);
+    // blank line between its changed methods, or quiet), are its Body item.
+    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, undefined, skip));
+    const lines = changedSymbolLines(baseHunks, fileDefinitions);
+    // The lines a scroll must show: the quiet ones are hidden.
+    if (lines && quietLines) for (const [id, keys] of lines) lines.set(id, keys.filter((key) => !quietLines.has(key)));
     // A body's lines are its container's own.
     for (const item of items) if (lines && isBody(item)) lines.set(item.id, lines.get(bodyOwner(item.id)) ?? []);
     return { own, top, symbols: top ? [topLevelSymbol(top), ...items] : items, lines };

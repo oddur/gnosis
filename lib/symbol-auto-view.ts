@@ -8,7 +8,8 @@
  * - dwell is time between two looks that both had the symbol on screen, so a symbol that scrolled in a moment ago has
  *   not been read for the whole gap;
  * - a gap between looks counts for at most MAX_LOOK_GAP_MS, so time the window was hidden or idle is not reading.
- * The ticks are the outline's own (lib/file-view-progress.ts); the file is never marked, and a symbol the reader
+ * The ticks are the outline's own (lib/file-view-progress.ts), through the file's sync: the last one marks the file, as
+ * the reader's own last tick does (lib/symbol-file-sync.ts). A symbol the reader
  * unticked is left alone (the caller's `eligible`).
  *
  * The diff (components/ChangesDiff.tsx) looks at the lines on screen when the reader scrolls, at most every few
