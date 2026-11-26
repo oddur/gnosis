@@ -348,7 +348,14 @@ void app.whenReady().then(async () => {
     for (let presses = 0; presses < 80 && !(await js<boolean>(toastWith('Everything viewed'))); presses++) {
       const before = await leftNow();
       await press('v');
-      await wait(`${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()`);
+      await wait(`${toastWith('Everything viewed')}||(()=>{const e=document.querySelector('.changes-progress-left');return (e?Number(e.textContent.replace(/\\D/g,'')):0)<${before}})()`).catch(
+        async (error: unknown) => {
+          const state = await js(
+            `({log:(window.__log||[]).slice(-30),left:document.querySelector('.changes-progress-left')?.textContent,lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),focused:window.focusedTreeRow(),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,visited:${JSON.stringify(visited)},rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+          ).catch(() => 'unreadable');
+          throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+        }
+      );
       visited.push(await activeFile());
     }
     console.log('V walked through:', JSON.stringify(visited));
