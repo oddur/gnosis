@@ -450,6 +450,9 @@ export function PrChangesView({
   const quietFiles = useMemo(() => new Map(quietLabels ? quietLabels.split('\n').map((row) => row.split('\u0000') as [string, string]) : []), [quietLabels]);
   // Settings › Review › "Show changed symbols in the file tree" (Beta): off is the file tree as it was.
   const treeSymbols = preferences.treeSymbols !== false;
+  // Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): off unless chosen, and only with the
+  // tree's symbol rows.
+  const autoViewSymbols = treeSymbols && preferences.autoViewSymbols === true;
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -1110,6 +1113,7 @@ export function PrChangesView({
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
                     onOpenSource={combined?.onOpenSource}
                     onViewedNext={next}
+                    autoViewSymbols={autoViewSymbols}
                     onAsk={(text) => {
                       setChatEntry(e);
                       setSelection(text);

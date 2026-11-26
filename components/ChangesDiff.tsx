@@ -29,6 +29,8 @@ import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
+import { isFileViewed, isSymbolViewed, markSymbolsViewed, wasSymbolUnticked } from '../lib/file-view-progress';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 import { ArrowRightLeft, BookOpen } from 'lucide-react';
@@ -928,8 +930,30 @@ export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 /** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
 const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
 
+/** The scrolled-through ticks look at the view at most this often (lib/symbol-auto-view.ts). */
+const LOOK_MS = 250;
+/** Lines each of their two probes steps over, past a comment or a hunk header, before the look gives up. */
+const AUTO_PROBES = 6;
+
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
+
+/**
+ * The diff line at a point of the screen, inside `section`: one hit test, into the diff's shadow root. A deleted line
+ * is on the old side, by its old number; any other line is on the new side, by its new number, in either column of the
+ * split diff. Undefined over anything else (a header, a comment, a slice still mounting).
+ */
+function lineAtPoint(x: number, y: number, section: Element): LinePoint | undefined {
+  let hit = document.elementFromPoint(x, y);
+  if (hit?.shadowRoot) hit = hit.shadowRoot.elementFromPoint(x, y) ?? hit;
+  const host = hit && (hit.getRootNode() as ShadowRoot).host;
+  if (!hit || !host || !section.contains(host)) return undefined;
+  const line = hit.closest<HTMLElement>('[data-line]');
+  if (!line) return undefined;
+  const before = line.dataset.lineType === 'change-deletion';
+  const number = Number(!before && line.closest('[data-deletions]') ? line.dataset.altLine : line.dataset.line);
+  return number ? { side: before ? 'before' : 'after', line: number } : undefined;
+}
 
 /**
  * Names where the reader is in a pinned header (`bar`): the definitions around the code line just below it, and that
@@ -950,17 +974,11 @@ function followReader(
   const x = where.getBoundingClientRect().left + 2;
   // Half a code line below the bar: the first line mostly in view, not one sliding out under the bar.
   const y = bar.getBoundingClientRect().bottom + 10;
-  let hit = document.elementFromPoint(x, y);
-  if (hit?.shadowRoot) hit = hit.shadowRoot.elementFromPoint(x, y) ?? hit;
-  const host = hit && (hit.getRootNode() as ShadowRoot).host;
+  const point = lineAtPoint(x, y, section);
   // Nothing to name yet, such as a slice still mounting: the caller looks again next frame.
-  if (!hit || !host || !section.contains(host)) return false;
-  const line = hit.closest<HTMLElement>('[data-line]');
-  if (!line) return false;
-  const before = line.dataset.lineType === 'change-deletion';
-  const number = Number(!before && line.closest('[data-deletions]') ? line.dataset.altLine : line.dataset.line);
-  if (!number) return false;
-  const point: LinePoint = { side: before ? 'before' : 'after', line: number };
+  if (!point) return false;
+  const before = point.side === 'before';
+  const number = point.line;
   const chain = scopeAt?.(point);
   const previous = bar.getAttribute('data-live-key')?.split(':')[2];
   // A deleted line without the old file's definitions keeps the place named last: it sits among the same lines.
@@ -1476,6 +1494,7 @@ export function ChangesDiff<A>({
   written = NO_WRITTEN,
   explained,
   symbolKey,
+  autoView,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1539,6 +1558,11 @@ export function ChangesDiff<A>({
    * reader is in, as the pinned breadcrumb names it, and jump here as the outline does.
    */
   symbolKey?: string;
+  /**
+   * Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta), in Changes: the file's changed
+   * symbols with their changed lines, ticked Viewed once the reader has read them (lib/symbol-auto-view.ts).
+   */
+  autoView?: { fileKey: string; symbols: readonly AutoViewSymbol[] };
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1784,6 +1808,110 @@ export function ChangesDiff<A>({
     // One batch per idle task, and none while the reader types: the reader can scroll and type between them.
     return whenIdle(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])));
   }, [progressive, slices, mounted, nearVersion]);
+
+  // Scrolled-through ticks (lib/symbol-auto-view.ts). While the diff is in view, a look every LOOK_MS at most while the
+  // reader scrolls, and while a symbol on screen waits for its dwell when they don't: hit tests find the first and last
+  // code lines on screen, and a few box reads where they are. Nothing runs per frame, and nothing at all while the
+  // diff is out of view.
+  const autoSignature = autoView ? `${autoView.fileKey}\u0000${autoView.symbols.map((symbol) => `${symbol.id}:${symbol.lines.join(',')}`).join('\n')}` : '';
+  const latestAutoView = useRef(autoView);
+  latestAutoView.current = autoView;
+  useEffect(() => {
+    const element = root.current;
+    const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
+    const wanted = latestAutoView.current;
+    if (!wanted || !element || !scroller) return;
+    const { fileKey, symbols } = wanted;
+    const positions = diffRowPositions(
+      parts.flatMap((part) => (part.kind === 'hunk' ? [part.hunk] : [])),
+      split
+    );
+    // Never the file, never a symbol already ticked, and never one the reader unticked in this session.
+    const eligible = (id: string) => !isFileViewed(fileKey) && !isSymbolViewed(fileKey, id) && !wasSymbolUnticked(fileKey, id);
+    const viewer = createAutoViewer(symbols, positions, eligible);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastTop = scroller.scrollTop;
+    let lastAt = performance.now();
+    let inView = false;
+    const place = (point: LinePoint | undefined) => point && positions.get(`${point.side === 'before' ? 'b' : 'a'}${point.line}`);
+    /** The first code line from `y` on, stepping a code line at a time towards `toward`, up to a few lines. */
+    const probe = (x: number, y: number, toward: 1 | -1, limit: number) => {
+      for (let step = 0; step < AUTO_PROBES; step++) {
+        const at = y + toward * step * CODE_LINE_HEIGHT;
+        if (toward === 1 ? at > limit : at < limit) return undefined;
+        const found = place(lineAtPoint(x, at, element));
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    };
+    const onScreen = (): readonly [number, number] | undefined => {
+      if (document.visibilityState === 'hidden' || !element.checkVisibility()) return undefined;
+      const view = scroller.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
+      // Below the file's sticky header and the hunk header pinned under it: lines there are covered.
+      const covered = Math.max(
+        stickyUnder?.current?.getBoundingClientRect().bottom ?? view.top,
+        element.querySelector('[data-hunk-header][data-stuck]')?.getBoundingClientRect().bottom ?? view.top
+      );
+      const top = Math.max(view.top, box.top, covered) + 2;
+      const bottom = Math.min(view.bottom, box.bottom) - 2;
+      if (bottom <= top) return undefined;
+      // A slice still waiting to mount shows its estimate, not its lines: nothing between counts as seen.
+      for (const slice of element.querySelectorAll('.changes-slice:not([data-mounted])')) {
+        const r = slice.getBoundingClientRect();
+        if (r.bottom > top && r.top < bottom) return undefined;
+      }
+      const column = element.querySelector('[data-hunk-header] .diff-gap-where');
+      if (!column) return undefined;
+      // The code's text column; in the split diff, the new side's too, for rows that only add.
+      const xs = [column.getBoundingClientRect().left + 2, ...(split ? [box.left + box.width * 0.75] : [])];
+      const edge = (y: number, toward: 1 | -1, limit: number) => {
+        const found = xs.map((x) => probe(x, y, toward, limit)).filter((value) => value !== undefined);
+        return found.length ? (toward === 1 ? Math.min(...found) : Math.max(...found)) : undefined;
+      };
+      const first = edge(top, 1, bottom);
+      const last = edge(bottom, -1, top);
+      return first !== undefined && last !== undefined && first <= last ? [first, last] : undefined;
+    };
+    const look = () => {
+      timer = undefined;
+      // Symbols the diff may still tick: the reader may have ticked, unticked or marked the file since the last look.
+      if (!inView || !symbols.some((symbol) => eligible(symbol.id))) return;
+      const now = performance.now();
+      const scrollTop = scroller.scrollTop;
+      const speed = Math.abs(scrollTop - lastTop) / Math.max(1, now - lastAt);
+      lastTop = scrollTop;
+      lastAt = now;
+      const read = viewer.look({ at: now, range: onScreen(), fast: speed > FAST_SCROLL_PX_PER_MS });
+      if (read.length) void markSymbolsViewed(fileKey, read, true);
+      // While a symbol on screen waits for its dwell, look again in a moment without a scroll to wake it; else the
+      // next scroll does.
+      if (viewer.waiting()) timer = setTimeout(look, LOOK_MS);
+    };
+    const schedule = () => {
+      if (!timer) timer = setTimeout(look, LOOK_MS);
+    };
+    const visibility = new IntersectionObserver(
+      (entries) => {
+        inView = entries[entries.length - 1].isIntersecting;
+        if (inView) {
+          scroller.addEventListener('scroll', schedule, { passive: true });
+          schedule();
+        } else {
+          scroller.removeEventListener('scroll', schedule);
+          clearTimeout(timer);
+          timer = undefined;
+        }
+      },
+      { root: scroller }
+    );
+    visibility.observe(element);
+    return () => {
+      visibility.disconnect();
+      scroller.removeEventListener('scroll', schedule);
+      clearTimeout(timer);
+    };
+  }, [autoSignature, parts, split]);
 
   // Pinned hunk headers (#395). CSS sticky does the pinning; this only marks a pinned header, so its expand controls
   // can step aside. The file header's height comes from a ResizeObserver, never a layout read, and sets both the

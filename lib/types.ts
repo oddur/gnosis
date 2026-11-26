@@ -462,6 +462,11 @@ export interface Preferences {
   showInlineExplanations?: boolean;
   /** Settings › Review › "Show changed symbols in the file tree" (Beta): on unless false. See lib/tree-symbols.ts. */
   treeSymbols?: boolean;
+  /**
+   * Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): off unless true, and only with
+   * `treeSymbols`. See lib/symbol-auto-view.ts.
+   */
+  autoViewSymbols?: boolean;
   /** Width of each chat surface's side panel, in pixels. See lib/chat-preferences.ts. */
   chatPanelWidths?: import('./chat-preferences').ChatPanelWidths;
   /** The model each chat surface sends its next question to. See lib/chat-preferences.ts. */

@@ -120,14 +120,18 @@ test('row places: one per line in the unified diff, side by side in the split on
 test('a symbol is ticked after every changed line was on screen for the dwell time', () => {
   const positions = new Map([['a1', 0], ['a2', 1], ['a3', 2], ['a4', 3], ['a5', 4]]);
   const viewer = createAutoViewer([{ id: 'f', lines: ['a2', 'a4'] }], positions, () => true);
-  // First look: only part of it on screen.
+  // First look: only part of it on screen. It waits for its dwell, so a still view keeps looking.
   assert.deepEqual(viewer.look({ at: 0, range: [0, 2], fast: false }), []);
-  // Still on screen, but a4 not seen yet: dwell grows, no tick.
+  assert.equal(viewer.waiting(), true);
+  // Still on screen, but a4 not seen yet: dwell grows, no tick. With its dwell, it waits for a scroll, not the clock.
   for (let at = 400; at <= 2_000; at += 400) assert.deepEqual(viewer.look({ at, range: [0, 2], fast: false }), []);
-  // The rest comes into view: every line seen and enough dwell.
-  assert.deepEqual(viewer.look({ at: 2_400, range: [1, 4], fast: false }), ['f']);
-  // Once only.
-  assert.deepEqual(viewer.look({ at: 2_800, range: [1, 4], fast: false }), []);
+  assert.equal(viewer.waiting(), false);
+  // The rest comes into view; a line counts once two looks in a row had it on screen.
+  assert.deepEqual(viewer.look({ at: 2_400, range: [1, 4], fast: false }), []);
+  assert.deepEqual(viewer.look({ at: 2_800, range: [1, 4], fast: false }), ['f']);
+  // Once only, and nothing waits any more.
+  assert.deepEqual(viewer.look({ at: 3_200, range: [1, 4], fast: false }), []);
+  assert.equal(viewer.waiting(), false);
 });
 
 test('flying past never ticks, and neither does idle time', () => {

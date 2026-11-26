@@ -4,6 +4,7 @@
  * AUTO_VIEW_DWELL_MS. Only what the reader read counts:
  * - a moment the view moved faster than FAST_SCROLL_PX_PER_MS is flying past: its lines are not seen, and its time is
  *   not dwell;
+ * - a line is seen when two slow looks in a row both had it on screen;
  * - dwell is time between two looks that both had the symbol on screen, so a symbol that scrolled in a moment ago has
  *   not been read for the whole gap;
  * - a gap between looks counts for at most MAX_LOOK_GAP_MS, so time the window was hidden or idle is not reading.
@@ -71,6 +72,11 @@ export interface Look {
 export interface AutoViewer {
   /** Takes a look; returns the symbols now read, each once. */
   look: (look: Look) => string[];
+  /**
+   * Whether a symbol on screen still waits for its dwell, so a look while the view is still can tick it. One that has
+   * its dwell and waits only for lines off screen needs the reader to scroll.
+   */
+  waiting: () => boolean;
 }
 
 export function createAutoViewer(
@@ -92,20 +98,27 @@ export function createAutoViewer(
       done: false,
     }));
   let last: number | undefined;
+  // The places the last look had on screen, if it was a slow one.
+  let before: readonly [number, number] | undefined;
   return {
     look: ({ at, range, fast }) => {
       const gap = last === undefined ? 0 : Math.min(Math.max(0, at - last), MAX_LOOK_GAP_MS);
       last = at;
+      const slow = range && !fast ? range : undefined;
+      // A line is seen once two slow looks in a row had it on screen: one look could catch it in passing, or in a
+      // slice that has not drawn yet.
+      const both = slow && before ? ([Math.max(slow[0], before[0]), Math.min(slow[1], before[1])] as const) : undefined;
+      before = slow;
       const ready: string[] = [];
       for (const symbol of tracked) {
         if (symbol.done) continue;
         let showing = false;
-        if (range && !fast)
+        if (slow)
           for (let index = 0; index < symbol.places.length; index++) {
             const place = symbol.places[index];
-            if (place === undefined || place < range[0] || place > range[1]) continue;
+            if (place === undefined || place < slow[0] || place > slow[1]) continue;
             showing = true;
-            symbol.seen.add(index);
+            if (both && place >= both[0] && place <= both[1]) symbol.seen.add(index);
           }
         // Time counts only between two slow looks that both had the symbol on screen.
         if (showing && symbol.onScreen) symbol.dwell += gap;
@@ -117,5 +130,6 @@ export function createAutoViewer(
       }
       return ready;
     },
+    waiting: () => tracked.some((symbol) => !symbol.done && symbol.onScreen && symbol.dwell < dwellMs && eligible(symbol.id)),
   };
 }

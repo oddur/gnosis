@@ -192,6 +192,7 @@ export function SettingsDialog({
   const [effort, setEffort] = useState<Effort>('high');
   const [smartImports, setSmartImports] = useState(true);
   const [treeSymbols, setTreeSymbols] = useState(true);
+  const [autoViewSymbols, setAutoViewSymbols] = useState(false);
   const [prInactivityDays, setPrInactivityDays] = useState(DEFAULT_PR_INACTIVITY_DAYS);
   const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
@@ -283,6 +284,7 @@ export function SettingsDialog({
         setEffort(normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking));
         setSmartImports(prefs.smartImports);
         setTreeSymbols(prefs.treeSymbols !== false);
+        setAutoViewSymbols(prefs.autoViewSymbols === true);
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
         setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
@@ -812,6 +814,26 @@ export function SettingsDialog({
                     const next = !treeSymbols;
                     setTreeSymbols(next);
                     saveField({ treeSymbols: next });
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Mark a symbol viewed after you scroll through it"
+                description={
+                  treeSymbols
+                    ? 'Tick a changed function or class Viewed once all of its changed lines have been on screen and you have stayed on it for a moment. It never marks the file, and a symbol you untick stays unticked.'
+                    : 'Turn on “Show changed symbols in the file tree” to use this.'
+                }
+                beta
+              >
+                <Toggle
+                  checked={treeSymbols && autoViewSymbols}
+                  disabled={!treeSymbols}
+                  ariaLabel="Mark a symbol viewed after you scroll through it"
+                  onChange={() => {
+                    const next = !autoViewSymbols;
+                    setAutoViewSymbols(next);
+                    saveField({ autoViewSymbols: next });
                   }}
                 />
               </SettingRow>

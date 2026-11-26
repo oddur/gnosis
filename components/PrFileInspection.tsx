@@ -87,6 +87,7 @@ export function PrFileInspection({
   briefSubject,
   onOpenBrief,
   onOpenFeedback,
+  autoViewSymbols = false,
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
@@ -99,6 +100,8 @@ export function PrFileInspection({
   briefSubject?: ReviewSubject;
   onOpenBrief?: () => void;
   onOpenFeedback?: (url: string, threadId: string) => void;
+  /** Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): the diff ticks what the reader read. */
+  autoViewSymbols?: boolean;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   /** The file's kind tags, such as Test, beside its path and status. */
@@ -233,6 +236,14 @@ export function PrFileInspection({
     status: contents?.lfs ? undefined : entry.file.status,
     noiseFilter,
   });
+  // The symbols the reader may tick by scrolling through them: the outline's own, each with its changed lines.
+  const autoView = useMemo(
+    () =>
+      autoViewSymbols && model.symbols && model.symbolLines
+        ? { fileKey: activeKey, symbols: model.symbols.map((symbol) => ({ id: symbol.id, lines: model.symbolLines?.get(symbol.id) ?? [] })) }
+        : undefined,
+    [autoViewSymbols, model.symbols, model.symbolLines, activeKey]
+  );
   // How much of the file is noise the reader hides (#396), for its header: "90 formatting", or "Formatting only".
   const quiet = model.noise?.file;
   const quietStat = quiet && (quiet.added || quiet.deleted) ? quietHeader(quiet, entry.file.additions, entry.file.deletions) : undefined;
@@ -867,6 +878,7 @@ export function PrFileInspection({
                   }}
                   stickyUnder={headerRef}
                   symbolKey={activeKey}
+                  autoView={autoView}
                   onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}

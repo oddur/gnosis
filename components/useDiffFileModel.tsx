@@ -34,7 +34,7 @@ import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-synt
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
-import { changedSymbols } from '../lib/symbol-outline';
+import { changedSymbolLines, changedSymbols } from '../lib/symbol-outline';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
 import type { MoveMark } from '../lib/moved-symbols-store';
@@ -496,6 +496,15 @@ export function useDiffFileModel({
         : undefined,
     [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]
   );
+  // Each listed symbol's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):
+  // the same lines the outline counts, quiet ones left out.
+  const symbolLines = useMemo(
+    () =>
+      symbols && fileDefinitions.after && baseHunks
+        ? changedSymbolLines(baseHunks, fileDefinitions, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))
+        : undefined,
+    [symbols, baseHunks, fileDefinitions, quietLines]
+  );
   // Symbols whose every change is hidden, for the outline's quiet note.
   const quietSymbols = useMemo(() => {
     if (!symbols || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
@@ -638,6 +647,7 @@ export function useDiffFileModel({
     rails,
     collapseScope,
     symbols,
+    symbolLines,
     quietSymbols,
     outlinePending,
     noise: diffNoise,
