@@ -96,9 +96,10 @@ export function treeSymbolLook(): { icons: FileTreeIconConfig; css: string } {
     // Symbol names end-truncate: the start of a name is what reads (a_followed_store_feeds_every…). Pierre's middle
     // truncation suits file names, whose extension it keeps, but halves a long function name and lays its marker over
     // a cut letter. Its two halves flow as one line here, and the content box adds the ellipsis.
-    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }`,
-    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] :is([data-truncate-container], [data-truncate-grid], [data-truncate-content]) { display:contents; direction:ltr; }`,
-    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] :is([data-truncate-marker], [data-truncate-fill]) { display:none; }`,
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] { display:block; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }`,
+    // Each half is drawn twice, a visible copy and a measuring copy; only the visible one stays, in one inline run.
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] * { display:contents; direction:ltr; }`,
+    `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="content"] :is([data-truncate-content="overflow"], [data-truncate-marker-cell], [data-truncate-marker], [data-truncate-fill]) { display:none; }`,
     // Symbol rows have no Git status of their own: the dot that marks a folder holding the lit row stays off them.
     `:is([data-item-path$=${cssString(CODE_END)}], [data-item-path$=${cssString(`${CODE_END}/`)}]) > [data-item-section="git"] { visibility:hidden; }`
   );
