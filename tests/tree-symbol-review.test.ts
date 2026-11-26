@@ -331,3 +331,47 @@ void test('roll-ups nest, and one untick clears them up to the file', () => {
   // The scrolled-through ticks see the same items: a container is never among them.
   assert.ok(!counted.includes('namespace:N') && !counted.includes('namespace:N>class:C'));
 });
+
+void test("Reset viewed clears a view's files and ticks, and Undo puts back exactly those", async () => {
+  const { viewedMarkKeys, symbolViewedKey, resetViewed, restoreViewed, markFileViewed, markSymbolsViewed, isFileViewed, isSymbolViewed, hasViewedMarks, wasSymbolUnticked } =
+    await import('../lib/file-view-progress');
+  // The pure part: which marks make the view's files read as viewed.
+  const state = {
+    aliases: { rev1: 'content-a', rev2: 'content-b' },
+    marks: {
+      'content-a': true,
+      'content-b': false,
+      [symbolViewedKey('content-a', 'function:f')]: true,
+      [symbolViewedKey('rev2', 'class:C>@body')]: true,
+      [symbolViewedKey('content-a', TOP_LEVEL_ID)]: true,
+      // Another file, and another revision of a file of this view, under its own alias.
+      'content-other': true,
+      [symbolViewedKey('content-old', 'function:f')]: true,
+    },
+  };
+  assert.deepEqual(viewedMarkKeys(state, ['rev1', 'rev2']).sort(), [
+    'content-a',
+    symbolViewedKey('content-a', TOP_LEVEL_ID),
+    symbolViewedKey('content-a', 'function:f'),
+    symbolViewedKey('rev2', 'class:C>@body'),
+  ].sort());
+
+  // Against the store: a marked file, a tick in another, an untick remembered, and a file outside the view.
+  await markFileViewed('reset:a', true);
+  await markSymbolsViewed('reset:b', ['function:g', 'function:h'], true);
+  await markSymbolsViewed('reset:b', ['function:h'], false);
+  await markFileViewed('reset:outside', true);
+  assert.equal(hasViewedMarks(['reset:a', 'reset:b']), true);
+  assert.equal(wasSymbolUnticked('reset:b', 'function:h'), true);
+  const { snapshot } = resetViewed(['reset:a', 'reset:b']);
+  assert.equal(isFileViewed('reset:a'), false);
+  assert.equal(isSymbolViewed('reset:b', 'function:g'), false);
+  assert.equal(wasSymbolUnticked('reset:b', 'function:h'), false, 'The session forgets its unticks too');
+  assert.equal(isFileViewed('reset:outside'), true, 'Files outside the view keep their marks');
+  assert.equal(hasViewedMarks(['reset:a', 'reset:b']), false, 'Nothing left: the button disables');
+  await restoreViewed(snapshot);
+  assert.equal(isFileViewed('reset:a'), true);
+  assert.equal(isSymbolViewed('reset:b', 'function:g'), true);
+  assert.equal(isSymbolViewed('reset:b', 'function:h'), false, 'Unticked before stays unticked');
+  assert.equal(wasSymbolUnticked('reset:b', 'function:h'), true);
+});

@@ -32,7 +32,7 @@ import {
   commitPositionId,
   inspectionData,
 } from '../lib/inspection-cache';
-import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
 import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
@@ -53,7 +53,7 @@ import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
 import { changesRevision, type PrChanges } from '../lib/pr-changes';
 import { staleDiffRefresh } from '../lib/use-stale-diff-refresh';
-import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
+import { hasViewedMarks, progressVersion, registerChangeProgress, resetViewed, restoreViewed, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
@@ -780,6 +780,33 @@ export function PrChangesView({
    * "Show file symbols" beside Unviewed only: the same preference as Settings › Review › "Show changed symbols in the
    * file tree". It is saved, then announced, so every open Changes view and the Settings dialog agree.
    */
+  /**
+   * Reset viewed: every file of these changes (all of them, not only those the filters show) loses its Viewed mark
+   * and every symbol tick, at once, keeping the reader's place. A toast offers Undo, which puts back exactly what was
+   * cleared.
+   */
+  const allFileKeys = useMemo(() => entries.map(viewKey), [entries]);
+  const anyViewed = useMemo(() => hasViewedMarks(allFileKeys), [allFileKeys, progressVersion()]);
+  function resetAllViewed() {
+    for (const fileKey of allFileKeys) releaseHeld({ only: fileKey });
+    stream.current?.preservePosition();
+    const { snapshot, saved } = resetViewed(allFileKeys);
+    void saved;
+    if (!snapshot.marks.length) return;
+    const id = toast.add({
+      type: 'success',
+      title: 'Viewed state reset',
+      description: 'Every file and symbol in these changes is unviewed.',
+      actionProps: {
+        children: 'Undo',
+        onClick: () => {
+          toast.close(id);
+          stream.current?.preservePosition();
+          void restoreViewed(snapshot);
+        },
+      },
+    });
+  }
   function setTreeSymbols(on: boolean) {
     setPreferenceError('');
     writes.current = writes.current
@@ -1024,6 +1051,17 @@ export function PrChangesView({
                     <input type="checkbox" checked={treeSymbols} onChange={(e) => setTreeSymbols(e.target.checked)} />
                     Show file symbols
                   </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="self-start"
+                    disabled={!anyViewed}
+                    title="Clear Viewed for every file and symbol in these changes"
+                    onClick={resetAllViewed}
+                  >
+                    <RotateCcw size={14} aria-hidden="true" />
+                    Reset viewed
+                  </Button>
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit && !combined &&

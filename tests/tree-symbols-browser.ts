@@ -20,6 +20,7 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
  *   the end a notice says there are none after it.
  * - V on a file without symbols (an SVG) marks it Viewed, and again unviewed.
+ * - Reset viewed clears every file and tick of these changes, and its toast's Undo puts them back.
  * - Search matches a symbol's name.
  * - With the setting off, the tree is the plain file tree again.
  *
@@ -206,6 +207,22 @@ void app.whenReady().then(async () => {
     await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
     await pressV('flow.svg');
     await wait("!window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
+
+    // ── Reset viewed clears every file and tick of these changes; Undo puts them back ──
+    await pressV('flow.svg');
+    await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration.startsWith('Viewed')`);
+    await clickButton('Reset viewed');
+    await wait("!window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
+    await wait(`!window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration.startsWith('Viewed')`);
+    // store.ts expands again, its ticks gone: flush shows its counts.
+    await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='+1−1'");
+    await wait(`document.querySelector(${JSON.stringify(fileRow + ' .changes-file-actions input[type=checkbox]')})?.checked===false`);
+    assert.equal(await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Reset viewed')?.disabled"), true, 'Nothing left to reset');
+    await clickButton('Undo');
+    await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration.startsWith('Viewed')`);
+    await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
 
     // ── Search matches a symbol's name ──
     const search = (value: string) =>
