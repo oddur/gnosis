@@ -137,8 +137,8 @@ const settingsScene =
 export const scenes: Record<string, Scene> = {
   /** A PR selected in the queue, with its briefing beside it. */
   async queueSelected(c) {
+    // No settled:queue-list wait: that key is registered only when the queue is long enough to be virtual.
     await queue(c);
-    await c.step('wait settled:queue-list');
     await selectRow(c, 'Introduce a bounded');
   },
 

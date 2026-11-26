@@ -84,7 +84,10 @@ const helpers = `window.__docs ??= (() => {
     parts.push(document.body.innerText.length);
     return parts.join(',');
   };
-  return { all, visible, byText, hasText, press, doubleClick, pointerDown, signature };
+  // Images the screenshot shows that have not loaded: visible and inside the viewport. A lazy image below the fold
+  // never loads, and it is not in the picture.
+  const pendingImages = () => [...document.images].filter(i => !i.complete && visible(i) && (() => { const r = i.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; })()).map(i => i.currentSrc || i.src);
+  return { all, visible, byText, hasText, press, doubleClick, pointerDown, signature, pendingImages };
 })(); true`;
 
 /** A condition as a page expression that is true when it holds. */
@@ -269,7 +272,10 @@ async function capture(recipe: Recipe, theme: Theme, progress: Progress): Promis
     if (dark !== (theme === 'dark')) throw new Error(`the page did not show the ${theme} theme`);
     stage('waiting for fonts and images');
     await within(js(`document.fonts.ready.then(()=>true)`), stepTimeoutMs, 'document.fonts.ready');
-    await until(`[...document.images].every(i=>i.complete)`, 'images to finish loading');
+    await until(`window.__docs.pendingImages().length===0`, 'images to finish loading').catch(async (error: unknown) => {
+      const pending = await js<string[]>(`window.__docs.pendingImages().map(s=>s.slice(0,120))`).catch(() => []);
+      throw new Error(`${(error as Error).message}. Still loading: ${pending.slice(0, 5).join(', ') || 'none'}`);
+    });
     // Settled: the on-screen layout is the same five times in a row, 50ms apart, and no animation runs. A timer, not
     // requestAnimationFrame: a window the runner's desktop hides may get no frames, and this wait must still end.
     stage('waiting for the layout to settle');
