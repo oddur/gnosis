@@ -4,12 +4,79 @@ description: Comment on lines, reply to and resolve threads, keep drafts, and su
 order: 5
 ---
 
-You can comment on a line or a range of lines in any diff. Each comment starts as a draft. The Drafts panel in the PR header shows the comments that you did not send yet. On the Summary tab, reply to a thread or resolve it. Press <Kbd keys="n" /> to go to the next unresolved thread, <Kbd keys="r" /> to reply, and <Kbd keys="e" /> to resolve. To finish, submit a review: Approve, Comment, or Request changes. Gnosis sends your drafts with the review.
+In Gnosis, you write review comments on lines of a diff, reply to threads, and submit a GitHub review. A comment stays a draft on your computer until you submit the review.
+
+## When to use this page
+
+- Use **draft comments** when you review a PR and want to send all your comments in one review.
+- Use **Post to GitHub now** when one comment cannot wait for the review.
+- Use **threads on Summary** to answer the feedback on your own PR, or to follow a discussion.
+
+## Write a comment on a line
+
+1. Open the PR's **Changes** tab.
+2. Select the **+** beside a line. To comment on more than one line, select the lines and choose **Comment**.
+3. Write the comment. The editor supports Markdown. Use the toolbar for lists, quotes, code and a **Suggested change**. Select **Preview** to see the result.
+4. Under **Save as**, choose **Review draft**.
+5. Select **Add to review**, or press <Kbd keys="⌘ ↵" /> (Ctrl+Enter on Windows and Linux).
+
+<DocShot
+  name="comment-inline"
+  alt="A draft comment open under line 36 of src/worker.ts in the Changes tab. The comment editor has a Markdown toolbar and the Add to review button."
+  caption="A draft comment on a changed line."
+/>
+
+The comment is now a draft. Nobody on GitHub can see it yet.
+
+To send one comment at once, without a review, select **Post to GitHub now**.
+
+To keep a private note for yourself or for a coding agent, choose **Local note** under **Save as**. See [Reviewing a PR](/docs/reviewing-a-pr/#local-notes).
+
+<DocShot
+  name="comment-composer"
+  alt="The comment editor with its Markdown toolbar: bold, italic, inline code, code block, quote, lists and suggested change. Write and Preview tabs are above the text."
+  caption="The comment editor with Markdown tools."
+/>
+
+## See your drafts
+
+Select **Drafts** in the PR header. The number beside it shows how many drafts you have. In a narrow window, **Drafts** is in the ⋯ menu. The **Pending review** panel lists each draft with its file and line. You can edit or remove a draft there.
+
+When the PR gets new commits, a draft can refer to an earlier version of the code. Gnosis then tells you, and you must copy or remove that draft before you submit the review.
+
+## Reply to and resolve threads
+
+The Summary tab shows the PR's threads in its timeline. Each thread shows the code that the comment was about.
+
+- Press <Kbd keys="j" /> and <Kbd keys="k" /> to move through the timeline. The focus must be in the timeline; otherwise these keys go to the next or previous PR.
+- Press <Kbd keys="n" /> to go to the next unresolved thread.
+- Press <Kbd keys="r" /> to reply to the thread.
+- Press <Kbd keys="e" /> to resolve the thread.
+- Press <Kbd keys="u" /> to mark the item as unread.
 
 <DocShot
   name="review-threads"
-  alt="Review threads with Reply and Resolve."
+  alt="Two review threads on the Summary tab. Each thread shows the commented code, the comments, and Reply and Resolve thread buttons."
   caption="Review threads with Reply and Resolve."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): comment-composer, comment-inline. */}
+## Submit a review
+
+1. Select **Review PR** in the PR header, or press <Kbd keys="⌘ ⇧ V" />. When threads wait for your reply, the button is **Reply to feedback**. On your own PR, it is **Request review…**.
+2. Choose one decision:
+   - **Comment**: give feedback without approval.
+   - **Approve**: approve the changes.
+   - **Request changes**: ask the author to change the PR.
+3. Write a **Review message**. **Comment** and **Request changes** need one when you have no draft comments.
+4. Select **Submit review**. Gnosis sends your drafts with the review.
+
+By default, Gnosis adds the line "Reviewed using gnosis.to" to the end of the review message. To leave it out, clear **Add “Reviewed using gnosis.to” signature** in the review dialog.
+
+A draft on a line that is no longer in GitHub's diff cannot go inline. Gnosis adds it to the review message as text, with its file and line.
+
+On your own PR, GitHub lets you choose only **Comment**.
+
+## Related pages
+
+- [Merging & PR actions](/docs/merging-and-pr-actions/) covers what to do after the review.
+- [Notifications & menu bar](/docs/notifications-and-menu-bar/) tells you when someone replies to you.

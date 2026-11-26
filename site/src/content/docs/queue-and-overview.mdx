@@ -4,12 +4,95 @@ description: See which PRs need you, then filter, sort, group, save views, star,
 order: 2
 ---
 
-The Review Queue lists the PRs in your watched repositories. Its sidebar sections show all PRs, PRs that wait for your response, review requests, updated PRs, stacks, saved views, and starred, snoozed and muted PRs. The Overview is a morning page: a briefing sentence, what changed since yesterday, what to do next, and the PRs that wait on you or on others. Filter the queue by state, people, repository, branch, labels and more. Sort it and group it by action or repository, then save the result as a view. Select more than one PR to act on all of them. Use <Kbd keys="j" /> and <Kbd keys="k" /> to move through the queue, <Kbd keys="z" /> to snooze, and <Kbd keys="⌘ K" /> to open the command palette.
+The Review Queue lists the open PRs that Gnosis watches for you. The Overview is a separate morning page. It is the first item in the sidebar, and it opens by default. It tells you what changed, what to do next, and who waits on whom.
+
+## When to use the Overview and the queue
+
+- Use the **Overview** at the start of the day, or when you come back to work. It answers one question: what do I do now?
+- Use the **queue** to find a PR, to work through a list of PRs, or to act on many PRs at the same time.
+
+## The Overview
+
+Select **Overview** at the top of the sidebar. The page starts with a briefing sentence. Each number in it is a link to the rows that it counts. A **Since yesterday** line and a freshness line follow.
 
 <DocShot
   name="overview"
-  alt="The Overview: a briefing, then what needs you next."
+  alt="The Overview page. A briefing sentence is at the top, then a Since yesterday line, then the Next up section with one action button on each row."
   caption="The Overview: a briefing, then what needs you next."
 />
 
-{/* Other screenshots for this page (scripts/docs-screenshots.json): queue, queue-filters, command-palette. */}
+The page has these sections:
+
+- **Starred**: the PRs and stacks that you starred. This section shows only when you starred something.
+- **Next up**: up to five things to do. People who wait on you come first, then approved merges, then fixes.
+- **Waiting on you**: the people who wait for your review or your reply.
+- **Waiting on others**: your PRs, grouped by the person or the check that blocks them.
+- **Needs a decision**: your PRs that fail, have no approval, or did not change for more than a week.
+
+Each row has one action, for example **Merge**, **Review**, **Review again**, **Reply** or **Open**. In **Waiting on others**, **Remind** asks a reviewer for a review again. In **Needs a decision**, **Close PR** closes a PR without a merge. **Remind** and **Close PR** open a confirmation before Gnosis writes to GitHub.
+
+To move through the rows, press <Kbd keys="j" /> and <Kbd keys="k" />. Press <Kbd keys="a" /> to do the row's action, and <Kbd keys="z" /> to snooze the row.
+
+## The Review Queue
+
+The sidebar has the queue's lists:
+
+- **Review queue**: all the PRs that match your filters.
+- **Starred**, **Review requests**, **Needs my response**, **Updated PRs** and **Stacks**.
+- **Saved reviews**: the explanations that you generated before.
+- **Saved views**: the views that you saved.
+- **Snoozed** and **Muted PRs**.
+
+Select a PR to see its briefing beside the list. Press <Kbd keys="Enter" /> to open it. Press <Kbd keys="⌘ \" /> to show or hide the sidebar.
+
+<DocShot
+  name="queue"
+  alt="The Review Queue with a stack selected. The list of PRs is on the left, and the stack's briefing is in a side panel on the right."
+  caption="The queue with a PR selected and its briefing beside it."
+/>
+
+### Filter, sort and group
+
+1. Open the filters from the queue toolbar.
+2. Filter by read state, involvement, repository, author, target branch, draft state, dates, labels, PR or stack, explanation state, briefing state, or merge conflicts.
+3. Open the sort menu and choose an order, for example **Priority**, **Last updated**, **Change size** or **Unread first**. **Starred first** keeps your starred PRs at the top.
+4. Open **Group by** and choose **None**, **Action** or **Repository**.
+
+Press <Kbd keys="/" /> to search the queue.
+
+<DocShot
+  name="queue-filters"
+  alt="The queue filter popover. It has controls for involvement, repository, author, target branch, dates, labels and explanation state."
+  caption="The queue filters."
+/>
+
+### Save a view
+
+When the filters, sort and grouping show what you need, select **Save view…** and give the view a name. The view shows in the sidebar under **Saved views**.
+
+### Star, snooze and mute
+
+- **Star** a PR or a stack to show it in the Overview's Starred section. While **Starred first** is on, which is the default, starred PRs also stay at the top of the queue.
+- **Snooze** a PR to hide it until later. Choose **Later today** (until about 6 PM), **Tomorrow morning**, **Next week**, **Until new activity**, **Until checks finish** (your own PRs only) or **Custom…**. A timed snooze also ends early on a new review or a review request.
+- **Mute** a PR to hide it until you unmute it. Muted PRs are in **Muted PRs**.
+
+These actions are in the menu of each row. Right-click the row, or press <Kbd keys="⇧ F10" />.
+
+### Act on many PRs
+
+⌘-click a row to add it to the selection, or to remove it. Shift-click selects a range. Press <Kbd keys="⌘ A" /> to select every PR in the list. From the keyboard, <Kbd keys="⌘ Space" /> also adds or removes the focused row, but macOS uses ⌘ Space for Spotlight on most Macs. The selection menu can mark PRs as read or unread, generate explanations or briefings, star, copy links, snooze and mute.
+
+## The command palette
+
+Press <Kbd keys="⌘ K" /> to open the command palette. Type to find PRs, code, explanations and commands. Start with `>` to show only commands.
+
+<DocShot
+  name="command-palette"
+  alt="The command palette, with #150 typed in the search field and the matching PR as the first result."
+  caption="The command palette finds a PR by its number."
+/>
+
+## Related pages
+
+- [Tabs & navigation](/docs/tabs-and-navigation/) shows how to open PRs in tabs.
+- [Notifications & menu bar](/docs/notifications-and-menu-bar/) shows the queue from the macOS menu bar.
