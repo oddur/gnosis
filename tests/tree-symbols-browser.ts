@@ -135,7 +135,8 @@ void app.whenReady().then(async () => {
     );
 
     // ── V marks the symbol Viewed, shared with the outline, and goes on; the file stays unviewed ──
-    await js("window.treeRow('flush').focus()");
+    // The reader picks the row, as a click does: it becomes the item under review, which V acts on.
+    await js("(()=>{const r=window.treeRow('flush');r.querySelector('[data-item-section=content]').click();r.focus()})()");
     await js("window.treeRow('flush').dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))");
     await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
     await wait(
@@ -235,7 +236,7 @@ void app.whenReady().then(async () => {
     await inView(fileRow, 'function added()');
     // V ticks and goes on to the next item, which stays in store.ts until its last one.
     for (const symbol of ['Imports', 'gone']) {
-      await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
+      await js(`(()=>{const r=window.treeRow(${JSON.stringify(symbol)});r.querySelector('[data-item-section=content]').click();r.focus()})()`);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
@@ -259,7 +260,7 @@ void app.whenReady().then(async () => {
 
     // ── V on a file without symbols marks the file, as its header's checkbox does ──
     const pressV = (row: string) =>
-      js(`(()=>{const r=window.treeRow(${JSON.stringify(row)});r.focus();r.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))})()`);
+      js(`(()=>{const r=window.treeRow(${JSON.stringify(row)});r.querySelector('[data-item-section=content]').click();r.focus();r.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))})()`);
     await pressV('flow.svg');
     await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
     await pressV('flow.svg');
