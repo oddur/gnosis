@@ -1383,6 +1383,7 @@ export function PrChangesView({
                     noiseFilter={noiseFilter}
                     reveal={treeReveal}
                     onReviewKey={(intent) => void reviewAndMove(intent)}
+                    onReviewCurrent={() => void reviewAndMove()}
                   />
                 ) : (
                   <ChangesFileTree

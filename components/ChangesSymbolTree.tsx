@@ -11,7 +11,7 @@ import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
 import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
-import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
+import { peekReviewTarget, setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { ensureCarried, isUpdated, updatedCount, useCarry } from '../lib/symbol-carry';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
@@ -70,6 +70,7 @@ export function ChangesSymbolTree({
   noiseFilter,
   reveal,
   onReviewKey,
+  onReviewCurrent,
 }: {
   entries: SymbolTreeEntry[];
   selected: string;
@@ -93,6 +94,8 @@ export function ChangesSymbolTree({
    * a symbol row) and moves on to the next unviewed item, as V does anywhere in Changes.
    */
   onReviewKey?: (tick: { key: string; ids: string[]; viewed: boolean; file: boolean }) => void;
+  /** V on a row with nothing of its own to mark (a folder, a note): Changes' own V, on the item under review. */
+  onReviewCurrent?: () => void;
 }) {
   const progress = useFileProgress();
   // Which files list symbols: only their paths and revisions matter, not their decorations.
@@ -315,6 +318,10 @@ export function ChangesSymbolTree({
         } else closed.current.add(id);
       }
     applied.current = { layout, entries, viewed: viewedSignature, progress: progressSignature };
+    // The row with the keyboard before the rebuild: if the rebuild drops it (Unviewed only, a file just finished), Pierre
+    // moves its focus to a neighbour the reader never chose, and the keyboard goes back to the row V went to.
+    const focusedBefore = model.getFocusedPath();
+    const displaced = !!focusedBefore && !layout.rows.has(focusedBefore) && !layout.paths.includes(focusedBefore);
     // Resetting also refreshes Pierre's row decorations: counts, Viewed, quiet words.
     model.resetPaths({ preparedInput: prepared, initialExpandedPaths: openPaths(layout, open, closed.current) });
     applyStatus.current();
@@ -325,7 +332,7 @@ export function ChangesSymbolTree({
       if (path) {
         expandTo(path);
         // After a rebuild only focus the rows took with them comes back: a row the reader moved to stays theirs.
-        focusWhenDrawn(path, { fromTree: false });
+        focusWhenDrawn(path, { fromTree: displaced });
       }
     }
   }, [model, layout, prepared, entries, viewedSignature, progressSignature]);
@@ -665,6 +672,16 @@ export function ChangesSymbolTree({
           if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && row?.type === 'file' && auto.current === row.key) auto.current = undefined;
           // V marks the symbol Viewed, as its tick in the outline does.
           // Shift+V takes back the last V: Changes' own key (PrChangesView), not the row's.
+          // V acts on the item under review when there is one: the row the reader clicked or arrowed to, or the one V or n
+          // went to. The keyboard can trail the light by a frame or land on a folder when Unviewed only drops a finished
+          // file's rows, and V on whatever row holds it would tick, or untick, the wrong thing. With no item under review
+          // (the reader arrowed to a container), V acts on the row: a container ticks everything under it.
+          if ((event.key === 'v' || event.key === 'V') && !event.shiftKey && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey && onReviewCurrent && (peekReviewTarget() || !row || row.type === 'folder' || row.type === 'note')) {
+            event.preventDefault();
+            event.stopPropagation();
+            onReviewCurrent();
+            return;
+          }
           if ((event.key === 'v' || event.key === 'V') && !event.shiftKey && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && !event.altKey && row && row.type !== 'folder' && row.type !== 'note') {
             event.preventDefault();
             event.stopPropagation();
