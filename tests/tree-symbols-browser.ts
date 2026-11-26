@@ -172,6 +172,14 @@ void app.whenReady().then(async () => {
         ).catch(() => 'unreadable');
         throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
       });
+    /** Waits for the keyboard to be on a tree row, with the same report as `lit` on a timeout. */
+    const focusedOn = (row: string) =>
+      wait(`window.focusedTreeRow()===${JSON.stringify(row)}`).catch(async (error: unknown) => {
+        const state = await js(
+          `({log:(window.__log||[]).slice(-40),focused:window.focusedTreeRow(),active:document.activeElement&&(document.activeElement.className||document.activeElement.tagName),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        ).catch(() => 'unreadable');
+        throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+      });
     const nextRow = `.commit-stream-row[data-file=${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}]`;
     const inView = (row: string, text: string) =>
       wait(
@@ -316,12 +324,12 @@ void app.whenReady().then(async () => {
         // flush is under the closed folder and class: both open, and flush is lit and focused.
         await wait("window.treeRow('symbols')?.getAttribute('aria-expanded')==='true'&&window.treeRow('Store')?.getAttribute('aria-expanded')==='true'");
         assert.equal(await expandedOf('Store'), 'true');
-        await wait(`window.focusedTreeRow()==='flush'`);
+        await focusedOn('flush');
       }
       const after = await decorations();
       const changed = symbolRows.filter((row) => before[row] !== after[row]).sort();
       assert.deepEqual(changed, [...expectChanged[ticked]].sort(), `V on ${ticked} ticked ${ticked} only: ${JSON.stringify({ before, after })}`);
-      await wait(`window.focusedTreeRow()===${JSON.stringify(next)}`);
+      await focusedOn(next);
     }
     // The last of store.ts: on into tasks.ts, and store.ts, Viewed, leaves the Unviewed only tree.
     await press('v');
