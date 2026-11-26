@@ -30,7 +30,8 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
 import { registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
-import { isFileViewed, isSymbolViewed, markSymbolsViewed, wasSymbolUnticked } from '../lib/file-view-progress';
+import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
+import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 import { ArrowRightLeft, BookOpen } from 'lucide-react';
@@ -1885,7 +1886,8 @@ export function ChangesDiff<A>({
       lastTop = scrollTop;
       lastAt = now;
       const read = viewer.look({ at: now, range: onScreen(), fast: speed > FAST_SCROLL_PX_PER_MS });
-      if (read.length) void markSymbolsViewed(fileKey, read, true);
+      // The last one marks the file too, which stays open while the reader is on it (lib/symbol-file-sync.ts).
+      if (read.length) void markReviewSymbols(fileKey, read, true);
       // While a symbol on screen waits for its dwell, look again in a moment without a scroll to wake it; else the
       // next scroll does.
       if (viewer.waiting()) timer = setTimeout(look, LOOK_MS);

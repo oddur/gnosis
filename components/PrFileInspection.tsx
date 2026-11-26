@@ -31,6 +31,7 @@ import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
 import { usePendingSymbolJump } from '../lib/tree-symbol-sync';
+import { releaseHeld, useHeldOpen } from '../lib/symbol-file-sync';
 import { applyCodeIntelligence } from '../lib/use-syntax-contents';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { diffThemeName } from '../lib/diff-worker-pool';
@@ -125,7 +126,10 @@ export function PrFileInspection({
   const viewed = progress.isFileViewed(activeKey);
   // Jumping to a line must show it, without changing the reviewer's viewed progress.
   const [jumpedOpen, setJumpedOpen] = useState(false);
-  const collapsed = viewed && !jumpedOpen && !focusThreadId;
+  // A file its last symbol tick marked Viewed stays open while the reader is on it (lib/symbol-file-sync.ts), and
+  // collapses once they move on. A file marked Viewed by hand collapses at once, as always.
+  const heldOpen = useHeldOpen(activeKey);
+  const collapsed = viewed && !jumpedOpen && !focusThreadId && !(symbolTree && heldOpen);
   // A symbol chosen in the file tree opens a file shown collapsed, as a jump to a line does: its diff takes the jump.
   const symbolJump = usePendingSymbolJump(symbolTree ? activeKey : '');
   useEffect(() => {
@@ -142,6 +146,22 @@ export function PrFileInspection({
   const sourceJump = useRef<MarkdownLocation | undefined>(undefined);
   const previewJump = useRef<MarkdownLocation | undefined>(undefined);
   const sectionRef = useRef<HTMLElement>(null);
+  // A held file collapses once its diff has scrolled wholly out of view, keeping what the reader looks at in place.
+  useEffect(() => {
+    const section = sectionRef.current;
+    const scroller = section?.closest<HTMLElement>('.commit-diff-stream');
+    if (!symbolTree || !heldOpen || !section || !scroller) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[entries.length - 1].isIntersecting) releaseHeld({ only: activeKey, anchor: true });
+      },
+      { root: scroller }
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [symbolTree, heldOpen, activeKey]);
+  // Unmounted (scrolled far away, or the view closed): the reader has left it, and it shows collapsed when it returns.
+  useEffect(() => () => releaseHeld({ only: activeKey }), [activeKey]);
   const headerRef = useRef<HTMLElement>(null);
   const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
@@ -550,6 +570,8 @@ export function PrFileInspection({
       : { status: 'absent' };
   };
   function mark(andNext: boolean) {
+    // The reader marked a file by hand, and may be going on: files their ticks held open collapse.
+    releaseHeld({ except: andNext ? undefined : activeKey });
     setJumpedOpen(false);
     void progress.markFileViewed(activeKey, true);
     if (andNext) onViewedNext?.();
@@ -705,7 +727,15 @@ export function PrFileInspection({
             <input
               type="checkbox"
               checked={viewed}
-              onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  mark(false);
+                  return;
+                }
+                // Unviewed by hand: its symbol ticks stay as the reader left them.
+                releaseHeld({ only: activeKey });
+                void progress.markFileViewed(activeKey, false);
+              }}
             />
             Viewed
           </label>

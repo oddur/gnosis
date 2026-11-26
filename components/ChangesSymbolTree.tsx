@@ -12,6 +12,7 @@ import type { NoiseFilter } from '../lib/semantic-noise';
 import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
+import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
 import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
@@ -418,13 +419,16 @@ export function ChangesSymbolTree({
   /** What V and the Viewed menu tick for a row: a symbol's changed symbols, or the file's top-level changes. */
   const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? changedIds(row.node) : row?.type === 'top' ? [TOP_LEVEL_ID] : []);
   const markSymbols = (row: TreeRow | undefined, viewed?: boolean) => {
-    const source = row?.type === 'symbol' || row?.type === 'top' ? supported.get(row.key) : undefined;
+    if (row?.type !== 'symbol' && row?.type !== 'top') return;
+    const source = supported.get(row.key);
     const ids = symbolIds(row);
     if (!source || !ids.length) return;
-    const now = ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length;
-    // Never the file: Viewed collapses it, which would take the code away from under the reader.
-    void progress.markSymbolsViewed(source.fileKey, ids, viewed ?? now < ids.length);
+    const now = ids.filter((id) => symbolOn(row.key, source.fileKey, id)).length;
+    // The file follows its ticks (lib/symbol-file-sync.ts): the last one marks it, kept open while the reader is on it.
+    void markReviewSymbols(source.fileKey, ids, viewed ?? now < ids.length);
   };
+  /** A symbol reads as ticked when it is, or when its file is Viewed. */
+  const symbolOn = (key: string, fileKey: string, id: string) => !!entryOf(key)?.viewed || progress.isSymbolViewed(fileKey, id);
   const selectedFiles = selectedTreeFiles(entries, mapped(selectedPaths), matchingPaths);
   return (
     <div className="file-tree-selection-workspace">
@@ -452,7 +456,7 @@ export function ChangesSymbolTree({
                 label={row.type === 'top' ? topLevelName(row.top) : `${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
                 what={row.type === 'top' ? (row.top.imports ? 'imports' : 'top-level changes') : undefined}
                 count={ids.length}
-                viewed={ids.filter((id) => progress.isSymbolViewed(source.fileKey, id)).length}
+                viewed={ids.filter((id) => symbolOn(row.key, source.fileKey, id)).length}
                 onSetViewed={(viewed) => markSymbols(row, viewed)}
               />
             );

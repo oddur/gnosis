@@ -163,3 +163,43 @@ export function stepUnviewed(
   }
   return { kind: 'end' };
 }
+
+/**
+ * The ids a file's review counts, as its progress counts them: the changed symbols and `@top`, quiet-only ones left
+ * out. Undefined while they are not known (loading, or failed to load): a file is then never marked by its ticks.
+ */
+export function countedIds(symbols: FileSymbols | undefined): string[] | undefined {
+  if (symbols?.state !== 'ready') return undefined;
+  return reviewStops(symbols.nodes, symbols.top)
+    .filter((stop) => stop.counted)
+    .map((stop) => stop.id);
+}
+
+/**
+ * What a tick or untick does to its file, in symbol mode: ticking the last counted item marks the file Viewed, and
+ * unticking any of a Viewed file's symbols makes it unviewed again. `ticks` are the ids to set to `viewed`; `others`
+ * are the counted ids to tick first, so that unticking one symbol of a file marked Viewed as a whole keeps the rest
+ * ticked, as the file showed them. Nothing happens to the file without its counted ids (`counted` undefined).
+ */
+export function fileAfterTick({
+  counted,
+  ids,
+  viewed,
+  fileViewed,
+  isViewed,
+}: {
+  counted: readonly string[] | undefined;
+  ids: readonly string[];
+  viewed: boolean;
+  fileViewed: boolean;
+  isViewed: (id: string) => boolean;
+}): { file?: 'mark' | 'unmark'; others: string[] } {
+  if (!counted?.length) return { others: [] };
+  if (!viewed) {
+    if (!fileViewed) return { others: [] };
+    return { file: 'unmark', others: counted.filter((id) => !ids.includes(id) && !isViewed(id)) };
+  }
+  if (fileViewed) return { others: [] };
+  const done = counted.every((id) => ids.includes(id) || isViewed(id));
+  return done ? { file: 'mark', others: [] } : { others: [] };
+}

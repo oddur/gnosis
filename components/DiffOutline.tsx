@@ -1,6 +1,7 @@
 import { useId, useSyncExternalStore } from 'react';
 import { Check, ChevronRight, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
 import { useFileProgress } from '../lib/file-view-progress';
+import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
 import { isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
@@ -85,6 +86,7 @@ function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
 
 export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, markFileLabel, onGo, quiet = 0 }: OutlineProps) {
   const open = useExpanded();
+  const synced = useSymbolFileSync(fileKey);
   const progress = useFileProgress();
   const listId = useId();
   if (!symbols) {
@@ -103,7 +105,9 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   // Symbols whose changes are all hidden as noise are left out, and counted, so the outline stays honest.
   const quietNote = quiet > 0 ? `${quiet} ${quiet === 1 ? 'symbol' : 'symbols'} with quiet changes only` : undefined;
   const summary = !symbols.some((symbol) => !isTopLevel(symbol)) && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
-  const tick = (symbol: ChangedSymbol, on: boolean) => void progress.markSymbolsViewed(fileKey, [symbol.id], on);
+  // Through the file's sync (lib/symbol-file-sync.ts): in symbol mode the last tick marks the file, and an untick of
+  // a Viewed file's symbol makes it unviewed. Elsewhere the ticks stay apart from the file, as before.
+  const tick = (symbol: ChangedSymbol, on: boolean) => void markReviewSymbols(fileKey, [symbol.id], on);
   const go = (symbol: ChangedSymbol) => (
     <button
       type="button"
@@ -172,7 +176,11 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
         )}
         {symbols.length > 0 && (
           <span className="diff-outline-end">
-            {all && !fileViewed && onMarkFileViewed ? (
+            {all && !fileViewed && synced ? (
+              // The file follows its ticks: no offer to mark it. All ticked and not Viewed is a file the reader
+              // unviewed by hand; its header's checkbox marks it again, as does the next tick.
+              <span className="diff-outline-progress">All viewed</span>
+            ) : all && !fileViewed && onMarkFileViewed ? (
               <>
                 <span className="diff-outline-progress">All viewed</span>
                 <button type="button" className="diff-outline-mark" onClick={onMarkFileViewed}>
@@ -196,7 +204,8 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
                   type="checkbox"
                   className="diff-outline-tick"
                   checked={viewed[index]}
-                  disabled={fileViewed}
+                  // A Viewed file's symbols untick when the file follows them, which unviews the file.
+                  disabled={fileViewed && !synced}
                   aria-label={`Viewed ${named(symbol)}`}
                   onChange={(event) => tick(symbol, event.target.checked)}
                 />

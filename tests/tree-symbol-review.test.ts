@@ -4,7 +4,7 @@ import type { SyntaxDefinition } from '../lib/syntax-scope';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
 import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
-import { folderProgress, progressLabel, reviewStops, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { countedIds, fileAfterTick, folderProgress, progressLabel, reviewStops, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -219,4 +219,40 @@ void test('scattered top-level lines must all be seen: imports at the top and a 
   // Read on down to it: ticked once it has been on screen in two looks.
   assert.deepEqual(viewer.look({ at: 3_400, range: [30, 45], fast: false }), []);
   assert.deepEqual(viewer.look({ at: 3_800, range: [30, 45], fast: false }), [TOP_LEVEL_ID]);
+});
+
+void test('the file follows its ticks: the last counted tick marks it, any untick unmarks it', () => {
+  const plan = (counted: string[] | undefined, ids: string[], viewed: boolean, fileViewed: boolean, ticked: string[] = []) =>
+    fileAfterTick({ counted, ids, viewed, fileViewed, isViewed: (id) => ticked.includes(id) });
+  const counted = [TOP_LEVEL_ID, 'a', 'b'];
+  // Not the last: nothing happens to the file.
+  assert.deepEqual(plan(counted, ['a'], true, false, [TOP_LEVEL_ID]), { others: [] });
+  // The last one marks it.
+  assert.deepEqual(plan(counted, ['b'], true, false, [TOP_LEVEL_ID, 'a']), { file: 'mark', others: [] });
+  // Several at once (a context row's V), finishing it.
+  assert.deepEqual(plan(counted, ['a', 'b'], true, false, [TOP_LEVEL_ID]), { file: 'mark', others: [] });
+  // An untick of a Viewed file unmarks it, and ticks the rest, which read as viewed with the file.
+  assert.deepEqual(plan(counted, ['a'], false, true, ['b']), { file: 'unmark', others: [TOP_LEVEL_ID] });
+  // Ticking in a Viewed file, or unticking in an unviewed one, leaves the file alone.
+  assert.deepEqual(plan(counted, ['a'], true, true), { others: [] });
+  assert.deepEqual(plan(counted, ['a'], false, false, ['a']), { others: [] });
+  // Unknown or failed symbols: never marked, never unmarked.
+  assert.deepEqual(plan(undefined, ['a'], true, false, [TOP_LEVEL_ID, 'b']), { others: [] });
+  assert.deepEqual(plan(undefined, ['a'], false, true), { others: [] });
+  assert.deepEqual(plan([], ['a'], true, false), { others: [] });
+});
+
+void test('what a file counts for its Viewed mark: symbols and top level, quiet ones out, nothing until known', () => {
+  assert.deepEqual(countedIds({ state: 'ready', nodes: [node('a'), node('q', [], { quiet: true }), node('class:C', [node('class:C>m')], { context: true })], top: top() }), [
+    TOP_LEVEL_ID,
+    'a',
+    'class:C>m',
+  ]);
+  assert.deepEqual(countedIds({ state: 'ready', nodes: [node('a')], top: top(true) }), ['a']);
+  assert.equal(countedIds({ state: 'loading' }), undefined);
+  assert.equal(countedIds({ state: 'none', reason: 'Couldn’t parse this file' }), undefined);
+  assert.equal(countedIds(undefined), undefined);
+  // A quiet symbol's tick does not finish a file whose real symbol is unticked.
+  const ids = countedIds({ state: 'ready', nodes: [node('a'), node('q', [], { quiet: true })] });
+  assert.deepEqual(fileAfterTick({ counted: ids, ids: ['q'], viewed: true, fileViewed: false, isViewed: () => false }), { others: [] });
 });

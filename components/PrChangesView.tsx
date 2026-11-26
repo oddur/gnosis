@@ -37,7 +37,8 @@ import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
 import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported, type TreeSymbolSource } from '../lib/use-tree-symbols';
-import { stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
+import { countedIds, stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
+import { registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
 import { readingSymbol, rowDestination } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import { toast } from './ui/toast';
@@ -384,7 +385,9 @@ export function PrChangesView({
       !hiddenByFileExtensions(e.file.path, filters.state.hiddenExtensions)
   );
   const hidden = entries.length - allowed.length;
-  const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
+  // A file its ticks just marked Viewed stays listed under Unviewed only until the reader moves on from it.
+  const heldFiles = useHeldFiles();
+  const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)) || heldFiles.has(viewKey(e)));
   const selectionIndex = entries.findIndex((e) => e.key === selected);
   const visibleKeys = new Set(visible.map((e) => e.key));
   const entry =
@@ -557,6 +560,8 @@ export function PrChangesView({
   async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
+    // The reader moves on: a file its ticks marked Viewed, held open while they were on it, collapses.
+    releaseHeld({ except: viewKey(target) });
     if (!allowed.some((e) => e.key === key)) await reveal();
     if (unviewed && progress.isFileViewed(viewKey(target))) setUnviewed(false);
     setSelected(key);
@@ -572,6 +577,8 @@ export function PrChangesView({
     const target = entries.find((e) => e.key === key);
     if (!target) return;
     const fileKey = viewKey(target);
+    // Going to a symbol is moving on too, unless it is in the held file itself.
+    releaseHeld({ except: fileKey });
     const release = () => stream.current?.releasePosition();
     if (hasSymbolTarget(fileKey)) {
       setSelected(key);
@@ -677,6 +684,30 @@ export function PrChangesView({
     },
     []
   );
+  // In symbol mode a file follows its ticks (lib/symbol-file-sync.ts): each file whose symbols are known counts what
+  // its progress counts, for this revision. A held file that collapses on its own keeps the reader's place.
+  const latestSync = useRef({ visible, codeSettings, noiseFilter });
+  latestSync.current = { visible, codeSettings, noiseFilter };
+  useEffect(() => {
+    if (!treeSymbols) return;
+    const stops = visible.map((e) => {
+      const fileKey = viewKey(e);
+      return registerCountedSymbols(fileKey, () => {
+        const { codeSettings: settings, noiseFilter: filter } = latestSync.current;
+        const source = { fileKey, snapshot: e.snapshot, file: e.file };
+        return treeSymbolsSupported(source, settings) ? countedIds(peekTreeSymbols(source, settings, filter)) : undefined;
+      });
+    });
+    return () => stops.forEach((stop) => stop());
+  }, [visibleSignature, revision, treeSymbols]);
+  useEffect(() => {
+    setBeforeCollapse(() => stream.current?.preservePosition());
+    return () => {
+      setBeforeCollapse(undefined);
+      // Closed or reopened, a held file shows collapsed like any Viewed file.
+      releaseHeld();
+    };
+  }, []);
   // A held key does not race through the symbols: one step per press. A press while a file loads takes over.
   const symbolKeys = {
     n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1)),

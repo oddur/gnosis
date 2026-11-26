@@ -14,8 +14,9 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  * - Clicking a symbol scrolls the diff to it and lights its row.
  * - V marks the symbol Viewed: the file's outline ticks it, and the file itself stays unviewed.
  * - The file row then shows its progress, 1/4 (Imports counts as one), as the outline does, and its folder the sum of
- *   what is known; V on Imports ticks it in the tree and the outline; all viewed shows ✓ 4/4, and the file stays
- *   unviewed.
+ *   what is known; V on Imports ticks it in the tree and the outline.
+ * - The last tick marks the file Viewed (lib/symbol-file-sync.ts): its row reads Viewed and its header's checkbox is
+ *   ticked, but it stays open while the reader is on it, and collapses once n takes them on to the next file.
  * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
  *   the end a notice says there are none after it.
  * - Search matches a symbol's name.
@@ -175,17 +176,27 @@ void app.whenReady().then(async () => {
     await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed symbols after this'))");
     assert.equal((await rows()).find((r) => r.name === 'stop')?.lit, true, 'Nothing wraps around');
 
-    // ── Every symbol viewed, Imports too: a check on the file, which stays unviewed ──
+    // ── Every symbol viewed, Imports too: the file is Viewed, and stays open while the reader is on it ──
+    // Back in store.ts first, so its diff is on screen.
+    await js("window.treeRow('added').querySelector('[data-item-section=content]').click()");
+    await lit('added');
+    await inView(fileRow, 'function added()');
     for (const symbol of ['Imports', 'gone', 'added']) {
       await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
-    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='✓ 4/4'`);
-    // The outline counts the same, Imports included, and offers to mark the file.
-    await wait(`/^All viewed\\s*Mark file viewed$/.test(document.querySelector(${JSON.stringify(fileRow + ' .diff-outline-end')})?.textContent.trim()??'')`);
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='Viewed'`);
+    await wait(`document.querySelector(${JSON.stringify(fileRow + ' .changes-file-actions input[type=checkbox]')})?.checked===true`);
     console.log('Outline after every tick:', await outlineProgress());
-    assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'The file stays open, not Viewed');
+    const bodyHidden = () => js<boolean>(`!!document.querySelector(${JSON.stringify(fileRow + ' .commit-stream-file-body')})?.hidden`);
+    assert.equal(await bodyHidden(), false, 'Marked by its ticks, the file stays open while the reader is on it');
+    assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'Its code is still there');
+    // Moving on collapses it.
+    await press('n');
+    await lit('start');
+    // Collapsed, or no longer mounted at all (the stream keeps only rows near the view): either way, not held open.
+    await wait(`(()=>{const b=document.querySelector(${JSON.stringify(fileRow + ' .commit-stream-file-body')});return !b||b.hidden})()`);
 
     // ── Search matches a symbol's name ──
     const search = (value: string) =>
