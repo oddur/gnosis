@@ -71,6 +71,7 @@ export function SymbolPeek({
   appearance?: DiffAppearance;
 }) {
   const anchorRef = useRef(anchor);
+  const contentRef = useRef<HTMLDivElement>(null);
   anchorRef.current = anchor;
   const [active, setActive] = useState(-1);
   const list = callers.kind === 'callers' ? callers.callers : [];
@@ -117,8 +118,13 @@ export function SymbolPeek({
           collisionPadding={12}
           aria-label={`Peek: ${view.name}`}
           className="symbol-peek"
+          ref={contentRef}
+          tabIndex={-1}
+          // The keyboard goes to the peek itself, not its first button (a caller's Go): Enter there goes to the peeked
+          // item, as the footer says, and ↑↓ choose a caller. Opened by hover, it takes nothing.
           onOpenAutoFocus={(event) => {
-            if (!focus) event.preventDefault();
+            event.preventDefault();
+            if (focus) contentRef.current?.focus({ preventScroll: true });
           }}
           // Back to the tree row, which the tree does itself (it knows the row).
           onCloseAutoFocus={(event) => event.preventDefault()}
