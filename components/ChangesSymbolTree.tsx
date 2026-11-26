@@ -419,13 +419,21 @@ export function ChangesSymbolTree({
   }, [held, arrived]);
   // The item the reader was taken to stays lit until they move on their own, whatever the pinned crumb names: a jump to
   // a top-level line between two functions lands with one of them named. Then the light follows the reader.
-  const targetPath = target && target.key === selected && target.id !== FILE_STOP ? layout.symbolPaths.get(symbolRowKey(target.key, target.id)) : undefined;
+  // A file stop (a file without symbols, or one whose symbols could not be listed) lights the file's own row.
+  const targetPath =
+    target && target.key === selected
+      ? target.id === FILE_STOP
+        ? layout.pierreOf.get(target.key)
+        : layout.symbolPaths.get(symbolRowKey(target.key, target.id))
+      : undefined;
   const readingPath = targetPath ?? (held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path);
   applyStatus.current = () => {
     const status: GitStatusEntry[] = [];
     for (const e of entries) {
       const path = layout.pierreOf.get(e.key);
-      if (path) status.push({ path, status: STATUS[e.status] });
+      // A file that is the lit stop (a file without symbols) takes the light instead of its own status: a path has one
+      // status, and its own would win over the light, leaving the stop unlit.
+      if (path && path !== readingPath) status.push({ path, status: STATUS[e.status] });
     }
     // The one status no file here has lights the reading row (components/tree-symbol-icons.ts).
     if (readingPath) status.push({ path: readingPath, status: 'untracked' });
@@ -726,8 +734,9 @@ export function ChangesSymbolTree({
             return;
           }
           // Enter on the item under review (its row lit, its target held) comments on it: Enter to go, Enter again to
-          // comment. On any other row it goes there, as always.
-          const item = row?.type === 'symbol' && reviewed(row.node) ? { key: row.key, id: row.node.id } : row?.type === 'top' ? { key: row.key, id: TOP_LEVEL_ID } : row?.type === 'file' && !row.folder ? { key: row.key, id: FILE_STOP } : undefined;
+          // comment. On any other row it goes there, as always. A file row is the item when it is the lit file stop (no
+          // symbols, or symbols that could not be listed).
+          const item = row?.type === 'symbol' && reviewed(row.node) ? { key: row.key, id: row.node.id } : row?.type === 'top' ? { key: row.key, id: TOP_LEVEL_ID } : row?.type === 'file' ? { key: row.key, id: FILE_STOP } : undefined;
           if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && item && target?.key === item.key && target.id === item.id && onCommentKey?.(item)) {
             event.preventDefault();
             event.stopPropagation();

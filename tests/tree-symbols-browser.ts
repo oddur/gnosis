@@ -194,9 +194,9 @@ void app.whenReady().then(async () => {
       if (now && now !== before) walked.push(now);
     }
     await wait(atEnd);
-    // Whatever unviewed stops follow tasks.ts in this fixture, the walk ends in the notice; the V loop below checks that a
-    // file without symbols (flow.svg) is a stop of its own.
     console.log(`n walked after stop: ${walked.join(', ') || '(nothing)'}`);
+    // Files without symbols are stops of their own, lit like any item.
+    assert.ok(walked.includes('pnpm-lock.yaml'), `A file without symbols is a lit stop: ${walked.join(', ')}`);
     // Past the last one the reader stays where they are: nothing wraps around to the first file.
     const last = walked.at(-1) ?? 'stop';
     assert.equal((await rows()).find((r) => r.name === last)?.lit, true, 'Nothing wraps around');
