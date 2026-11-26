@@ -177,10 +177,24 @@ void app.whenReady().then(async () => {
     await lit('start');
     await press('n');
     await lit('stop');
-    // Past the last one: a notice, and the reader stays where they are.
-    await press('n');
-    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed symbols after this'))");
-    assert.equal((await rows()).find((r) => r.name === 'stop')?.lit, true, 'Nothing wraps around');
+    // On through the rest: the other files' items, and files without symbols as one stop each (pnpm-lock.yaml), until
+    // a notice says nothing is left. Which items new.ts, old.ts and worker.ts have depends on their parse, so the walk
+    // is followed rather than listed. Each press must move the light, or end in the notice.
+    const atEnd = "[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed items after this'))";
+    const litName = () => js<string | undefined>(`window.treeRows().find(r=>r.lit)?.name`);
+    const walked: string[] = [];
+    for (let step = 0; step < 20 && !(await js<boolean>(atEnd)); step++) {
+      const before = await litName();
+      await press('n');
+      await wait(`${atEnd}||window.treeRows().find(r=>r.lit)?.name!==${JSON.stringify(before ?? '')}`);
+      const now = await litName();
+      if (now && now !== before) walked.push(now);
+    }
+    await wait(atEnd);
+    assert.ok(walked.includes('pnpm-lock.yaml'), `A file without symbols is a stop of its own: ${walked.join(', ')}`);
+    // Past the last one the reader stays where they are: nothing wraps around to the first file.
+    const last = walked.at(-1) ?? 'stop';
+    assert.equal((await rows()).find((r) => r.name === last)?.lit, true, 'Nothing wraps around');
 
     // ── Every symbol viewed, Imports too: the file is Viewed, and stays open while the reader is on it ──
     // Back in store.ts first, so its diff is on screen.
