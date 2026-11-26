@@ -117,12 +117,14 @@ try {
   };
   delete env.ELECTRON_RUN_AS_NODE;
   // A scene loads its fixture and settles in seconds; two minutes per capture leaves room for a stalled load's retry.
-  const timeoutMs = 120_000 + recipes.length * THEMES.length * 120_000;
+  // Capped below the workflow's 90-minute job limit, so a slow run still writes the scenes it captured and its report.
+  const timeoutMs = Math.min(120_000 + recipes.length * THEMES.length * 120_000, 80 * 60_000);
   const code = await new Promise((resolve, reject) => {
     const child = spawn(electron, [outfile], { env, stdio: 'inherit' });
     const timer = setTimeout(() => {
+      console.error(`Docs screenshot capture timed out after ${timeoutMs / 60000} minutes; keeping the scenes it captured.`);
       child.kill();
-      reject(new Error(`Docs screenshot capture timed out after ${timeoutMs / 60000} minutes`));
+      resolve(null);
     }, timeoutMs);
     child.on('error', (error) => {
       clearTimeout(timer);

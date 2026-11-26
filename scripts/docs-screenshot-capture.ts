@@ -34,6 +34,20 @@ const out = process.env.GNOSIS_DOCS_OUT ?? '';
 // The workbench fixture reports platform 'darwin' (tests/fixtures/workbench.tsx), so the app reads Cmd as Mod.
 const mod = 'Meta';
 const stepTimeoutMs = 20_000;
+// A whole capture: the page load (up to 90s with its retry), the steps and the settle wait. Past this the capture is
+// recorded as failed with the stage it was in, and the next scene starts, so one hung call cannot stall the run.
+const captureTimeoutMs = 180_000;
+
+/** Resolves with the promise, or rejects after ms naming what was being waited for. */
+function within<T>(promise: Promise<T>, ms: number, what: string | (() => string)): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${typeof what === 'function' ? what() : what} did not finish within ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /** Page helpers: deep (shadow DOM) queries, visibility, text matching and a pointer-like press. */
 const helpers = `window.__docs ??= (() => {
@@ -97,10 +111,27 @@ function keyCode(key: string): string {
   return named[key] ?? key;
 }
 
-async function capture(recipe: Recipe, theme: Theme): Promise<string> {
+/** What a capture is doing now, so a capture that times out says where it stopped. */
+interface Progress {
+  stage: string;
+  window?: BrowserWindow;
+}
+
+async function capture(recipe: Recipe, theme: Theme, progress: Progress): Promise<string> {
+  const started = Date.now();
+  const stage = (name: string) => {
+    progress.stage = name;
+    console.log(`  ${recipe.name} (${theme}) +${((Date.now() - started) / 1000).toFixed(1)}s ${name}`);
+  };
   const viewport = recipe.viewport ?? DEFAULT_VIEWPORT;
   // A fresh profile state per capture: saved tabs, views and drafts from one scene must not leak into the next.
-  await session.defaultSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql'] });
+  stage('clearing storage');
+  await within(
+    session.defaultSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql'] }),
+    stepTimeoutMs,
+    'clearing storage'
+  );
+  stage('opening the window');
   const window = new BrowserWindow({
     width: viewport.width,
     height: viewport.height,
@@ -109,6 +140,7 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
     backgroundColor: theme === 'dark' ? '#000000' : '#ffffff',
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
+  progress.window = window;
   const contents = window.webContents;
   const errors: string[] = [];
   contents.on('console-message', (details) => {
@@ -186,6 +218,7 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
   };
 
   try {
+    stage('emulating the theme and viewport');
     contents.debugger.attach('1.3');
     // Both themes are set the way the app sets them: the fixture reads ?theme= into the theme preference and applies
     // it (lib/theme.ts); fixtures that follow the system appearance, such as the menu bar panel, see the emulated
@@ -203,19 +236,25 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
       mobile: false,
     });
+    stage('loading the fixture');
     await loadWorkbenchPage(window, fixtureUrl(fixtures, recipe.fixture ?? '', theme));
     await until(`innerWidth===${viewport.width} && innerHeight===${viewport.height}`, `the ${viewport.width}×${viewport.height} viewport`);
     await contents.insertCSS(
       '*,*::before,*::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;caret-color:transparent!important}'
     );
     await js(helpers);
-    for (const source of recipe.steps ?? []) await step(source);
+    for (const source of recipe.steps ?? []) {
+      stage(`step ${source}`);
+      await step(source);
+    }
     if (recipe.scene) {
+      stage(`scene ${recipe.scene}`);
       const scene = scenes[recipe.scene] as SceneFunction | undefined;
       if (!scene) throw new Error(`scripts/docs-screenshot-steps.ts has no scene "${recipe.scene}"`);
       const context: SceneContext = { recipe: recipe.name, theme, js, step, until };
       await scene(context);
     }
+    stage(`waiting for ${recipe.ready ?? ''}`);
     const ready = parseCondition(recipe.ready ?? '');
     await waitFor(ready, `the scene's ready condition "${recipe.ready ?? ''}"`).catch((error: unknown) => {
       throw new Error(`the scene did not render: ${(error as Error).message}`);
@@ -223,31 +262,54 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
     // The theme the page shows must be the one asked for.
     const dark = await js<boolean>(`document.documentElement.classList.contains('dark')`);
     if (dark !== (theme === 'dark')) throw new Error(`the page did not show the ${theme} theme`);
-    await js(`document.fonts.ready.then(()=>true)`);
+    stage('waiting for fonts and images');
+    await within(js(`document.fonts.ready.then(()=>true)`), stepTimeoutMs, 'document.fonts.ready');
     await until(`[...document.images].every(i=>i.complete)`, 'images to finish loading');
-    // Settled: the on-screen layout is the same for five frames in a row, and no animation runs.
-    await js(
-      `new Promise((resolve,reject)=>{let last='',same=0;const end=performance.now()+${stepTimeoutMs};const tick=()=>{const now=window.__docs.signature();const moving=document.getAnimations().some(a=>a.playState==='running');same=now===last&&!moving?same+1:0;last=now;if(same>=5)return resolve(true);if(performance.now()>end)return reject(new Error('the layout kept changing for ${stepTimeoutMs / 1000}s'));requestAnimationFrame(tick)};requestAnimationFrame(tick)})`
+    // Settled: the on-screen layout is the same five times in a row, 50ms apart, and no animation runs. A timer, not
+    // requestAnimationFrame: a window the runner's desktop hides may get no frames, and this wait must still end.
+    stage('waiting for the layout to settle');
+    await within(
+      js(
+        `new Promise((resolve,reject)=>{let last='',same=0;const end=performance.now()+${stepTimeoutMs};const tick=()=>{const now=window.__docs.signature();const moving=document.getAnimations().some(a=>a.playState==='running');same=now===last&&!moving?same+1:0;last=now;if(same>=5)return resolve(true);if(performance.now()>end)return reject(new Error('the layout kept changing for ${stepTimeoutMs / 1000}s'));setTimeout(tick,50)};setTimeout(tick,50)})`
+      ),
+      stepTimeoutMs + 5_000,
+      'the settle wait'
     );
     // The page content only, without window chrome, at the emulated device scale factor.
-    const shot = (await contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: true })) as { data: string };
+    stage('taking the screenshot');
+    const shot = (await within(
+      contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: true }),
+      stepTimeoutMs,
+      'Page.captureScreenshot'
+    )) as { data: string };
     const file = path.join(out, `${recipe.name}-${theme}.png`);
     fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
     return file;
   } finally {
-    if (contents.debugger.isAttached()) contents.debugger.detach();
-    window.destroy();
+    if (!window.isDestroyed()) {
+      if (contents.debugger.isAttached()) contents.debugger.detach();
+      window.destroy();
+    }
   }
 }
 
+// The captures open and destroy one window at a time; between two of them there is no window, and the app must stay.
+app.on('window-all-closed', () => {});
+
 void app.whenReady().then(async () => {
+  console.log(`Electron ready: ${recipes.length} recipe(s)`);
   const results: CaptureResult[] = [];
   for (const recipe of recipes) {
     if (recipe.placeholder) continue;
     for (const theme of THEMES) {
       const started = Date.now();
+      const progress: Progress = { stage: 'starting' };
       try {
-        const png = await capture(recipe, theme);
+        const png = await within(capture(recipe, theme, progress), captureTimeoutMs, () => `the capture (stopped while ${progress.stage})`).catch((error: unknown) => {
+          // The timed-out capture may still hold its window; close it so the next scene starts clean.
+          if (progress.window && !progress.window.isDestroyed()) progress.window.destroy();
+          throw error;
+        });
         results.push({ name: recipe.name, theme, png });
         console.log(`captured ${recipe.name} (${theme}) in ${((Date.now() - started) / 1000).toFixed(1)}s`);
       } catch (error) {
