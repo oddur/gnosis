@@ -310,6 +310,10 @@ void app.whenReady().then(async () => {
     await js("window.treeRow('Imports').focus()");
     // The reader closes the class and the folder above it: going on must open both again.
     const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
+    const symbolRows = ['Imports', 'Store', 'flush', 'gone', 'added'];
+    const decorations = () => js<Record<string, string>>(`Object.fromEntries(window.treeRows().filter(r=>${JSON.stringify(symbolRows)}.includes(r.name)).map(r=>[r.name,r.decoration]))`);
+    // Before the class and folder close: closed, their rows are not listed, and V opens them again.
+    const openBefore = await decorations();
     await js("window.treeRow('Store').querySelector('[data-item-section=icon]').click()");
     await wait("window.treeRow('Store')?.getAttribute('aria-expanded')==='false'");
     await js("window.treeRow('symbols').querySelector('[data-item-section=icon]').click()");
@@ -317,11 +321,9 @@ void app.whenReady().then(async () => {
     // Each V ticks the item it is on, and only that (its class rolls up with it), lights the next, and puts the
     // keyboard focus on its row. Imports is the case that went wrong: landing on a top-level line, the pinned crumb
     // names a neighbour, which must not become what the next V ticks.
-    const symbolRows = ['Imports', 'Store', 'flush', 'gone', 'added'];
-    const decorations = () => js<Record<string, string>>(`Object.fromEntries(window.treeRows().filter(r=>${JSON.stringify(symbolRows)}.includes(r.name)).map(r=>[r.name,r.decoration]))`);
     const expectChanged: Record<string, string[]> = { Imports: ['Imports'], flush: ['flush', 'Store'], gone: ['gone'] };
     for (const [ticked, next] of [['Imports', 'flush'], ['flush', 'gone'], ['gone', 'added']] as const) {
-      const before = await decorations();
+      const before = ticked === 'Imports' ? openBefore : await decorations();
       await press('v');
       await lit(next);
       await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(ticked)})?.decoration==='✓'`);
