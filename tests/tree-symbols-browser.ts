@@ -127,7 +127,7 @@ void app.whenReady().then(async () => {
     // ── V marks the symbol Viewed: shared with the outline, never the file ──
     await js("window.treeRow('flush').focus()");
     await js("window.treeRow('flush').dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))");
-    await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='Viewed'");
+    await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='✓'");
     await wait(
       `[...document.querySelectorAll(${JSON.stringify(fileRow + ' .diff-outline-go')})].some(b=>b.textContent.includes('flush')&&b.closest('[data-viewed]'))`
     );
@@ -179,7 +179,7 @@ void app.whenReady().then(async () => {
     for (const symbol of ['Imports', 'gone', 'added']) {
       await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
       await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
-      await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='Viewed'`);
+      await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='✓'`);
     }
     await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='✓ 4/4'`);
     // The outline counts the same, Imports included, and offers to mark the file.

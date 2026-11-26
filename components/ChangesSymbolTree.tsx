@@ -24,6 +24,12 @@ export interface SymbolTreeEntry extends ChangeTreeEntry {
 
 const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renamed: 'renamed' } as const;
 
+/**
+ * A viewed symbol's mark in place of its counts. Files read "Viewed"; a symbol row sits deeper in a narrow tree, and
+ * the word took the width its name needs. The tooltip still says "Viewed", and the file rows' progress uses ✓ too.
+ */
+const VIEWED_MARK = '✓';
+
 /** How long a chosen symbol stays lit while the diff scrolls to it, if the diff never says it arrived. */
 const HOLD_MS = 1_500;
 
@@ -170,7 +176,7 @@ export function ChangesSymbolTree({
         // Ticked like a symbol, under the top level's own id (lib/tree-symbol-review.ts).
         const topSource = current.current.supported.get(row.key);
         if (entryOf(row.key)?.viewed || (!!topSource && current.current.progress.isSymbolViewed(topSource.fileKey, TOP_LEVEL_ID)))
-          return { text: 'Viewed', parts: [{ text: 'Viewed' }], title: `${topLevelName(row.top)}: viewed` };
+          return { text: VIEWED_MARK, parts: [{ text: VIEWED_MARK, color: 'var(--muted-foreground)' }], title: `${topLevelName(row.top)}: viewed` };
         if (row.top.quiet) {
           const word = 'Quiet';
           return { text: word, parts: [{ text: word, color: 'var(--muted-foreground)' }], title: `${added} additions, ${deleted} deletions, every one quiet` };
@@ -193,11 +199,11 @@ export function ChangesSymbolTree({
       const moved = node.moved ? [{ text: '⇄', color: 'var(--muted-foreground)' }] : [];
       const spoken = `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
       return {
-        text: viewed ? 'Viewed' : (quiet ?? `+${node.added} −${node.deleted}`),
+        text: viewed ? VIEWED_MARK : (quiet ?? `+${node.added} −${node.deleted}`),
         parts: [
           ...moved,
           ...(viewed
-            ? [{ text: 'Viewed' }]
+            ? [{ text: VIEWED_MARK, color: 'var(--muted-foreground)' }]
             : quiet
               ? [{ text: quiet, color: 'var(--muted-foreground)' }]
               : [
