@@ -34,6 +34,20 @@ const out = process.env.GNOSIS_DOCS_OUT ?? '';
 // The workbench fixture reports platform 'darwin' (tests/fixtures/workbench.tsx), so the app reads Cmd as Mod.
 const mod = 'Meta';
 const stepTimeoutMs = 20_000;
+// A whole capture: the page load (up to 90s with its retry), the steps and the settle wait. Past this the capture is
+// recorded as failed with the stage it was in, and the next scene starts, so one hung call cannot stall the run.
+const captureTimeoutMs = 180_000;
+
+/** Resolves with the promise, or rejects after ms naming what was being waited for. */
+function within<T>(promise: Promise<T>, ms: number, what: string | (() => string)): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${typeof what === 'function' ? what() : what} did not finish within ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /** Page helpers: deep (shadow DOM) queries, visibility, text matching and a pointer-like press. */
 const helpers = `window.__docs ??= (() => {
@@ -70,7 +84,10 @@ const helpers = `window.__docs ??= (() => {
     parts.push(document.body.innerText.length);
     return parts.join(',');
   };
-  return { all, visible, byText, hasText, press, doubleClick, pointerDown, signature };
+  // Images the screenshot shows that have not loaded: visible and inside the viewport. A lazy image below the fold
+  // never loads, and it is not in the picture.
+  const pendingImages = () => [...document.images].filter(i => !i.complete && visible(i) && (() => { const r = i.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; })()).map(i => i.currentSrc || i.src);
+  return { all, visible, byText, hasText, press, doubleClick, pointerDown, signature, pendingImages };
 })(); true`;
 
 /** A condition as a page expression that is true when it holds. */
@@ -97,10 +114,27 @@ function keyCode(key: string): string {
   return named[key] ?? key;
 }
 
-async function capture(recipe: Recipe, theme: Theme): Promise<string> {
+/** What a capture is doing now, so a capture that times out says where it stopped. */
+interface Progress {
+  stage: string;
+  window?: BrowserWindow;
+}
+
+async function capture(recipe: Recipe, theme: Theme, progress: Progress): Promise<string> {
+  const started = Date.now();
+  const stage = (name: string) => {
+    progress.stage = name;
+    console.log(`  ${recipe.name} (${theme}) +${((Date.now() - started) / 1000).toFixed(1)}s ${name}`);
+  };
   const viewport = recipe.viewport ?? DEFAULT_VIEWPORT;
   // A fresh profile state per capture: saved tabs, views and drafts from one scene must not leak into the next.
-  await session.defaultSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql'] });
+  stage('clearing storage');
+  await within(
+    session.defaultSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql'] }),
+    stepTimeoutMs,
+    'clearing storage'
+  );
+  stage('opening the window');
   const window = new BrowserWindow({
     width: viewport.width,
     height: viewport.height,
@@ -109,6 +143,7 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
     backgroundColor: theme === 'dark' ? '#000000' : '#ffffff',
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
+  progress.window = window;
   const contents = window.webContents;
   const errors: string[] = [];
   contents.on('console-message', (details) => {
@@ -186,36 +221,52 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
   };
 
   try {
+    // A window that has never loaded a page does not answer CDP commands until it navigates (tests/workbench-ready.ts),
+    // so the emulation below hung on every scene. A blank page first; the emulation then holds across the fixture load.
+    stage('opening a blank page');
+    await within(window.loadURL('about:blank'), stepTimeoutMs, 'loading about:blank');
+    stage('emulating the theme and viewport');
     contents.debugger.attach('1.3');
+    const cdp = (method: string, params: Record<string, unknown>) => within(contents.debugger.sendCommand(method, params), stepTimeoutMs, method);
     // Both themes are set the way the app sets them: the fixture reads ?theme= into the theme preference and applies
     // it (lib/theme.ts); fixtures that follow the system appearance, such as the menu bar panel, see the emulated
     // prefers-color-scheme. Reduced motion keeps transitions out of the captures.
-    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+    await cdp('Emulation.setEmulatedMedia', {
       features: [
         { name: 'prefers-color-scheme', value: theme },
         { name: 'prefers-reduced-motion', value: 'reduce' },
       ],
     });
-    await contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await contents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+    await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await cdp('Emulation.setDeviceMetricsOverride', {
       width: viewport.width,
       height: viewport.height,
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
       mobile: false,
     });
-    await loadWorkbenchPage(window, fixtureUrl(fixtures, recipe.fixture ?? '', theme));
+    stage('loading the fixture');
+    const url = fixtureUrl(fixtures, recipe.fixture ?? '', theme);
+    // loadWorkbenchPage's render check reads #root, which a dialog-only fixture leaves empty (its dialog is a portal).
+    // Those fixtures load as their suites load them; the recipe's own wait steps show they rendered.
+    if ((recipe.fixture ?? '').startsWith('workbench.html')) await loadWorkbenchPage(window, url);
+    else await within(window.loadURL(url), 60_000, `loading ${recipe.fixture}`);
     await until(`innerWidth===${viewport.width} && innerHeight===${viewport.height}`, `the ${viewport.width}×${viewport.height} viewport`);
     await contents.insertCSS(
       '*,*::before,*::after{transition-duration:0s!important;transition-delay:0s!important;animation-duration:0s!important;animation-delay:0s!important;caret-color:transparent!important}'
     );
     await js(helpers);
-    for (const source of recipe.steps ?? []) await step(source);
+    for (const source of recipe.steps ?? []) {
+      stage(`step ${source}`);
+      await step(source);
+    }
     if (recipe.scene) {
+      stage(`scene ${recipe.scene}`);
       const scene = scenes[recipe.scene] as SceneFunction | undefined;
       if (!scene) throw new Error(`scripts/docs-screenshot-steps.ts has no scene "${recipe.scene}"`);
       const context: SceneContext = { recipe: recipe.name, theme, js, step, until };
       await scene(context);
     }
+    stage(`waiting for ${recipe.ready ?? ''}`);
     const ready = parseCondition(recipe.ready ?? '');
     await waitFor(ready, `the scene's ready condition "${recipe.ready ?? ''}"`).catch((error: unknown) => {
       throw new Error(`the scene did not render: ${(error as Error).message}`);
@@ -223,31 +274,57 @@ async function capture(recipe: Recipe, theme: Theme): Promise<string> {
     // The theme the page shows must be the one asked for.
     const dark = await js<boolean>(`document.documentElement.classList.contains('dark')`);
     if (dark !== (theme === 'dark')) throw new Error(`the page did not show the ${theme} theme`);
-    await js(`document.fonts.ready.then(()=>true)`);
-    await until(`[...document.images].every(i=>i.complete)`, 'images to finish loading');
-    // Settled: the on-screen layout is the same for five frames in a row, and no animation runs.
-    await js(
-      `new Promise((resolve,reject)=>{let last='',same=0;const end=performance.now()+${stepTimeoutMs};const tick=()=>{const now=window.__docs.signature();const moving=document.getAnimations().some(a=>a.playState==='running');same=now===last&&!moving?same+1:0;last=now;if(same>=5)return resolve(true);if(performance.now()>end)return reject(new Error('the layout kept changing for ${stepTimeoutMs / 1000}s'));requestAnimationFrame(tick)};requestAnimationFrame(tick)})`
+    stage('waiting for fonts and images');
+    await within(js(`document.fonts.ready.then(()=>true)`), stepTimeoutMs, 'document.fonts.ready');
+    await until(`window.__docs.pendingImages().length===0`, 'images to finish loading').catch(async (error: unknown) => {
+      const pending = await js<string[]>(`window.__docs.pendingImages().map(s=>s.slice(0,120))`).catch(() => []);
+      throw new Error(`${(error as Error).message}. Still loading: ${pending.slice(0, 5).join(', ') || 'none'}`);
+    });
+    // Settled: the on-screen layout is the same five times in a row, 50ms apart, and no animation runs. A timer, not
+    // requestAnimationFrame: a window the runner's desktop hides may get no frames, and this wait must still end.
+    stage('waiting for the layout to settle');
+    await within(
+      js(
+        `new Promise((resolve,reject)=>{let last='',same=0;const end=performance.now()+${stepTimeoutMs};const tick=()=>{const now=window.__docs.signature();const moving=document.getAnimations().some(a=>a.playState==='running');same=now===last&&!moving?same+1:0;last=now;if(same>=5)return resolve(true);if(performance.now()>end)return reject(new Error('the layout kept changing for ${stepTimeoutMs / 1000}s'));setTimeout(tick,50)};setTimeout(tick,50)})`
+      ),
+      stepTimeoutMs + 5_000,
+      'the settle wait'
     );
     // The page content only, without window chrome, at the emulated device scale factor.
-    const shot = (await contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: true })) as { data: string };
+    stage('taking the screenshot');
+    const shot = (await within(
+      contents.debugger.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: true }),
+      stepTimeoutMs,
+      'Page.captureScreenshot'
+    )) as { data: string };
     const file = path.join(out, `${recipe.name}-${theme}.png`);
     fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
     return file;
   } finally {
-    if (contents.debugger.isAttached()) contents.debugger.detach();
-    window.destroy();
+    if (!window.isDestroyed()) {
+      if (contents.debugger.isAttached()) contents.debugger.detach();
+      window.destroy();
+    }
   }
 }
 
+// The captures open and destroy one window at a time; between two of them there is no window, and the app must stay.
+app.on('window-all-closed', () => {});
+
 void app.whenReady().then(async () => {
+  console.log(`Electron ready: ${recipes.length} recipe(s)`);
   const results: CaptureResult[] = [];
   for (const recipe of recipes) {
     if (recipe.placeholder) continue;
     for (const theme of THEMES) {
       const started = Date.now();
+      const progress: Progress = { stage: 'starting' };
       try {
-        const png = await capture(recipe, theme);
+        const png = await within(capture(recipe, theme, progress), captureTimeoutMs, () => `the capture (stopped while ${progress.stage})`).catch((error: unknown) => {
+          // The timed-out capture may still hold its window; close it so the next scene starts clean.
+          if (progress.window && !progress.window.isDestroyed()) progress.window.destroy();
+          throw error;
+        });
         results.push({ name: recipe.name, theme, png });
         console.log(`captured ${recipe.name} (${theme}) in ${((Date.now() - started) / 1000).toFixed(1)}s`);
       } catch (error) {

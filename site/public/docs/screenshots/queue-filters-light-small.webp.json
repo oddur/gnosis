@@ -1,5 +1,15 @@
 {
-  "prompt": "Placeholder, not a capture. Drawn with sharp from an SVG: \"queue-filters\", light theme, 960px wide. The docs capture pipeline replaces it from its recipe in scripts/docs-screenshots.json.",
-  "createdAt": "2026-11-25T23:20:17.237Z",
-  "placeholder": true
+  "prompt": "Origin: actual Gnosis application captured from commit ddf5ffa by scripts/capture-docs-screenshots.mjs, recipe \"queue-filters\" in the light theme, from tests/fixtures/workbench.html?filters (as tests/workbench-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 960px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-26T02:57:43.552Z",
+  "commit": "ddf5ffa3778de2b02c0c2a41b4cc3d7082ec8e25",
+  "recipe": "queue-filters",
+  "theme": "light",
+  "fixture": "tests/fixtures/workbench.html?filters",
+  "viewport": {
+    "width": 1600,
+    "height": 960
+  },
+  "deviceScaleFactor": 2,
+  "width": 960,
+  "source": "synthetic fixture data, actual Gnosis UI"
 }

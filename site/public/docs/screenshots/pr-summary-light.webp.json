@@ -1,5 +1,15 @@
 {
-  "prompt": "Placeholder, not a capture. Drawn with sharp from an SVG: \"pr-summary\", light theme, 1600px wide. The docs capture pipeline replaces it from its recipe in scripts/docs-screenshots.json.",
-  "createdAt": "2026-11-25T22:44:22.060Z",
-  "placeholder": true
+  "prompt": "Origin: actual Gnosis application captured from commit ddf5ffa by scripts/capture-docs-screenshots.mjs, recipe \"pr-summary\" in the light theme, from tests/fixtures/workbench.html?pr-summary&checks (as tests/pr-changes-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 1600px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-26T02:57:43.552Z",
+  "commit": "ddf5ffa3778de2b02c0c2a41b4cc3d7082ec8e25",
+  "recipe": "pr-summary",
+  "theme": "light",
+  "fixture": "tests/fixtures/workbench.html?pr-summary&checks",
+  "viewport": {
+    "width": 1600,
+    "height": 960
+  },
+  "deviceScaleFactor": 2,
+  "width": 1600,
+  "source": "synthetic fixture data, actual Gnosis UI"
 }

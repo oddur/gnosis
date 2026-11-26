@@ -36,7 +36,7 @@ async function selectRow(c: SceneContext, title: string) {
 
 /** Clicks the visible element under `scope` whose text or aria-label is `text`, as the suites click (mousedown first). */
 async function clickIn(c: SceneContext, scope: string, text: string) {
-  const find = `window.__docs.all(${q(scope)}).filter(window.__docs.visible).find(e=>e.textContent.trim()===${q(text)}||e.getAttribute('aria-label')===${q(text)})`;
+  const find = `window.__docs.all(${q(scope)}).filter(window.__docs.visible).find(e=>{const t=e.textContent.trim();return t===${q(text)}||e.getAttribute('aria-label')===${q(text)}||(t.startsWith(${q(text)})&&/^\\d+$/.test(t.slice(${q(text)}.length)))})`;
   await c.until(find, `"${text}" in ${scope}`);
   await c.js(`window.__docs.press(${find})`);
 }
@@ -53,7 +53,8 @@ async function openPr(c: SceneContext, title = 'Fix reconnect') {
 async function prTab(c: SceneContext, label: string) {
   await clickIn(c, '[data-workspace-active=true] .pr-overview-tabs [role=tab]', label);
   await c.until(
-    `document.querySelector('[data-workspace-active=true] .pr-overview-tabs [role=tab][data-state=active]')?.textContent.trim()===${q(label)}`,
+    // A tab with a count reads "Checks3": the label, then digits.
+    `(()=>{const t=document.querySelector('[data-workspace-active=true] .pr-overview-tabs [role=tab][data-state=active]')?.textContent.trim()??'';return t===${q(label)}||(t.startsWith(${q(label)})&&/^\\d+$/.test(t.slice(${q(label)}.length)))})()`,
     `the ${label} tab to be active`
   );
 }
@@ -137,8 +138,8 @@ const settingsScene =
 export const scenes: Record<string, Scene> = {
   /** A PR selected in the queue, with its briefing beside it. */
   async queueSelected(c) {
+    // No settled:queue-list wait: that key is registered only when the queue is long enough to be virtual.
     await queue(c);
-    await c.step('wait settled:queue-list');
     await selectRow(c, 'Introduce a bounded');
   },
 
@@ -164,7 +165,9 @@ export const scenes: Record<string, Scene> = {
   /** The Open tabs menu, over the tabs of workspaceTabs (tests/workspace-tabs-hardening-browser.ts). */
   async workspaceTabsMenu(c) {
     await scenes.workspaceTabs(c);
-    await c.step('click [aria-label="Open tabs"]');
+    // The trigger is see-through until hovered, so it is not "visible" to a click step; the suite clicks it directly.
+    await c.until(`!!document.querySelector('[aria-label="Open tabs"]')`, 'the Open tabs button');
+    await c.js(`document.querySelector('[aria-label="Open tabs"]').click(); true`);
   },
 
   async prSummary(c) {
@@ -286,7 +289,7 @@ export const scenes: Record<string, Scene> = {
   async sectionChat(c) {
     await queue(c);
     await c.js(
-      `window.electronAPI.sendSlideChat=async()=>'The queue bounds work **before** it reaches the worker: \`enqueue\` waits for capacity, so a slow worker slows producers instead of growing memory.\\n\\n- Cancellation releases the slot it held.\\n- Retries go back through the same bound.'`
+      `window.electronAPI.sendSlideChat=async()=>'The queue bounds work **before** it reaches the worker: \`enqueue\` waits for capacity, so a slow worker slows producers instead of growing memory.\\n\\n- Cancellation releases the slot it held.\\n- Retries go back through the same bound.';true`
     );
     await openExplanation(c, 1);
     await c.js(`document.activeElement?.blur()`);

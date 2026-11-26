@@ -1,5 +1,15 @@
 {
-  "prompt": "Placeholder, not a capture. Drawn with sharp from an SVG: \"explanation-options\", dark theme, 1600px wide. The docs capture pipeline replaces it from its recipe in scripts/docs-screenshots.json.",
-  "createdAt": "2026-11-25T23:20:18.492Z",
-  "placeholder": true
+  "prompt": "Origin: actual Gnosis application captured from commit 6792c0f by scripts/capture-docs-screenshots.mjs, recipe \"explanation-options\" in the dark theme, from tests/fixtures/explanation-options.html (as tests/explanation-options-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 1600px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-26T03:02:36.635Z",
+  "commit": "6792c0f38f69725e90382d02ff03d8f27d9d130e",
+  "recipe": "explanation-options",
+  "theme": "dark",
+  "fixture": "tests/fixtures/explanation-options.html",
+  "viewport": {
+    "width": 1600,
+    "height": 960
+  },
+  "deviceScaleFactor": 2,
+  "width": 1600,
+  "source": "synthetic fixture data, actual Gnosis UI"
 }
