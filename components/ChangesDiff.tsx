@@ -28,7 +28,7 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
-import { registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
 import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
@@ -1885,7 +1885,9 @@ export function ChangesDiff<A>({
       const speed = Math.abs(scrollTop - lastTop) / Math.max(1, now - lastAt);
       lastTop = scrollTop;
       lastAt = now;
-      const read = viewer.look({ at: now, range: onScreen(), fast: speed > FAST_SCROLL_PX_PER_MS });
+      // While the reader steps with V or n, only V ticks (a review target holds until their own move).
+      const paused = !!peekReviewTarget();
+      const read = viewer.look({ at: now, range: paused ? undefined : onScreen(), fast: speed > FAST_SCROLL_PX_PER_MS, paused });
       // The last one marks the file too, which stays open while the reader is on it (lib/symbol-file-sync.ts).
       if (read.length) void markReviewSymbols(fileKey, read, true);
       // While a symbol on screen waits for its dwell, look again in a moment without a scroll to wake it; else the

@@ -67,6 +67,12 @@ export interface Look {
   /** The places on screen, top and bottom, from `diffRowPositions`; undefined when none of the diff showed. */
   range?: readonly [number, number];
   fast: boolean;
+  /**
+   * The reader is stepping with V or n (a review target holds, lib/tree-symbol-sync.ts): only V ticks. Nothing is
+   * seen and no dwell counts, and what was gathered is dropped, so after the reader's own move every symbol starts a
+   * fresh dwell, and nothing already on screen is ticked the moment the target ends.
+   */
+  paused?: boolean;
 }
 
 export interface AutoViewer {
@@ -101,9 +107,17 @@ export function createAutoViewer(
   // The places the last look had on screen, if it was a slow one.
   let before: readonly [number, number] | undefined;
   return {
-    look: ({ at, range, fast }) => {
+    look: ({ at, range, fast, paused = false }) => {
       const gap = last === undefined ? 0 : Math.min(Math.max(0, at - last), MAX_LOOK_GAP_MS);
       last = at;
+      if (paused) {
+        before = undefined;
+        for (const symbol of tracked) {
+          symbol.dwell = 0;
+          symbol.onScreen = false;
+        }
+        return [];
+      }
       const slow = range && !fast ? range : undefined;
       // A line is seen once two slow looks in a row had it on screen: one look could catch it in passing, or in a
       // slice that has not drawn yet.

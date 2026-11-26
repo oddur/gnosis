@@ -437,3 +437,25 @@ void test("Reset viewed clears a view's files and ticks, and Undo puts back exac
   assert.equal(isSymbolViewed('reset:b', 'function:h'), false, 'Unticked before stays unticked');
   assert.equal(wasSymbolUnticked('reset:b', 'function:h'), true);
 });
+
+void test('scrolled-through ticks stand aside while the reader steps with V or n, and start afresh after their own move', () => {
+  const positions = new Map([['a1', 0], ['a2', 1]]);
+  const viewer = createAutoViewer([{ id: 'f', lines: ['a1', 'a2'] }], positions, () => true);
+  // A neighbour fully on screen for long, while a target holds: nothing ticks, and nothing accrues.
+  for (let at = 0; at <= 6_000; at += 400) assert.deepEqual(viewer.look({ at, range: [0, 1], fast: false, paused: true }), []);
+  assert.equal(viewer.waiting(), false, 'Paused, nothing waits for its dwell');
+  // The reader moves on their own: the dwell starts from that moment, not from what was on screen before.
+  let at = 6_000;
+  const ticked: string[] = [];
+  for (; at < 6_000 + AUTO_VIEW_DWELL_MS; at += 400) ticked.push(...viewer.look({ at, range: [0, 1], fast: false }));
+  assert.deepEqual(ticked, [], 'Not before a full dwell after the move');
+  assert.deepEqual(viewer.look({ at: at + 400, range: [0, 1], fast: false }), ['f']);
+  // A pause in the middle of a dwell drops it.
+  const interrupted = createAutoViewer([{ id: 'g', lines: ['a1'] }], positions, () => true);
+  interrupted.look({ at: 0, range: [0, 1], fast: false });
+  interrupted.look({ at: 400, range: [0, 1], fast: false });
+  interrupted.look({ at: 800, range: [0, 1], fast: false });
+  interrupted.look({ at: 1_200, range: [0, 1], fast: false, paused: true });
+  assert.deepEqual(interrupted.look({ at: 1_600, range: [0, 1], fast: false }), []);
+  assert.deepEqual(interrupted.look({ at: 2_000, range: [0, 1], fast: false }), []);
+});
