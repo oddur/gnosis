@@ -9,12 +9,12 @@ import { selectedTreeFiles } from '../lib/tree-viewed-files';
 import { useFileProgress } from '../lib/file-view-progress';
 import type { CodeIntelligenceSettings } from '../lib/code-intelligence';
 import type { NoiseFilter } from '../lib/semantic-noise';
-import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
+import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
-import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
-import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
+import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
+import { folderProgress, progressLabel, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -193,12 +193,20 @@ export function ChangesSymbolTree({
       }
       if (row.type !== 'symbol') return null;
       const { node } = row;
-      if (!node.symbol) return null;
       const source = current.current.supported.get(row.key);
-      const viewed = !!entryOf(row.key)?.viewed || (!!source && current.current.progress.isSymbolViewed(source.fileKey, node.id));
+      // Viewed once every review item under the row is ticked, itself included (lib/tree-symbol-review.ts).
+      const done = rolledUp(node, (id) => !!source && current.current.progress.isSymbolViewed(source.fileKey, id), !!entryOf(row.key)?.viewed);
+      if (!reviewed(node) && !node.quiet) {
+        // A container (or a context row): no tick of its own. It reads as viewed once everything under it is, its
+        // Body included; its own lines' counts are on its Body row.
+        if (!done) return null;
+        return { text: VIEWED_MARK, parts: [{ text: VIEWED_MARK, color: 'var(--muted-foreground)' }], title: `${definitionNoun(node.definition)} ${node.definition.name}: everything changed in it viewed` };
+      }
+      if (!node.symbol) return null;
+      const viewed = done ?? (!!entryOf(row.key)?.viewed || (!!source && current.current.progress.isSymbolViewed(source.fileKey, node.id)));
       const quiet = !viewed && node.quiet ? (TREE_WORDS[node.quiet] ?? 'Quiet') : undefined;
       const moved = node.moved ? [{ text: '⇄', color: 'var(--muted-foreground)' }] : [];
-      const spoken = `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
+      const spoken = isBody(node) ? node.definition.crumb : `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
       return {
         text: viewed ? VIEWED_MARK : (quiet ?? `+${node.added} −${node.deleted}`),
         parts: [
@@ -288,7 +296,12 @@ export function ChangesSymbolTree({
     const id = readingSymbol(known.nodes, place);
     return { path: id ? layout.symbolPaths.get(symbolRowKey(selected, id)) : undefined, id };
   }, [place, symbols, selected, layout]);
-  const arrived = !!held && held.key === selected && !!live.id && (live.id === held.id || live.id.startsWith(`${held.id}>`));
+  // A Body has no definition of its own: the diff arrives at it inside its container.
+  const arrived =
+    !!held &&
+    held.key === selected &&
+    !!live.id &&
+    (live.id === held.id || live.id.startsWith(`${held.id}>`) || (held.id.endsWith(`>${BODY_PART}`) && live.id === bodyOwner(held.id)));
   useEffect(() => {
     if (!held) return;
     // A symbol in another file waits for that file to be selected; the timer ends the hold either way.
@@ -417,7 +430,7 @@ export function ChangesSymbolTree({
     current.current.onSelect(row.key);
   };
   /** What V and the Viewed menu tick for a row: a symbol's changed symbols, or the file's top-level changes. */
-  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? changedIds(row.node) : row?.type === 'top' ? [TOP_LEVEL_ID] : []);
+  const symbolIds = (row: TreeRow | undefined) => (row?.type === 'symbol' ? reviewIds(row.node) : row?.type === 'top' ? [TOP_LEVEL_ID] : []);
   const markSymbols = (row: TreeRow | undefined, viewed?: boolean) => {
     if (row?.type !== 'symbol' && row?.type !== 'top') return;
     const source = supported.get(row.key);
@@ -453,7 +466,7 @@ export function ChangesSymbolTree({
             return (
               <TreeSymbolMenu
                 context={context}
-                label={row.type === 'top' ? topLevelName(row.top) : `${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
+                label={row.type === 'top' ? topLevelName(row.top) : isBody(row.node) ? row.node.definition.crumb : `${definitionNoun(row.node.definition)} ${row.node.definition.name}`}
                 what={row.type === 'top' ? (row.top.imports ? 'imports' : 'top-level changes') : undefined}
                 count={ids.length}
                 viewed={ids.filter((id) => symbolOn(row.key, source.fileKey, id)).length}
@@ -542,10 +555,15 @@ export function ChangesSymbolTree({
           // The arrow keys open and close a file as its chevron does; the reader's choice then stays.
           if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && row?.type === 'file' && auto.current === row.key) auto.current = undefined;
           // V marks the symbol Viewed, as its tick in the outline does.
-          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && (row?.type === 'symbol' || row?.type === 'top')) {
+          if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && row && row.type !== 'folder' && row.type !== 'note') {
             event.preventDefault();
             event.stopPropagation();
-            markSymbols(row);
+            // V on a file row marks the file, as its header's Viewed checkbox does, whatever it is (JSON, an image, a
+            // file with symbols); on a symbol row, the symbol, as its tick in the outline does.
+            if (row.type === 'file') {
+              const entry = entryOf(row.key);
+              if (entry) void onSetViewed?.([row.key], !entry.viewed);
+            } else markSymbols(row);
             return;
           }
           if (event.key === 'Enter' && row && row.type !== 'folder') {

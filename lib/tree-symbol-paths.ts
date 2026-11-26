@@ -1,4 +1,5 @@
-import { TOP_LEVEL_ID } from './symbol-outline';
+import { TOP_LEVEL_ID, isBody } from './symbol-outline';
+import { reviewed } from './tree-symbol-review';
 import { topLevelName, treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
 
 /**
@@ -135,8 +136,11 @@ export function symbolTreePaths(
   const emitNodes = (file: string, base: string, nodes: readonly TreeSymbolNode[]) => {
     const used = new Set<string>();
     for (const node of nodes) {
-      const icon: TreeRowIcon = treeSymbolKind(node.definition.kind);
-      const tint: TreeRowTint = node.change === 'context' ? 'context' : node.change;
+      // A container's Body (its own changed lines) looks like the file's top-level row; a container, which only rolls
+      // up from what is under it, like a context row (lib/tree-symbol-review.ts).
+      const body = isBody(node);
+      const icon: TreeRowIcon = body ? 'top' : treeSymbolKind(node.definition.kind);
+      const tint: TreeRowTint = body ? 'muted' : node.change === 'context' || (!node.quiet && !reviewed(node)) ? 'context' : node.change;
       let segment = `${segmentName(node.definition.name)}${rowCode(icon, tint)}`;
       while (used.has(segment)) segment = `${segment.slice(0, -CODE_LENGTH)}${REPEAT}${segment.slice(-CODE_LENGTH)}`;
       used.add(segment);

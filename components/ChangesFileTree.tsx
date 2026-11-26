@@ -236,6 +236,16 @@ export function ChangesFileTree({
           const path = model.getFocusedPath();
           if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
         }
+        // V marks the file Viewed, or not, as its header's checkbox does; the same key as in the symbol tree.
+        if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && model.getFocusedItem()?.isDirectory() === false) {
+          const entry = current.current.entries.find((e) => e.key === model.getFocusedPath());
+          if (entry && onSetViewed) {
+            event.preventDefault();
+            event.stopPropagation();
+            void onSetViewed([entry.key], !entry.viewed);
+          }
+          return;
+        }
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();
           event.stopPropagation();

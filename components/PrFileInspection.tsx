@@ -266,7 +266,10 @@ export function PrFileInspection({
   const autoView = useMemo(
     () =>
       autoViewSymbols && model.symbols && model.symbolLines
-        ? { fileKey: activeKey, symbols: model.symbols.map((symbol) => ({ id: symbol.id, lines: model.symbolLines?.get(symbol.id) ?? [] })) }
+        ? {
+            fileKey: activeKey,
+            symbols: model.symbols.map((symbol) => ({ id: symbol.id, lines: model.symbolLines?.get(symbol.id) ?? [] })),
+          }
         : undefined,
     [autoViewSymbols, model.symbols, model.symbolLines, activeKey]
   );

@@ -19,6 +19,7 @@ import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbo
  *   ticked, but it stays open while the reader is on it, and collapses once n takes them on to the next file.
  * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
  *   the end a notice says there are none after it.
+ * - V on a file without symbols (an SVG) marks it Viewed, and again unviewed.
  * - Search matches a symbol's name.
  * - With the setting off, the tree is the plain file tree again.
  *
@@ -197,6 +198,14 @@ void app.whenReady().then(async () => {
     await lit('start');
     // Collapsed, or no longer mounted at all (the stream keeps only rows near the view): either way, not held open.
     await wait(`(()=>{const b=document.querySelector(${JSON.stringify(fileRow + ' .commit-stream-file-body')});return !b||b.hidden})()`);
+
+    // ── V on a file without symbols marks the file, as its header's checkbox does ──
+    const pressV = (row: string) =>
+      js(`(()=>{const r=window.treeRow(${JSON.stringify(row)});r.focus();r.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))})()`);
+    await pressV('flow.svg');
+    await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
+    await pressV('flow.svg');
+    await wait("!window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
 
     // ── Search matches a symbol's name ──
     const search = (value: string) =>

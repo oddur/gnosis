@@ -1,6 +1,6 @@
 import type { GapHunk } from './diff-gaps';
 import type { MoveMark } from './moved-symbols-store';
-import { TOP_LEVEL_ID, type ChangedSymbol, type SymbolChange } from './symbol-outline';
+import { TOP_LEVEL_ID, bodySymbol, type ChangedSymbol, type SymbolChange } from './symbol-outline';
 import type { DefinitionKind, SyntaxDefinition, SyntaxLanguage } from './syntax-scope';
 
 /**
@@ -55,6 +55,11 @@ export interface TreeSymbolNode {
   quiet?: string;
   /** Where the symbol moved from or to (#398), in words for its tooltip. */
   moved?: string;
+  /**
+   * Its own changed lines are all trivial (blank, brackets, quiet; lib/symbol-outline.ts `trivialSymbols`): with a
+   * changed symbol under it, it is a context row for review (lib/tree-symbol-review.ts).
+   */
+  trivial?: boolean;
   children: TreeSymbolNode[];
 }
 
@@ -68,7 +73,9 @@ export function symbolTree(
   shown: readonly ChangedSymbol[] = all,
   moves: readonly MoveMark[] = [],
   /** What a quiet symbol's changes are, in the words of a quiet file's label. */
-  quietLabel: (symbol: ChangedSymbol) => string = () => 'Quiet changes'
+  quietLabel: (symbol: ChangedSymbol) => string = () => 'Quiet changes',
+  /** Symbols whose own changed lines are all trivial (`trivialSymbols`). */
+  trivial: ReadonlySet<string> = new Set()
 ): TreeSymbolNode[] {
   const shownIds = new Set(shown.map((symbol) => symbol.id));
   const roots: TreeSymbolNode[] = [];
@@ -100,6 +107,7 @@ export function symbolTree(
       deleted: symbol.deleted,
       quiet: shownIds.has(symbol.id) ? undefined : quietLabel(symbol),
       moved: move && moveWords(move),
+      trivial: trivial.has(symbol.id) || undefined,
     };
     const known = nodes.get(symbol.id);
     // A parent listed as context for a child that changed first, and changed further down itself.
@@ -110,6 +118,18 @@ export function symbolTree(
       place(node, nested ? parent : undefined);
     }
   }
+  // A container (a symbol with a changed symbol under it) is no review item of its own: its own changed lines, unless
+  // trivial, are a Body row first under it, as the file's top level is first under the file (lib/tree-symbol-review.ts).
+  const changedUnder = (node: TreeSymbolNode): boolean => node.children.some((child) => (!!child.symbol && !child.quiet) || changedUnder(child));
+  const addBodies = (nodes: TreeSymbolNode[]) => {
+    for (const node of nodes) {
+      addBodies(node.children);
+      if (!node.symbol || node.trivial || node.quiet || !changedUnder(node)) continue;
+      const body = bodySymbol(node.symbol);
+      node.children.unshift({ id: body.id, definition: body.definition, change: node.change, symbol: body, added: node.added, deleted: node.deleted, children: [] });
+    }
+  };
+  addBodies(roots);
   return roots;
 }
 

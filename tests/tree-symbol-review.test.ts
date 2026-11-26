@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import type { SyntaxDefinition } from '../lib/syntax-scope';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import type { TopLevelChanges, TreeSymbolNode } from '../lib/tree-symbols';
-import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
-import { countedIds, fileAfterTick, folderProgress, progressLabel, reviewStops, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
+import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline';
+import { symbolTree } from '../lib/tree-symbols';
+import { countedIds, fileAfterTick, folderProgress, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
@@ -255,4 +256,78 @@ void test('what a file counts for its Viewed mark: symbols and top level, quiet 
   // A quiet symbol's tick does not finish a file whose real symbol is unticked.
   const ids = countedIds({ state: 'ready', nodes: [node('a'), node('q', [], { quiet: true })] });
   assert.deepEqual(fileAfterTick({ counted: ids, ids: ['q'], viewed: true, fileViewed: false, isViewed: () => false }), { others: [] });
+});
+
+/** Changed symbols as `changedSymbols()` lists them, nested by id: `namespace:N>class:C>method:m`. */
+function changed(id: string, change: ChangedSymbol['change'] = 'modified'): ChangedSymbol {
+  const parts = id.split('>');
+  const parents = parts.slice(0, -1).map((part) => definition(part));
+  return { id, change, definition: definition(parts.at(-1) ?? id), side: 'after', parents, first: { side: 'after', line: 1 }, added: 1, deleted: 0 };
+}
+
+void test('a class changed only by a brace between its changed methods rolls up from them; it is no stop', () => {
+  const nodes = symbolTree([changed('class:C'), changed('class:C>a'), changed('class:C>b')], undefined, [], undefined, new Set(['class:C']));
+  // No Body: the brace is nothing to read.
+  assert.deepEqual(treeOrder(nodes).map((n) => n.id), ['class:C', 'class:C>a', 'class:C>b']);
+  assert.deepEqual(countedIds({ state: 'ready', nodes }), ['class:C>a', 'class:C>b']);
+  const ticked = new Set<string>();
+  const on = (id: string) => ticked.has(id);
+  assert.equal(rolledUp(nodes[0], on), false);
+  ticked.add('class:C>a');
+  assert.equal(rolledUp(nodes[0], on), false);
+  ticked.add('class:C>b');
+  assert.equal(rolledUp(nodes[0], on), true, 'All its methods viewed: the class reads viewed');
+  ticked.delete('class:C>a');
+  assert.equal(rolledUp(nodes[0], on), false, 'One unticked: not any more');
+  // n walks the methods, never the class.
+  const files: ReviewFile[] = [{ key: 'c.ts', viewed: false, symbols: { state: 'ready', nodes } }];
+  const step = stepUnviewed(files, { key: 'c.ts' }, 1, () => false);
+  assert.equal(step.kind === 'go' && step.id, 'class:C>a');
+  // V on the class ticks what is under it.
+  assert.deepEqual(reviewIds(nodes[0]), ['class:C>a', 'class:C>b']);
+});
+
+void test("a class's changed field is its Body, first under it; the class rolls up only when that is ticked too", () => {
+  const nodes = symbolTree([changed('class:C'), changed('class:C>a'), changed('class:C>b')]);
+  const body = bodyId('class:C');
+  assert.deepEqual(treeOrder(nodes).map((n) => n.id), ['class:C', body, 'class:C>a', 'class:C>b']);
+  assert.equal(nodes[0].children[0].symbol?.definition.crumb, 'class:C · body');
+  assert.deepEqual(countedIds({ state: 'ready', nodes }), [body, 'class:C>a', 'class:C>b']);
+  assert.equal(rolledUp(nodes[0], (id) => id !== body), false, 'Its methods are not all of it');
+  assert.equal(rolledUp(nodes[0], () => true), true);
+  // The Body is a stop, walked first under the class.
+  const files: ReviewFile[] = [{ key: 'c.ts', viewed: false, symbols: { state: 'ready', nodes } }];
+  const step = stepUnviewed(files, { key: 'c.ts', id: 'class:C' }, 1, () => false);
+  assert.equal(step.kind === 'go' && step.id, body);
+  // An added class whose methods folded into it is one leaf, with no Body.
+  const added = symbolTree([changed('class:Q', 'added')]);
+  assert.deepEqual(countedIds({ state: 'ready', nodes: added }), ['class:Q']);
+});
+
+void test('roll-ups nest, and one untick clears them up to the file', () => {
+  const nodes = symbolTree(
+    [changed('namespace:N'), changed('namespace:N>class:C'), changed('namespace:N>class:C>m'), changed('namespace:N>f')],
+    undefined,
+    [],
+    undefined,
+    new Set(['namespace:N'])
+  );
+  const body = bodyId('namespace:N>class:C');
+  const counted = countedIds({ state: 'ready', nodes });
+  assert.deepEqual(counted, [body, 'namespace:N>class:C>m', 'namespace:N>f']);
+  const ticked = new Set(counted);
+  const on = (id: string) => ticked.has(id);
+  const namespace = nodes[0];
+  const inner = namespace.children.find((n) => n.id === 'namespace:N>class:C');
+  assert.ok(inner);
+  assert.equal(rolledUp(namespace, on), true);
+  assert.equal(rolledUp(inner, on), true);
+  // The last tick marks the file; one untick clears the class, the namespace and the file.
+  assert.deepEqual(fileAfterTick({ counted, ids: ['namespace:N>f'], viewed: true, fileViewed: false, isViewed: (id) => id !== 'namespace:N>f' && on(id) }).file, 'mark');
+  ticked.delete('namespace:N>class:C>m');
+  assert.equal(rolledUp(inner, on), false);
+  assert.equal(rolledUp(namespace, on), false);
+  assert.equal(fileAfterTick({ counted, ids: ['namespace:N>class:C>m'], viewed: false, fileViewed: true, isViewed: on }).file, 'unmark');
+  // The scrolled-through ticks see the same items: a container is never among them.
+  assert.ok(!counted.includes('namespace:N') && !counted.includes('namespace:N>class:C'));
 });

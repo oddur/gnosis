@@ -1068,6 +1068,8 @@ export function PrChangesView({
                     onGoToSymbol={goToSymbol}
                     onSetViewed={(keys, viewed) => {
                       const targets = new Set(keys);
+                      // Unviewed by hand: a file its ticks held open no longer needs holding.
+                      if (!viewed) for (const e of entries) if (targets.has(e.key)) releaseHeld({ only: viewKey(e) });
                       stream.current?.preservePosition();
                       return progress.markFilesViewed(entries.filter(e => targets.has(e.key)).map(viewKey), viewed);
                     }}

@@ -177,7 +177,7 @@
     },
     {
       "keys": "v",
-      "label": "Mark the symbol selected in the file tree as viewed",
+      "label": "Mark the file or symbol selected in the file tree as viewed",
       "source": "components/ChangesSymbolTree.tsx",
       "evidence": "(event.key === 'v' || event.key === 'V')"
     },

@@ -6,7 +6,7 @@ import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import type { GapHunk } from '../lib/diff-gaps';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { changedSymbolLines, changedSymbols, outlineSummary, spokenSymbol } from '../lib/symbol-outline';
+import { bodyId, changedSymbolLines, changedSymbols, outlineSummary, reviewItems, spokenSymbol, trivialLine, trivialSymbols } from '../lib/symbol-outline';
 
 /** The changed-symbols outline (#394) with the real tree-sitter runtime: added, modified and removed symbols. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -221,4 +221,40 @@ void test('An added file lists its symbols as added, and a deleted file its symb
   assert.ok(removed);
   assert.ok(removed.every((symbol) => symbol.change === 'removed' && symbol.side === 'before'));
   assert.equal(outlineSummary(removed), 'Removes 1 struct and 1 impl block');
+});
+
+void test('a class whose own changes are a blank line or a brace is a roll-up; a changed field makes it a Body item', async () => {
+  for (const line of ['', '  ', '}', '});', '},', '{', ')', ']']) assert.equal(trivialLine(line), true, JSON.stringify(line));
+  for (const line of ['  private items = 1;', '@Injectable()', '} else {', 'x']) assert.equal(trivialLine(line), false, line);
+  const methods = (lines: string[]) =>
+    lines.map((line) => (line === '    return this.items.length;' ? '    return this.items.length * 2;' : line === '    this.items = [];' ? '    this.items = [0];' : line));
+  // Both methods change, and a blank line comes in between them: the class's own change is that blank line.
+  const blank = methods(BEFORE).flatMap((line) => (line === '  clear(): void {' ? ['', line] : [line]));
+  const hunks = hunksOf(BEFORE, blank);
+  const definitions = { after: await parse('typescript', blank), before: await parse('typescript', BEFORE) };
+  const all = changedSymbols(hunks, definitions) ?? [];
+  assert.ok(all.some((symbol) => symbol.id === 'class:Store'), 'The blank line makes the class a changed symbol');
+  const trivial = trivialSymbols(hunks, definitions);
+  assert.ok(trivial.has('class:Store'));
+  assert.deepEqual(reviewItems(all, trivial).map((symbol) => symbol.id), ['class:Store>method:flush', 'class:Store>method:clear']);
+  // A changed field: the class's own lines are its Body, an item beside the methods.
+  const field = methods(BEFORE).map((line) => (line === '  private items: number[] = [];' ? '  private items: number[] = [1];' : line));
+  const fieldHunks = hunksOf(BEFORE, field);
+  const fieldDefinitions = { after: await parse('typescript', field), before: await parse('typescript', BEFORE) };
+  const fieldAll = changedSymbols(fieldHunks, fieldDefinitions) ?? [];
+  assert.equal(trivialSymbols(fieldHunks, fieldDefinitions).has('class:Store'), false);
+  const items = reviewItems(fieldAll, trivialSymbols(fieldHunks, fieldDefinitions));
+  assert.deepEqual(new Set(items.map((symbol) => symbol.id)), new Set([bodyId('class:Store'), 'class:Store>method:flush', 'class:Store>method:clear']));
+  const body = items.find((symbol) => symbol.id === bodyId('class:Store'));
+  assert.ok(body);
+  assert.equal(body.definition.crumb, 'Store · body');
+  assert.equal(body.first.line, field.indexOf('  private items: number[] = [1];') + 1, 'The Body goes to the first of its own lines');
+  // Lines the reader hides as quiet count as trivial too.
+  const quietField = trivialSymbols(fieldHunks, fieldDefinitions, undefined, (_side, line) => line === field.indexOf('  private items: number[] = [1];') + 1);
+  assert.equal(quietField.has('class:Store'), true);
+  // An added class folds its methods: one item, as before.
+  const added = [...BEFORE, '', 'export class Queue {', '  push(n: number) {', '    return n;', '  }', '}'];
+  const addedHunks = hunksOf(BEFORE, added);
+  const addedDefinitions = { after: await parse('typescript', added), before: await parse('typescript', BEFORE) };
+  assert.deepEqual(reviewItems(changedSymbols(addedHunks, addedDefinitions) ?? [], trivialSymbols(addedHunks, addedDefinitions)).map((symbol) => symbol.id), ['class:Queue']);
 });

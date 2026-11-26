@@ -7,7 +7,7 @@ import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
 import { hidden, noiseFilterOn, noiseLabel, patchHunks, type NoiseFilter, type NoiseKind } from './semantic-noise';
-import { changedSymbols } from './symbol-outline';
+import { changedSymbols, trivialSymbols } from './symbol-outline';
 import { syntaxContentsPlan, wholeFileText } from './syntax-contents';
 import { SYNTAX_MAX_CHARACTERS, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 import { onDefinitions, onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
@@ -169,7 +169,7 @@ function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, fi
           if (from <= end && from + Math.max(count, 1) - 1 >= start) kinds.push(block.kind);
         }
         return noiseLabel(kinds);
-      }),
+      }, trivialSymbols(gapHunks, fileDefinitions, undefined, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))),
       top: treeTop(gapHunks, fileDefinitions, quietLines),
     },
   };

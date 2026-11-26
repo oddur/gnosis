@@ -34,7 +34,7 @@ import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-synt
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
-import { TOP_LEVEL_ID, changedSymbolLines, changedSymbols } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols } from '../lib/symbol-outline';
 import { topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
@@ -497,7 +497,13 @@ export function useDiffFileModel({
     const skip = quietLines && ((side: 'before' | 'after', line: number) => quietLines.has(`${side[0]}${line}`));
     const top = topLevelChanges(baseHunks, fileDefinitions, skip);
     const own = changedSymbols(baseHunks, fileDefinitions, skip) ?? [];
-    return { own, top, symbols: top ? [topLevelSymbol(top), ...own] : own, lines: changedSymbolLines(baseHunks, fileDefinitions, skip) };
+    // The review items, as the Changes tree has them: a container is none; its own lines, unless trivial (a brace or a
+    // blank line between its changed methods), are its Body item.
+    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, skip));
+    const lines = changedSymbolLines(baseHunks, fileDefinitions, skip);
+    // A body's lines are its container's own.
+    for (const item of items) if (lines && isBody(item)) lines.set(item.id, lines.get(bodyOwner(item.id)) ?? []);
+    return { own, top, symbols: top ? [topLevelSymbol(top), ...items] : items, lines };
   }, [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]);
   const symbols = listed?.symbols;
   // Each listed entry's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):

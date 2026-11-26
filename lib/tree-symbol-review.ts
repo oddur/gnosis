@@ -13,8 +13,34 @@ import type { TopLevelChanges, TreeSymbolNode } from './tree-symbols';
  * unless every one of them is quiet.
  */
 
-/** A symbol the review counts: changed, with a change that shows. */
-export const reviewed = (node: TreeSymbolNode) => !!node.symbol && !node.quiet;
+/** A changed symbol with a change that shows. */
+const changedNode = (node: TreeSymbolNode) => !!node.symbol && !node.quiet;
+const changedBelow = (node: TreeSymbolNode): boolean => node.children.some((child) => changedNode(child) || changedBelow(child));
+/**
+ * A review item: a changed leaf with a change that shows, the file's top level, or a container's Body (its own changed
+ * lines, lib/tree-symbols.ts). A container (a class, a namespace, with changed symbols under it) is never one: it reads
+ * as viewed once everything under it is (`rolledUp`), as a file does.
+ */
+export const reviewed = (node: TreeSymbolNode) => changedNode(node) && !changedBelow(node);
+
+/** The review items in a row's subtree, itself included: what V on the row ticks, and what its ✓ rolls up from. */
+export function reviewIds(node: TreeSymbolNode): string[] {
+  return treeOrder([node])
+    .filter(reviewed)
+    .map((item) => item.id);
+}
+
+/**
+ * Whether a row reads as viewed: every review item under it, itself included, is ticked (or the file is Viewed).
+ * Derived, never stored, for a container, so it cannot disagree with what is under it, its Body included. Undefined
+ * for a row with no review items (a quiet symbol).
+ */
+export function rolledUp(node: TreeSymbolNode, isViewed: (id: string) => boolean, fileViewed = false): boolean | undefined {
+  const ids = reviewIds(node);
+  if (!ids.length) return undefined;
+  return fileViewed || ids.every(isViewed);
+}
+
 
 /** A file's symbols in the tree's order, context rows included: depth first, as the rows show. */
 export function treeOrder(nodes: readonly TreeSymbolNode[]): TreeSymbolNode[] {

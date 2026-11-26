@@ -2,7 +2,7 @@ import { useId, useSyncExternalStore } from 'react';
 import { Check, ChevronRight, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
 import { useFileProgress } from '../lib/file-view-progress';
 import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
-import { isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
+import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
 /**
@@ -68,10 +68,15 @@ function Marker({ change }: { change: SymbolChange }) {
 /**
  * A symbol in words: "function merge". The file's top-level changes (TOP_LEVEL_ID) lead the list as one more entry,
  * "Imports" or "Top level", ticked and counted like a symbol (lib/tree-symbol-review.ts), so this bar's "x/y viewed"
- * and the Changes tree's count agree.
+ * and the Changes tree's count agree. A container's own lines are its body, "Store · body"; the container itself is
+ * no entry, as it is no review item.
  */
 const named = (symbol: ChangedSymbol) =>
-  isTopLevel(symbol) ? `${symbol.definition.name.toLowerCase()} changes` : `${definitionNoun(symbol.definition)} ${symbol.definition.name}`;
+  isTopLevel(symbol)
+    ? `${symbol.definition.name.toLowerCase()} changes`
+    : isBody(symbol)
+      ? symbol.definition.crumb
+      : `${definitionNoun(symbol.definition)} ${symbol.definition.name}`;
 
 /** A symbol's name as its crumb shows it: the kind word tinted as the syntax theme tints keywords. */
 function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
@@ -104,7 +109,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   const all = symbols.length > 0 && done === symbols.length;
   // Symbols whose changes are all hidden as noise are left out, and counted, so the outline stays honest.
   const quietNote = quiet > 0 ? `${quiet} ${quiet === 1 ? 'symbol' : 'symbols'} with quiet changes only` : undefined;
-  const summary = !symbols.some((symbol) => !isTopLevel(symbol)) && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
+  const summary = !symbols.some((symbol) => !isPseudo(symbol)) && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
   // Through the file's sync (lib/symbol-file-sync.ts): in symbol mode the last tick marks the file, and an untick of
   // a Viewed file's symbol makes it unviewed. Elsewhere the ticks stay apart from the file, as before.
   const tick = (symbol: ChangedSymbol, on: boolean) => void markReviewSymbols(fileKey, [symbol.id], on);
@@ -113,7 +118,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
       type="button"
       className="diff-outline-go"
       data-symbol={symbol.id}
-      aria-label={`Go to ${isTopLevel(symbol) ? named(symbol) : spokenSymbol(symbol)}`}
+      aria-label={`Go to ${isPseudo(symbol) ? named(symbol) : spokenSymbol(symbol)}`}
       title={`Go to ${named(symbol)}`}
       onClick={() => onGo(symbol)}
     >
