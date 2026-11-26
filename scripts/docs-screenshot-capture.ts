@@ -218,19 +218,24 @@ async function capture(recipe: Recipe, theme: Theme, progress: Progress): Promis
   };
 
   try {
+    // A window that has never loaded a page does not answer CDP commands until it navigates (tests/workbench-ready.ts),
+    // so the emulation below hung on every scene. A blank page first; the emulation then holds across the fixture load.
+    stage('opening a blank page');
+    await within(window.loadURL('about:blank'), stepTimeoutMs, 'loading about:blank');
     stage('emulating the theme and viewport');
     contents.debugger.attach('1.3');
+    const cdp = (method: string, params: Record<string, unknown>) => within(contents.debugger.sendCommand(method, params), stepTimeoutMs, method);
     // Both themes are set the way the app sets them: the fixture reads ?theme= into the theme preference and applies
     // it (lib/theme.ts); fixtures that follow the system appearance, such as the menu bar panel, see the emulated
     // prefers-color-scheme. Reduced motion keeps transitions out of the captures.
-    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+    await cdp('Emulation.setEmulatedMedia', {
       features: [
         { name: 'prefers-color-scheme', value: theme },
         { name: 'prefers-reduced-motion', value: 'reduce' },
       ],
     });
-    await contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await contents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+    await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await cdp('Emulation.setDeviceMetricsOverride', {
       width: viewport.width,
       height: viewport.height,
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
