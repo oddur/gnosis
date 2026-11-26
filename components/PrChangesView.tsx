@@ -82,6 +82,8 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 const NAV_CURSOR_MS = 1_500;
 /** How long `n` waits for one file's symbols to be read and parsed. */
 const NAV_LOAD_MS = 4_000;
+/** How long a press keeps waiting for one file's symbols, in NAV_LOAD_MS waits, before it says they are still loading. */
+const NAV_GIVE_UP_MS = 30_000;
 /** Files one press of `n` reads at most before it asks the reader to press again. */
 const NAV_MAX_LOADS = 12;
 /** A wait shorter than this shows no "Loading symbols…". */
@@ -712,7 +714,12 @@ export function PrChangesView({
           toast.add({ title: 'Still looking for unviewed symbols', description: 'Press the key again to read further.', timeout: NOTICE_MS });
           return 'stopped';
         }
-        const value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
+        // The press waits for this file's symbols while the reader waits for it (the Loading symbols notice shows): a
+        // busy parse queue on a large PR can take longer than one wait, and a press that gave up would be lost. Another
+        // press, or the reader moving on, ends it; NAV_GIVE_UP_MS is only the backstop.
+        let value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
+        for (const until = Date.now() + NAV_GIVE_UP_MS; value.state === 'loading' && run === navRun.current && Date.now() < until; )
+          value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
         // Another press, or the reader moved on: this one is over.
         if (run !== navRun.current) return 'stopped';
         if (value.state === 'loading') {
@@ -776,11 +783,16 @@ export function PrChangesView({
     const root = workspace.current;
     if (!root) return;
     const inDiff = (event: Event) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('commit-diff-stream'));
+    // The reader moving on their own also ends a press still waiting for a file's symbols: it must not jump them later.
+    const movedOn = () => {
+      readerMoved();
+      navRun.current++;
+    };
     const moved = (event: Event) => {
-      if (inDiff(event)) readerMoved();
+      if (inDiff(event)) movedOn();
     };
     const key = (event: KeyboardEvent) => {
-      if (SCROLL_KEYS.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && inDiff(event)) readerMoved();
+      if (SCROLL_KEYS.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && inDiff(event)) movedOn();
     };
     const types = ['wheel', 'touchstart', 'pointerdown'] as const;
     for (const type of types) root.addEventListener(type, moved, { capture: true, passive: true });
