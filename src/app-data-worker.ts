@@ -68,6 +68,11 @@ function rows(name: string, value: unknown): Map<string, string> {
         if (typeof v !== 'boolean') throw new Error('Invalid viewed mark');
         result.set('mark:' + key, JSON.stringify(v));
       }
+      // What each tick's item read when ticked (lib/review-prints.ts); progress saved before them has none.
+      for (const [key, v] of Object.entries(record(value.prints) ? value.prints : {})) {
+        if (typeof v !== 'string') throw new Error('Invalid viewed print');
+        result.set('print:' + key, JSON.stringify(v));
+      }
     } else if (name.startsWith('renderer:gnosis-changes-drafts:')) {
       if (!Array.isArray(value)) throw new Error('Invalid saved drafts');
       result.set('header', '{}');
@@ -108,6 +113,7 @@ function read(name: string): unknown {
   if (!header) throw new Error(`Incomplete saved state: ${name}`);
   const value = JSON.parse(header.payload) as Record<string, unknown>;
   if (name === 'renderer:' + FILE_PROGRESS_KEY) {
+    const prints = saved.filter((row) => row.id.startsWith('print:'));
     return {
       aliases: Object.fromEntries(
         saved.filter((row) => row.id.startsWith('alias:')).map((row) => [row.id.slice(6), JSON.parse(row.payload)])
@@ -115,6 +121,8 @@ function read(name: string): unknown {
       marks: Object.fromEntries(
         saved.filter((row) => row.id.startsWith('mark:')).map((row) => [row.id.slice(5), JSON.parse(row.payload)])
       ),
+      // Progress saved before prints has none: it reads as it always did.
+      ...(prints.length ? { prints: Object.fromEntries(prints.map((row) => [row.id.slice(6), JSON.parse(row.payload)])) } : {}),
     };
   }
   if (name.startsWith('renderer:gnosis-changes-drafts:'))
@@ -337,8 +345,10 @@ port.on('message', (request: Request) => {
         if (
           !record(args.aliases) ||
           !record(args.marks) ||
+          (args.prints !== undefined && !record(args.prints)) ||
           Object.keys(args.aliases).length > 10000 ||
-          Object.keys(args.marks).length > 10000
+          Object.keys(args.marks).length > 10000 ||
+          Object.keys(args.prints ?? {}).length > 10000
         )
           throw new Error('Invalid file progress');
         transaction(() => {
@@ -355,6 +365,10 @@ port.on('message', (request: Request) => {
           for (const [key, value] of Object.entries(args.marks)) {
             if (key.length > 10000 || typeof value !== 'boolean') throw new Error('Invalid viewed mark');
             put.run(name, 'mark:' + key, JSON.stringify(value));
+          }
+          for (const [key, value] of Object.entries(args.prints ?? {})) {
+            if (key.length > 10000 || typeof value !== 'string' || value.length > 200) throw new Error('Invalid viewed print');
+            put.run(name, 'print:' + key, JSON.stringify(value));
           }
         });
       } else if (method === 'search') {

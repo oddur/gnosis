@@ -87,6 +87,15 @@ To turn this on or off, clear or select **Symbols** above the file tree, next to
 
 If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it and go back. When everything is viewed, Gnosis shows **Everything viewed** with a button to review the PR.
 
+### After the author pushes
+
+<Prerelease /> When the file tree shows symbols, a new push keeps your marks on the code that did not change. Gnosis compares each symbol you marked as viewed with the new version of the PR. Changes to spaces and blank lines do not count.
+
+- A symbol that is the same stays marked as viewed. If every symbol of a file is the same, the file stays viewed.
+- A symbol that changed shows **↻** in the file tree and in the outline above the diff, and is not viewed any more. The toolbar shows how many items changed, such as **2 updated**. <Kbd keys="n" /> and <Kbd keys="v" /> go to them like to any other item that is not viewed.
+- A file without symbols stays viewed if its changes are the same.
+- Marks that you made before this version of Gnosis do not carry over.
+
 ### Mark files as viewed
 
 Select the **Viewed** checkbox of a file when you finish it, or select the file in the file tree and press <Kbd keys="v" />. This works for every file, also files without symbols, such as JSON or Markdown files. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters. To start again, select **Reset viewed** under the file tree. This clears **Viewed** for every file and symbol in these changes, also the files that your filters hide. Select **Undo** in the message that shows to get them back.

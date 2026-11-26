@@ -7,7 +7,9 @@ import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
 import { hidden, noiseFilterOn, noiseLabel, patchHunks, type NoiseFilter, type NoiseKind } from './semantic-noise';
-import { changedSymbols, trivialSymbols } from './symbol-outline';
+import { changedSymbolLines, changedSymbols, trivialSymbols } from './symbol-outline';
+import { changedRowTexts, itemPrints } from './review-prints';
+import { countedIds } from './tree-symbol-review';
 import { syntaxContentsPlan, wholeFileText } from './syntax-contents';
 import { SYNTAX_MAX_CHARACTERS, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
 import { onDefinitions, onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
@@ -157,22 +159,28 @@ function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, fi
   const all = changedSymbols(gapHunks, fileDefinitions) ?? [];
   const quietLines = quiet;
   const shown = quietLines ? (changedSymbols(gapHunks, fileDefinitions, (side, line) => quietLines.has(`${side[0]}${line}`)) ?? []) : all;
-  const peeked: Peeked = {
-    value: {
-      state: 'ready',
-      nodes: symbolTree(all, shown, moves?.marks, (symbol) => {
-        // What the quiet blocks inside the symbol are, on its side: "Formatting only", "Comments only".
-        const { start, end } = symbol.definition;
-        const kinds: NoiseKind[] = [];
-        for (const block of hiddenBlocks) {
-          const [from, count] = symbol.side === 'after' ? [block.newStart, block.newCount] : [block.oldStart, block.oldCount];
-          if (from <= end && from + Math.max(count, 1) - 1 >= start) kinds.push(block.kind);
-        }
-        return noiseLabel(kinds);
-      }, trivialSymbols(gapHunks, fileDefinitions, undefined, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))),
-      top: treeTop(gapHunks, fileDefinitions, quietLines),
-    },
-  };
+  const nodes = symbolTree(all, shown, moves?.marks, (symbol) => {
+    // What the quiet blocks inside the symbol are, on its side: "Formatting only", "Comments only".
+    const { start, end } = symbol.definition;
+    const kinds: NoiseKind[] = [];
+    for (const block of hiddenBlocks) {
+      const [from, count] = symbol.side === 'after' ? [block.newStart, block.newCount] : [block.oldStart, block.oldCount];
+      if (from <= end && from + Math.max(count, 1) - 1 >= start) kinds.push(block.kind);
+    }
+    return noiseLabel(kinds);
+  }, trivialSymbols(gapHunks, fileDefinitions, undefined, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`))));
+  const top = treeTop(gapHunks, fileDefinitions, quietLines);
+  // What each counted item reads, from the text at hand, for its tick to carry to the next revision.
+  const prints = itemPrints({
+    items: countedIds({ state: 'ready', nodes, top }) ?? [],
+    nodes,
+    top,
+    after: afterText,
+    before: beforeText,
+    rows: changedRowTexts(gapHunks),
+    own: changedSymbolLines(gapHunks, fileDefinitions),
+  });
+  const peeked: Peeked = { value: { state: 'ready', nodes, top, prints } };
   made.delete(fileKey);
   made.set(fileKey, { inputs, peeked });
   for (const key of made.keys()) {

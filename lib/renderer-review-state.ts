@@ -130,5 +130,6 @@ export async function patchFileProgress(patch: FileProgressPatch) {
   await writeReviewState(FILE_PROGRESS_KEY, {
     aliases: { ...previous.aliases, ...patch.aliases },
     marks: { ...previous.marks, ...patch.marks },
+    prints: { ...previous.prints, ...patch.prints },
   });
 }

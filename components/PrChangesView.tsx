@@ -51,6 +51,7 @@ import {
   type ReviewPlace,
   type ReviewTick,
 } from '../lib/tree-symbol-review';
+import { ensureCarried, updatedCount, useCarry } from '../lib/symbol-carry';
 import { markReviewSymbols, registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
 import { readingSymbol, rowDestination, type TopLevelChanges, type TreeSymbolNode } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
@@ -730,6 +731,14 @@ export function PrChangesView({
   const leftFiles = treeSymbols ? reviewFiles(allowed) : [];
   const leftKeys = new Map(leftFiles.map((file) => [file.key, file.fileKey]));
   const left = treeSymbols ? itemsLeft(leftFiles, (key, id) => progress.isSymbolViewed(leftKeys.get(key) ?? '', id)) : 0;
+  // Re-review only what changed (lib/symbol-carry.ts): each file of a PR's new revision takes its earlier ticks once
+  // what it lists is known (files without symbols at once); the tree does the same for files whose parse lands.
+  useCarry();
+  useEffect(() => {
+    if (!treeSymbols || commit || combined) return;
+    for (const file of leftFiles) ensureCarried(file.fileKey, file.symbols);
+  });
+  const updated = treeSymbols ? updatedCount(leftFiles.map((file) => file.fileKey)) : 0;
   const endNotice = (direction: 1 | -1) =>
     toast.add({ title: direction === 1 ? 'No unviewed items after this' : 'No unviewed items before this', timeout: NOTICE_MS });
   /**
@@ -888,7 +897,10 @@ export function PrChangesView({
       return registerCountedSymbols(fileKey, () => {
         const { codeSettings: settings, noiseFilter: filter } = latestSync.current;
         const source = { fileKey, snapshot: e.snapshot, file: e.file };
-        return treeSymbolsSupported(source, settings) ? countedIds(peekTreeSymbols(source, settings, filter)) : undefined;
+        if (!treeSymbolsSupported(source, settings)) return undefined;
+        const symbols = peekTreeSymbols(source, settings, filter);
+        const ids = countedIds(symbols);
+        return ids && { ids, prints: symbols.state === 'ready' ? symbols.prints : undefined };
       });
     });
     return () => stops.forEach((stop) => stop());
@@ -1119,6 +1131,11 @@ export function PrChangesView({
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
             {treeSymbols && left > 0 && <span className="changes-progress-left"> · {left} left</span>}
+            {updated > 0 && (
+              <span className="changes-progress-updated" title="Changed since you viewed them, in an earlier revision">
+                {' '}· {updated} updated
+              </span>
+            )}
             {incomplete && ' · available files'}
             {quietNote && (
               <span

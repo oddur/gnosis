@@ -1,7 +1,8 @@
 import { useId, useSyncExternalStore } from 'react';
-import { Check, ChevronRight, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
+import { Check, ChevronRight, RefreshCw, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
 import { useFileProgress } from '../lib/file-view-progress';
 import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
+import { isUpdated, useCarry } from '../lib/symbol-carry';
 import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
@@ -78,6 +79,16 @@ const named = (symbol: ChangedSymbol) =>
       ? symbol.definition.crumb
       : `${definitionNoun(symbol.definition)} ${symbol.definition.name}`;
 
+/** An item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts). */
+function Updated() {
+  return (
+    <span className="diff-outline-updated" title="Changed since you viewed it">
+      <RefreshCw size={12} aria-hidden="true" />
+      <span className="sr-only">Changed since you viewed it</span>
+    </span>
+  );
+}
+
 /** A symbol's name as its crumb shows it: the kind word tinted as the syntax theme tints keywords. */
 function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
   const { crumb, crumbKeyword } = symbol.definition;
@@ -92,6 +103,7 @@ function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
 export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, markFileLabel, onGo, quiet = 0 }: OutlineProps) {
   const open = useExpanded();
   const synced = useSymbolFileSync(fileKey);
+  useCarry();
   const progress = useFileProgress();
   const listId = useId();
   if (!symbols) {
@@ -162,6 +174,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
                   <Marker change={symbol.change} />
                   {go(symbol)}
                   {seen && <Check className="diff-outline-check" size={12} aria-label="Viewed" />}
+                  {!seen && isUpdated(fileKey, symbol.id) && <Updated />}
                 </li>
               );
             })}
@@ -218,6 +231,7 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
               <Marker change={symbol.change} />
               <span className="sr-only">{MARKERS[symbol.change].label}</span>
               {go(symbol)}
+              {!viewed[index] && isUpdated(fileKey, symbol.id) && <Updated />}
               {symbol.parents.length > 0 && (
                 <span className="diff-outline-parents" aria-hidden="true">
                   in {symbol.parents.map((parent) => parent.crumb).join(' › ')}

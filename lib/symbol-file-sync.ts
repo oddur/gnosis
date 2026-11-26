@@ -16,12 +16,17 @@ import { fileAfterTick } from './tree-symbol-review';
  * under them. It collapses once they move on, scrolling it out of view or jumping elsewhere (`releaseHeld`).
  */
 
-const counters = new Map<string, () => readonly string[] | undefined>();
+/** What a file's review counts now: its counted ids, and each one's print (lib/review-prints.ts), for its ticks. */
+export interface CountedSymbols {
+  ids: readonly string[];
+  prints?: Readonly<Record<string, string>>;
+}
+const counters = new Map<string, () => CountedSymbols | undefined>();
 const syncListeners = new Set<() => void>();
 const syncChanged = () => syncListeners.forEach((listener) => listener());
 
 /** The file's counted ids now, or undefined while its symbols are not known for this revision. */
-export function registerCountedSymbols(fileKey: string, counted: () => readonly string[] | undefined): () => void {
+export function registerCountedSymbols(fileKey: string, counted: () => CountedSymbols | undefined): () => void {
   counters.set(fileKey, counted);
   syncChanged();
   return () => {
@@ -43,11 +48,17 @@ export function useSymbolFileSync(fileKey: string): boolean {
 
 /** Ticks or unticks symbols of a file, and marks or unmarks the file as its ticks then say. */
 export async function markReviewSymbols(fileKey: string, ids: readonly string[], viewed: boolean): Promise<boolean> {
-  const counted = counters.get(fileKey)?.();
+  const known = counters.get(fileKey)?.();
+  const counted = known?.ids;
+  // Each tick saves what its item reads, so it can carry to the file's next revision.
+  const prints = known?.prints;
   const fileViewed = isFileViewed(fileKey);
   const plan = fileAfterTick({ counted, ids, viewed, fileViewed, isViewed: (id) => isSymbolViewed(fileKey, id) });
   // The rest of a Viewed file's symbols read as ticked: they stay ticked once the file is not Viewed.
-  const saved = [plan.others.length ? markSymbolsViewed(fileKey, plan.others, true) : Promise.resolve(true), markSymbolsViewed(fileKey, ids, viewed)];
+  const saved = [
+    plan.others.length ? markSymbolsViewed(fileKey, plan.others, true, prints) : Promise.resolve(true),
+    markSymbolsViewed(fileKey, ids, viewed, prints),
+  ];
   if (plan.file === 'mark') {
     holdOpen(fileKey);
     saved.push(markFileViewed(fileKey, true));

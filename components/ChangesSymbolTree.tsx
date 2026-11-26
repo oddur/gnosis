@@ -13,6 +13,7 @@ import { BODY_PART, TOP_LEVEL_ID, bodyOwner, isBody, type ChangedSymbol } from '
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setReviewTarget, setTreeCursor, useReadingPlace, useReviewTarget } from '../lib/tree-symbol-sync';
 import { markReviewSymbols } from '../lib/symbol-file-sync';
+import { ensureCarried, isUpdated, useCarry } from '../lib/symbol-carry';
 import { matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
 import { FILE_STOP, folderProgress, progressLabel, rowReviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
@@ -30,6 +31,15 @@ const STATUS = { added: 'added', modified: 'modified', deleted: 'deleted', renam
  * the word took the width its name needs. The tooltip still says "Viewed", and the file rows' progress uses ✓ too.
  */
 const VIEWED_MARK = '✓';
+
+/** The mark of an item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts). */
+const UPDATED_MARK = '↻';
+const withUpdated = <T extends { text: string; parts: { text: string; color?: string }[]; title: string }>(decoration: T): T => ({
+  ...decoration,
+  text: `${UPDATED_MARK} ${decoration.text}`,
+  parts: [{ text: UPDATED_MARK, color: 'var(--muted-foreground)' }, ...decoration.parts],
+  title: `Changed since you viewed it. ${decoration.title}`,
+});
 
 /** How long a chosen symbol stays lit while the diff scrolls to it, if the diff never says it arrived. */
 const HOLD_MS = 1_500;
@@ -138,7 +148,16 @@ export function ChangesSymbolTree({
       fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed, value.top));
   }
   const folderSums = folderProgress(fileProgress);
-  const progressSignature = [...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n');
+  // Carry-over (lib/symbol-carry.ts): a file's ticks come over from its earlier revisions once its symbols are known,
+  // and the rows mark what changed since the reader viewed it.
+  const carried = useCarry();
+  useEffect(() => {
+    for (const [key, value] of known) {
+      const source = supported.get(key);
+      if (source && value.state !== 'loading') ensureCarried(source.fileKey, value.state === 'ready' ? value : undefined);
+    }
+  }, [known, supported]);
+  const progressSignature = `${carried}\n${[...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n')}`;
   const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums });
   current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums };
   const rowAt = (path: string | null | undefined): TreeRow | undefined => (path ? current.current.layout.rows.get(path) : undefined);
@@ -165,7 +184,11 @@ export function ChangesSymbolTree({
       if (!row) return null;
       if (row.type === 'file') {
         const entry = entryOf(row.key);
-        return entry ? fileRowDecoration(entry, showComments, current.current.fileProgress.get(row.key)) : null;
+        if (!entry) return null;
+        const decoration = fileRowDecoration(entry, showComments, current.current.fileProgress.get(row.key));
+        // A file without symbols whose patch changed since the reader viewed it.
+        const fileKey = entry.source?.fileKey;
+        return !row.folder && fileKey && isUpdated(fileKey, FILE_STOP) ? withUpdated(decoration) : decoration;
       }
       if (row.type === 'folder') {
         // The files under it whose symbols are known, summed; nothing until one of their symbols is viewed.
@@ -188,7 +211,7 @@ export function ChangesSymbolTree({
           const word = 'Quiet';
           return { text: word, parts: [{ text: word, color: 'var(--muted-foreground)' }], title: `${added} additions, ${deleted} deletions, every one quiet` };
         }
-        return {
+        const counts = {
           text: `+${added} −${deleted}`,
           parts: [
             { text: `+${added}`, color: DIFF_STAT_COLORS.added },
@@ -196,6 +219,7 @@ export function ChangesSymbolTree({
           ],
           title: `${added} additions, ${deleted} deletions ${imports ? 'to imports' : 'outside every function and class'}`,
         };
+        return topSource && isUpdated(topSource.fileKey, TOP_LEVEL_ID) ? withUpdated(counts) : counts;
       }
       if (row.type !== 'symbol') return null;
       const { node } = row;
@@ -213,7 +237,7 @@ export function ChangesSymbolTree({
       const quiet = !viewed && node.quiet ? (TREE_WORDS[node.quiet] ?? 'Quiet') : undefined;
       const moved = node.moved ? [{ text: '⇄', color: 'var(--muted-foreground)' }] : [];
       const spoken = isBody(node) ? node.definition.crumb : `${definitionNoun(node.definition)} ${node.definition.name}, ${node.change}`;
-      return {
+      const decoration = {
         text: viewed ? VIEWED_MARK : (quiet ?? `+${node.added} −${node.deleted}`),
         parts: [
           ...moved,
@@ -228,6 +252,7 @@ export function ChangesSymbolTree({
         ],
         title: `${spoken}. ${viewed ? 'Viewed' : `${node.added} additions, ${node.deleted} deletions`}${node.quiet ? `. ${node.quiet}: every change is quiet` : ''}${node.moved ? `. ${node.moved}` : ''}`,
       };
+      return !viewed && source && isUpdated(source.fileKey, node.id) ? withUpdated(decoration) : decoration;
     },
   });
   const selectedPaths = useFileTreeSelection(model);

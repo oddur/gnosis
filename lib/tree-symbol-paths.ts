@@ -61,7 +61,13 @@ const segmentName = (name: string) => (name.replace(MARKS, '').replaceAll('/', N
 export type FileSymbols =
   | { state: 'loading' }
   | { state: 'none'; reason: string }
-  | { state: 'ready'; nodes: readonly TreeSymbolNode[]; top?: TopLevelChanges };
+  | {
+      state: 'ready';
+      nodes: readonly TreeSymbolNode[];
+      top?: TopLevelChanges;
+      /** Each counted item's print, by id, for its tick to carry to a new revision (lib/review-prints.ts). */
+      prints?: Readonly<Record<string, string>>;
+    };
 
 /** What one of the tree's rows is. */
 export type TreeRow =
