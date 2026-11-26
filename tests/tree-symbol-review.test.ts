@@ -18,7 +18,7 @@ function node(id: string, children: TreeSymbolNode[] = [], { quiet = false, cont
 }
 const ready = (nodes: TreeSymbolNode[]): FileSymbols => ({ state: 'ready', nodes });
 
-test('progress counts changed symbols only, as the outline does', () => {
+void test('progress counts changed symbols only, as the outline does', () => {
   const nodes = [node('class:Store', [node('class:Store>flush'), node('class:Store>keep')], { context: true }), node('gone'), node('fmt', [], { quiet: true })];
   assert.deepEqual(treeOrder(nodes).map((n) => n.id), ['class:Store', 'class:Store>flush', 'class:Store>keep', 'gone', 'fmt']);
   const viewed = new Set(['class:Store>flush', 'fmt']);
@@ -29,7 +29,7 @@ test('progress counts changed symbols only, as the outline does', () => {
   assert.deepEqual(symbolProgress([node('fmt', [], { quiet: true })], () => true), { viewed: 0, total: 0 });
 });
 
-test('the row shows progress once a symbol is viewed, and a check once all are', () => {
+void test('the row shows progress once a symbol is viewed, and a check once all are', () => {
   assert.deepEqual(progressLabel(undefined), { kind: 'none' });
   assert.deepEqual(progressLabel({ viewed: 0, total: 5 }), { kind: 'none' });
   assert.deepEqual(progressLabel({ viewed: 0, total: 0 }), { kind: 'none' });
@@ -37,7 +37,7 @@ test('the row shows progress once a symbol is viewed, and a check once all are',
   assert.deepEqual(progressLabel({ viewed: 5, total: 5 }), { kind: 'all', text: '✓ 5/5' });
 });
 
-test('folders sum the files under them whose symbols are known', () => {
+void test('folders sum the files under them whose symbols are known', () => {
   const sums = folderProgress(
     new Map([
       ['src/lib/a.ts', { viewed: 2, total: 5 }],
@@ -53,7 +53,7 @@ test('folders sum the files under them whose symbols are known', () => {
   });
 });
 
-test('n and Shift+N walk unviewed symbols in the tree order, across files', () => {
+void test('n and Shift+N walk unviewed symbols in the tree order, across files', () => {
   const files: ReviewFile[] = [
     { key: 'a.ts', viewed: false, symbols: ready([node('a1'), node('a2')]) },
     { key: 'b.json', viewed: false },
@@ -90,7 +90,7 @@ test('n and Shift+N walk unviewed symbols in the tree order, across files', () =
   assert.equal(next('missing.ts', undefined, -1), 'f.ts:f2');
 });
 
-test('a file whose symbols are not known yet is read before the walk passes it', () => {
+void test('a file whose symbols are not known yet is read before the walk passes it', () => {
   const files: ReviewFile[] = [
     { key: 'a.ts', viewed: false, symbols: ready([node('a1')]) },
     { key: 'b.ts', viewed: true, symbols: { state: 'loading' } },
@@ -108,7 +108,7 @@ test('a file whose symbols are not known yet is read before the walk passes it',
   assert.deepEqual(stepUnviewed(files, { key: 'c.ts' }, 1, () => false), { kind: 'load', key: 'c.ts' });
 });
 
-test('row places: one per line in the unified diff, side by side in the split one', () => {
+void test('row places: one per line in the unified diff, side by side in the split one', () => {
   const hunks = [
     { oldStart: 1, newStart: 1, rows: [{ type: ' ' }, { type: '-' }, { type: '-' }, { type: '+' }, { type: ' ' }] as const },
     { oldStart: 20, newStart: 19, rows: [{ type: '+' }, { type: '+' }] as const },
@@ -117,7 +117,7 @@ test('row places: one per line in the unified diff, side by side in the split on
   assert.deepEqual(Object.fromEntries(diffRowPositions(hunks, true)), { a1: 0, b2: 1, b3: 2, a2: 1, a3: 3, a19: 4, a20: 5 });
 });
 
-test('a symbol is ticked after every changed line was on screen for the dwell time', () => {
+void test('a symbol is ticked after every changed line was on screen for the dwell time', () => {
   const positions = new Map([['a1', 0], ['a2', 1], ['a3', 2], ['a4', 3], ['a5', 4]]);
   const viewer = createAutoViewer([{ id: 'f', lines: ['a2', 'a4'] }], positions, () => true);
   // First look: only part of it on screen. It waits for its dwell, so a still view keeps looking.
@@ -134,7 +134,7 @@ test('a symbol is ticked after every changed line was on screen for the dwell ti
   assert.equal(viewer.waiting(), false);
 });
 
-test('flying past never ticks, and neither does idle time', () => {
+void test('flying past never ticks, and neither does idle time', () => {
   const positions = new Map([['a1', 0], ['a2', 1]]);
   const flown = createAutoViewer([{ id: 'f', lines: ['a1', 'a2'] }], positions, () => true);
   for (let at = 0; at <= 5_000; at += 100) assert.deepEqual(flown.look({ at, range: [0, 1], fast: true }), []);
@@ -156,7 +156,7 @@ test('flying past never ticks, and neither does idle time', () => {
   assert.deepEqual(idle.look({ at: (at += MAX_LOOK_GAP_MS), range: [0, 1], fast: false }), ['f']);
 });
 
-test('a symbol scrolled off before the dwell, unticked, or with lines the diff hides is not ticked', () => {
+void test('a symbol scrolled off before the dwell, unticked, or with lines the diff hides is not ticked', () => {
   const positions = new Map([['a1', 0], ['a2', 1], ['a9', 8]]);
   // Each look sees it for a moment only: the time between looks without it on screen is not dwell.
   const passing = createAutoViewer([{ id: 'f', lines: ['a1'] }], positions, () => true);

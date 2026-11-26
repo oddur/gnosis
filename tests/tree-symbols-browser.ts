@@ -2,7 +2,7 @@ import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
-import { TREE_SYMBOLS_FILE } from './fixtures/tree-symbols';
+import { TREE_SYMBOLS_FILE, TREE_SYMBOLS_NEXT_FILE } from './fixtures/tree-symbols';
 
 /**
  * The Changes tree's changed symbols (Settings › Review, Beta; components/ChangesSymbolTree.tsx). `?tree-symbols`
@@ -13,6 +13,10 @@ import { TREE_SYMBOLS_FILE } from './fixtures/tree-symbols';
  * - Clicking the file's name opens it; only its chevron expands and collapses it.
  * - Clicking a symbol scrolls the diff to it and lights its row.
  * - V marks the symbol Viewed: the file's outline ticks it, and the file itself stays unviewed.
+ * - The file row then shows its progress, 1/3, and its folder the sum of what is known; all viewed shows ✓ 3/3, and
+ *   the file stays unviewed.
+ * - n and Shift+N go to the next and previous unviewed symbol, on into `src/symbols/tasks.ts`, lighting each row; at
+ *   the end a notice says there are none after it.
  * - Search matches a symbol's name.
  * - With the setting off, the tree is the plain file tree again.
  *
@@ -128,6 +132,53 @@ void app.whenReady().then(async () => {
     );
     assert.notEqual((await rows()).find((r) => r.name === name)?.decoration, 'Viewed', 'The file stays unviewed');
     assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'The file stays open');
+
+    // ── The file row shows how many of its symbols are viewed; its folder sums what is known ──
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='1/3'`);
+    // tasks.ts counts towards the folder once its symbols are known (the prefetch may not have read it yet).
+    await wait("/^1\\/(3|5)$/.test(window.treeRows().find(r=>r.name==='symbols')?.decoration??'')");
+
+    // ── n and Shift+N: the next and previous unviewed symbol, across files ──
+    const press = (key: string) =>
+      js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},shiftKey:${key === 'N'},bubbles:true,cancelable:true}))`);
+    const lit = (symbol: string) => wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.lit===true`);
+    const nextRow = `.commit-stream-row[data-file=${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}]`;
+    const inView = (row: string, text: string) =>
+      wait(
+        `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row)})).find(e=>e.textContent.includes(${JSON.stringify(text)}));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
+      );
+    // From flush, the one the reader chose (Viewed now): gone, then added.
+    await press('n');
+    await lit('gone');
+    await inView(fileRow, 'function gone()');
+    await press('n');
+    await lit('added');
+    await inView(fileRow, 'function added()');
+    // On into the next file, which opens in the tree.
+    await press('n');
+    await lit('start');
+    await inView(nextRow, 'function start()');
+    await wait(`window.treeRow('tasks.ts')?.getAttribute('aria-expanded')==='true'`);
+    // Back again.
+    await press('N');
+    await lit('added');
+    await press('n');
+    await lit('start');
+    await press('n');
+    await lit('stop');
+    // Past the last one: a notice, and the reader stays where they are.
+    await press('n');
+    await wait("[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed symbols after this'))");
+    assert.equal((await rows()).find((r) => r.name === 'stop')?.lit, true, 'Nothing wraps around');
+
+    // ── Every symbol viewed: a check on the file, which stays unviewed ──
+    for (const symbol of ['gone', 'added']) {
+      await js(`window.treeRow(${JSON.stringify(symbol)}).focus()`);
+      await js(`window.treeRow(${JSON.stringify(symbol)}).dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}))`);
+      await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(symbol)})?.decoration==='Viewed'`);
+    }
+    await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration==='✓ 3/3'`);
+    assert.equal(await js(`!!document.querySelector(${JSON.stringify(fileRow + ' .changes-diff')})`), true, 'The file stays open, not Viewed');
 
     // ── Search matches a symbol's name ──
     const search = (value: string) =>
