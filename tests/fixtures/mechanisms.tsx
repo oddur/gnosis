@@ -14,6 +14,7 @@ import generated from './illustration-generated.json';
 import { normalizeSvgIllustration } from '../../lib/svg-illustration';
 import { SvgIllustration } from '../../components/SvgIllustration';
 import '../../src/globals.css';
+import { applyFixtureTheme } from './fixture-theme';
 import './mechanisms.css';
 type Example = {
   id: string;
@@ -248,4 +249,5 @@ function Gallery() {
   );
 }
 const root = document.getElementById('root');
+applyFixtureTheme();
 if (root) createRoot(root).render(<Gallery />);

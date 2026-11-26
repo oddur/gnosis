@@ -1,0 +1,501 @@
+{
+  "recipes": [
+    {
+      "name": "setup-wizard",
+      "page": "getting-started",
+      "title": "The Set up Gnosis wizard, starting with queue goals",
+      "fixture": "workbench.html?ftue",
+      "suite": "tests/onboarding-setup-browser.ts",
+      "steps": [
+        "wait .setup-dialog"
+      ],
+      "ready": "js:!!document.querySelector('.setup-dialog .setup-body > fieldset:not([hidden])')",
+      "note": "First run: the wizard opens on its first step, the queue goals."
+    },
+    {
+      "name": "ai-tools",
+      "page": "getting-started",
+      "title": "AI tool settings: environment variables for Claude Code and Codex",
+      "fixture": "harness-environment.html",
+      "suite": "tests/harness-environment-browser.ts",
+      "ready": "text:No overrides",
+      "note": "The harness environment editor, with no overrides set."
+    },
+    {
+      "name": "queue",
+      "page": "queue",
+      "title": "The review queue with a PR selected and its briefing beside it",
+      "fixture": "workbench.html",
+      "suite": "tests/workbench-browser.ts",
+      "scene": "queueSelected",
+      "ready": "js:!!document.querySelector('.queue-item.is-selected') && !!document.querySelector('.briefing-panel')",
+      "note": "Select the stack row; its briefing opens in the side panel."
+    },
+    {
+      "name": "overview",
+      "page": "queue",
+      "title": "The Overview: a briefing, then what needs you next",
+      "fixture": "workbench.html?overview",
+      "suite": "tests/overview-browser.ts",
+      "ready": "js:!!document.querySelector('.workspace-panel[data-workspace-active=true] [data-overview-briefing]')?.textContent && !!document.querySelector('.workspace-panel[data-workspace-active=true] .morning [data-overview-row]')",
+      "note": "The Overview is the default home tab."
+    },
+    {
+      "name": "queue-filters",
+      "page": "queue",
+      "title": "The queue filters",
+      "fixture": "workbench.html?filters",
+      "suite": "tests/workbench-browser.ts",
+      "steps": [
+        "wait js:document.querySelectorAll('.queue-item').length===7",
+        "click .queue-filter-toggle"
+      ],
+      "ready": "js:!!document.querySelector('.queue-filter-popover .queue-filter-panel label')",
+      "note": "Open the filter popover from the queue toolbar."
+    },
+    {
+      "name": "command-palette",
+      "page": "queue",
+      "title": "The command palette finding a PR by number",
+      "fixture": "workbench.html?polish",
+      "suite": "tests/command-center-browser.ts",
+      "scene": "commandPalette",
+      "ready": "js:!!document.querySelector('.global-command-preview h2') && document.querySelector('.global-command-results')?.getAttribute('aria-busy')==='false'",
+      "note": "Cmd/Ctrl+K, then type #150."
+    },
+    {
+      "name": "workspace-tabs",
+      "page": "workspace-tabs",
+      "title": "Several PRs open in workspace tabs",
+      "fixture": "workbench.html?pr-summary&workspace-tabs",
+      "suite": "tests/workspace-tabs-browser.ts",
+      "scene": "workspaceTabs",
+      "ready": "[data-workspace-active=true] .pr-summary-page",
+      "note": "Cmd/Ctrl+click three queue rows to open them in background tabs, then switch to the first."
+    },
+    {
+      "name": "workspace-tabs-menu",
+      "page": "workspace-tabs",
+      "title": "The Open tabs menu",
+      "fixture": "workbench.html?pr-summary&workspace-tabs",
+      "suite": "tests/workspace-tabs-hardening-browser.ts",
+      "scene": "workspaceTabsMenu",
+      "ready": "js:!!document.querySelector('.workspace-open-tabs-menu [role=menuitem]')",
+      "note": "As workspace-tabs, then open the Open tabs menu."
+    },
+    {
+      "name": "pr-summary",
+      "page": "pr-page",
+      "title": "The PR Summary tab: description, timeline, readiness",
+      "fixture": "workbench.html?pr-summary&checks",
+      "suite": "tests/pr-changes-browser.ts",
+      "scene": "prSummary",
+      "ready": "[data-workspace-active=true] .pr-description",
+      "note": "Select Fix reconnect, then Open PR overview."
+    },
+    {
+      "name": "pr-changes-split",
+      "page": "pr-page",
+      "title": "Changes with the file tree and a split diff",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-changes-browser.ts",
+      "scene": "changesSplit",
+      "ready": "js:document.querySelector('[data-workspace-active=true] .pr-changes')?.dataset.diffLayout==='split' && !!document.querySelector('.commit-stream-row[data-file=\"src/worker.ts\"] .changes-diff')",
+      "note": "Open Changes, pick src/worker.ts, press s for the split layout."
+    },
+    {
+      "name": "pr-commits",
+      "page": "pr-page",
+      "title": "The Commits tab with a commit's diff",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-commits-browser.ts",
+      "scene": "commits",
+      "ready": "js:document.querySelectorAll('.commit-row').length>0 && !!document.querySelector('.commit-detail-title')"
+    },
+    {
+      "name": "pr-checks",
+      "page": "pr-page",
+      "title": "Checks as a workflow graph",
+      "fixture": "workbench.html?pr-summary&checks",
+      "suite": "tests/pr-checks-browser.ts",
+      "scene": "checksGraph",
+      "ready": "js:!!document.querySelector('.workflow-host:not([hidden])') && document.querySelectorAll('.workflow-job').length>=4 && !document.querySelector('.loading-motif')",
+      "note": "Open Checks and choose Graph."
+    },
+    {
+      "name": "pr-checks-failure",
+      "page": "pr-page",
+      "title": "A failing check with its steps",
+      "fixture": "workbench.html?pr-summary&checks",
+      "suite": "tests/workflow-graph-browser.ts",
+      "scene": "checksFailure",
+      "ready": ".check-steps",
+      "note": "Open Checks and select the failing Lint check."
+    },
+    {
+      "name": "pr-local-notes",
+      "page": "pr-page",
+      "title": "Local notes: private notes for an agent",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/agent-brief-browser.ts",
+      "scene": "localNotes",
+      "ready": ".agent-brief"
+    },
+    {
+      "name": "comment-composer",
+      "page": "comments",
+      "title": "The comment composer with Markdown tools",
+      "fixture": "comment-editor.html",
+      "suite": "tests/comment-editor-browser.ts",
+      "viewport": {
+        "width": 1200,
+        "height": 720
+      },
+      "steps": [
+        "wait .changes-comment-composer textarea",
+        "js document.querySelector('.changes-comment-composer textarea').focus()",
+        "type Could this **retry** reuse the backoff from `retry.ts`?"
+      ],
+      "ready": ".changes-comment-composer textarea"
+    },
+    {
+      "name": "comment-inline",
+      "page": "comments",
+      "title": "A draft comment on a changed line",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-changes-browser.ts",
+      "scene": "inlineComment",
+      "ready": ".changes-comment-composer textarea",
+      "note": "Click line 36 of src/worker.ts in Changes and write a comment."
+    },
+    {
+      "name": "review-threads",
+      "page": "comments",
+      "title": "Review threads with Reply and Resolve",
+      "fixture": "workbench.html?threads",
+      "suite": "tests/review-threads-browser.ts",
+      "scene": "reviewThreads",
+      "ready": ".github-thread"
+    },
+    {
+      "name": "pr-header-actions",
+      "page": "pr-actions",
+      "title": "The PR header actions",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-actions-browser.ts",
+      "scene": "prHeader",
+      "ready": "[data-workspace-active=true] .pr-header-actions [data-merge-action]",
+      "note": "The action state is mocked in the page; nothing is written."
+    },
+    {
+      "name": "merge-confirm",
+      "page": "pr-actions",
+      "title": "The merge confirmation",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-actions-browser.ts",
+      "scene": "mergeConfirm",
+      "ready": "js:[...document.querySelectorAll('.pr-merge-confirm button')].some(b=>b.textContent.trim()==='Merge pull request'&&!b.disabled)",
+      "note": "Cmd/Ctrl+Shift+M."
+    },
+    {
+      "name": "update-menu",
+      "page": "pr-actions",
+      "title": "The Update menu: merge or rebase",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-actions-browser.ts",
+      "scene": "updateMenu",
+      "ready": "js:[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent.startsWith('Update with rebase'))",
+      "note": "Cmd/Ctrl+Shift+U."
+    },
+    {
+      "name": "submit-review",
+      "page": "pr-actions",
+      "title": "Review PR: approve, comment or request changes",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/pr-actions-browser.ts",
+      "scene": "submitReview",
+      "ready": "js:[...document.querySelectorAll('[role=dialog]')].some(d=>d.textContent.includes('Review PR #150'))",
+      "note": "Cmd/Ctrl+Shift+V."
+    },
+    {
+      "name": "explanation-reader",
+      "page": "explanations",
+      "title": "An explanation section: prose beside the code it explains",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/explanation-tab-browser.ts",
+      "scene": "explanationSection",
+      "ready": "[data-explanation-section=\"1\"] .review-narrative"
+    },
+    {
+      "name": "explanation-options",
+      "page": "explanations",
+      "title": "Generate explanation: style, noise, focused sections, model",
+      "fixture": "explanation-options.html",
+      "suite": "tests/explanation-options-browser.ts",
+      "steps": [
+        "wait .explanation-setup-dialog",
+        "click .explanation-setup-dialog .explanation-focused-setting input"
+      ],
+      "ready": ".explanation-setup-dialog .explanation-focused-setting input:checked",
+      "note": "Focused sections turned on."
+    },
+    {
+      "name": "explanation-model",
+      "page": "explanations",
+      "title": "Choosing the model and reasoning effort for an explanation",
+      "fixture": "explanation-options.html",
+      "suite": "tests/explanation-options-browser.ts",
+      "steps": [
+        "wait .explanation-setup-dialog",
+        "click text:Explanation model"
+      ],
+      "ready": ".model-picker-popup"
+    },
+    {
+      "name": "explanation-focused",
+      "page": "explanations",
+      "title": "A focused section: slices of a file with labelled gaps",
+      "fixture": "workbench.html?pr-summary&syntax-scope&explanation-parity",
+      "suite": "tests/explanation-parity-browser.ts",
+      "scene": "focusedSection",
+      "ready": "js:!!document.querySelector('[data-explanation-section=\"4\"] .review-file-group .diff-gap[data-hidden-in] button[data-hidden-target]')"
+    },
+    {
+      "name": "explanation-outside-code",
+      "page": "explanations",
+      "title": "Code outside the explanation, listed at the end",
+      "fixture": "workbench.html?pr-summary&syntax-scope&explanation-parity",
+      "suite": "tests/explanation-parity-browser.ts",
+      "scene": "outsideCode",
+      "ready": ".explanation-outside-code li li button"
+    },
+    {
+      "name": "explanation-diagram",
+      "page": "explanations",
+      "title": "A D2 diagram in an explanation section",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/d2-browser.ts",
+      "scene": "d2Explanation",
+      "ready": ".review-narrative .d2-preview svg",
+      "note": "The fixture review gets the first D2 gallery example."
+    },
+    {
+      "name": "diagram-explorer",
+      "page": "explanations",
+      "title": "Exploring a diagram: zoom and inspect its parts",
+      "fixture": "mechanisms.html?exploration-fixture",
+      "suite": "tests/diagram-exploration-browser.ts",
+      "steps": [
+        "wait .svg-illustration iframe",
+        "click text:Explore diagram"
+      ],
+      "ready": "js:document.querySelectorAll('.diagram-entity-target').length===3"
+    },
+    {
+      "name": "chat-panel",
+      "page": "chat",
+      "title": "Chat beside an explanation section",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/chat-browser.ts",
+      "scene": "sectionChat",
+      "ready": "[aria-label=\"Copy answer\"]",
+      "note": "Press c in a section, ask, and get a (mocked) answer."
+    },
+    {
+      "name": "chat-file",
+      "page": "chat",
+      "title": "Asking about a file in Changes",
+      "fixture": "workbench.html?pr-summary",
+      "suite": "tests/chat-browser.ts",
+      "scene": "fileChat",
+      "ready": ".changes-chat [aria-label=\"Copy answer\"]"
+    },
+    {
+      "name": "conflicts",
+      "page": "conflicts",
+      "title": "Resolving a merge conflict: keep the PR's change, main's, or both",
+      "fixture": "workbench.html?pr-summary&checks",
+      "suite": "tests/conflict-resolution-browser.ts",
+      "scene": "conflicts",
+      "ready": "settled:conflict-workspace",
+      "note": "The conflict session is mocked in the page; nothing is pushed."
+    },
+    {
+      "name": "stack-overview",
+      "page": "stacks",
+      "title": "A stack's overview: its PRs in order",
+      "fixture": "workbench.html?pr-summary&unread&checks",
+      "suite": "tests/stack-hierarchy-browser.ts",
+      "steps": [
+        "wait js:document.querySelectorAll('.queue-item').length===7",
+        "js document.querySelector('.queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
+      ],
+      "ready": "js:document.querySelectorAll('.stack-overview-member').length===3",
+      "note": "Double-click the stack row."
+    },
+    {
+      "name": "stack-merge-plan",
+      "page": "stacks",
+      "title": "A stack's merge plan",
+      "fixture": "workbench.html?pr-summary&checks",
+      "suite": "tests/stack-merge-details-browser.ts",
+      "scene": "stackMergePlan",
+      "ready": ".stack-merge-plan h2"
+    },
+    {
+      "name": "breadcrumbs",
+      "page": "code-intelligence",
+      "title": "Breadcrumbs: the class and function a hunk sits in",
+      "fixture": "workbench.html?pr-summary&breadcrumb-nav",
+      "suite": "tests/breadcrumb-nav-browser.ts",
+      "scene": "breadcrumbs",
+      "ready": "js:window.__docs.all('.diff-gap-crumb').some(window.__docs.visible)"
+    },
+    {
+      "name": "moved-symbols",
+      "page": "code-intelligence",
+      "title": "A moved function, noted where it landed",
+      "fixture": "workbench.html?moved-symbols",
+      "suite": "tests/moved-symbols-browser.ts",
+      "scene": "movedSymbols",
+      "ready": "js:window.__docs.all('[data-move-note]',document.querySelector('.commit-stream-row[data-file=\"src/moves/queue.ts\"]')).length>0"
+    },
+    {
+      "name": "quiet-changes",
+      "page": "code-intelligence",
+      "title": "Quiet changes: formatting-only lines collapsed",
+      "fixture": "workbench.html?noise-filter",
+      "suite": "tests/noise-filter-browser.ts",
+      "scene": "quietChanges",
+      "ready": ".commit-stream-row[data-file=\"src/noise/mixed.ts\"] [data-noise-bar]"
+    },
+    {
+      "name": "diff-appearance",
+      "page": "code-intelligence",
+      "title": "Diff appearance: layout and quiet-change toggles",
+      "fixture": "workbench.html?noise-filter",
+      "suite": "tests/noise-filter-browser.ts",
+      "scene": "diffAppearance",
+      "ready": "[data-noise-toggle]"
+    },
+    {
+      "name": "notification",
+      "page": "notifications",
+      "title": "A notification when checks fail",
+      "fixture": "workbench.html?notifications&threads",
+      "suite": "tests/notifications-browser.ts",
+      "scene": "notificationToast",
+      "ready": ".app-toast[data-kind=checks-failed]"
+    },
+    {
+      "name": "menubar-panel",
+      "page": "notifications",
+      "title": "The menu bar panel",
+      "fixture": "menubar.html?state=sample",
+      "suite": "tests/menubar-browser.ts",
+      "viewport": {
+        "width": 360,
+        "height": 560
+      },
+      "ready": "js:!!document.querySelector('.menubar-title') && !document.querySelector('.menubar-skeleton') && document.querySelectorAll('.menubar-row').length===7",
+      "note": "The panel follows the system appearance; the capture emulates it. The sample state is the website's capture (synthetic workbench data)."
+    },
+    {
+      "name": "settings-queue",
+      "page": "settings",
+      "title": "Settings: Queue & briefings",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsQueue",
+      "ready": "#queue-defaults-title",
+      "note": "Cmd/Ctrl+, then the Queue & briefings section."
+    },
+    {
+      "name": "settings-repositories",
+      "page": "settings",
+      "title": "Settings: Repositories",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsRepositories",
+      "ready": ".settings-repositories[data-state=active]",
+      "note": "Cmd/Ctrl+, then the Repositories section."
+    },
+    {
+      "name": "settings-review",
+      "page": "settings",
+      "title": "Settings: Review",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsReview",
+      "ready": "js:!!document.querySelector('.settings-tabs [role=tabpanel][data-state=active]')?.textContent.includes('Web search')",
+      "note": "Cmd/Ctrl+, then the Review section."
+    },
+    {
+      "name": "settings-appearance",
+      "page": "settings",
+      "title": "Settings: Appearance",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsAppearance",
+      "ready": "js:!!document.querySelector('.settings-tabs [role=tabpanel][data-state=active]')?.textContent.includes('Code font')",
+      "note": "Cmd/Ctrl+, then the Appearance section."
+    },
+    {
+      "name": "settings-notifications",
+      "page": "settings",
+      "title": "Settings: Notifications",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsNotifications",
+      "ready": "#notifications-where-title",
+      "note": "Cmd/Ctrl+, then the Notifications section."
+    },
+    {
+      "name": "settings-integrations",
+      "page": "settings",
+      "title": "Settings: Integrations",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsIntegrations",
+      "ready": "#preloading-title",
+      "note": "Cmd/Ctrl+, then the Integrations section."
+    },
+    {
+      "name": "settings-updates",
+      "page": "settings",
+      "title": "Settings: Updates",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsUpdates",
+      "ready": "#update-version-title",
+      "note": "Cmd/Ctrl+, then the Updates section."
+    },
+    {
+      "name": "settings-diagnostics",
+      "page": "settings",
+      "title": "Settings: Diagnostics",
+      "fixture": "workbench.html",
+      "suite": "tests/repository-settings-browser.ts",
+      "scene": "settingsDiagnostics",
+      "ready": "js:!!document.querySelector('.settings-tabs [role=tabpanel][data-state=active]')?.querySelector('#slow-interactions-title, #diagnostics-export-title')",
+      "note": "Cmd/Ctrl+, then the Diagnostics section."
+    },
+    {
+      "name": "shortcut-overlay",
+      "page": "shortcuts",
+      "title": "The keyboard shortcut overlay",
+      "fixture": "workbench.html",
+      "suite": "tests/polish-browser.ts",
+      "scene": "shortcutOverlay",
+      "ready": ".shortcut-dialog",
+      "note": "Press ? in the explanation reader."
+    },
+    {
+      "name": "browser-extension",
+      "page": "browser-extension",
+      "title": "Open in Gnosis on a GitHub pull request",
+      "note": "No fixture renders the extension on a GitHub page; the docs keep a placeholder.",
+      "placeholder": true
+    }
+  ]
+}

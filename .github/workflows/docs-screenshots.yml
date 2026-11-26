@@ -1,0 +1,115 @@
+name: Docs screenshots
+
+# Captures the documentation screenshots (scripts/docs-screenshots.json) from the real app UI with synthetic fixture
+# data, and opens a draft pull request with the images that changed. Run it by hand from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      recipes:
+        description: Recipe names to capture, separated by spaces or commas. Empty captures every recipe.
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: docs-screenshots
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      # Mergiraf's host (codeberg.org) is not reliable enough to download from on every job.
+      # prepare:mergiraf skips the download when this folder already holds the manifest's version.
+      - name: Cache Mergiraf
+        uses: actions/cache@v4
+        with:
+          path: resources/mergiraf/runtime
+          key: mergiraf-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('resources/mergiraf/manifest.json') }}
+      - run: npm ci
+      - run: npm run prepare:mergiraf
+      # sharp writes the WebP files. It is not an app dependency, so it is installed beside the checkout.
+      - name: Install sharp
+        run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/sharp" sharp@0.34
+      - name: Capture
+        id: capture
+        env:
+          DOCS_SCREENSHOTS_ONLY: ${{ inputs.recipes }}
+          GNOSIS_SHARP_DIR: ${{ runner.temp }}/sharp
+        run: node scripts/capture-docs-screenshots.mjs --report "$RUNNER_TEMP/docs-screenshots.json"
+      # Scenes that rendered still go into the pull request when another one failed; the job fails afterwards.
+      - name: Open a draft pull request
+        if: ${{ !cancelled() && hashFiles('site/public/docs/screenshots/**') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.sha }}
+          BRANCH: docs-screenshots/${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT: ${{ runner.temp }}/docs-screenshots.json
+          REPO: ${{ github.repository }}
+        run: |
+          git add --all site/public/docs/screenshots
+          if git diff --cached --quiet; then
+            echo "No screenshot changed: no pull request."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -m "Update documentation screenshots" -m "Captured by $RUN_URL from ${BASE_SHA}."
+          git push origin "$BRANCH"
+          HEAD_SHA=$(git rev-parse HEAD)
+          raw="https://raw.githubusercontent.com/$REPO"
+          {
+            echo "Documentation screenshots captured by [this run]($RUN_URL) from ${BASE_SHA}: the actual Gnosis UI, rendered from the browser-test fixtures with synthetic data (scripts/docs-screenshots.json)."
+            echo
+            echo "| Image | Before | After |"
+            echo "|---|---|---|"
+            git diff --name-status HEAD~1 HEAD -- 'site/public/docs/screenshots/*.webp' | grep -v -- '-small\.webp$' | while read -r status file; do
+              name=$(basename "$file" .webp)
+              if [ "$status" = "A" ]; then before="(new)"; else before="<img src=\"$raw/$BASE_SHA/$file\" width=\"400\">"; fi
+              echo "| \`$name\` | $before | <img src=\"$raw/$HEAD_SHA/$file\" width=\"400\"> |"
+            done
+            echo
+            echo "The 960px \`-small\` variants and the \`.json\` provenance sidecars changed with each image."
+            if [ -f "$REPORT" ] && [ "$(jq '.failed | length' "$REPORT")" != "0" ]; then
+              echo
+              echo "**These scenes did not render, and kept their old images:**"
+              echo
+              jq -r '.failed[] | "- `\(.name)` (\(.theme)): \(.error | gsub("\n"; " ") | .[0:300])"' "$REPORT"
+            fi
+            echo
+            echo "Pull requests opened with the workflow token start no other workflows: close and reopen this one, or push to it, to run the checks."
+          } > "$RUNNER_TEMP/body.md"
+          # The repository may not let Actions open pull requests (Settings > Actions > "Allow GitHub Actions to create and
+          # approve pull requests"). Then the branch is pushed and the PR is opened by hand from it, with this body.
+          if ! gh pr create --draft --base "${GITHUB_REF_NAME}" --head "$BRANCH" --title "Update documentation screenshots" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::notice::Pushed $BRANCH. Actions could not open the pull request: open it from that branch; the body is in the docs-screenshots-pr-body artifact."
+          fi
+
+      - name: Upload the pull request body and capture report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-screenshots-pr-body
+          path: |
+            ${{ runner.temp }}/body.md
+            ${{ runner.temp }}/docs-screenshots.json
+          if-no-files-found: ignore
+          retention-days: 14
