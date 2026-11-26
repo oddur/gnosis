@@ -13,9 +13,12 @@ const places = new Map<string, string>();
 const placeListeners = new Set<() => void>();
 const SEP = '>';
 
-/** The reader is in `chain` (outermost first) of the file, or no longer in any of its hunks (undefined). */
-export function setReadingPlace(fileKey: string, chain: readonly Pick<SyntaxDefinition, 'kind' | 'name'>[] | undefined) {
-  const value = chain?.map((definition) => `${definition.kind}:${definition.name}`).join(SEP);
+/**
+ * The reader is in `chain` (outermost first) of the file, or no longer in any of its hunks (undefined). Each part is
+ * `kind:name@start`: the start tells overloads apart (lib/tree-symbols.ts `readingSymbol`).
+ */
+export function setReadingPlace(fileKey: string, chain: readonly Pick<SyntaxDefinition, 'kind' | 'name' | 'start'>[] | undefined) {
+  const value = chain?.map((definition) => `${definition.kind}:${definition.name}@${definition.start}`).join(SEP);
   if ((places.get(fileKey) ?? undefined) === value) return;
   if (value === undefined) places.delete(fileKey);
   else places.set(fileKey, value);
@@ -25,7 +28,7 @@ const subscribePlaces = (listener: () => void) => {
   placeListeners.add(listener);
   return () => placeListeners.delete(listener);
 };
-/** Where the reader is in the file, as `kind:name` parts, outermost first; undefined outside its hunks. */
+/** Where the reader is in the file, as `kind:name@start` parts, outermost first; undefined outside its hunks. */
 export function useReadingPlace(fileKey: string | undefined): string[] | undefined {
   const value = useSyncExternalStore(subscribePlaces, () => (fileKey ? places.get(fileKey) : undefined));
   return value === undefined ? undefined : value ? value.split(SEP) : [];

@@ -556,11 +556,15 @@ export function PrChangesView({
     const release = () => stream.current?.releasePosition();
     if (hasSymbolTarget(fileKey)) {
       setSelected(key);
+      // A narrow window's tree covers the diff, as when a file is chosen.
+      if (window.innerWidth <= 700) setTreeOpen(false);
       requestSymbolJump(fileKey, symbol, release);
       return;
     }
-    requestSymbolJump(fileKey, symbol, release);
-    void select(key);
+    // Asked for after select's frame scrolls to the file: that scroll holds the file's top in place, which the jump
+    // then releases. Asked for sooner, a diff that mounts at once (a Viewed file opening) would jump first and be
+    // pulled back to its top.
+    void select(key).then(() => requestAnimationFrame(() => requestSymbolJump(fileKey, symbol, release)));
   }
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
@@ -970,6 +974,7 @@ export function PrChangesView({
                   <PrFileInspection
                     key={viewKey(e)}
                     entry={e}
+                    symbolTree={treeSymbols}
                     sourceLine={jump?.url === e.snapshot.url && jump.path === e.file.path && jump.headSha === e.snapshot.metadata.headSha ? jump.line : undefined}
                     sourceEndLine={jump?.endLine}
                     sourceSide={jump?.side}

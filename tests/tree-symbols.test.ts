@@ -5,14 +5,15 @@ import { test } from 'node:test';
 import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import type { GapHunk } from '../lib/diff-gaps';
-import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { changedSymbols } from '../lib/symbol-outline';
+import { createSyntaxEngine, type SyntaxDefinition, type SyntaxLanguage } from '../lib/syntax-scope';
+import { changedSymbols, type ChangedSymbol } from '../lib/symbol-outline';
 import {
   changedIds,
   matchingSymbols,
   moveWords,
   pruneSymbols,
   readingSymbol,
+  rowDestination,
   symbolTree,
   topLevelChanges,
   type TreeSymbolNode,
@@ -228,4 +229,55 @@ void test('paths: repeated names stay apart, a slash in a name does not split it
   assert.ok(layout.paths[2].includes(`a${NAME_SLASH}b`));
   const codes = rowCodes().map((entry) => entry.code);
   for (const code of codes) assert.equal(codes.filter((other) => other.includes(code)).length, 1);
+});
+
+const def = (kind: SyntaxDefinition['kind'], name: string, start: number, end: number): SyntaxDefinition => ({
+  kind,
+  name,
+  label: name,
+  crumb: name,
+  start,
+  end,
+  signatureEnd: start,
+});
+const symbol = (id: string, change: ChangedSymbol['change'], side: 'after' | 'before', definition: SyntaxDefinition, parents: SyntaxDefinition[]): ChangedSymbol => ({
+  id,
+  change,
+  side,
+  definition,
+  parents,
+  first: { side, line: definition.start + 1 },
+  added: change === 'removed' ? 0 : 1,
+  deleted: change === 'added' ? 0 : 1,
+});
+
+void test('a context row goes to its definition on the side of the change it reveals, after a search too', () => {
+  // The class starts at line 10 in the new file and at line 40 in the old one.
+  const after = def('class', 'Store', 10, 30);
+  const before = def('class', 'Store', 40, 60);
+  const nodes = symbolTree([
+    symbol('class:Store>method:flush', 'modified', 'after', def('method', 'flush', 12, 14), [after]),
+    symbol('class:Store>method:gone', 'removed', 'before', def('method', 'gone', 50, 52), [before]),
+  ]);
+  assert.deepEqual(
+    [rowDestination(nodes[0])?.side, rowDestination(nodes[0])?.definition.start],
+    ['after', 10]
+  );
+  // A search for "gone" keeps only the removed method: the class row goes to its old-side start.
+  const pruned = pruneSymbols(nodes, matchingSymbols(nodes, 'gone') ?? new Set());
+  const target = rowDestination(pruned[0]);
+  assert.deepEqual([target?.side, target?.definition.start, target?.first.line], ['before', 40, 51]);
+  assert.equal(rowDestination(nodes[0].children[0]), nodes[0].children[0].symbol);
+});
+
+void test('overloads are told apart by where the reader is', () => {
+  const nodes = symbolTree([
+    symbol('function:parse', 'modified', 'after', def('function', 'parse', 1, 3), []),
+    symbol('function:parse#2', 'modified', 'after', def('function', 'parse', 5, 9), []),
+  ]);
+  assert.equal(readingSymbol(nodes, ['function:parse@5']), 'function:parse#2');
+  assert.equal(readingSymbol(nodes, ['function:parse@1']), 'function:parse');
+  // Without a start, or at one no row has, the first.
+  assert.equal(readingSymbol(nodes, ['function:parse']), 'function:parse');
+  assert.equal(readingSymbol(nodes, ['function:parse@99']), 'function:parse');
 });

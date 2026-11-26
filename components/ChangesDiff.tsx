@@ -971,9 +971,11 @@ function followReader(
       ? previous
       : '-';
   const key = `${point.side}:${number}:${scopeKey}`;
+  // Told on every look, not only when the place changes: a header that pins again on the line it left must say so
+  // again, after the place was cleared while nothing was pinned. The listener drops repeats.
+  if (chain) onPlace?.(chain);
   if (bar.getAttribute('data-live-key') === key) return true;
   bar.setAttribute('data-live-key', key);
-  if (chain) onPlace?.(chain);
   const lineSlot = bar.querySelector('.diff-gap-live-line');
   if (lineSlot) lineSlot.textContent = before ? `old L${number}` : `L${number}`;
   const slot = bar.querySelector<HTMLElement>('.diff-gap-live');

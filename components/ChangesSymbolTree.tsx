@@ -12,7 +12,7 @@ import type { NoiseFilter } from '../lib/semantic-noise';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { useReadingPlace } from '../lib/tree-symbol-sync';
-import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
+import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, rowDestination } from '../lib/tree-symbols';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -322,22 +322,10 @@ export function ChangesSymbolTree({
   useEffect(() => {
     if (readingPath && revealSelected && model.getSelectedPaths().length <= 1) model.scrollToPath(readingPath, { focus: false, offset: 'nearest' });
   }, [model, readingPath, revealSelected]);
-  /** A symbol row's place in the diff: a context row goes to its definition, revealing down to its first change. */
-  const destination = (node: TreeSymbolNode): ChangedSymbol | undefined => {
-    if (node.symbol) return node.symbol;
-    const first = (function find(nodes: readonly TreeSymbolNode[]): ChangedSymbol | undefined {
-      for (const child of nodes) {
-        const found = child.symbol ?? find(child.children);
-        if (found) return found;
-      }
-      return undefined;
-    })(node.children);
-    return first && { ...first, id: node.id, change: 'modified', definition: node.definition, parents: [] };
-  };
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;
     if (row.type === 'symbol') {
-      const symbol = destination(row.node);
+      const symbol = rowDestination(row.node);
       if (symbol) {
         setHeld({ key: row.key, id: row.node.id });
         onGoToSymbol(row.key, symbol);
