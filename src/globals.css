@@ -2704,7 +2704,15 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-progress,.changes-source,.changes-file-stats { font-size:var(--type-caption);color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
 .changes-workspace { display:flex;flex:1;min-height:0;min-width:0;position:relative; }
 .changes-tree-pane { width:var(--changes-tree-width);max-width:42%;min-width:160px;display:flex;flex-direction:column;flex-shrink:0;background:var(--sidebar); }
-.changes-tree-controls { padding:12px;display:flex;flex-direction:column;gap:10px;font-size:var(--type-caption); }
+.changes-tree-controls { padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;font-size:var(--type-caption); }
+/* The tree's view options on one line under the search; the reset sits apart at the end and wraps last. */
+.changes-tree-options { display:flex;align-items:center;gap:8px;min-height:24px;color:var(--muted-foreground); }
+/* Only a very narrow tree wraps the options; the reset keeps its place at the end of the first line. */
+.changes-tree-toggles { display:flex;align-items:center;flex-wrap:wrap;column-gap:12px;row-gap:4px;min-width:0; }
+.changes-tree-options label { gap:6px;white-space:nowrap;cursor:pointer; }
+.changes-tree-options label:has(input:checked) { color:var(--foreground); }
+.changes-tree-options input { accent-color:var(--primary);margin:0; }
+.changes-tree-reset { margin-inline-start:auto;align-self:flex-start;color:var(--muted-foreground); }
 .changes-tree-controls>input { width:100%;border:1px solid var(--input);background:var(--background);padding:6px 8px;border-radius:var(--radius); }
 .changes-tree-controls label,.changes-file-actions label { display:inline-flex;align-items:center;gap:5px; }
 .changes-file-tree { flex:1;min-height:0;color-scheme:light;--trees-theme-sidebar-bg:var(--sidebar);--trees-theme-sidebar-fg:var(--foreground);--trees-theme-git-added-fg:var(--color-success);--trees-theme-git-modified-fg:var(--color-info);--trees-theme-git-deleted-fg:var(--color-danger);--trees-theme-list-active-selection-bg:var(--accent);--trees-theme-list-active-selection-fg:var(--accent-foreground);--trees-theme-list-hover-bg:var(--muted);--trees-theme-focus-ring:var(--ring); }
@@ -2982,8 +2990,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 @media(max-width:700px) { .changes-tree-pane { position:absolute;top:0;bottom:0;left:0;width:min(300px,80%);max-width:80%;z-index:4;border-right:1px solid var(--border); } .changes-resize{display:none;} .changes-progress { display:none; } .changes-toolbar { gap:4px;padding:6px; } }
 
 .dark .changes-file-tree { color-scheme:dark; }
-.file-tree-selection-workspace { display:flex;flex-direction:column;flex:1;min-height:0;height:100%; }
-.file-tree-selection-status { display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;padding:2px 4px 6px;color:var(--muted-foreground);font-size:12px;font-variant-numeric:tabular-nums; }
+.file-tree-selection-workspace { position:relative;display:flex;flex-direction:column;flex:1;min-height:0;height:100%; }
+/* A multiple selection's count and Clear float over the foot of the tree, so selecting never moves a row. */
+.file-tree-selection-status { position:absolute;z-index:2;inset-inline:8px;bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;padding:2px 4px 2px 10px;background:var(--popover);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-variant-numeric:tabular-nums; }
 .file-tree-selection-status button { color:var(--primary);padding:3px 5px;border-radius:var(--radius-sm); }
 .file-tree-selection-status button:hover { background:var(--accent); }
 .file-tree-selection-status button:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }

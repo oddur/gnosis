@@ -218,7 +218,7 @@ void app.whenReady().then(async () => {
     // store.ts expands again, its ticks gone: flush shows its counts.
     await wait("window.treeRows().find(r=>r.name==='flush')?.decoration==='+1−1'");
     await wait(`document.querySelector(${JSON.stringify(fileRow + ' .changes-file-actions input[type=checkbox]')})?.checked===false`);
-    assert.equal(await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Reset viewed')?.disabled"), true, 'Nothing left to reset');
+    assert.equal(await js(`document.querySelector('button[aria-label="Reset viewed"]')?.disabled`), true, 'Nothing left to reset');
     await clickButton('Undo');
     await wait("window.treeRows().find(r=>r.name==='flow.svg')?.decoration.startsWith('Viewed')");
     await wait(`window.treeRows().find(r=>r.name===${JSON.stringify(name)})?.decoration.startsWith('Viewed')`);

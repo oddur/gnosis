@@ -1043,25 +1043,31 @@ export function PrChangesView({
                       onChange={(e) => setQuery(e.target.value)}
                     />
                   )}
-                  <label>
-                    <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
-                    Unviewed only
-                  </label>
-                  <label title="Expand a file to see the functions and classes its changes touch">
-                    <input type="checkbox" checked={treeSymbols} onChange={(e) => setTreeSymbols(e.target.checked)} />
-                    Show file symbols
-                  </label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="self-start"
-                    disabled={!anyViewed}
-                    title="Clear Viewed for every file and symbol in these changes"
-                    onClick={resetAllViewed}
-                  >
-                    <RotateCcw size={14} aria-hidden="true" />
-                    Reset viewed
-                  </Button>
+                  {/* One line under the search: the tree's two view options, then the rare reset, apart at the end. */}
+                  <div className="changes-tree-options">
+                    <div className="changes-tree-toggles">
+                      <label>
+                        <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
+                        Unviewed only
+                      </label>
+                      {/* "Symbols", not "Show file symbols": the tree's default width fits both options on one line. */}
+                      <label title="Show file symbols: expand a file to see the functions and classes its changes touch">
+                        <input type="checkbox" checked={treeSymbols} onChange={(e) => setTreeSymbols(e.target.checked)} />
+                        Symbols
+                      </label>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="changes-tree-reset"
+                      disabled={!anyViewed}
+                      aria-label="Reset viewed"
+                      title="Reset viewed: clear Viewed for every file and symbol in these changes"
+                      onClick={resetAllViewed}
+                    >
+                      <RotateCcw size={14} aria-hidden="true" />
+                    </Button>
+                  </div>
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit && !combined &&

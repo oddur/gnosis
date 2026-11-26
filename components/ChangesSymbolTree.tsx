@@ -445,16 +445,13 @@ export function ChangesSymbolTree({
   const selectedFiles = selectedTreeFiles(entries, mapped(selectedPaths), matchingPaths);
   return (
     <div className="file-tree-selection-workspace">
-      <div className="file-tree-selection-status">
-        {selectedFiles.length > 1 ? (
-          <>
-            <span role="status">{selectedFiles.length} files selected</span>
-            <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
-          </>
-        ) : (
-          <span>Shift-click to select a range</span>
-        )}
-      </div>
+      {/* A multiple selection floats over the tree's foot, so selecting moves no row; the range tip is in the menu. */}
+      {selectedFiles.length > 1 && (
+        <div className="file-tree-selection-status">
+          <span role="status">{selectedFiles.length} files selected</span>
+          <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
+        </div>
+      )}
       <FileTree
         model={model}
         renderContextMenu={onSetViewed ? (item, context) => {

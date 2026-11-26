@@ -73,6 +73,7 @@ export function TreeViewedMenu({
           >
             <div id={descriptionId} className="px-2 py-1 text-xs text-muted-foreground">
               {multiple ? `${files.length} selected files match your filters` : `${files.length} ${files.length === 1 ? 'file matches' : 'files match'} your filters`}
+              {!multiple && <div>Shift-click files to select a range</div>}
             </div>
             <Menu.Item
               className="entry-menu-item"
