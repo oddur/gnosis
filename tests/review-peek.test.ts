@@ -31,7 +31,13 @@ void test('a line calls the names right before a parenthesis, not in comments, s
 void test("a peek shows the item's own hunks: by its lines, or by its definition on its side", () => {
   const patch = ['@@ -1,3 +1,3 @@', ' a', '-b', '+B', ' c', '@@ -10,2 +10,3 @@', ' x', '+y', ' z'].join('\n');
   assert.deepEqual(peekHunks(patch, { keys: ['a11'] }).map((hunk) => hunk.header), ['@@ -10,2 +10,3 @@']);
-  assert.deepEqual(peekHunks(patch, { side: 'after', start: 1, end: 2 }).map((hunk) => hunk.header), ['@@ -1,3 +1,3 @@']);
+  // A definition on the new side, lines 1 to 2: its rows only, the deleted line among them kept, the line after it not.
+  assert.deepEqual(peekHunks(patch, { side: 'after', start: 1, end: 2 }), [{ header: '@@ -1,2 +1,2 @@', content: [' a', '-b', '+B'].join('\n') }]);
+  // A method inside a hunk that also holds the imports above it and the next method below: only the method.
+  const big = ['@@ -1,9 +1,9 @@', " import 'a';", " import 'b';", ' class S {', '   f() {', '-    return 1;', '+    return 2;', '   }', '   g() {', '   }'].join('\n');
+  assert.deepEqual(peekHunks(big, { side: 'after', start: 4, end: 6 }), [
+    { header: '@@ -4,3 +4,3 @@', content: ['   f() {', '-    return 1;', '+    return 2;', '   }'].join('\n') },
+  ]);
   assert.equal(peekHunks(patch).length, 2, 'A file: every hunk');
   assert.deepEqual(peekHunks(undefined), []);
 });

@@ -57,7 +57,7 @@ const changedItem = (added: number, deleted: number, rest: string) => ({
 });
 
 /** A hover on a symbol row this long opens its peek (components/SymbolPeek.tsx). */
-const HOVER_PEEK_MS = 500;
+const HOVER_PEEK_MS = 400;
 /** A hover peek stays this long after the pointer leaves the row and the popover, so it can travel into it. */
 const PEEK_GRACE_MS = 250;
 /** "Look in all files": files read at once, and how long each may take. */
@@ -649,6 +649,7 @@ export function ChangesSymbolTree({
   // without moving the review, the light or the diff. ──
   const [peek, setPeek] = useState<{ stack: { key: string; id: string }[]; focus: boolean; path: string; anchor: Element }>();
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hoverPath = useRef<string | undefined>(undefined);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   /** What a row peeks at: a symbol (not a move's old copy), the top level, or a file without symbols. */
   const peekItemOf = (row: TreeRow | undefined): { key: string; id: string } | undefined => {
@@ -869,8 +870,18 @@ export function ChangesSymbolTree({
           const path = rowPath(event.nativeEvent);
           if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
         }}
-        onPointerOver={(event) => {
+        // The row under the pointer, read on every move: pointerover comes once per element entered, and Pierre's rows,
+        // drawn and recycled as the list scrolls, can change under a pointer that sends no new over event. A peek opens once
+        // the pointer has rested on one symbol row for HOVER_PEEK_MS.
+        onPointerLeave={() => {
+          clearTimeout(hoverTimer.current);
+          hoverPath.current = undefined;
+        }}
+        onPointerMove={(event) => {
+          if (event.pointerType !== 'mouse') return;
           const path = rowPath(event.nativeEvent);
+          if (path === hoverPath.current) return;
+          hoverPath.current = path ?? undefined;
           const row = rowAt(path);
           if (row && row.type !== 'folder') onPreview?.(row.key);
           // A hover peek: after HOVER_PEEK_MS on a symbol row; another row's hover moves it there.

@@ -6,9 +6,16 @@ import type { TreeSymbolNode } from './tree-symbols';
  * changed symbols of the PR that call it. Pure parts here; components/SymbolPeek.tsx draws them.
  */
 
+/** Lines of context a peek keeps around changed lines that are not a whole definition (Top level, a Body). */
+export const PEEK_CONTEXT = 1;
+
 /**
- * A patch's hunks as a diff renders them (a header and its lines): those holding any of `keys` (`a12`, `b7`), or whose
- * lines on `side` overlap `start`..`end` (a symbol's definition); every hunk with neither.
+ * The parts of a patch's hunks a peek shows, each with its own header: a symbol's definition and nothing else, or the
+ * changed lines `keys` (`a12`, `b7`) with PEEK_CONTEXT lines around them; every hunk whole with neither (a file stop).
+ *
+ * A peek is about one item: the hunk holding a method also holds the imports above it and the next method below, and
+ * shown whole, the peek read as a copy of the file. Each hunk is cut to the run of its rows the item covers, from its
+ * first to its last, deleted lines among them included, and given a header for exactly those rows.
  */
 export function peekHunks(
   patch: string | undefined,
@@ -17,42 +24,66 @@ export function peekHunks(
   if (!patch) return [];
   const keys = want.keys && new Set(want.keys);
   const range = want.side && want.start !== undefined ? { side: want.side, start: want.start, end: want.end ?? want.start } : undefined;
+  interface Row {
+    text: string;
+    /** Its line on each side: deleted rows have no new line, added rows no old one. */
+    old?: number;
+    new?: number;
+  }
   const out: { header: string; content: string }[] = [];
-  let current: { header: string; rows: string[]; keys: Set<string>; old: [number, number]; new: [number, number] } | undefined;
+  let rows: Row[] = [];
+  let open = false;
+  const close = () => {
+    if (!open) return;
+    open = false;
+    const body = rows.filter((row) => !row.text.startsWith('\\'));
+    let first = -1,
+      last = -1;
+    body.forEach((row, index) => {
+      let hit: boolean;
+      if (keys) hit = (row.new !== undefined && row.text[0] === '+' && keys.has(`a${row.new}`)) || (row.old !== undefined && row.text[0] === '-' && keys.has(`b${row.old}`));
+      else if (range) {
+        const line = range.side === 'after' ? row.new : row.old;
+        hit = line !== undefined && line >= range.start && line <= range.end;
+      } else hit = true;
+      if (!hit) return;
+      if (first < 0) first = index;
+      last = index;
+    });
+    if (first < 0) return;
+    // Changed lines get a little context; a definition is shown as it is.
+    if (keys) {
+      first = Math.max(0, first - PEEK_CONTEXT);
+      last = Math.min(body.length - 1, last + PEEK_CONTEXT);
+    }
+    const kept = body.slice(first, last + 1);
+    const olds = kept.filter((row) => row.old !== undefined);
+    const news = kept.filter((row) => row.new !== undefined);
+    const oldStart = olds[0]?.old ?? (body.slice(0, first).reverse().find((row) => row.old !== undefined)?.old ?? 0);
+    const newStart = news[0]?.new ?? (body.slice(0, first).reverse().find((row) => row.new !== undefined)?.new ?? 0);
+    out.push({ header: `@@ -${oldStart},${olds.length} +${newStart},${news.length} @@`, content: kept.map((row) => row.text).join('\n') });
+  };
   let oldLine = 0,
     newLine = 0;
-  const close = () => {
-    if (!current) return;
-    const span = range && (range.side === 'after' ? current.new : current.old);
-    const hit = keys ? [...current.keys].some((key) => keys.has(key)) : span ? span[0] <= range.end && span[1] >= range.start : true;
-    if (hit) out.push({ header: current.header, content: current.rows.join('\n') });
-    current = undefined;
-  };
-  for (const row of patch.split('\n')) {
-    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(row);
+  for (const text of patch.split('\n')) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
     if (header) {
       close();
       oldLine = Number(header[1]);
       newLine = Number(header[2]);
-      current = { header: row, rows: [], keys: new Set(), old: [oldLine, oldLine - 1], new: [newLine, newLine - 1] };
+      rows = [];
+      open = true;
       continue;
     }
-    if (!current || row.startsWith('\\')) {
-      if (current) current.rows.push(row);
+    if (!open) continue;
+    if (text.startsWith('\\')) {
+      rows.push({ text });
       continue;
     }
-    current.rows.push(row);
-    const type = row[0];
-    if (type === '+') {
-      current.keys.add(`a${newLine}`);
-      current.new[1] = newLine++;
-    } else if (type === '-') {
-      current.keys.add(`b${oldLine}`);
-      current.old[1] = oldLine++;
-    } else {
-      current.old[1] = oldLine++;
-      current.new[1] = newLine++;
-    }
+    const type = text[0];
+    if (type === '+') rows.push({ text, new: newLine++ });
+    else if (type === '-') rows.push({ text, old: oldLine++ });
+    else rows.push({ text, old: oldLine++, new: newLine++ });
   }
   close();
   return out;
