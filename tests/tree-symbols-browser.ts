@@ -273,6 +273,9 @@ void app.whenReady().then(async () => {
     await wait("!!window.treeRow('Imports')");
     await js("window.treeRow('Imports').querySelector('[data-item-section=content]').click()");
     await lit('Imports');
+    // A reader's click also puts the keyboard on the row. A script's click() does not, and the search above left the
+    // find field focused: the tree rightly leaves a text field alone, so focus the row as the click would.
+    await js("window.treeRow('Imports').focus()");
     // The reader closes the class and the folder above it: going on must open both again.
     const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
     await js("window.treeRow('Store').querySelector('[data-item-section=icon]').click()");
