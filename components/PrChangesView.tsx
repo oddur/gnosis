@@ -38,7 +38,7 @@ import { ChangesSymbolTree } from './ChangesSymbolTree';
 import { hasSymbolTarget, peekReadingPlace, peekTreeCursor, requestSymbolJump } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported, type TreeSymbolSource } from '../lib/use-tree-symbols';
 import { stepUnviewed, type ReviewFile, type ReviewPlace } from '../lib/tree-symbol-review';
-import { readingSymbol, topLevelSymbol } from '../lib/tree-symbols';
+import { readingSymbol, rowDestination } from '../lib/tree-symbols';
 import type { FileSymbols } from '../lib/tree-symbol-paths';
 import { toast } from './ui/toast';
 import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
@@ -574,11 +574,15 @@ export function PrChangesView({
     const release = () => stream.current?.releasePosition();
     if (hasSymbolTarget(fileKey)) {
       setSelected(key);
+      // A narrow window's tree covers the diff, as when a file is chosen.
+      if (window.innerWidth <= 700) setTreeOpen(false);
       requestSymbolJump(fileKey, symbol, release);
       return;
     }
-    requestSymbolJump(fileKey, symbol, release);
-    void select(key);
+    // Asked for after select's frame scrolls to the file: that scroll holds the file's top in place, which the jump
+    // then releases. Asked for sooner, a diff that mounts at once (a Viewed file opening) would jump first and be
+    // pulled back to its top.
+    void select(key).then(() => requestAnimationFrame(() => requestSymbolJump(fileKey, symbol, release)));
   }
   /**
    * `n` and Shift+N (Settings › Review › "Show changed symbols in the file tree"): the next or previous unviewed changed
@@ -637,7 +641,8 @@ export function PrChangesView({
         }
         if (step.kind === 'go') {
           // A symbol, or the file's top-level changes, which go to their first changed line.
-          const symbol = step.node?.symbol ?? (step.top && topLevelSymbol(step.top));
+          const target = step.node ?? step.top;
+          const symbol = target && rowDestination(target);
           if (!symbol) return;
           navCursor.current = { key: step.key, id: step.id, at: Date.now() };
           setTreeReveal((previous) => ({ key: step.key, id: step.id, nonce: (previous?.nonce ?? 0) + 1 }));
@@ -1087,6 +1092,7 @@ export function PrChangesView({
                   <PrFileInspection
                     key={viewKey(e)}
                     entry={e}
+                    symbolTree={treeSymbols}
                     sourceLine={jump?.url === e.snapshot.url && jump.path === e.file.path && jump.headSha === e.snapshot.metadata.headSha ? jump.line : undefined}
                     sourceEndLine={jump?.endLine}
                     sourceSide={jump?.side}

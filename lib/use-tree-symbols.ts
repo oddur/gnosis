@@ -50,6 +50,8 @@ const sideReason = (side: PrFileSide) => (side.kind === 'lfs' ? 'Stored in Git L
 interface Peeked {
   value: FileSymbols;
   need?: Need;
+  /** The file's read or parse failed: it is not asked for again, only watched. */
+  failed?: boolean;
 }
 /** Files whose patch and symbols are kept, newest last. */
 const MADE_FILES = 2_000;
@@ -86,7 +88,12 @@ function peekFileSymbols(
   filter: NoiseFilter,
   failure: string | undefined
 ): Peeked {
-  if (failure) return { value: { state: 'none', reason: failure } };
+  const peeked = lookUp(source, settings, filter);
+  // A read or parse that failed says why while the file still waits for it. The caches come first: once the file is in
+  // them after all (Retry in its diff), its symbols show. Its need stays, so the tree keeps watching for that read.
+  return failure && peeked.value.state === 'loading' ? { value: { state: 'none', reason: failure }, need: peeked.need, failed: true } : peeked;
+}
+function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, filter: NoiseFilter): Peeked {
   const { fileKey, snapshot, file } = source;
   const { hunks, plan: planned } = patchOf(source, settings);
   // GitHub sends no patch for a very large diff.
@@ -283,14 +290,23 @@ export function useTreeSymbols(
     const wanted = new Set<string>();
     for (const key of load) {
       const source = files.get(key);
-      const need = peeked.get(key)?.need;
+      const found = peeked.get(key);
+      const need = found?.need;
       if (!source || !need) continue;
       const { fileKey, snapshot } = source;
       if (need.kind === 'read') {
         const id = `${fileKey}:read`;
         wanted.add(id);
         if (asked.current.has(id)) continue;
-        const stopWatching = syntaxContents.watch(fileKey, () => later.current());
+        // A read that lands, whoever asked for it, ends a failure.
+        const stopWatching = syntaxContents.watch(fileKey, () => {
+          failures.current.delete(fileKey);
+          later.current();
+        });
+        if (found.failed) {
+          asked.current.set(id, stopWatching);
+          continue;
+        }
         const cancel = syntaxContents.request(
           syntaxContentsJob({ key: fileKey, snapshot, file: source.file }, need.plan),
           () => later.current(),
@@ -306,7 +322,7 @@ export function useTreeSymbols(
       } else
         for (const side of need.sides) {
           wanted.add(side.key);
-          if (asked.current.has(side.key)) continue;
+          if (asked.current.has(side.key) || found.failed) continue;
           asked.current.set(side.key, () => {});
           void readDefinitions({ key: side.key, url: snapshot.url, language: side.language, text: side.text, priority: 'view' }).then(
             () => later.current(),

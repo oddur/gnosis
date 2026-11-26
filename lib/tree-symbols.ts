@@ -244,22 +244,29 @@ export function matchingSymbols(nodes: readonly TreeSymbolNode[], query: string)
 
 /**
  * The row of the symbol the reader is in, from the pinned breadcrumb's definitions around the line at the top of the
- * view (outermost first, `kind:name` each): the innermost one with a row, so reading a changed method inside an
- * unchanged class lights the method, and reading elsewhere in the class lights the class's context row.
+ * view (outermost first, `kind:name@start` each, the start optional): the innermost one with a row, so reading a
+ * changed method inside an unchanged class lights the method, and reading elsewhere in the class lights the class's
+ * context row. Repeats such as overloads share a kind and name, and are told apart by where they start.
  */
 export function readingSymbol(nodes: readonly TreeSymbolNode[], path: readonly string[] | undefined): string | undefined {
   if (!path?.length) return undefined;
-  const byPath = new Map<string, string>();
+  const byPath = new Map<string, TreeSymbolNode[]>();
   const walk = (node: TreeSymbolNode) => {
-    // Repeats such as overloads have `#2` on their part: the reader's place names the kind and name only.
+    // Repeats have `#2` on their part: the reader's place names the kind and name only.
     const plain = node.id.replace(/#\d+(?=>|$)/g, '');
-    if (!byPath.has(plain)) byPath.set(plain, node.id);
+    byPath.set(plain, [...(byPath.get(plain) ?? []), node]);
     node.children.forEach(walk);
   };
   nodes.forEach(walk);
-  for (let depth = path.length; depth > 0; depth--) {
-    const id = byPath.get(path.slice(0, depth).join('>'));
-    if (id) return id;
+  const parts = path.map((part) => {
+    const at = part.lastIndexOf('@');
+    return at > 0 && /^\d+$/.test(part.slice(at + 1)) ? { name: part.slice(0, at), start: Number(part.slice(at + 1)) } : { name: part };
+  });
+  for (let depth = parts.length; depth > 0; depth--) {
+    const found = byPath.get(parts.slice(0, depth).map((part) => part.name).join('>'));
+    if (!found) continue;
+    const start = parts[depth - 1].start;
+    return (found.find((node) => node.definition.start === start) ?? found[0]).id;
   }
   return undefined;
 }
@@ -274,4 +281,27 @@ export function changedIds(node: TreeSymbolNode): string[] {
 /** The rows in `keep`, nested as before: a search's matches in a file the reader has not opened. */
 export function pruneSymbols(nodes: readonly TreeSymbolNode[], keep: ReadonlySet<string>): TreeSymbolNode[] {
   return nodes.filter((node) => keep.has(node.id)).map((node) => ({ ...node, children: pruneSymbols(node.children, keep) }));
+}
+
+/**
+ * Where a row takes the reader: its symbol, or for a context row, its definition, revealing down to the first change
+ * under it. The definition is the one on that change's side, from the change's own parents: a context row's own was
+ * read on the side of the child that made it, which a search can leave out, and a removed child's old-side lines would
+ * then land on the new file's line numbers. The file's top-level row (Imports, Top level) goes to its first changed
+ * line, as its outline entry does (`topLevelSymbol`).
+ */
+export function rowDestination(node: TreeSymbolNode | TopLevelChanges): ChangedSymbol | undefined {
+  if (!('id' in node)) return topLevelSymbol(node);
+  if (node.symbol) return node.symbol;
+  const first = (function find(nodes: readonly TreeSymbolNode[]): ChangedSymbol | undefined {
+    for (const child of nodes) {
+      const found = child.symbol ?? find(child.children);
+      if (found) return found;
+    }
+    return undefined;
+  })(node.children);
+  if (!first) return undefined;
+  const depth = node.id.split('>').length - 1;
+  const definition = first.id.startsWith(`${node.id}>`) ? (first.parents[depth] ?? node.definition) : node.definition;
+  return { ...first, id: node.id, change: 'modified', definition, parents: first.parents.slice(0, depth) };
 }

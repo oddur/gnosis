@@ -12,7 +12,7 @@ import type { NoiseFilter } from '../lib/semantic-noise';
 import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { setTreeCursor, useReadingPlace } from '../lib/tree-symbol-sync';
-import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, topLevelName, topLevelSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
+import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, rowDestination, topLevelName } from '../lib/tree-symbols';
 import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
@@ -388,22 +388,10 @@ export function ChangesSymbolTree({
     revealing.current = undefined;
     if (model.getSelectedPaths().length <= 1) selectOnly(path);
   }, [model, layout, selected, reveal?.nonce]);
-  /** A symbol row's place in the diff: a context row goes to its definition, revealing down to its first change. */
-  const destination = (node: TreeSymbolNode): ChangedSymbol | undefined => {
-    if (node.symbol) return node.symbol;
-    const first = (function find(nodes: readonly TreeSymbolNode[]): ChangedSymbol | undefined {
-      for (const child of nodes) {
-        const found = child.symbol ?? find(child.children);
-        if (found) return found;
-      }
-      return undefined;
-    })(node.children);
-    return first && { ...first, id: node.id, change: 'modified', definition: node.definition, parents: [] };
-  };
   const activate = (row: TreeRow | undefined) => {
     if (!row || row.type === 'folder') return;
     if (row.type === 'symbol') {
-      const symbol = destination(row.node);
+      const symbol = rowDestination(row.node);
       if (symbol) {
         setHeld({ key: row.key, id: row.node.id });
         setTreeCursor(row.key, row.node.id);
@@ -415,7 +403,8 @@ export function ChangesSymbolTree({
       // The file's top-level changes go to their first changed line, as a symbol row goes to its symbol.
       setHeld({ key: row.key, id: TOP_LEVEL_ID });
       setTreeCursor(row.key, TOP_LEVEL_ID);
-      onGoToSymbol(row.key, topLevelSymbol(row.top));
+      const symbol = rowDestination(row.top);
+      if (symbol) onGoToSymbol(row.key, symbol);
       return;
     }
     current.current.onSelect(row.key);
