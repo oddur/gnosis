@@ -56,6 +56,7 @@ import { registerChangeProgress, useFileProgress } from '../lib/file-view-progre
 import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
+import { preferencesUpdated } from '../lib/use-repository-settings';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { countRender } from '../lib/render-count';
 import { openDiffComments } from '../lib/response-needed';
@@ -744,6 +745,21 @@ export function PrChangesView({
       })
       .catch(() => setPreferenceError('Could not save diff preferences.'));
   }
+  /**
+   * "Show file symbols" beside Unviewed only: the same preference as Settings › Review › "Show changed symbols in the
+   * file tree". It is saved, then announced, so every open Changes view and the Settings dialog agree.
+   */
+  function setTreeSymbols(on: boolean) {
+    setPreferenceError('');
+    writes.current = writes.current
+      .catch(() => {})
+      .then(async () => {
+        const next = { ...(await window.electronAPI.loadPreferences()), treeSymbols: on };
+        await window.electronAPI.savePreferences(next);
+        preferencesUpdated(next);
+      })
+      .catch(() => setPreferenceError('Could not save the file tree setting.'));
+  }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
     enabled: !commit && !combined,
@@ -972,6 +988,10 @@ export function PrChangesView({
                   <label>
                     <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
                     Unviewed only
+                  </label>
+                  <label title="Expand a file to see the functions and classes its changes touch">
+                    <input type="checkbox" checked={treeSymbols} onChange={(e) => setTreeSymbols(e.target.checked)} />
+                    Show file symbols
                   </label>
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
