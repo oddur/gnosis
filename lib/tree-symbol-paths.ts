@@ -14,7 +14,7 @@ import { treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSym
  * Pierre's own flattening of empty folders (`a/b/c` as one row) would fold a file into a folder that holds only it, and
  * a class into a file that holds only it, so it is off: real folders are flattened here instead, the same way, and
  * file and symbol folders never are. The paths are in the order the tree shows (presorted): the files in the diff's
- * order, each file's symbols in source order, its top-level changes last.
+ * order, each file's top-level changes first, then its symbols in source order.
  */
 
 export const FILE_MARK = '⁢';
@@ -169,9 +169,10 @@ export function symbolTreePaths(
       leaf(`${path}${segmentName(text)}${rowCode(loading ? 'loading' : 'note', 'muted')}`, { type: 'note', key, text, loading });
     const before = out.paths.length;
     if (known?.state === 'ready') {
-      emitNodes(key, path, known.nodes);
+      // Imports and top-level statements head the file, as they do in its source: first, then the symbols.
       if (known.top)
         leaf(`${path}${known.top.imports ? 'Imports' : 'Top level'}${rowCode(known.top.imports ? 'imports' : 'top', 'muted')}`, { type: 'top', key, top: known.top });
+      emitNodes(key, path, known.nodes);
       if (out.paths.length === before && expanded.has(key)) note('No symbols changed', false);
     } else if (expanded.has(key)) note(known?.state === 'none' ? known.reason : TEXT.loading, known?.state !== 'none');
     // A folder with nothing in it yet is listed as one, so it shows its chevron.

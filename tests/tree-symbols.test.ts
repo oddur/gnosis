@@ -107,7 +107,7 @@ void test('a method changed in an unchanged class nests under a context row for 
   assert.equal(nodes[0].children[0].id, all.find((symbol) => symbol.definition.name === 'flush')?.id);
 });
 
-void test('changes outside every definition make the last row, and the rows add up to the file', async () => {
+void test('changes outside every definition make the first row, and the rows add up to the file', async () => {
   const { hunks, definitions, all } = await file();
   const top = topLevelChanges(hunks, definitions);
   // A multi-line import reads as imports.
@@ -192,10 +192,10 @@ void test('paths: files keep the diff order, folders flatten as Pierre does, fil
   assert.deepEqual(shown, [
     'a | b | c/x.ts/Loading symbols…',
     'a | b | c/y.json',
+    'lib/store.ts/Imports',
     'lib/store.ts/Store/flush',
     'lib/store.ts/gone',
     'lib/store.ts/added',
-    'lib/store.ts/Imports',
     // A collapsed file with nothing to show yet is still a folder, so it has its chevron; its note waits for it to open.
     'one/only.ts/',
     'readme.md',

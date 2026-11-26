@@ -10,7 +10,7 @@ import type { DefinitionKind, SyntaxDefinition, SyntaxLanguage } from './syntax-
  *
  * The outline is a flat list; the tree nests it. A parent that holds changed symbols but is not changed itself is a
  * context row, so the reader can drill down to the method that changed. Changed lines outside every definition
- * (imports, top-level statements) make a last row, so a file's rows add up to its changes.
+ * (imports, top-level statements) make a first row, so a file's rows add up to its changes.
  */
 
 /** The languages whose tags queries name definitions (src/assets/tree-sitter/*-tags.scm): JSON and YAML have none. */
@@ -122,7 +122,7 @@ export function moveWords(mark: Pick<MoveMark, 'side' | 'sameFile' | 'other' | '
   return `${into ? 'Moved from' : 'Moved to'} ${where}${mark.renamed ? `, as ${other.name}` : ''}`;
 }
 
-/** Changed lines outside every definition: what the file's last row counts. */
+/** Changed lines outside every definition: what the file's first row counts. */
 export interface TopLevelChanges {
   added: number;
   deleted: number;
