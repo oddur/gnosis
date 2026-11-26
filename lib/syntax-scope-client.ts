@@ -173,6 +173,16 @@ export function warmSyntax(languages: Iterable<SyntaxLanguage>) {
     );
 }
 
+const definitionListeners = new Set<() => void>();
+/**
+ * Tells `listener` when a file side's definitions land, whoever asked for them (a view, the prefetch): the Changes
+ * tree counts a file's symbols as soon as they are known. The return stops it.
+ */
+export function onDefinitions(listener: () => void): () => void {
+  definitionListeners.add(listener);
+  return () => definitionListeners.delete(listener);
+}
+
 /**
  * A file's definitions, parsed in the worker. Rejects for a file that could not parse, and when workers are not
  * available: the caller then shows the diff as it is. `priority` says where the file is (lib/syntax-parse-queue.ts):
@@ -285,6 +295,7 @@ export function readDefinitions(request: {
         if (memo.size <= MEMO_ENTRIES) break;
         memo.delete(key);
       }
+      for (const listener of definitionListeners) listener();
     },
     () => {
       if (pending.get(request.key)?.promise === promise) pending.delete(request.key);

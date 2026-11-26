@@ -13,6 +13,7 @@ import type { ChangedSymbol } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 import { useReadingPlace } from '../lib/tree-symbol-sync';
 import { changedIds, matchingSymbols, pruneSymbols, readingSymbol, type TreeSymbolNode } from '../lib/tree-symbols';
+import { folderProgress, progressLabel, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
 
@@ -73,12 +74,20 @@ export function ChangesSymbolTree({
   // The files expanded in the tree, as Pierre has them.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const searching = !!query.trim();
-  // Collapsed files are looked up only for a search, which reads nothing.
-  const looked = useMemo(
-    () => (searching ? supported : new Map([...supported].filter(([key]) => expanded.has(key)))),
-    [supported, expanded, searching]
-  );
-  const symbols = useTreeSymbols(looked, expanded, codeSettings, noiseFilter);
+  // Every file is looked up in the caches, which reads nothing, so each file's progress shows once its symbols are
+  // known; only expanded files are read and parsed.
+  const known = useTreeSymbols(supported, expanded, codeSettings, noiseFilter);
+  // The rows list a collapsed file's symbols only for a search: the paths, and Pierre's rebuilds, stay as small as
+  // they were, and a parse landing for a collapsed file does not rebuild them.
+  const listed = useRef<ReadonlyMap<string, FileSymbols>>(new Map());
+  const symbols = useMemo(() => {
+    if (searching) return known;
+    const next = new Map([...known].filter(([key]) => expanded.has(key)));
+    const last = listed.current;
+    const same = next.size === last.size && [...next].every(([key, value]) => sameSymbols(value, last.get(key)));
+    if (!same) listed.current = next;
+    return listed.current;
+  }, [known, expanded, searching]);
   // A search shows a collapsed file's matching symbols only, so a query that matches the file's path does not list
   // every symbol of every file it names.
   const shown = useMemo(() => {
@@ -100,8 +109,19 @@ export function ChangesSymbolTree({
   );
   const pathSignature = layout.paths.join('\n');
   const prepared = useMemo(() => preparePresortedFileTreeInput(layout.paths), [pathSignature]);
-  const current = useRef({ entries, onSelect, layout, supported, progress });
-  current.current = { entries, onSelect, layout, supported, progress };
+  // Each file's progress through its changed symbols, once they are known, and each folder's sum of them: the rows'
+  // `2/5` (lib/tree-symbol-review.ts). The outline's ticks, so a tick anywhere shows here.
+  const fileProgress = new Map<string, SymbolProgress>();
+  for (const e of entries) {
+    const source = supported.get(e.key);
+    const value = known.get(e.key);
+    if (source && value?.state === 'ready')
+      fileProgress.set(e.key, symbolProgress(value.nodes, (id) => progress.isSymbolViewed(source.fileKey, id), e.viewed));
+  }
+  const folderSums = folderProgress(fileProgress);
+  const progressSignature = [...fileProgress, ...folderSums].map(([key, { viewed, total }]) => `${key}:${viewed}/${total}`).join('\n');
+  const current = useRef({ entries, onSelect, layout, supported, progress, fileProgress, folderSums });
+  current.current = { entries, onSelect, layout, supported, progress, fileProgress, folderSums };
   const rowAt = (path: string | null | undefined): TreeRow | undefined => (path ? current.current.layout.rows.get(path) : undefined);
   /** What the menus, the selection count and the Viewed actions know a row by: a file's key, a folder's path. */
   const appPath = (path: string): string | undefined => {
@@ -126,7 +146,18 @@ export function ChangesSymbolTree({
       if (!row) return null;
       if (row.type === 'file') {
         const entry = entryOf(row.key);
-        return entry ? fileRowDecoration(entry, showComments) : null;
+        return entry ? fileRowDecoration(entry, showComments, current.current.fileProgress.get(row.key)) : null;
+      }
+      if (row.type === 'folder') {
+        // The files under it whose symbols are known, summed; nothing until one of their symbols is viewed.
+        const sum = current.current.folderSums.get(row.path);
+        const label = progressLabel(sum);
+        if (!sum || label.kind === 'none') return null;
+        return {
+          text: label.text,
+          parts: [{ text: label.text, color: 'var(--muted-foreground)' }],
+          title: `${sum.viewed} of ${sum.total} changed symbols viewed, in the files here whose symbols are listed`,
+        };
       }
       if (row.type === 'top') {
         const { added, deleted, imports } = row.top;
@@ -197,11 +228,11 @@ export function ChangesSymbolTree({
   // Folders the reader closed: a rebuild of the paths keeps what is open as it was. Real folders and symbols with
   // children open the first time they show; files do not.
   const closed = useRef(new Set<string>());
-  const applied = useRef<{ layout: SymbolTreePaths; entries: unknown; viewed: string }>(undefined);
+  const applied = useRef<{ layout: SymbolTreePaths; entries: unknown; viewed: string; progress: string }>(undefined);
   const applyStatus = useRef(() => {});
   useEffect(() => {
     const last = applied.current;
-    if (last && last.layout === layout && last.entries === entries && last.viewed === viewedSignature) return;
+    if (last && last.layout === layout && last.entries === entries && last.viewed === viewedSignature && last.progress === progressSignature) return;
     // What is open now, by what stays the same across rebuilds.
     const open = new Set<string>();
     if (last)
@@ -213,11 +244,11 @@ export function ChangesSymbolTree({
           closed.current.delete(id);
         } else closed.current.add(id);
       }
-    applied.current = { layout, entries, viewed: viewedSignature };
+    applied.current = { layout, entries, viewed: viewedSignature, progress: progressSignature };
     // Resetting also refreshes Pierre's row decorations: counts, Viewed, quiet words.
     model.resetPaths({ preparedInput: prepared, initialExpandedPaths: openPaths(layout, open, closed.current) });
     applyStatus.current();
-  }, [model, layout, prepared, entries, viewedSignature]);
+  }, [model, layout, prepared, entries, viewedSignature, progressSignature]);
   // The file and the symbol the reader is in.
   const readingFile = supported.get(selected);
   const place = useReadingPlace(readingFile?.fileKey);
@@ -496,3 +527,10 @@ function openPaths(layout: SymbolTreePaths, open: ReadonlySet<string>, closed: R
 
 const folderOf = (item: FileTreeItemHandle | null | undefined): FileTreeDirectoryHandle | undefined =>
   item?.isDirectory() ? (item as FileTreeDirectoryHandle) : undefined;
+
+/** Whether a file's symbols are the same for the rows: the same result, or both still loading, or both none alike. */
+function sameSymbols(a: FileSymbols, b: FileSymbols | undefined) {
+  if (a === b) return true;
+  if (!b || a.state !== b.state) return false;
+  return a.state === 'loading' || (a.state === 'none' && b.state === 'none' && a.reason === b.reason);
+}

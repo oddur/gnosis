@@ -10,7 +10,7 @@ import { hidden, noiseFilterOn, noiseLabel, patchHunks, type NoiseFilter, type N
 import { changedSymbols } from './symbol-outline';
 import { syntaxContentsPlan, wholeFileText } from './syntax-contents';
 import { SYNTAX_MAX_CHARACTERS, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
-import { onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
+import { onDefinitions, onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
 import type { FileSymbols } from './tree-symbol-paths';
 import { symbolTree, topLevelChanges, treeSymbolLanguage } from './tree-symbols';
 import { syntaxContents, syntaxContentsJob, whenSettled } from './use-syntax-contents';
@@ -175,6 +175,58 @@ function peekFileSymbols(
   return peeked;
 }
 
+/** A file's symbols from what the caches hold now, reading nothing: `loading` while they are not known. */
+export const peekTreeSymbols = (source: TreeSymbolSource, settings: CodeIntelligenceSettings, filter: NoiseFilter): FileSymbols =>
+  peekFileSymbols(source, settings, filter, undefined).value;
+
+/**
+ * Reads and parses one file at the top priority, as a file on screen is, until its symbols are known or `waitMs` has
+ * passed: `n` reads the next file only when the walk gets to it. A read still running when the wait ends goes on, so
+ * asking again soon finds it done; the result is then still `loading`.
+ */
+export async function loadTreeSymbols(
+  source: TreeSymbolSource,
+  settings: CodeIntelligenceSettings,
+  filter: NoiseFilter,
+  waitMs: number
+): Promise<FileSymbols> {
+  const deadline = Date.now() + waitMs;
+  const { fileKey, snapshot, file } = source;
+  // A read, then the parse of each side: a few rounds at most.
+  for (let round = 0; round < 4; round++) {
+    const peeked = peekFileSymbols(source, settings, filter, undefined);
+    const need = peeked.need;
+    const left = deadline - Date.now();
+    if (!need || left <= 0) return peeked.value;
+    const work =
+      need.kind === 'read'
+        ? new Promise<void>((resolve, reject) => {
+            syntaxContents.request(syntaxContentsJob({ key: fileKey, snapshot, file }, need.plan), resolve, (failure) =>
+              reject(Error(failure.message.replace(/\.$/, '') || 'Couldn’t read this file'))
+            );
+          })
+        : Promise.all(
+            need.sides.map((side) =>
+              readDefinitions({ key: side.key, url: snapshot.url, language: side.language, text: side.text, priority: 'view' }).catch(() => {
+                throw Error('Couldn’t parse this file');
+              })
+            )
+          ).then(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      work.then(
+        () => ({ kind: 'done' as const }),
+        (error: unknown) => ({ kind: 'failed' as const, reason: error instanceof Error ? error.message : 'Couldn’t read this file' })
+      ),
+      new Promise<{ kind: 'late' }>((resolve) => (timer = setTimeout(() => resolve({ kind: 'late' }), left))),
+    ]);
+    clearTimeout(timer);
+    if (outcome.kind === 'failed') return { state: 'none', reason: outcome.reason };
+    if (outcome.kind === 'late') return { state: 'loading' };
+  }
+  return peekFileSymbols(source, settings, filter, undefined).value;
+}
+
 /**
  * The symbols of the tree's files, by entry key. Every file in `files` is looked up in the caches, which reads
  * nothing; the files in `load` (the ones the reader expanded) are read and parsed at the top priority, as a file on
@@ -199,7 +251,8 @@ export function useTreeSymbols(
   };
   useEffect(() => {
     const changed = () => later.current();
-    const stops = [onNoise(changed), onMoves(changed)];
+    // A file's symbols can show (and count) once its parse lands, whoever asked for it: a view, the prefetch, `n`.
+    const stops = [onNoise(changed), onMoves(changed), onDefinitions(changed)];
     return () => {
       stops.forEach((stop) => stop());
       pending.current?.();
