@@ -303,14 +303,17 @@ void app.whenReady().then(async () => {
     // and the reader stays on it), and the next one marks it. Pressed once more at most: V on a marked row takes it back.
     const oldViewed = "window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')";
     const newRead = "window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='Read')";
-    await wait(`${oldViewed}||${newRead}`).catch(async (error: unknown) => {
+    // V waits for the jump to the new copy to land before it acts, and moving on can fold the old copy's file again:
+    // opened anew while waiting, so its mark shows.
+    const openSource = `(()=>{const r=window.treeRow(${JSON.stringify(sourceName)});if(r&&r.getAttribute('aria-expanded')==='false')r.querySelector('[data-item-section=icon]').click();return false})()`;
+    await wait(`${openSource}||${oldViewed}||${newRead}`).catch(async (error: unknown) => {
       const state = await js(
         `({log:(window.__log||[]).slice(-20),rows:window.treeRows().filter(r=>/parseHeader|source|target|zmoves/.test(r.name)).map(r=>r.name+' '+r.decoration+(r.lit?' *':'')),focused:window.focusedTreeRow(),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file})`
       ).catch(() => 'unreadable');
       throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
     });
     if (await js<boolean>(newRead)) await wait(pressNewCopy);
-    await wait(oldViewed);
+    await wait(`${openSource}||${oldViewed}`);
 
     // ── V on a file without symbols marks the file, as its header's checkbox does ──
     const pressV = (row: string) =>

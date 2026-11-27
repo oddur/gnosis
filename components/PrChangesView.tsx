@@ -36,7 +36,7 @@ import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw, X } from 'l
 import { finishVHint, useVHint } from '../lib/review-hint';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { beginJump, hasSymbolTarget, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewFile, setReviewTarget } from '../lib/tree-symbol-sync';
+import { beginJump, dropWaitingKey, hasSymbolTarget, jumpOnItsWay, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewFile, setReviewTarget, whenJumpLands } from '../lib/tree-symbol-sync';
 import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported } from '../lib/use-tree-symbols';
 import {
   FILE_STOP,
@@ -586,6 +586,7 @@ export function PrChangesView({
     if (!target) return;
     // Choosing a file stops a jump still on its way elsewhere, which would scroll the reader back.
     beginJump();
+    dropWaitingKey();
     // The reader moves on: a file its ticks marked Viewed, held open while they were on it, collapses.
     releaseHeld({ except: viewKey(target) });
     if (!allowed.some((e) => e.key === key)) await reveal();
@@ -604,6 +605,7 @@ export function PrChangesView({
     if (!target) return;
     // A jump still on its way in another file stops: this one is the newest (lib/tree-symbol-sync.ts).
     beginJump();
+    dropWaitingKey();
     const fileKey = viewKey(target);
     // Going to a symbol is moving on too, unless it is in the held file itself.
     releaseHeld({ except: fileKey });
@@ -662,6 +664,7 @@ export function PrChangesView({
   /** Goes to a file without symbols, a stop of its own: selected, at its top, its row lit by the selection. */
   function goToFileStop(key: string, focus: boolean) {
     beginJump();
+    dropWaitingKey();
     navCursor.current = { key, id: FILE_STOP, at: Date.now() };
     setReviewTarget({ key, id: FILE_STOP });
     setTreeReveal((previous) => ({ key, id: FILE_STOP, nonce: (previous?.nonce ?? 0) + 1, focus }));
@@ -859,6 +862,7 @@ export function PrChangesView({
     // The reader moving on their own also ends a press still waiting for a file's symbols: it must not jump them later.
     const movedOn = () => {
       readerMoved();
+      dropWaitingKey();
       navRun.current++;
     };
     const moved = (event: Event) => {
@@ -896,6 +900,11 @@ export function PrChangesView({
   async function reviewAndMove(intent?: { key: string; ids: string[]; viewed: boolean; file: boolean }) {
     // The first V: the tip about it has done its job.
     finishVHint();
+    // A jump still on its way (a click, n): V acts once it lands, on what it landed on (lib/tree-symbol-sync.ts).
+    if (jumpOnItsWay()) {
+      whenJumpLands(() => void reviewAndMove(intent));
+      return;
+    }
     let from: ReviewPlace | undefined;
     let ticked: ReviewTick | undefined;
     if (intent) {

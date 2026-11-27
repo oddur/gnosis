@@ -47,8 +47,17 @@ void test('V never gets stuck: at the end of the stream it ticks, and lines the 
   const seenHidden = new Set<string>();
   markSeen(seenHidden, hidden, place, [0, 10]);
   assert.deepEqual(pageStep({ lines: hidden, place, seen: seenHidden, range: [0, 10], atEnd: false }), { kind: 'tick' });
-  // Nothing of the diff on screen (a slice still mounting): it pages on, rather than ticking blind.
-  assert.deepEqual(pageStep({ lines, place, seen: new Set(), range: undefined, atEnd: false }), { kind: 'down' });
+  // Nothing of the diff on screen (a slice still mounting): it goes to the item, rather than ticking blind.
+  assert.deepEqual(pageStep({ lines, place, seen: new Set(), range: undefined, atEnd: false }), { kind: 'to', place: 0 });
+});
+
+void test('an item not on screen yet is gone to, not paged toward from wherever the stream is', () => {
+  // A jump to it still on its way: the view is above the item, none of it shown.
+  assert.deepEqual(pageStep({ lines, place, seen: new Set(), range: [-200, -160], atEnd: false }), { kind: 'to', place: 0 });
+  // Part of it on screen: paging goes on as before.
+  const seen = new Set<string>();
+  markSeen(seen, lines, place, [-20, 19]);
+  assert.deepEqual(pageStep({ lines, place, seen, range: [-20, 19], atEnd: false }), { kind: 'down' });
 });
 
 void test("after the reader's own scroll, the long item they are in stays current over a neighbour peeking in", () => {

@@ -28,7 +28,7 @@ export function markSeen(seen: Set<string>, lines: readonly string[], place: (li
 /**
  * What V does on an item: tick it, once every changed line has been seen (or a line the diff does not show at all,
  * such as a hidden quiet hunk, which no scroll could show; or nothing is left to scroll to, at the stream's end); else
- * page down to the lines not seen yet, or back up to them when the reader scrolled past some.
+ * page down to the lines not seen yet, or go to them when they are above the view or none of the item is on screen.
  */
 export type PageStep = { kind: 'tick' } | { kind: 'down' } | { kind: 'to'; place: number };
 export function pageStep({
@@ -54,6 +54,13 @@ export function pageStep({
   if (range && next < range[0]) return { kind: 'to', place: next };
   // Nothing more to scroll to: what is left is on screen or cannot be, so V never gets stuck.
   if (atEnd) return { kind: 'tick' };
+  // None of it on screen yet (its diff still off screen or mounting, a jump to it still on its way): V goes to it. A
+  // page from where the stream is now would land wherever that is, another file even.
+  const shown = !!range && lines.some((line) => {
+    const at = place(line);
+    return at !== undefined && at >= range[0] && at <= range[1];
+  });
+  if (!shown) return { kind: 'to', place: next };
   return { kind: 'down' };
 }
 

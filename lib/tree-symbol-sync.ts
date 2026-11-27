@@ -166,3 +166,29 @@ export function useReviewFile(): string | undefined {
 let newestJump = 0;
 export const beginJump = () => ++newestJump;
 export const isNewestJump = (jump: number) => jump === newestJump;
+
+/**
+ * The newest jump while it is still scrolling (ChangesDiff's eased jump), and a V pressed meanwhile. V then waits for
+ * the jump to land and acts on what it landed on: acting at once would page from wherever the scroll is on its way, or
+ * stop the jump short of the item. The reader scrolling, or going somewhere else (n, a click), drops the waiting V.
+ */
+let flying: { jump: number; at: number } | undefined;
+let afterLanding: (() => void) | undefined;
+export const jumpTakesOff = (jump: number) => {
+  flying = { jump, at: Date.now() };
+};
+/** The jump ended: landed, or stopped by the reader. Only a landing runs the V that waited for it. */
+export function jumpEnds(jump: number, landed: boolean) {
+  if (flying?.jump !== jump) return;
+  flying = undefined;
+  const next = afterLanding;
+  afterLanding = undefined;
+  if (landed && isNewestJump(jump)) next?.();
+}
+export const jumpOnItsWay = () => !!flying && isNewestJump(flying.jump) && Date.now() - flying.at < JUMP_WAIT_MS;
+export const whenJumpLands = (run: () => void) => {
+  afterLanding = run;
+};
+export const dropWaitingKey = () => {
+  afterLanding = undefined;
+};

@@ -28,7 +28,7 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
-import { beginJump, isNewestJump, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { beginJump, isNewestJump, jumpEnds, jumpTakesOff, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
 import { PAGE_OVERLAP_LINES, registerPager } from '../lib/review-paging';
 import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
@@ -2164,16 +2164,31 @@ export function ChangesDiff<A>({
     // (lib/diff-here.ts), and the pinned breadcrumb then follows the reader as after any scroll.
     let jumpFrame = 0;
     let jumpId = 0;
-    const stopJump = () => {
+    // The jump scrolling now, by its newest-jump number: a V pressed meanwhile waits for it (lib/tree-symbol-sync.ts).
+    let flyingJump = 0;
+    const endFlight = (landed: boolean) => {
+      if (flyingJump) jumpEnds(flyingJump, landed);
+      flyingJump = 0;
+    };
+    const cancelFrames = () => {
       cancelAnimationFrame(jumpFrame);
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
     };
+    // The reader's own scroll, or the diff going away, stops the jump short.
+    const stopJump = () => {
+      cancelFrames();
+      endFlight(false);
+    };
     const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
-      stopJump();
+      // A new jump takes over from one on its way, and a V waiting for that one waits for this one.
+      cancelFrames();
+      flyingJump = 0;
       clearHere();
       const id = ++jumpId;
       const newest = beginJump();
+      flyingJump = newest;
+      jumpTakesOff(newest);
       // Every bar has the same height, pinned or not. Its top border is the air above it (globals.css), which pins
       // under the file header: only the rest shows there.
       const bar = element.querySelector<HTMLElement>('[data-hunk-header]');
@@ -2263,7 +2278,7 @@ export function ChangesDiff<A>({
           jumpFrame = requestAnimationFrame(step);
           return;
         }
-        stopJump();
+        cancelFrames();
         where();
         if (landed?.isConnected && section && landed.matches('[data-line]')) {
           // A definition is marked whole, in both columns of a split diff, with the gap bars inside it.
@@ -2289,6 +2304,7 @@ export function ChangesDiff<A>({
           markHere(rows);
         }
         onLanded?.();
+        endFlight(true);
       };
       for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
       step(performance.now());
