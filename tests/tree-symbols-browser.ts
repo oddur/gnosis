@@ -297,14 +297,15 @@ void app.whenReady().then(async () => {
     const pressNewCopy =
       "(()=>{const e=window.deepAll('[role=treeitem]').find(e=>window.treeName(e)==='parseHeader'&&!/[Mm]oved/.test(e.querySelector('[data-item-section=decoration]')?.textContent??''));if(!e)return false;e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'v',bubbles:true,composed:true,cancelable:true}));return true})()";
     await wait(pressNewCopy);
-    // V marks only lines that have been on screen: if the jump had not shown the new copy yet, that V showed it
-    // ("Read"), and the next one marks it. Pressed once more at most: V on a marked row takes the mark back.
-    const newCopy = "window.treeRows().find(r=>r.name==='parseHeader'&&!/[Mm]oved/.test(r.decoration))?.decoration";
-    await wait(`['✓','Read'].includes(${newCopy})||window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')`);
-    if ((await js<string | undefined>(newCopy)) === 'Read') await wait(pressNewCopy);
     if ((await js<string | null>(`window.treeRow(${JSON.stringify(sourceName)})?.getAttribute('aria-expanded')??null`)) === 'false')
       await js(`window.treeRow(${JSON.stringify(sourceName)}).querySelector('[data-item-section=icon]').click()`);
-    await wait("window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')");
+    // V marks only lines that have been on screen: if the jump had not shown the new copy yet, that V showed it ("Read",
+    // and the reader stays on it), and the next one marks it. Pressed once more at most: V on a marked row takes it back.
+    const oldViewed = "window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='✓ moved')";
+    const newRead = "window.treeRows().some(r=>r.name==='parseHeader'&&r.decoration==='Read')";
+    await wait(`${oldViewed}||${newRead}`);
+    if (await js<boolean>(newRead)) await wait(pressNewCopy);
+    await wait(oldViewed);
 
     // ── V on a file without symbols marks the file, as its header's checkbox does ──
     const pressV = (row: string) =>
