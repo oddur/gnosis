@@ -28,7 +28,11 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
-import { registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { beginJump, isNewestJump, jumpEnds, jumpTakesOff, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
+import { PAGE_OVERLAP_LINES, registerPager } from '../lib/review-paging';
+import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
+import { markReviewSymbols } from '../lib/symbol-file-sync';
 import { CODE_LINE_HEIGHT, HUNK_SLICE_SIZE } from '../lib/review-diff';
 import { definitionLines, type DefinitionReveal, type SyntaxDefinition } from '../lib/syntax-scope';
 import { ArrowRightLeft, BookOpen } from 'lucide-react';
@@ -445,12 +449,15 @@ function HeaderRow({
   counts,
   live,
   action,
+  since,
 }: {
   gutter?: ReactNode;
   location?: ReactNode;
   controls?: ReactNode;
   range?: HunkRange;
   counts?: HunkCounts;
+  /** The hunk holds an item that changed since the reader viewed it (lib/symbol-carry.ts). */
+  since?: boolean;
   /** The bar heads a hunk, and pins: it has the slots the reader's location is written into. */
   live?: boolean;
   /** What acts on the breadcrumb's definition ("Show whole function"), right after it. */
@@ -468,6 +475,7 @@ function HeaderRow({
       <span className="diff-gap-controls">{controls}</span>
       {(range || counts) && (
         <span className="diff-gap-end">
+          {since && <span className="diff-gap-since">Changed since you viewed</span>}
           {counts && <CountsLabel counts={counts} />}
           <span className="diff-gap-lines">
             {range && <RangeLabel range={range} />}
@@ -798,12 +806,14 @@ function GapBar({
   note,
   range,
   counts,
+  since,
   onShowDefinition,
   plain,
   onCollapseScope,
   onShowElsewhere,
   onOpenHidden,
 }: {
+  since?: boolean;
   part: GapBarPart;
   status: GapStatus;
   onReveal?: (part: GapBarPart, direction: GapDirection) => void;
@@ -912,6 +922,7 @@ function GapBar({
         }
         range={range}
         counts={counts}
+        since={since}
         live
         action={<ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
       />
@@ -928,8 +939,85 @@ export const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 /** The pinned state's thresholds: 0, 5%, 10%… 100% of a header in view (see the observer in ChangesDiff). */
 const STUCK_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
 
+/**
+ * The diff's lines on screen, as places (`diffRowPositions`), first and last: the first and last code lines below the
+ * pinned headers, found by a few hit tests. Undefined while none show, or a slice still mounting is in view (its
+ * estimate, not its lines). The scrolled-through ticks and V's paging both read the screen this way.
+ */
+function diffOnScreen(
+  element: HTMLElement,
+  scroller: HTMLElement,
+  header: HTMLElement | null | undefined,
+  positions: ReadonlyMap<string, number>,
+  split: boolean
+): readonly [number, number] | undefined {
+  const place = (point: LinePoint | undefined) => point && positions.get(`${point.side === 'before' ? 'b' : 'a'}${point.line}`);
+  /** The first code line from `y` on, stepping a code line at a time towards `toward`, up to a few lines. */
+  const probe = (x: number, y: number, toward: 1 | -1, limit: number) => {
+    for (let step = 0; step < AUTO_PROBES; step++) {
+      const at = y + toward * step * CODE_LINE_HEIGHT;
+      if (toward === 1 ? at > limit : at < limit) return undefined;
+      const found = place(lineAtPoint(x, at, element));
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  if (document.visibilityState === 'hidden' || !element.checkVisibility()) return undefined;
+  const view = scroller.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  const covered = codeTop(element, view, header);
+  const top = Math.max(view.top, box.top, covered) + 2;
+  const bottom = Math.min(view.bottom, box.bottom) - 2;
+  if (bottom <= top) return undefined;
+  // A slice still waiting to mount shows its estimate, not its lines: nothing between counts as seen.
+  for (const slice of element.querySelectorAll('.changes-slice:not([data-mounted])')) {
+    const r = slice.getBoundingClientRect();
+    if (r.bottom > top && r.top < bottom) return undefined;
+  }
+  const column = element.querySelector('[data-hunk-header] .diff-gap-where');
+  if (!column) return undefined;
+  // The code's text column; in the split diff, the new side's too, for rows that only add.
+  const xs = [column.getBoundingClientRect().left + 2, ...(split ? [box.left + box.width * 0.75] : [])];
+  const edge = (y: number, toward: 1 | -1, limit: number) => {
+    const found = xs.map((x) => probe(x, y, toward, limit)).filter((value) => value !== undefined);
+    return found.length ? (toward === 1 ? Math.min(...found) : Math.max(...found)) : undefined;
+  };
+  const first = edge(top, 1, bottom);
+  const last = edge(bottom, -1, top);
+  return first !== undefined && last !== undefined && first <= last ? [first, last] : undefined;
+}
+/** Below the file's sticky header and the hunk header pinned under it: lines above this are covered. */
+function codeTop(element: HTMLElement, view: DOMRect, header: HTMLElement | null | undefined) {
+  return Math.max(
+    header?.getBoundingClientRect().bottom ?? view.top,
+    element.querySelector('[data-hunk-header][data-stuck]')?.getBoundingClientRect().bottom ?? view.top
+  );
+}
+
+/** The scrolled-through ticks look at the view at most this often (lib/symbol-auto-view.ts). */
+const LOOK_MS = 250;
+/** Lines each of their two probes steps over, past a comment or a hunk header, before the look gives up. */
+const AUTO_PROBES = 6;
+
 /** A probe that finds no line (a slice still mounting, a comment) looks again on this many following frames. */
 const MISSED_PROBES = 30;
+
+/**
+ * The diff line at a point of the screen, inside `section`: one hit test, into the diff's shadow root. A deleted line
+ * is on the old side, by its old number; any other line is on the new side, by its new number, in either column of the
+ * split diff. Undefined over anything else (a header, a comment, a slice still mounting).
+ */
+function lineAtPoint(x: number, y: number, section: Element): LinePoint | undefined {
+  let hit = document.elementFromPoint(x, y);
+  if (hit?.shadowRoot) hit = hit.shadowRoot.elementFromPoint(x, y) ?? hit;
+  const host = hit && (hit.getRootNode() as ShadowRoot).host;
+  if (!hit || !host || !section.contains(host)) return undefined;
+  const line = hit.closest<HTMLElement>('[data-line]');
+  if (!line) return undefined;
+  const before = line.dataset.lineType === 'change-deletion';
+  const number = Number(!before && line.closest('[data-deletions]') ? line.dataset.altLine : line.dataset.line);
+  return number ? { side: before ? 'before' : 'after', line: number } : undefined;
+}
 
 /**
  * Names where the reader is in a pinned header (`bar`): the definitions around the code line just below it, and that
@@ -941,7 +1029,7 @@ function followReader(
   scopeAt: ((point: LinePoint) => readonly SyntaxDefinition[] | undefined) | undefined,
   file: string,
   /** Hears the definitions around the reader's line whenever they change: the Changes tree follows them. */
-  onPlace?: (chain: readonly SyntaxDefinition[]) => void
+  onPlace?: (chain: readonly SyntaxDefinition[], line?: string) => void
 ): boolean {
   const where = bar.querySelector<HTMLElement>('.diff-gap-where');
   const section = bar.parentElement;
@@ -950,17 +1038,11 @@ function followReader(
   const x = where.getBoundingClientRect().left + 2;
   // Half a code line below the bar: the first line mostly in view, not one sliding out under the bar.
   const y = bar.getBoundingClientRect().bottom + 10;
-  let hit = document.elementFromPoint(x, y);
-  if (hit?.shadowRoot) hit = hit.shadowRoot.elementFromPoint(x, y) ?? hit;
-  const host = hit && (hit.getRootNode() as ShadowRoot).host;
+  const point = lineAtPoint(x, y, section);
   // Nothing to name yet, such as a slice still mounting: the caller looks again next frame.
-  if (!hit || !host || !section.contains(host)) return false;
-  const line = hit.closest<HTMLElement>('[data-line]');
-  if (!line) return false;
-  const before = line.dataset.lineType === 'change-deletion';
-  const number = Number(!before && line.closest('[data-deletions]') ? line.dataset.altLine : line.dataset.line);
-  if (!number) return false;
-  const point: LinePoint = { side: before ? 'before' : 'after', line: number };
+  if (!point) return false;
+  const before = point.side === 'before';
+  const number = point.line;
   const chain = scopeAt?.(point);
   const previous = bar.getAttribute('data-live-key')?.split(':')[2];
   // A deleted line without the old file's definitions keeps the place named last: it sits among the same lines.
@@ -973,7 +1055,7 @@ function followReader(
   const key = `${point.side}:${number}:${scopeKey}`;
   // Told on every look, not only when the place changes: a header that pins again on the line it left must say so
   // again, after the place was cleared while nothing was pinned. The listener drops repeats.
-  if (chain) onPlace?.(chain);
+  if (chain) onPlace?.(chain, `${point.side === 'before' ? 'b' : 'a'}${point.line}`);
   if (bar.getAttribute('data-live-key') === key) return true;
   bar.setAttribute('data-live-key', key);
   const lineSlot = bar.querySelector('.diff-gap-live-line');
@@ -1334,6 +1416,8 @@ export interface DiffNavigator {
 
 /** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+/** The keys that scroll the diff, and so stop a jump on its way; any other key (V, Enter, n) leaves it to land. */
+const JUMP_STOPPING_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 /**
  * The diffs under `scope`, without a diff or an editor inside one's annotations, such as a conflict's in-place editor
@@ -1478,6 +1562,9 @@ export function ChangesDiff<A>({
   written = NO_WRITTEN,
   explained,
   symbolKey,
+  autoView,
+  changedLines,
+  pager,
 }: {
   parts: GapPart[];
   file: { name: string; prevName?: string; status?: string };
@@ -1541,6 +1628,21 @@ export function ChangesDiff<A>({
    * reader is in, as the pinned breadcrumb names it, and jump here as the outline does.
    */
   symbolKey?: string;
+  /**
+   * Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta), in Changes: the file's changed
+   * symbols with their changed lines, ticked Viewed once the reader has read them (lib/symbol-auto-view.ts).
+   */
+  autoView?: { fileKey: string; symbols: readonly AutoViewSymbol[] };
+  /**
+   * Lines of items that changed since the reader viewed them (`a12`, `b7`; lib/symbol-carry.ts): the headers of their
+   * hunks say so. Changes and Explanation topics pass the same, from the file's model.
+   */
+  changedLines?: ReadonlySet<string>;
+  /**
+   * In Changes with symbol rows: each review item's changed lines, so V can page through an item taller than the
+   * screen before it ticks it (lib/review-paging.ts).
+   */
+  pager?: { fileKey: string; lines: ReadonlyMap<string, readonly string[]> };
 }) {
   const latestRails = useRef(rails);
   latestRails.current = rails;
@@ -1644,6 +1746,25 @@ export function ChangesDiff<A>({
   const latestNoiseLines = useRef(noiseLines);
   latestNoiseLines.current = noiseLines;
   const slices = useMemo(() => blocks.flatMap((block) => (block.kind === 'hunk' ? block.slices : [])), [blocks]);
+  // Hunks holding a line of an item changed since the reader viewed it.
+  const sinceHunks = useMemo(() => {
+    const out = new Set<string>();
+    if (!changedLines?.size) return out;
+    for (const part of parts) {
+      if (part.kind !== 'hunk') continue;
+      let oldLine = part.hunk.oldStart,
+        newLine = part.hunk.newStart;
+      for (const row of part.hunk.rows) {
+        if ((row.type === '+' && changedLines.has(`a${newLine}`)) || (row.type === '-' && changedLines.has(`b${oldLine}`))) {
+          out.add(part.key);
+          break;
+        }
+        if (row.type !== '+') oldLine++;
+        if (row.type !== '-') newLine++;
+      }
+    }
+    return out;
+  }, [parts, changedLines]);
   // Hunks with a change: pinned context (a definition's signature) is not a location of its own.
   const changedHunks = useMemo(() => new Set(blocks.flatMap((block) => (block.kind === 'hunk' && block.changed ? [block.key] : []))), [blocks]);
   const progressive = slices.length > MANY_DIFFS || (slices.length > 1 && slices.some((slice) => slice.key.includes(':')));
@@ -1787,6 +1908,111 @@ export function ChangesDiff<A>({
     return whenIdle(() => setMounted((current) => new Set([...current, ...next.map((slice) => slice.key)])));
   }, [progressive, slices, mounted, nearVersion]);
 
+  // Scrolled-through ticks (lib/symbol-auto-view.ts). While the diff is in view, a look every LOOK_MS at most while the
+  // reader scrolls, and while a symbol on screen waits for its dwell when they don't: hit tests find the first and last
+  // code lines on screen, and a few box reads where they are. Nothing runs per frame, and nothing at all while the
+  // diff is out of view.
+  const autoSignature = autoView ? `${autoView.fileKey}\u0000${autoView.symbols.map((symbol) => `${symbol.id}:${symbol.lines.join(',')}`).join('\n')}` : '';
+  const latestAutoView = useRef(autoView);
+  latestAutoView.current = autoView;
+  useEffect(() => {
+    const element = root.current;
+    const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
+    const wanted = latestAutoView.current;
+    if (!wanted || !element || !scroller) return;
+    const { fileKey, symbols } = wanted;
+    const positions = diffRowPositions(
+      parts.flatMap((part) => (part.kind === 'hunk' ? [part.hunk] : [])),
+      split
+    );
+    // Never the file, never a symbol already ticked, and never one the reader unticked in this session.
+    const eligible = (id: string) => !isFileViewed(fileKey) && !isSymbolViewed(fileKey, id) && !wasSymbolUnticked(fileKey, id);
+    const viewer = createAutoViewer(symbols, positions, eligible);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastTop = scroller.scrollTop;
+    let lastAt = performance.now();
+    let inView = false;
+    const onScreen = () => diffOnScreen(element, scroller, stickyUnder?.current, positions, split);
+    const look = () => {
+      timer = undefined;
+      // Symbols the diff may still tick: the reader may have ticked, unticked or marked the file since the last look.
+      if (!inView || !symbols.some((symbol) => eligible(symbol.id))) return;
+      const now = performance.now();
+      const scrollTop = scroller.scrollTop;
+      const speed = Math.abs(scrollTop - lastTop) / Math.max(1, now - lastAt);
+      lastTop = scrollTop;
+      lastAt = now;
+      // While the reader steps with V or n, only V ticks (a review target holds until their own move).
+      const paused = !!peekReviewTarget();
+      const read = viewer.look({ at: now, range: paused ? undefined : onScreen(), fast: speed > FAST_SCROLL_PX_PER_MS, paused });
+      // The last one marks the file too, which stays open while the reader is on it (lib/symbol-file-sync.ts).
+      if (read.length) void markReviewSymbols(fileKey, read, true);
+      // While a symbol on screen waits for its dwell, look again in a moment without a scroll to wake it; else the
+      // next scroll does.
+      if (viewer.waiting()) timer = setTimeout(look, LOOK_MS);
+    };
+    const schedule = () => {
+      if (!timer) timer = setTimeout(look, LOOK_MS);
+    };
+    const visibility = new IntersectionObserver(
+      (entries) => {
+        inView = entries[entries.length - 1].isIntersecting;
+        if (inView) {
+          scroller.addEventListener('scroll', schedule, { passive: true });
+          schedule();
+        } else {
+          scroller.removeEventListener('scroll', schedule);
+          clearTimeout(timer);
+          timer = undefined;
+        }
+      },
+      { root: scroller }
+    );
+    visibility.observe(element);
+    return () => {
+      visibility.disconnect();
+      scroller.removeEventListener('scroll', schedule);
+      clearTimeout(timer);
+    };
+  }, [autoSignature, parts, split]);
+
+  // V's pager (lib/review-paging.ts): what of an item is on screen, and a page down. Its scrolls are the program's: the
+  // item stays the reader's target while V pages through it.
+  const latestPager = useRef(pager);
+  latestPager.current = pager;
+  const pagerKey = pager?.fileKey;
+  useEffect(() => {
+    const element = root.current;
+    const scroller = element?.closest<HTMLElement>(DIFF_SCROLLER);
+    if (!pagerKey || !element || !scroller) return;
+    const positions = diffRowPositions(
+      parts.flatMap((part) => (part.kind === 'hunk' ? [part.hunk] : [])),
+      split
+    );
+    const byPlace = new Map<number, string>();
+    for (const [line, at] of positions) if (!byPlace.has(at)) byPlace.set(at, line);
+    return registerPager(pagerKey, {
+      lines: (id) => latestPager.current?.lines.get(id),
+      place: (line) => positions.get(line),
+      range: () => diffOnScreen(element, scroller, stickyUnder?.current, positions, split),
+      page: () => {
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return false;
+        const view = scroller.getBoundingClientRect();
+        // A screen of code below the pinned headers, less the overlap, in whole lines.
+        const lines = Math.max(1, Math.floor((view.bottom - codeTop(element, view, stickyUnder?.current)) / CODE_LINE_HEIGHT) - PAGE_OVERLAP_LINES);
+        const instant = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        scroller.scrollBy({ top: lines * CODE_LINE_HEIGHT, behavior: instant ? 'auto' : 'smooth' });
+        return true;
+      },
+      goToPlace: (at) => {
+        const line = byPlace.get(at);
+        if (!line) return;
+        const number = Number(line.slice(1));
+        own.current?.goTo({ side: line[0] === 'b' ? 'before' : 'after', line: number, here: [number, number] });
+      },
+    });
+  }, [pagerKey, parts, split]);
+
   // Pinned hunk headers (#395). CSS sticky does the pinning; this only marks a pinned header, so its expand controls
   // can step aside. The file header's height comes from a ResizeObserver, never a layout read, and sets both the
   // headers' `top` and the line below which one counts as pinned. A pinned header sits 1 px under the file header,
@@ -1846,7 +2072,7 @@ export function ChangesDiff<A>({
     let frame = 0;
     let listening = false;
     const treeKey = latestSymbolKey.current;
-    const place = treeKey ? (chain: readonly SyntaxDefinition[]) => setReadingPlace(treeKey, chain) : undefined;
+    const place = treeKey ? (chain: readonly SyntaxDefinition[], line?: string) => setReadingPlace(treeKey, chain, line) : undefined;
     // Frames left to look again for a place a probe could not name (MISSED_PROBES).
     let retries = 0;
     const probe = () => {
@@ -1940,15 +2166,36 @@ export function ChangesDiff<A>({
     // (lib/diff-here.ts), and the pinned breadcrumb then follows the reader as after any scroll.
     let jumpFrame = 0;
     let jumpId = 0;
-    const stopJump = () => {
+    // The jump scrolling now, by its newest-jump number: a V pressed meanwhile waits for it (lib/tree-symbol-sync.ts).
+    let flyingJump = 0;
+    const endFlight = (landed: boolean) => {
+      if (flyingJump) jumpEnds(flyingJump, landed);
+      flyingJump = 0;
+    };
+    const cancelFrames = () => {
       cancelAnimationFrame(jumpFrame);
       jumpFrame = 0;
-      for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
+      for (const type of READER_SCROLLS) scroller.removeEventListener(type, readerStops);
+    };
+    // The reader's own scroll, or the diff going away, stops the jump short.
+    const stopJump = () => {
+      cancelFrames();
+      endFlight(false);
+    };
+    // A key that does not scroll (V, Enter) is no reader's scroll: one pressed meanwhile waits for the landing.
+    const readerStops = (event: Event) => {
+      if (event instanceof KeyboardEvent && !JUMP_STOPPING_KEYS.has(event.key)) return;
+      stopJump();
     };
     const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
-      stopJump();
+      // A new jump takes over from one on its way, and a V waiting for that one waits for this one.
+      cancelFrames();
+      flyingJump = 0;
       clearHere();
       const id = ++jumpId;
+      const newest = beginJump();
+      flyingJump = newest;
+      jumpTakesOff(newest);
       // Every bar has the same height, pinned or not. Its top border is the air above it (globals.css), which pins
       // under the file header: only the rest shows there.
       const bar = element.querySelector<HTMLElement>('[data-hunk-header]');
@@ -2008,7 +2255,7 @@ export function ChangesDiff<A>({
       let still = 0;
       const step = (now: number) => {
         jumpFrame = 0;
-        if (id !== jumpId) return;
+        if (id !== jumpId || !isNewestJump(newest)) return;
         // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
         if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
           jumpFrame = requestAnimationFrame(step);
@@ -2038,7 +2285,7 @@ export function ChangesDiff<A>({
           jumpFrame = requestAnimationFrame(step);
           return;
         }
-        stopJump();
+        cancelFrames();
         where();
         if (landed?.isConnected && section && landed.matches('[data-line]')) {
           // A definition is marked whole, in both columns of a split diff, with the gap bars inside it.
@@ -2064,8 +2311,9 @@ export function ChangesDiff<A>({
           markHere(rows);
         }
         onLanded?.();
+        endFlight(true);
       };
-      for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
+      for (const type of READER_SCROLLS) scroller.addEventListener(type, readerStops, { passive: true });
       step(performance.now());
     };
     // A pinned crumb goes to its definition's first line (#417): it reveals every hidden line from there down to where
@@ -2232,6 +2480,7 @@ export function ChangesDiff<A>({
           note={scopeNote}
           range={next?.kind === 'hunk' && next.changed ? next.range : undefined}
           counts={next?.kind === 'hunk' && next.changed ? next.counts : undefined}
+          since={next?.kind === 'hunk' && sinceHunks.has(next.key)}
           onShowDefinition={onShowDefinition}
           plain={plainGaps}
           onCollapseScope={onCollapseScope}
@@ -2286,6 +2535,7 @@ export function ChangesDiff<A>({
             action={structure && <ShowDefinition scope={scope} onShow={onShowDefinition} onCollapse={onCollapseScope} />}
             range={block.range}
             counts={block.counts}
+            since={sinceHunks.has(block.key)}
             live
           />
         </div>

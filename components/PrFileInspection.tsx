@@ -31,6 +31,8 @@ import { gapContaining, hunksFromDiff, shownSelection } from '../lib/diff-gaps';
 import { ChangesDiff } from './ChangesDiff';
 import { useDiffFileModel } from './useDiffFileModel';
 import { usePendingSymbolJump } from '../lib/tree-symbol-sync';
+import { releaseHeld, useHeldOpen } from '../lib/symbol-file-sync';
+import { setLineSelection } from '../lib/review-comment';
 import { applyCodeIntelligence } from '../lib/use-syntax-contents';
 import { codeIntelligenceSettings } from '../lib/code-intelligence';
 import { diffThemeName } from '../lib/diff-worker-pool';
@@ -87,6 +89,7 @@ export function PrFileInspection({
   briefSubject,
   onOpenBrief,
   onOpenFeedback,
+  autoViewSymbols = false,
   symbolTree = false,
 }: {
   entry: ChangeFileEntry;
@@ -105,6 +108,8 @@ export function PrFileInspection({
   briefSubject?: ReviewSubject;
   onOpenBrief?: () => void;
   onOpenFeedback?: (url: string, threadId: string) => void;
+  /** Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): the diff ticks what the reader read. */
+  autoViewSymbols?: boolean;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   /** The file's kind tags, such as Test, beside its path and status. */
@@ -122,7 +127,10 @@ export function PrFileInspection({
   const viewed = progress.isFileViewed(activeKey);
   // Jumping to a line must show it, without changing the reviewer's viewed progress.
   const [jumpedOpen, setJumpedOpen] = useState(false);
-  const collapsed = viewed && !jumpedOpen && !focusThreadId;
+  // A file its last symbol tick marked Viewed stays open while the reader is on it (lib/symbol-file-sync.ts), and
+  // collapses once they move on. A file marked Viewed by hand collapses at once, as always.
+  const heldOpen = useHeldOpen(activeKey);
+  const collapsed = viewed && !jumpedOpen && !focusThreadId && !(symbolTree && heldOpen);
   // A symbol chosen in the file tree opens a file shown collapsed, as a jump to a line does: its diff takes the jump.
   const symbolJump = usePendingSymbolJump(symbolTree ? activeKey : '');
   useEffect(() => {
@@ -139,6 +147,22 @@ export function PrFileInspection({
   const sourceJump = useRef<MarkdownLocation | undefined>(undefined);
   const previewJump = useRef<MarkdownLocation | undefined>(undefined);
   const sectionRef = useRef<HTMLElement>(null);
+  // A held file collapses once its diff has scrolled wholly out of view, keeping what the reader looks at in place.
+  useEffect(() => {
+    const section = sectionRef.current;
+    const scroller = section?.closest<HTMLElement>('.commit-diff-stream');
+    if (!symbolTree || !heldOpen || !section || !scroller) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[entries.length - 1].isIntersecting) releaseHeld({ only: activeKey, anchor: true });
+      },
+      { root: scroller }
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [symbolTree, heldOpen, activeKey]);
+  // Unmounted (scrolled far away, or the view closed): the reader has left it, and it shows collapsed when it returns.
+  useEffect(() => () => releaseHeld({ only: activeKey }), [activeKey]);
   const headerRef = useRef<HTMLElement>(null);
   const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
@@ -153,6 +177,11 @@ export function PrFileInspection({
   const [fileAttempt, setFileAttempt] = useState(0);
   const unsupportedFiles = useRef(new Map<string, string>());
   const [range, setRange] = useState<SelectedLineRange | null>(null);
+  // Enter comments on the selected lines, when there are any (lib/review-comment.ts).
+  useEffect(() => {
+    setLineSelection(activeKey, range);
+    return () => setLineSelection(activeKey, null);
+  }, [activeKey, range]);
   const code = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
   const currentFile = useRef(activeKey);
@@ -239,6 +268,25 @@ export function PrFileInspection({
     status: contents?.lfs ? undefined : entry.file.status,
     noiseFilter,
   });
+  // Each review item's changed lines, for V to page through a long one before it ticks it (lib/review-paging.ts).
+  const pager = useMemo(
+    () =>
+      symbolTree && model.symbols && model.symbolLines
+        ? { fileKey: activeKey, lines: new Map(model.symbols.map((symbol) => [symbol.id, model.symbolLines?.get(symbol.id) ?? []] as const)) }
+        : undefined,
+    [symbolTree, model.symbols, model.symbolLines, activeKey]
+  );
+  // The symbols the reader may tick by scrolling through them: the outline's own, each with its changed lines.
+  const autoView = useMemo(
+    () =>
+      autoViewSymbols && model.symbols && model.symbolLines
+        ? {
+            fileKey: activeKey,
+            symbols: model.symbols.map((symbol) => ({ id: symbol.id, lines: model.symbolLines?.get(symbol.id) ?? [] })),
+          }
+        : undefined,
+    [autoViewSymbols, model.symbols, model.symbolLines, activeKey]
+  );
   // How much of the file is noise the reader hides (#396), for its header: "90 formatting", or "Formatting only".
   const quiet = model.noise?.file;
   const quietStat = quiet && (quiet.added || quiet.deleted) ? quietHeader(quiet, entry.file.additions, entry.file.deletions) : undefined;
@@ -539,6 +587,8 @@ export function PrFileInspection({
       : { status: 'absent' };
   };
   function mark(andNext: boolean) {
+    // The reader marked a file by hand, and may be going on: files their ticks held open collapse.
+    releaseHeld({ except: andNext ? undefined : activeKey });
     setJumpedOpen(false);
     void progress.markFileViewed(activeKey, true);
     if (andNext) onViewedNext?.();
@@ -694,7 +744,15 @@ export function PrFileInspection({
             <input
               type="checkbox"
               checked={viewed}
-              onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  mark(false);
+                  return;
+                }
+                // Unviewed by hand: its symbol ticks stay as the reader left them.
+                releaseHeld({ only: activeKey });
+                void progress.markFileViewed(activeKey, false);
+              }}
             />
             Viewed
           </label>
@@ -873,6 +931,9 @@ export function PrFileInspection({
                   }}
                   stickyUnder={headerRef}
                   symbolKey={symbolTree ? activeKey : undefined}
+                  autoView={symbolTree ? autoView : undefined}
+                  changedLines={model.changedLines}
+                  pager={pager}
                   onRetry={model.retry}
                   target={sourceLocation ? { side: sourceLocation.side, line: sourceLocation.start } : undefined}
                   lineCount={lineCount}

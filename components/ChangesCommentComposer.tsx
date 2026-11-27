@@ -1,3 +1,4 @@
+import { closeReviewComment, reviewCommentOpen } from '../lib/review-comment';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useSessionDraft, useSessionDraftId, writeSessionDraft } from '../lib/session-drafts';
@@ -42,6 +43,12 @@ export function ChangesCommentComposer({
     const frame = requestAnimationFrame(() => actions.current?.scrollIntoView({ block: 'nearest' }));
     return () => cancelAnimationFrame(frame);
   }, []);
+  // Opened for the item under review (Enter, lib/review-comment.ts): closing hands the keyboard back, or goes on.
+  const next = useRef(false);
+  const cancel = () => {
+    onCancel();
+    closeReviewComment('cancelled');
+  };
   async function run(action: (text: string) => Promise<void>) {
     if (pending.current || !body.trim()) return;
     pending.current = true;
@@ -51,6 +58,8 @@ export function ChangesCommentComposer({
       await action(body.trim());
       setBody('');
       onCancel();
+      closeReviewComment(next.current ? 'next' : 'saved');
+      next.current = false;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -118,8 +127,20 @@ export function ChangesCommentComposer({
         }
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing) return;
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            cancel();
+            return;
+          }
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
+            // Opened for the item under review, ⌘⇧↩ saves and then does what V does; elsewhere it saves a local note.
+            if (e.shiftKey && reviewCommentOpen()) {
+              next.current = true;
+              void submit(destination);
+              return;
+            }
             void submit(e.shiftKey && onAddToBrief ? 'local' : destination);
           }
         }}
@@ -139,8 +160,9 @@ export function ChangesCommentComposer({
       <div ref={actions} className="changes-comment-buttons">
         <span className="changes-comment-shortcut">
           {shortcut}Enter to {destination === 'local' ? 'add local note' : 'add to review'}
+          {reviewCommentOpen() && ` · ${shortcut}⇧Enter to add and go on`}
         </span>
-        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={cancel}>
           Cancel
         </Button>
         {onSave && (

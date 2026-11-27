@@ -1,7 +1,11 @@
 import { useId, useSyncExternalStore } from 'react';
-import { Check, ChevronRight, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
+import { Check, ChevronRight, RefreshCw, SquareDot, SquareMinus, SquarePlus } from 'lucide-react';
 import { useFileProgress } from '../lib/file-view-progress';
-import { outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
+import { markReviewSymbols, useSymbolFileSync } from '../lib/symbol-file-sync';
+import { isUpdated, useCarry } from '../lib/symbol-carry';
+import { readingLabel, usePaging } from '../lib/review-paging';
+import { useReviewFile, useReviewTarget } from '../lib/tree-symbol-sync';
+import { isBody, isPseudo, isTopLevel, outlineSummary, spokenSymbol, type ChangedSymbol, type SymbolChange } from '../lib/symbol-outline';
 import { definitionNoun } from '../lib/hunk-scopes';
 
 /**
@@ -64,6 +68,40 @@ function Marker({ change }: { change: SymbolChange }) {
   return <Icon className="diff-outline-marker" data-change={change} size={13} strokeWidth={2} aria-hidden="true" />;
 }
 
+/**
+ * A symbol in words: "function merge". The file's top-level changes (TOP_LEVEL_ID) lead the list as one more entry,
+ * "Imports" or "Top level", ticked and counted like a symbol (lib/tree-symbol-review.ts), so this bar's "x/y viewed"
+ * and the Changes tree's count agree. A container's own lines are its body, "Store · body"; the container itself is
+ * no entry, as it is no review item.
+ */
+const named = (symbol: ChangedSymbol) =>
+  isTopLevel(symbol)
+    ? `${symbol.definition.name.toLowerCase()} changes`
+    : isBody(symbol)
+      ? symbol.definition.crumb
+      : `${definitionNoun(symbol.definition)} ${symbol.definition.name}`;
+
+/** An item V is paging through, with how much of it the reader has seen (lib/review-paging.ts). */
+function Reading({ share }: { share: number }) {
+  const label = readingLabel(share);
+  return (
+    <span className="diff-outline-reading" data-full={label.full || undefined} title={label.title}>
+      {label.text}
+    </span>
+  );
+}
+
+/** An item that changed since the reader viewed it in an earlier revision (lib/symbol-carry.ts). */
+function Updated() {
+  return (
+    <span className="diff-outline-updated" title="Changed since you viewed it">
+      <RefreshCw size={12} aria-hidden="true" />
+      Changed
+      <span className="sr-only"> since you viewed it</span>
+    </span>
+  );
+}
+
 /** A symbol's name as its crumb shows it: the kind word tinted as the syntax theme tints keywords. */
 function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
   const { crumb, crumbKeyword } = symbol.definition;
@@ -77,6 +115,15 @@ function SymbolName({ symbol }: { symbol: ChangedSymbol }) {
 
 export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = false, onMarkFileViewed, markFileLabel, onGo, quiet = 0 }: OutlineProps) {
   const open = useExpanded();
+  const synced = useSymbolFileSync(fileKey);
+  useCarry();
+  // The item V is paging through (lib/review-paging.ts): its chip says how much of it the reader has seen.
+  const paging = usePaging();
+  // The item under review, if it is here: its chip says Enter comments on it (lib/review-comment.ts).
+  const target = useReviewTarget();
+  const reviewFile = useReviewFile();
+  const current = (symbol: ChangedSymbol) => !!target && reviewFile === fileKey && target.id === symbol.id;
+  const readingShare = (symbol: ChangedSymbol) => (paging && paging.fileKey === fileKey && paging.id === symbol.id ? paging.share : undefined);
   const progress = useFileProgress();
   const listId = useId();
   if (!symbols) {
@@ -94,21 +141,27 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
   const all = symbols.length > 0 && done === symbols.length;
   // Symbols whose changes are all hidden as noise are left out, and counted, so the outline stays honest.
   const quietNote = quiet > 0 ? `${quiet} ${quiet === 1 ? 'symbol' : 'symbols'} with quiet changes only` : undefined;
-  const summary = !symbols.length && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
-  const tick = (symbol: ChangedSymbol, on: boolean) => void progress.markSymbolsViewed(fileKey, [symbol.id], on);
+  const summary = !symbols.some((symbol) => !isPseudo(symbol)) && quietNote ? 'No functions or classes changed beyond quiet changes' : outlineSummary(symbols);
+  // Through the file's sync (lib/symbol-file-sync.ts): in symbol mode the last tick marks the file, and an untick of
+  // a Viewed file's symbol makes it unviewed. Elsewhere the ticks stay apart from the file, as before.
+  const tick = (symbol: ChangedSymbol, on: boolean) => void markReviewSymbols(fileKey, [symbol.id], on);
   const go = (symbol: ChangedSymbol) => (
     <button
       type="button"
       className="diff-outline-go"
       data-symbol={symbol.id}
-      aria-label={`Go to ${spokenSymbol(symbol)}`}
-      title={`Go to ${definitionNoun(symbol.definition)} ${symbol.definition.name}`}
+      aria-label={`Go to ${isPseudo(symbol) ? named(symbol) : spokenSymbol(symbol)}`}
+      title={`Go to ${named(symbol)}${current(symbol) ? ' · Enter to comment' : ''}`}
       onClick={() => onGo(symbol)}
     >
       <SymbolName symbol={symbol} />
     </button>
   );
-  const rest = symbols.length - SHOWN_COLLAPSED;
+  // Collapsed, the bar previews the definitions the summary names; the top-level entry, with its tick, is in the list
+  // (and counts in "x/y viewed"), and is a chip only when the file changes nothing else.
+  const definitions = symbols.filter((symbol) => !isTopLevel(symbol));
+  const chips = (definitions.length ? definitions : symbols).slice(0, SHOWN_COLLAPSED);
+  const rest = (definitions.length || symbols.length) - SHOWN_COLLAPSED;
   return (
     <section
       className="diff-outline"
@@ -134,13 +187,18 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
         )}
         {!open && symbols.length > 0 && (
           <ul className="diff-outline-chips" aria-label="Symbols">
-            {symbols.slice(0, SHOWN_COLLAPSED).map((symbol, index) => (
-              <li key={symbol.id} className="diff-outline-chip" data-change={symbol.change} data-viewed={viewed[index] || undefined}>
-                <Marker change={symbol.change} />
-                {go(symbol)}
-                {viewed[index] && <Check className="diff-outline-check" size={12} aria-label="Viewed" />}
-              </li>
-            ))}
+            {chips.map((symbol) => {
+              const seen = viewed[symbols.indexOf(symbol)];
+              return (
+                <li key={symbol.id} className="diff-outline-chip" data-change={symbol.change} data-viewed={seen || undefined}>
+                  <Marker change={symbol.change} />
+                  {go(symbol)}
+                  {seen && <Check className="diff-outline-check" size={12} aria-label="Viewed" />}
+                  {!seen && readingShare(symbol) !== undefined && <Reading share={readingShare(symbol) ?? 0} />}
+                  {!seen && readingShare(symbol) === undefined && isUpdated(fileKey, symbol.id) && <Updated />}
+                </li>
+              );
+            })}
             {rest > 0 && (
               <li className="diff-outline-chip">
                 <button type="button" className="diff-outline-more" aria-expanded={false} aria-controls={listId} onClick={() => setExpanded(true)}>
@@ -157,7 +215,11 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
         )}
         {symbols.length > 0 && (
           <span className="diff-outline-end">
-            {all && !fileViewed && onMarkFileViewed ? (
+            {all && !fileViewed && synced ? (
+              // The file follows its ticks: no offer to mark it. All ticked and not Viewed is a file the reader
+              // unviewed by hand; its header's checkbox marks it again, as does the next tick.
+              <span className="diff-outline-progress">All viewed</span>
+            ) : all && !fileViewed && onMarkFileViewed ? (
               <>
                 <span className="diff-outline-progress">All viewed</span>
                 <button type="button" className="diff-outline-mark" onClick={onMarkFileViewed}>
@@ -181,14 +243,17 @@ export function DiffOutline({ symbols, pending, fileKey, fileName, fileViewed = 
                   type="checkbox"
                   className="diff-outline-tick"
                   checked={viewed[index]}
-                  disabled={fileViewed}
-                  aria-label={`Viewed ${definitionNoun(symbol.definition)} ${symbol.definition.name}`}
+                  // A Viewed file's symbols untick when the file follows them, which unviews the file.
+                  disabled={fileViewed && !synced}
+                  aria-label={`Viewed ${named(symbol)}`}
                   onChange={(event) => tick(symbol, event.target.checked)}
                 />
               </label>
               <Marker change={symbol.change} />
               <span className="sr-only">{MARKERS[symbol.change].label}</span>
               {go(symbol)}
+              {!viewed[index] && readingShare(symbol) !== undefined && <Reading share={readingShare(symbol) ?? 0} />}
+              {!viewed[index] && readingShare(symbol) === undefined && isUpdated(fileKey, symbol.id) && <Updated />}
               {symbol.parents.length > 0 && (
                 <span className="diff-outline-parents" aria-hidden="true">
                   in {symbol.parents.map((parent) => parent.crumb).join(' › ')}

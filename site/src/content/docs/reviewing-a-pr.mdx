@@ -60,14 +60,65 @@ Changes shows the diff of the PR. A file tree is on the left.
 - Changes outside every function and class show first, as **Imports** or **Top level**.
 - A class that is not changed, but has a changed method, shows in gray so you can open it.
 - Each symbol shows its added and removed lines. A symbol whose changes are only formatting or comments shows a short word, such as **Format**, instead.
-- To mark a symbol as viewed, select it and press <Kbd keys="v" />, or right-click it. This updates the outline above the diff too. It does not mark the file as viewed, so the file stays open.
+- To mark a symbol as viewed, select it and press <Kbd keys="v" />, or right-click it. The symbol then shows a gray check (**✓**) in place of its counts. This updates the outline above the diff too.
 - The search box above the file tree also finds symbol names.
 
-To turn this off, go to <Setting name="Show changed symbols in the file tree" section="Review" />.
+To turn this on or off, clear or select **Symbols** above the file tree, next to **Unviewed only**. This is the same setting as <Setting name="Show changed symbols in the file tree" section="Review" />.
+
+When **Symbols** is selected, a second line of checkboxes shows under it:
+
+- **Auto-mark** is the same setting as <Setting name="Mark a symbol viewed after you scroll through it" section="Review" />.
+- **Peek on hover** is the same setting as <Setting name="Peek at a symbol when you rest the pointer on it" section="Review" />. See [Peek at a symbol](#peek-at-a-symbol).
+
+### Review symbol by symbol
+
+<Prerelease /> When the file tree shows changed symbols, it also shows your progress through them.
+
+- After you mark a symbol of a file as viewed, the file shows how many of its changed symbols are viewed, such as **2/5**, instead of its added and removed lines. Symbols with only formatting or comment changes do not count. The **Imports** or **Top level** row counts as one more symbol: mark it as viewed with <Kbd keys="v" />, right-click, or its tick in the outline above the diff.
+- When you mark the last changed symbol of a file as viewed, Gnosis marks the file as viewed. The file stays open while you read it, and it collapses when you go to another file or scroll past it. If you clear the mark of one symbol, the file is not viewed any more, and the other symbols stay marked.
+- If you clear the **Viewed** checkbox of a file, its symbols keep their marks. The file then shows a gray check, such as **✓ 5/5**, until you mark it again.
+- A class or namespace whose changes are in its methods is not a symbol to mark: it shows a gray check when everything in it is viewed. If the class has changes of its own, such as a changed field, they show as a **Body** row first under it, which you mark like a symbol.
+- A folder shows the total for its files, for the files whose symbols Gnosis has read.
+- Press <Kbd keys="n" /> to go to the next symbol that is not viewed. Press <Kbd keys="⇧ N" /> to go to the previous one. Gnosis starts at the symbol that you read, or at the symbol that you selected in the file tree. It skips viewed files and opens the file of the symbol in the file tree. If it must read the symbols of the next file first, it shows **Loading symbols…**. At the last symbol, it tells you that there are no more symbols after it.
+- To mark symbols as viewed while you scroll, turn on <Setting name="Mark a symbol viewed after you scroll through it" section="Review" />. A symbol is marked after all of its changed lines were on the screen and you stayed on it for a moment. Symbols that you scroll past quickly are not marked.
+
+### Review with V
+
+<Prerelease /> To review a PR one change at a time, turn on **Unviewed only** and **Symbols** above the file tree.
+
+1. Select the first symbol in the file tree, or press <Kbd keys="n" />. Until you first press <Kbd keys="v" />, a tip under the file tree options reminds you of it.
+2. Read it, then press <Kbd keys="v" />. Gnosis marks it as viewed and goes to the next symbol that is not viewed. A file without symbols, such as a JSON file or an image, is one step.
+3. Press <Kbd keys="v" /> again until nothing is left. The toolbar shows how many files are viewed, and how many changes are left to review, such as **2 / 10 files viewed · 14 left to review**. When you mark the last symbol of a file, Gnosis marks the file as viewed and goes on to the next file.
+
+A function or class that moved to another file, or was renamed, is one step: its new copy. Its old copy shows **Moved**, goes to the new copy when you select it, and shows **✓ moved** when you mark the new copy.
+
+A symbol that is taller than the screen is not marked at once: <Kbd keys="v" /> scrolls down one screen at a time, and the symbol shows how much of it you have read, such as **Reading 40%**. When all of its changed lines have been on the screen, it shows **Read**, and the next <Kbd keys="v" /> marks it.
+
+To comment on the symbol you are on, press <Kbd keys="Enter" />: in the file tree, press it again on the selected row. The comment covers the symbol's changed lines, or the lines you selected. Press <Kbd keys="⌘ ⇧ Enter" /> to add the comment and go to the next symbol.
+
+If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it and go back. If you started part way down, <Kbd keys="v" /> goes back to the first item you have not viewed when it reaches the end. When everything is viewed, Gnosis shows **Everything viewed** with a button to review the PR.
+
+### Peek at a symbol
+
+<Prerelease /> To look at a symbol without leaving your place, select it in the file tree and press <Kbd keys="Space" />, or hold the pointer over it. A panel shows its changes, as the diff shows them, and the changed functions and classes in this PR that call it.
+
+- Press <Kbd keys="Enter" /> to go to the symbol, <Kbd keys="v" /> to mark it as viewed, or <Kbd keys="Esc" /> to close the panel.
+- Use <Kbd keys="↑" /> and <Kbd keys="↓" /> to choose a caller, and <Kbd keys="Enter" /> to peek at it. Press <Kbd keys="Backspace" /> to go back.
+- To stop the panel from opening when you hold the pointer over a symbol, clear **Peek on hover** above the file tree. <Kbd keys="Space" /> still opens it.
+- Gnosis only looks in the files that it has read. To look in every file, select **Look in all files**. A name that more than one changed function uses is not matched. For a class, struct or other type, the panel lists the callers of its changed methods.
+
+### After the author pushes
+
+<Prerelease /> When the file tree shows symbols, a new push keeps your marks on the code that did not change. Gnosis compares each symbol you marked as viewed with the new version of the PR. Changes to spaces and blank lines do not count.
+
+- A symbol that is the same stays marked as viewed. If every symbol of a file is the same, the file stays viewed.
+- A symbol that changed shows **↻ Changed** in the file tree and in the outline above the diff, and is not viewed any more. Its hunks show **Changed since you viewed**. A file or folder shows how many items in it changed, such as **2 changed**, and so does the toolbar. <Kbd keys="n" /> and <Kbd keys="v" /> go to them like to any other item that is not viewed.
+- A file without symbols stays viewed if its changes are the same.
+- Marks that you made before this version of Gnosis do not carry over.
 
 ### Mark files as viewed
 
-Select the **Viewed** checkbox of a file when you finish it. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters.
+Select the **Viewed** checkbox of a file when you finish it, or select the file in the file tree and press <Kbd keys="v" />. This works for every file, also files without symbols, such as JSON or Markdown files. To mark a whole folder, right-click it in the file tree and select **Mark folder as viewed**. This marks only the files that match your filters. To start again, select **Reset viewed** under the file tree. This clears **Viewed** for every file and symbol in these changes, also the files that your filters hide. Select **Undo** in the message that shows to get them back.
 
 Viewed marks stay on your computer. They do not change the Viewed boxes on GitHub.
 

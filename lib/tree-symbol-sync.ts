@@ -10,20 +10,71 @@ import type { SyntaxDefinition } from './syntax-scope';
  */
 
 const places = new Map<string, string>();
+/** When each file's place last changed, so `n` starts from whichever moved last: the reader, or the tree's row. */
+const placeTimes = new Map<string, number>();
 const placeListeners = new Set<() => void>();
+const lines = new Map<string, string>();
 const SEP = '>';
 
 /**
  * The reader is in `chain` (outermost first) of the file, or no longer in any of its hunks (undefined). Each part is
  * `kind:name@start`: the start tells overloads apart (lib/tree-symbols.ts `readingSymbol`).
  */
-export function setReadingPlace(fileKey: string, chain: readonly Pick<SyntaxDefinition, 'kind' | 'name' | 'start'>[] | undefined) {
+export function setReadingPlace(
+  fileKey: string,
+  chain: readonly Pick<SyntaxDefinition, 'kind' | 'name' | 'start'>[] | undefined,
+  /** The line at the reading position, `a12` or `b7`: a changed top-level line is the top level's, whatever is near. */
+  line?: string
+) {
   const value = chain?.map((definition) => `${definition.kind}:${definition.name}@${definition.start}`).join(SEP);
+  if (line === undefined) lines.delete(fileKey);
+  else lines.set(fileKey, line);
   if ((places.get(fileKey) ?? undefined) === value) return;
   if (value === undefined) places.delete(fileKey);
   else places.set(fileKey, value);
+  placeTimes.set(fileKey, Date.now());
   for (const listener of placeListeners) listener();
 }
+/** Where the reader is in the file now, as `useReadingPlace` has it, and when that last changed (0: never). */
+export function peekReadingPlace(fileKey: string): { place: string[] | undefined; at: number; line?: string } {
+  const value = places.get(fileKey);
+  return { place: value === undefined ? undefined : value ? value.split(SEP) : [], at: placeTimes.get(fileKey) ?? 0, line: lines.get(fileKey) };
+}
+
+/** The symbol row last chosen in the tree, or moved to with its keys, by entry key and symbol id. */
+let treeCursor: { key: string; id: string; at: number } | undefined;
+export function setTreeCursor(key: string, id: string) {
+  treeCursor = { key, id, at: Date.now() };
+}
+export const peekTreeCursor = () => treeCursor;
+
+/**
+ * The review item the reader was taken to (V, n, Shift+V, a tree row), which stays the current one until the reader
+ * moves on their own: their wheel, touch, pointer or a scroll key in the diff (`readerMoved`), or another target.
+ * The jump's own scroll, layout settling and the reading place naming a neighbour never end it, nor does time. The
+ * tree keeps its row lit meanwhile, and V ticks it (lib/tree-symbol-review.ts `currentItem`).
+ */
+let target: { key: string; id: string } | undefined;
+const targetListeners = new Set<() => void>();
+const targetChanged = () => targetListeners.forEach((listener) => listener());
+export function setReviewTarget(item: { key: string; id: string } | undefined) {
+  if (target?.key === item?.key && target?.id === item?.id) return;
+  target = item;
+  targetChanged();
+}
+/** The reader moved on their own: the item they were taken to is no longer the current one. */
+export const readerMoved = () => setReviewTarget(undefined);
+export const peekReviewTarget = () => target;
+export function useReviewTarget(): { key: string; id: string } | undefined {
+  return useSyncExternalStore(
+    (listener) => {
+      targetListeners.add(listener);
+      return () => targetListeners.delete(listener);
+    },
+    () => target
+  );
+}
+
 const subscribePlaces = (listener: () => void) => {
   placeListeners.add(listener);
   return () => placeListeners.delete(listener);
@@ -89,3 +140,55 @@ export function usePendingSymbolJump(fileKey: string): boolean {
     return !!jump && Date.now() - jump.at < JUMP_WAIT_MS;
   });
 }
+
+/** The file the review target is in, by revision key (PrChangesView): its outline says "Enter to comment" on it. */
+let targetFile: string | undefined;
+export function setReviewFile(fileKey: string | undefined) {
+  if (targetFile === fileKey) return;
+  targetFile = fileKey;
+  targetChanged();
+}
+export function useReviewFile(): string | undefined {
+  return useSyncExternalStore(
+    (listener) => {
+      targetListeners.add(listener);
+      return () => targetListeners.delete(listener);
+    },
+    () => targetFile
+  );
+}
+
+/**
+ * The newest jump anywhere in Changes. Each diff runs its own jump, an eased scroll that aims anew each frame, and one
+ * diff's jump knows nothing of another's: a quick second n or V into another file would be pulled back by the first
+ * still on its way. Every jump, and every move to another file, takes a new number; a jump that is not the newest stops.
+ */
+let newestJump = 0;
+export const beginJump = () => ++newestJump;
+export const isNewestJump = (jump: number) => jump === newestJump;
+
+/**
+ * The newest jump while it is still scrolling (ChangesDiff's eased jump), and a V pressed meanwhile. V then waits for
+ * the jump to land and acts on what it landed on: acting at once would page from wherever the scroll is on its way, or
+ * stop the jump short of the item. The reader scrolling, or going somewhere else (n, a click), drops the waiting V.
+ */
+let flying: { jump: number; at: number } | undefined;
+let afterLanding: (() => void) | undefined;
+export const jumpTakesOff = (jump: number) => {
+  flying = { jump, at: Date.now() };
+};
+/** The jump ended: landed, or stopped by the reader. Only a landing runs the V that waited for it. */
+export function jumpEnds(jump: number, landed: boolean) {
+  if (flying?.jump !== jump) return;
+  flying = undefined;
+  const next = afterLanding;
+  afterLanding = undefined;
+  if (landed && isNewestJump(jump)) next?.();
+}
+export const jumpOnItsWay = () => !!flying && isNewestJump(flying.jump) && Date.now() - flying.at < JUMP_WAIT_MS;
+export const whenJumpLands = (run: () => void) => {
+  afterLanding = run;
+};
+export const dropWaitingKey = () => {
+  afterLanding = undefined;
+};

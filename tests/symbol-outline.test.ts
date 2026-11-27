@@ -6,7 +6,7 @@ import { structuredPatch } from 'diff';
 import * as TreeSitter from 'web-tree-sitter';
 import type { GapHunk } from '../lib/diff-gaps';
 import { createSyntaxEngine, type SyntaxLanguage } from '../lib/syntax-scope';
-import { changedSymbols, outlineSummary, spokenSymbol } from '../lib/symbol-outline';
+import { bodyId, changedSymbolLines, changedSymbols, outlineSummary, reviewItems, spokenSymbol, trivialLine, trivialSymbols } from '../lib/symbol-outline';
 
 /** The changed-symbols outline (#394) with the real tree-sitter runtime: added, modified and removed symbols. */
 const assets = path.resolve(__dirname, '../src/assets/tree-sitter');
@@ -86,6 +86,28 @@ void test('Added, modified and removed symbols, matched across both sides by the
   assert.deepEqual(symbols[2].parents.map((d) => d.name), ['Store'], 'A method keeps its class as its parent');
   assert.equal(outlineSummary(symbols), 'Changes 4 functions');
   assert.equal(spokenSymbol(symbols[1]), 'function rebase, removed');
+});
+
+void test("Each symbol's changed lines, by side, for the scrolled-through ticks; a folded symbol's go to its parent", async () => {
+  const after = BEFORE
+    .map((line) => (line === '  out.push(...b);' ? '  out.push(...b.filter(Boolean));' : line))
+    .concat(['', 'export class Queue {', '  push(n: number) {', '    return n;', '  }', '}']);
+  const hunks = hunksOf(BEFORE, after);
+  const definitions = { after: await parse('typescript', after), before: await parse('typescript', BEFORE) };
+  const lines = changedSymbolLines(hunks, definitions);
+  assert.ok(lines);
+  const push = BEFORE.indexOf('  out.push(...b);') + 1;
+  const queue = after.indexOf('export class Queue {') + 1;
+  // Which lines, in any order.
+  assert.deepEqual(Object.fromEntries([...lines].map(([id, list]) => [id, [...list].sort()])), {
+    'function:merge': [`a${push}`, `b${push}`],
+    // The added method folds into the added class, with its lines.
+    'class:Queue': [queue, queue + 1, queue + 2, queue + 3, queue + 4].map((line) => `a${line}`),
+  });
+  // The same symbols as the outline lists, in the same order.
+  assert.deepEqual([...lines.keys()], changedSymbols(hunks, definitions)?.map((symbol) => symbol.id));
+  // Lines the outline leaves out are left out here too.
+  assert.deepEqual([...(changedSymbolLines(hunks, definitions, (side) => side === 'before')?.get('function:merge') ?? [])], [`a${push}`]);
 });
 
 void test('A symbol inside an added one folds into it; a whole new class lists once', async () => {
@@ -199,4 +221,76 @@ void test('An added file lists its symbols as added, and a deleted file its symb
   assert.ok(removed);
   assert.ok(removed.every((symbol) => symbol.change === 'removed' && symbol.side === 'before'));
   assert.equal(outlineSummary(removed), 'Removes 1 struct and 1 impl block');
+});
+
+void test('a class whose own changes are a blank line or a brace is a roll-up; a changed field makes it a Body item', async () => {
+  for (const line of ['', '  ', '}', '});', '},', '{', ')', ']']) assert.equal(trivialLine(line), true, JSON.stringify(line));
+  for (const line of ['  private items = 1;', '@Injectable()', '} else {', 'x']) assert.equal(trivialLine(line), false, line);
+  const methods = (lines: string[]) =>
+    lines.map((line) => (line === '    return this.items.length;' ? '    return this.items.length * 2;' : line === '    this.items = [];' ? '    this.items = [0];' : line));
+  // Both methods change, and a blank line comes in between them: the class's own change is that blank line.
+  const blank = methods(BEFORE).flatMap((line) => (line === '  clear(): void {' ? ['', line] : [line]));
+  const hunks = hunksOf(BEFORE, blank);
+  const definitions = { after: await parse('typescript', blank), before: await parse('typescript', BEFORE) };
+  const all = changedSymbols(hunks, definitions) ?? [];
+  assert.ok(all.some((symbol) => symbol.id === 'class:Store'), 'The blank line makes the class a changed symbol');
+  const trivial = trivialSymbols(hunks, definitions);
+  assert.ok(trivial.has('class:Store'));
+  assert.deepEqual(reviewItems(all, trivial).map((symbol) => symbol.id), ['class:Store>method:flush', 'class:Store>method:clear']);
+  // A changed field: the class's own lines are its Body, an item beside the methods.
+  const field = methods(BEFORE).map((line) => (line === '  private items: number[] = [];' ? '  private items: number[] = [1];' : line));
+  const fieldHunks = hunksOf(BEFORE, field);
+  const fieldDefinitions = { after: await parse('typescript', field), before: await parse('typescript', BEFORE) };
+  const fieldAll = changedSymbols(fieldHunks, fieldDefinitions) ?? [];
+  assert.equal(trivialSymbols(fieldHunks, fieldDefinitions).has('class:Store'), false);
+  const items = reviewItems(fieldAll, trivialSymbols(fieldHunks, fieldDefinitions));
+  assert.deepEqual(new Set(items.map((symbol) => symbol.id)), new Set([bodyId('class:Store'), 'class:Store>method:flush', 'class:Store>method:clear']));
+  const body = items.find((symbol) => symbol.id === bodyId('class:Store'));
+  assert.ok(body);
+  assert.equal(body.definition.crumb, 'Store · body');
+  assert.equal(body.first.line, field.indexOf('  private items: number[] = [1];') + 1, 'The Body goes to the first of its own lines');
+  // Lines the reader hides as quiet count as trivial too.
+  const quietField = trivialSymbols(fieldHunks, fieldDefinitions, undefined, (_side, line) => line === field.indexOf('  private items: number[] = [1];') + 1);
+  assert.equal(quietField.has('class:Store'), true);
+  // An added class folds its methods: one item, as before.
+  const added = [...BEFORE, '', 'export class Queue {', '  push(n: number) {', '    return n;', '  }', '}'];
+  const addedHunks = hunksOf(BEFORE, added);
+  const addedDefinitions = { after: await parse('typescript', added), before: await parse('typescript', BEFORE) };
+  assert.deepEqual(reviewItems(changedSymbols(addedHunks, addedDefinitions) ?? [], trivialSymbols(addedHunks, addedDefinitions)).map((symbol) => symbol.id), ['class:Queue']);
+});
+
+// With a backtracking pattern the first call would not return in any useful time: the test would hang, not fail.
+void test('a trivial-line check is linear: a long run of brackets with text after it is not trivial', () => {
+  assert.equal(trivialLine(`${'}'.repeat(200)} as const`), false);
+  assert.equal(trivialLine(`${'})'.repeat(200)};`), true);
+});
+
+void test('A nested function in a method of an added class folds into the class, with every line', async () => {
+  const after = [...BEFORE, '', 'export class Queue {', '  push(n: number) {', '    function inner() {', '      return n;', '    }', '    return inner();', '  }', '}'];
+  const hunks = hunksOf(BEFORE, after);
+  const definitions = { after: await parse('typescript', after), before: await parse('typescript', BEFORE) };
+  const symbols = changedSymbols(hunks, definitions);
+  assert.deepEqual(brief(symbols ?? []), [['class:Queue', 'added', 8, 0]], 'The class counts its method and the function in it');
+  assert.equal(changedSymbolLines(hunks, definitions)?.get('class:Queue')?.length, 8, 'and has all their lines');
+});
+
+void test('The tree and the outline list the same items when a hidden comment sits in an added class', async () => {
+  const { symbolTree } = await import('../lib/tree-symbols');
+  const { countedIds } = await import('../lib/tree-symbol-review');
+  const { visibleSymbols } = await import('../lib/symbol-outline');
+  const after = [...BEFORE, '', 'export class Queue {', '  // a note the reader hides', '  push(n: number) {', '    return n;', '  }', '}'];
+  const hunks = hunksOf(BEFORE, after);
+  // Without the old side, "added" needs every line of the class added: leaving the comment out must not unfold it.
+  const definitions = { after: await parse('typescript', after) };
+  const comment = after.indexOf('  // a note the reader hides') + 1;
+  const skip = (side: 'before' | 'after', line: number) => side === 'after' && line === comment;
+  const all = changedSymbols(hunks, definitions) ?? [];
+  const shown = changedSymbols(hunks, definitions, skip) ?? [];
+  assert.notDeepEqual(brief(all), brief(shown), 'The case: leaving the comment out changes the folding');
+  const trivial = trivialSymbols(hunks, definitions, undefined, skip);
+  const tree = countedIds({ state: 'ready', nodes: symbolTree(all, shown, [], undefined, trivial) });
+  const visible = visibleSymbols(all, shown);
+  const outline = reviewItems(all.filter((symbol) => visible.has(symbol.id)), trivial).map((symbol) => symbol.id);
+  assert.deepEqual(outline, tree);
+  assert.deepEqual(outline, ['class:Queue']);
 });

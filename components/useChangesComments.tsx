@@ -172,6 +172,15 @@ export function useChangesComments({
       .forEach((c) => location(c.line, c.side).brief.push(c));
   if (composer) location(composer.line, composer.side).composer = composer;
   const canComment = writable || !!brief;
+  /**
+   * Opens the composer for every view of this file: the draft is shared by its key, but its setter only updates this
+   * hook's own state. Enter on the item under review begins it from Changes (PrChangesView), and the file's diff, which
+   * draws the composer, must see it too.
+   */
+  const openComposer = (where: Location) => {
+    setComposer(where);
+    writeSessionDraft(composerId, where);
+  };
   function begin(range: SelectedLineRange) {
     if (!canComment) return;
     if (range.endSide && range.endSide !== range.side) {
@@ -181,7 +190,7 @@ export function useChangesComments({
       }
       // Dragging across a changed block is natural. Only GitHub requires a single side.
       setError('');
-      setComposer({
+      openComposer({
         line: range.side === 'additions' ? range.start : range.end,
         startLine: range.side === 'additions' ? range.end : range.start,
         side: 'RIGHT',
@@ -192,7 +201,7 @@ export function useChangesComments({
     setError('');
     const start = Math.min(range.start, range.end),
       line = Math.max(range.start, range.end);
-    setComposer({
+    openComposer({
       line,
       ...(start !== line ? { startLine: start } : {}),
       side: range.side === 'deletions' ? 'LEFT' : 'RIGHT',

@@ -69,6 +69,80 @@ export function changedSymbols(
    */
   skip?: (side: 'before' | 'after', line: number) => boolean
 ): ChangedSymbol[] | undefined {
+  return collectSymbols(hunks, definitions, skip)?.map(({ id, change, definition, side, parents, first, added, deleted }) => ({
+    id,
+    change,
+    definition,
+    side,
+    parents,
+    first,
+    added,
+    deleted,
+  }));
+}
+
+/**
+ * Each changed symbol's own changed lines, by id, as `changedSymbols()` counts them: `a12` for added line 12 of the new
+ * file, `b7` for deleted line 7 of the old one. A symbol folded into an added or removed parent gives its lines to the
+ * parent. What "Mark a symbol viewed after you scroll through it" waits to see (lib/symbol-auto-view.ts).
+ */
+export function changedSymbolLines(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  skip?: (side: 'before' | 'after', line: number) => boolean
+): Map<string, string[]> | undefined {
+  const symbols = collectSymbols(hunks, definitions, skip);
+  return symbols && new Map(symbols.map((symbol) => [symbol.id, symbol.lines]));
+}
+
+/**
+ * A changed line that carries no change of its own to read: blank, or only brackets and braces, with an optional `;` or
+ * `,` (`}`, `});`, `},`, `{`). A class whose own changed lines are all such, between edited methods, is no review stop
+ * of its own (lib/tree-symbol-review.ts).
+ */
+// One character class, no nested quantifier: linear on any line (a nested one backtracked exponentially on a long run
+// of brackets followed by text). It also takes `;` or `,` between brackets, as `}; }`, which is no code either.
+const TRIVIAL_LINE = /^[\s{}()[\];,]*$/;
+export const trivialLine = (text: string) => TRIVIAL_LINE.test(text);
+
+/**
+ * The symbols whose own changed lines (as `changedSymbols()` attributes them) are all trivial: blank or brackets only,
+ * or `quiet` (lines the reader hides as noise). `skip` leaves lines out, as it does for the outline.
+ */
+export function trivialSymbols(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  skip?: (side: 'before' | 'after', line: number) => boolean,
+  quiet?: (side: 'before' | 'after', line: number) => boolean
+): Set<string> {
+  // Each changed line's text, by the key the symbols name their lines with.
+  const texts = new Map<string, string>();
+  for (const hunk of hunks) {
+    let oldLine = hunk.oldStart,
+      newLine = hunk.newStart;
+    for (const row of hunk.rows) {
+      if (row.type === '+') texts.set(`a${newLine}`, row.text);
+      else if (row.type === '-') texts.set(`b${oldLine}`, row.text);
+      if (row.type !== '+') oldLine++;
+      if (row.type !== '-') newLine++;
+    }
+  }
+  const out = new Set<string>();
+  for (const symbol of collectSymbols(hunks, definitions, skip) ?? []) {
+    const plain = symbol.lines.every((key) => {
+      const side = key[0] === 'a' ? 'after' : 'before';
+      return trivialLine(texts.get(key) ?? '') || !!quiet?.(side, Number(key.slice(1)));
+    });
+    if (plain) out.add(symbol.id);
+  }
+  return out;
+}
+
+function collectSymbols(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  skip?: (side: 'before' | 'after', line: number) => boolean
+): (ChangedSymbol & { lines: string[] })[] | undefined {
   const after = definitions.after;
   if (!after) return undefined;
   const before = definitions.before;
@@ -83,10 +157,12 @@ export function changedSymbols(
     first: ChangedSymbol['first'];
     added: number;
     deleted: number;
+    lines: string[];
   }
   const entries = new Map<string, Entry>();
   const addedLines = new Set<number>();
   const touch = (definition: SyntaxDefinition, side: 'after' | 'before', order: number, at: ChangedSymbol['first'], added: number, deleted: number) => {
+    const line = `${at.side[0]}${at.line}`;
     const id = (side === 'after' ? afterIds : beforeIds)?.get(definition)?.id;
     if (!id) return;
     // A symbol in both files gathers its added and deleted lines under the new file's definition.
@@ -95,9 +171,10 @@ export function changedSymbols(
     if (entry) {
       entry.added += added;
       entry.deleted += deleted;
+      entry.lines.push(line);
       return;
     }
-    entries.set(id, { ...own, order, first: at, added, deleted });
+    entries.set(id, { ...own, order, first: at, added, deleted, lines: [line] });
   };
   let order = 0;
   for (const hunk of hunks) {
@@ -119,7 +196,7 @@ export function changedSymbols(
       if (row.type !== '-') newLine++;
     }
   }
-  const symbols: (ChangedSymbol & { order: number })[] = [];
+  const symbols: (ChangedSymbol & { order: number; lines: string[] })[] = [];
   for (const [id, entry] of entries) {
     const parents = (entry.side === 'after' ? afterIds : beforeIds)?.get(entry.definition)?.parents ?? [];
     let change: SymbolChange;
@@ -130,18 +207,21 @@ export function changedSymbols(
       for (let line = entry.definition.start; line <= entry.definition.end && whole; line++) whole = addedLines.has(line);
       change = whole ? 'added' : 'modified';
     }
-    symbols.push({ id, change, definition: entry.definition, side: entry.side, parents, first: entry.first, added: entry.added, deleted: entry.deleted, order: entry.order });
+    symbols.push({ id, change, definition: entry.definition, side: entry.side, parents, first: entry.first, added: entry.added, deleted: entry.deleted, order: entry.order, lines: entry.lines });
   }
   // A symbol inside an added or removed one is part of it.
   const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
   const folded = symbols.filter((symbol) => {
     if (symbol.change === 'modified') return true;
     const parts = symbol.id.split('>');
-    for (let depth = parts.length - 1; depth > 0; depth--) {
+    // Into the outermost ancestor of the same change, which folds into nothing itself: a nearer one may already be
+    // folded away, and what it took would be lost with it.
+    for (let depth = 1; depth < parts.length; depth++) {
       const ancestor = byId.get(parts.slice(0, depth).join('>'));
       if (ancestor && ancestor.change === symbol.change) {
         ancestor.added += symbol.added;
         ancestor.deleted += symbol.deleted;
+        ancestor.lines.push(...symbol.lines);
         if (symbol.order < ancestor.order) {
           ancestor.order = symbol.order;
           ancestor.first = symbol.first;
@@ -153,7 +233,7 @@ export function changedSymbols(
   });
   return folded
     .sort((a, b) => a.order - b.order)
-    .map((symbol): ChangedSymbol => ({
+    .map((symbol): ChangedSymbol & { lines: string[] } => ({
       id: symbol.id,
       change: symbol.change,
       definition: symbol.definition,
@@ -162,7 +242,71 @@ export function changedSymbols(
       first: symbol.first,
       added: symbol.added,
       deleted: symbol.deleted,
+      lines: symbol.lines,
     }));
+}
+
+/**
+ * The id of a file's top-level changes (imports, statements outside every definition) when they take part in review
+ * like a symbol: their Viewed tick is kept under it beside the symbols' (lib/file-view-progress.ts). Real ids are
+ * `kind:name` paths, so `@` can never start one.
+ */
+export const TOP_LEVEL_ID = '@top';
+export const isTopLevel = (symbol: Pick<ChangedSymbol, 'id'>) => symbol.id === TOP_LEVEL_ID;
+/**
+ * A container's own changed lines, as one review item under it (`containerId>@body`): a class's changed field or
+ * decorator, beside its changed methods. A container is never a review item itself; it rolls up from what is under
+ * it (lib/tree-symbol-review.ts). `@` can never start a real `kind:name` part.
+ */
+export const BODY_PART = '@body';
+export const bodyId = (containerId: string) => `${containerId}>${BODY_PART}`;
+export const isBody = (symbol: Pick<ChangedSymbol, 'id'>) => symbol.id.endsWith(`>${BODY_PART}`);
+/** The container a body item's id belongs to. */
+export const bodyOwner = (id: string) => id.slice(0, -(BODY_PART.length + 1));
+/** An entry of the outline that is no definition of its own: the file's top level, or a container's body. */
+export const isPseudo = (symbol: Pick<ChangedSymbol, 'id'>) => isTopLevel(symbol) || isBody(symbol);
+
+/** A container's own changed lines as its Body item: going to it lands on the first of them. */
+export function bodySymbol(container: ChangedSymbol): ChangedSymbol {
+  const { line } = container.first;
+  const name = 'Body';
+  return {
+    ...container,
+    id: bodyId(container.id),
+    definition: { kind: container.definition.kind, name, label: name, crumb: `${container.definition.name} · body`, start: line, end: line, signatureEnd: line },
+    side: container.first.side,
+    parents: [...container.parents, container.definition],
+  };
+}
+
+/**
+ * The symbols with a change that shows: from `all` (`changedSymbols()` with every line), those that `shown` (the same
+ * with quiet lines left out) lists, or lists something under. Added, modified and removed, and what folds into what,
+ * come from `all`: leaving a hidden comment out of an added class must not make it modified and unfold it. The tree
+ * and the outline both list exactly these, so their items, counts and ticks agree.
+ */
+export function visibleSymbols(all: readonly Pick<ChangedSymbol, 'id'>[], shown: readonly Pick<ChangedSymbol, 'id'>[]): Set<string> {
+  const ids = new Set(shown.map((symbol) => symbol.id));
+  return new Set(all.filter((symbol) => ids.has(symbol.id) || shown.some((other) => other.id.startsWith(`${symbol.id}>`))).map((symbol) => symbol.id));
+}
+
+/**
+ * The outline's review items from its changed symbols: a container (a symbol with changed symbols listed under it) is
+ * no item; its own lines are its Body item in its place, unless they are trivial (`trivial`, from `trivialSymbols`),
+ * when they are nothing to read. Leaves stay as they are.
+ */
+export function reviewItems(
+  all: readonly ChangedSymbol[],
+  trivial: ReadonlySet<string>,
+  /** Old copies of moves (`movedAwayIds`): reviewed at their new copies, no items here. */
+  movedAway: ReadonlySet<string> = new Set()
+): ChangedSymbol[] {
+  const symbols = all.filter((symbol) => !movedAway.has(symbol.id));
+  return symbols.flatMap((symbol) => {
+    const container = symbols.some((other) => other.id.startsWith(`${symbol.id}>`));
+    if (!container) return [symbol];
+    return trivial.has(symbol.id) ? [] : [bodySymbol(symbol)];
+  });
 }
 
 const PLURALS: Record<string, string> = { class: 'classes', property: 'properties', entry: 'entries' };
@@ -171,7 +315,9 @@ const plural = (noun: string, n: number) => (n === 1 ? noun : (PLURALS[noun] ?? 
  * What a file's changes touch, in words: "Changes 3 functions", "Changes 2 functions and 1 class", "Adds 1 test".
  * Kinds are counted in the order they first appear.
  */
-export function outlineSummary(symbols: readonly ChangedSymbol[]): string {
+export function outlineSummary(all: readonly ChangedSymbol[]): string {
+  // The top-level and body entries are no function or class: the summary names the definitions only.
+  const symbols = all.filter((symbol) => !isPseudo(symbol));
   if (!symbols.length) return 'No functions or classes changed';
   const counts = new Map<string, number>();
   for (const symbol of symbols) {

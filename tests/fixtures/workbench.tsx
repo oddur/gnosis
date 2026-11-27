@@ -16,6 +16,8 @@ import { NOISE_FILES, noiseFilterContents, noiseFilterFiles } from './noise-filt
 import { MOVE_FILES, movedSymbolsContents, movedSymbolsFiles, movedSymbolsLargeContents, movedSymbolsLargeFiles } from './moved-symbols';
 import { NAV_TOPIC_FILES, breadcrumbNavContents, breadcrumbNavFiles } from './breadcrumb-nav';
 import { treeSymbolsContents, treeSymbolsFiles } from './tree-symbols';
+import { peekReviewTarget } from '../../lib/tree-symbol-sync';
+import { pagerKeys, pagerOf } from '../../lib/review-paging';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -41,6 +43,11 @@ import { parsePauseRequest, pauseUntil } from '../../lib/notification-settings';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+// What the review is on, for the tree-symbols suite's reports on a timeout.
+(window as unknown as { __review: unknown }).__review = {
+  target: () => peekReviewTarget(),
+  pagers: () => pagerKeys().map((key) => ({ key, top: pagerOf(key)?.lines('@top')?.length ?? null })),
+};
 // The browser checks wait on window.__gnosisSettled instead of sleeping (lib/test-settled.ts).
 installSettledRegistry();
 // Saved like the main process: full PRs, with summary rows in each snapshot.

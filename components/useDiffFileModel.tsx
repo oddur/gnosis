@@ -34,7 +34,10 @@ import { useSyntaxContents, useViewTier, type SyntaxFile } from '../lib/use-synt
 import { pathEnabled, type CodeIntelligenceSettings } from '../lib/code-intelligence';
 import { syntaxContentsPlan, wholeFileText } from '../lib/syntax-contents';
 import { nextScopePlan, scopePlanSignature, showScopePlan, type ScopeRail, type ShownScope } from '../lib/show-scope';
-import { changedSymbols } from '../lib/symbol-outline';
+import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, reviewItems, trivialSymbols, visibleSymbols } from '../lib/symbol-outline';
+import { movedAwayIds, topLevelChanges, topLevelSymbol } from '../lib/tree-symbols';
+import { isUpdated, useCarry } from '../lib/symbol-carry';
+import { progressVersion, useFileProgress } from '../lib/file-view-progress';
 import { useSemanticNoise } from '../lib/use-semantic-noise';
 import { useFileMoves } from '../lib/use-moved-symbols';
 import type { MoveMark } from '../lib/moved-symbols-store';
@@ -489,18 +492,52 @@ export function useDiffFileModel({
   // The symbols the hunks change (#394), for the file's outline, once the file is parsed; a quiet bar until then. When
   // the old side is on its way, the outline waits for it, in the same bar, so its removed symbols are not first listed
   // as modified ones: it parses right behind the after side, after the breadcrumbs have shown.
-  const symbols = useMemo(
-    () =>
-      fileDefinitions.after && !definitions.beforeParsing && baseHunks
-        ? changedSymbols(baseHunks, fileDefinitions, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`)))
-        : undefined,
-    [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines]
-  );
-  // Symbols whose every change is hidden, for the outline's quiet note.
+  // The file's top-level changes (imports, statements outside every definition) lead the list as one more entry, under
+  // TOP_LEVEL_ID, so they are ticked, counted and gone to like a symbol, here and in the Changes tree alike.
+  const listed = useMemo(() => {
+    if (!fileDefinitions.after || definitions.beforeParsing || !baseHunks) return undefined;
+    const skip = quietLines && ((side: 'before' | 'after', line: number) => quietLines.has(`${side[0]}${line}`));
+    const top = topLevelChanges(baseHunks, fileDefinitions, skip);
+    // The same symbols as the Changes tree lists (lib/use-tree-symbols.ts): their kinds and folding from every line,
+    // the quiet lines only deciding which show; else a hidden comment could unfold an added class here alone.
+    const all = changedSymbols(baseHunks, fileDefinitions) ?? [];
+    const visible = visibleSymbols(all, skip ? (changedSymbols(baseHunks, fileDefinitions, skip) ?? []) : all);
+    const own = all.filter((symbol) => visible.has(symbol.id));
+    // The review items, as the Changes tree has them: a container is none; its own lines, unless trivial (a brace or a
+    // blank line between its changed methods, or quiet), are its Body item.
+    // A moved symbol is one item, its new copy: the old copy here is none (lib/tree-symbols.ts `movedAwayIds`).
+    const items = reviewItems(own, trivialSymbols(baseHunks, fileDefinitions, undefined, skip), movedAwayIds(own, moves?.marks ?? []));
+    const lines = changedSymbolLines(baseHunks, fileDefinitions);
+    // The lines a scroll must show: the quiet ones are hidden.
+    if (lines && quietLines) for (const [id, keys] of lines) lines.set(id, keys.filter((key) => !quietLines.has(key)));
+    // A body's lines are its container's own.
+    for (const item of items) if (lines && isBody(item)) lines.set(item.id, lines.get(bodyOwner(item.id)) ?? []);
+    return { own, top, symbols: top ? [topLevelSymbol(top), ...items] : items, lines };
+  }, [baseHunks, fileDefinitions, definitions.beforeParsing, quietLines, moves]);
+  const symbols = listed?.symbols;
+  // Each listed entry's changed lines, for the ticks the reader earns by scrolling through it (lib/symbol-auto-view.ts):
+  // the same lines the outline counts, quiet ones left out; the top level's wherever in the file they are.
+  const symbolLines = useMemo(() => {
+    if (!listed?.lines) return undefined;
+    const lines = new Map(listed.lines);
+    if (listed.top) lines.set(TOP_LEVEL_ID, listed.top.lines);
+    return lines;
+  }, [listed]);
+  // The lines of items that changed since the reader viewed them in an earlier revision (lib/symbol-carry.ts): their
+  // hunks' headers say so, in Changes and in Explanation topics alike.
+  const carry = useCarry();
+  // A tick ends an item's Changed: this renders again on ticks.
+  useFileProgress();
+  const changedLines = useMemo(() => {
+    const out = new Set<string>();
+    for (const symbol of symbols ?? []) if (isUpdated(fileKey, symbol.id)) for (const line of symbolLines?.get(symbol.id) ?? []) out.add(line);
+    return out.size ? out : undefined;
+  }, [symbols, symbolLines, fileKey, carry, progressVersion()]);
+  // Symbols whose every change is hidden, for the outline's quiet note: definitions only.
   const quietSymbols = useMemo(() => {
-    if (!symbols || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
-    return Math.max(0, (changedSymbols(baseHunks, fileDefinitions)?.length ?? 0) - symbols.length);
-  }, [symbols, quietLines, fileDefinitions, baseHunks]);
+    if (!listed || !quietLines || !fileDefinitions.after || !baseHunks) return 0;
+    return Math.max(0, (changedSymbols(baseHunks, fileDefinitions)?.length ?? 0) - listed.own.length);
+  }, [listed, quietLines, fileDefinitions, baseHunks]);
   // An added or deleted file's bar waits from the first render, as its patch parses, so nothing moves when it lands.
   const outlinePending =
     !symbols &&
@@ -638,6 +675,8 @@ export function useDiffFileModel({
     rails,
     collapseScope,
     symbols,
+    symbolLines,
+    changedLines,
     quietSymbols,
     outlinePending,
     noise: diffNoise,

@@ -2,15 +2,20 @@ import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { pathEnabled, type CodeIntelligenceSettings } from './code-intelligence';
 import type { GapHunk } from './diff-gaps';
 import { pathFileKinds } from './file-kinds';
-import { inspectionFileRequest, inspectionFiles } from './inspection-cache';
+import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
+import { addDiagnosticsSource } from './diagnostics-sources';
+import { forgetCarry } from './symbol-carry';
 import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
 import { hidden, noiseFilterOn, noiseLabel, patchHunks, type NoiseFilter, type NoiseKind } from './semantic-noise';
-import { changedSymbols } from './symbol-outline';
+import { TOP_LEVEL_ID, bodyOwner, changedSymbolLines, changedSymbols, isBody, trivialSymbols } from './symbol-outline';
+import { changedRowTexts, itemPrints } from './review-prints';
+import { itemCalls } from './review-peek';
+import { countedIds } from './tree-symbol-review';
 import { syntaxContentsPlan, wholeFileText } from './syntax-contents';
 import { SYNTAX_MAX_CHARACTERS, syntaxLanguage, type SyntaxDefinition, type SyntaxLanguage } from './syntax-scope';
-import { onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
+import { onDefinitions, onNoise, peekDefinitions, peekFileNoise, readDefinitions } from './syntax-scope-client';
 import type { FileSymbols } from './tree-symbol-paths';
 import { symbolTree, topLevelChanges, treeSymbolLanguage } from './tree-symbols';
 import { syntaxContents, syntaxContentsJob, whenSettled } from './use-syntax-contents';
@@ -56,11 +61,15 @@ interface Peeked {
 /** Files whose patch and symbols are kept, newest last. */
 const MADE_FILES = 2_000;
 /** Each file's patch as hunks, and what its scopes read: both walk the whole patch, and the tree looks often. */
-const patches = new Map<string, { patch?: string; settings: CodeIntelligenceSettings; hunks: ReturnType<typeof patchHunks>; plan: ReturnType<typeof syntaxContentsPlan> }>();
+const patches = new Map<
+  string,
+  { url: string; patch?: string; settings: CodeIntelligenceSettings; hunks: ReturnType<typeof patchHunks>; plan: ReturnType<typeof syntaxContentsPlan> }
+>();
 function patchOf({ fileKey, snapshot, file }: TreeSymbolSource, settings: CodeIntelligenceSettings) {
   const known = patches.get(fileKey);
   if (known && known.patch === file.patch && known.settings === settings) return known;
   const value = {
+    url: snapshot.url,
     patch: file.patch,
     settings,
     hunks: patchHunks(file.patch),
@@ -75,7 +84,25 @@ function patchOf({ fileKey, snapshot, file }: TreeSymbolSource, settings: CodeIn
   return value;
 }
 /** The last result per file, with what it was made from: the tree renders often, and most files did not change. */
-const made = new Map<string, { inputs: readonly unknown[]; peeked: Peeked }>();
+const made = new Map<string, { url: string; inputs: readonly unknown[]; peeked: Peeked }>();
+// Both leave with their PR's inspection data (a closed tab, an idle PR, a cache reset), as the definitions they were
+// made from do: every file of a PR is looked up, and each entry holds its patch, its hunks and its definitions.
+onInspectionForget((urls) => {
+  for (const cache of [patches, made] as Map<string, { url: string }>[])
+    for (const [key, entry] of cache) if (!urls || urls.has(entry.url)) cache.delete(key);
+  // Carry-over's per-PR state too: its registered patches, the revisions done, the items Changed.
+  forgetCarry(urls);
+});
+onInspectionUses((into) => {
+  // A PR whose files only these still hold is swept when idle, as its definitions are.
+  for (const entry of patches.values()) if (!into.has(entry.url)) into.set(entry.url, -Infinity);
+});
+addDiagnosticsSource('treeSymbols', () => ({
+  patches: { entries: patches.size, bytes: [...patches.values()].reduce((sum, entry) => sum + 2 * (entry.patch?.length ?? 0), 0) },
+  made: made.size,
+  // The calls kept for peeks' callers, which leave with their PR as the rest of `made` does.
+  calls: [...made.values()].reduce((sum, entry) => sum + (entry.peeked.value.state === 'ready' ? Object.values(entry.peeked.value.calls ?? {}).reduce((n, list) => n + list.length, 0) : 0), 0),
+}));
 
 /**
  * A file's symbols from what the caches already hold, the way the diff finds them (components/useDiffFileModel.tsx):
@@ -157,29 +184,101 @@ function lookUp(source: TreeSymbolSource, settings: CodeIntelligenceSettings, fi
   const all = changedSymbols(gapHunks, fileDefinitions) ?? [];
   const quietLines = quiet;
   const shown = quietLines ? (changedSymbols(gapHunks, fileDefinitions, (side, line) => quietLines.has(`${side[0]}${line}`)) ?? []) : all;
-  const peeked: Peeked = {
-    value: {
-      state: 'ready',
-      nodes: symbolTree(all, shown, moves?.marks, (symbol) => {
-        // What the quiet blocks inside the symbol are, on its side: "Formatting only", "Comments only".
-        const { start, end } = symbol.definition;
-        const kinds: NoiseKind[] = [];
-        for (const block of hiddenBlocks) {
-          const [from, count] = symbol.side === 'after' ? [block.newStart, block.newCount] : [block.oldStart, block.oldCount];
-          if (from <= end && from + Math.max(count, 1) - 1 >= start) kinds.push(block.kind);
-        }
-        return noiseLabel(kinds);
-      }),
-      top: topLevelChanges(gapHunks, fileDefinitions),
-    },
-  };
+  const nodes = symbolTree(all, shown, moves?.marks, (symbol) => {
+    // What the quiet blocks inside the symbol are, on its side: "Formatting only", "Comments only".
+    const { start, end } = symbol.definition;
+    const kinds: NoiseKind[] = [];
+    for (const block of hiddenBlocks) {
+      const [from, count] = symbol.side === 'after' ? [block.newStart, block.newCount] : [block.oldStart, block.oldCount];
+      if (from <= end && from + Math.max(count, 1) - 1 >= start) kinds.push(block.kind);
+    }
+    return noiseLabel(kinds);
+  }, trivialSymbols(gapHunks, fileDefinitions, undefined, quietLines && ((side, line) => quietLines.has(`${side[0]}${line}`))));
+  const top = treeTop(gapHunks, fileDefinitions, quietLines);
+  // What each counted item reads, from the text at hand, for its tick to carry to the next revision.
+  const items = countedIds({ state: 'ready', nodes, top }) ?? [];
+  const rows = changedRowTexts(gapHunks);
+  const own = changedSymbolLines(gapHunks, fileDefinitions);
+  const prints = itemPrints({ items, nodes, top, after: afterText, before: beforeText, rows, own });
+  // What each item's changed lines call, for a peek's "Called by, in this PR" (lib/review-peek.ts): from the lines
+  // already read, with nothing parsed again.
+  const lines = new Map<string, readonly string[]>();
+  for (const id of items) {
+    const keys = id === TOP_LEVEL_ID ? top?.lines : own?.get(isBody({ id }) ? bodyOwner(id) : id);
+    if (keys) lines.set(id, keys);
+  }
+  const calls = itemCalls(lines, rows);
+  const peeked: Peeked = { value: { state: 'ready', nodes, top, prints, calls } };
   made.delete(fileKey);
-  made.set(fileKey, { inputs, peeked });
+  made.set(fileKey, { url: snapshot.url, inputs, peeked });
   for (const key of made.keys()) {
     if (made.size <= MADE_FILES) break;
     made.delete(key);
   }
   return peeked;
+}
+
+/** A file's symbols from what the caches hold now, reading nothing: `loading` while they are not known. */
+export const peekTreeSymbols = (source: TreeSymbolSource, settings: CodeIntelligenceSettings, filter: NoiseFilter): FileSymbols =>
+  peekFileSymbols(source, settings, filter, undefined).value;
+
+/**
+ * Reads and parses one file at the top priority, as a file on screen is, until its symbols are known or `waitMs` has
+ * passed: `n` reads the next file only when the walk gets to it. A read still running when the wait ends goes on, so
+ * asking again soon finds it done; the result is then still `loading`.
+ */
+export async function loadTreeSymbols(
+  source: TreeSymbolSource,
+  settings: CodeIntelligenceSettings,
+  filter: NoiseFilter,
+  waitMs: number
+): Promise<FileSymbols> {
+  const deadline = Date.now() + waitMs;
+  const { fileKey, snapshot, file } = source;
+  // A read, then the parse of each side: a few rounds at most.
+  for (let round = 0; round < 4; round++) {
+    const peeked = peekFileSymbols(source, settings, filter, undefined);
+    const need = peeked.need;
+    const left = deadline - Date.now();
+    if (!need || left <= 0) return peeked.value;
+    const work =
+      need.kind === 'read'
+        ? new Promise<void>((resolve, reject) => {
+            syntaxContents.request(syntaxContentsJob({ key: fileKey, snapshot, file }, need.plan), resolve, (failure) =>
+              reject(Error(failure.message.replace(/\.$/, '') || 'Couldn’t read this file'))
+            );
+          })
+        : Promise.all(
+            need.sides.map((side) =>
+              readDefinitions({ key: side.key, url: snapshot.url, language: side.language, text: side.text, priority: 'view' }).catch(() => {
+                throw Error('Couldn’t parse this file');
+              })
+            )
+          ).then(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      work.then(
+        () => ({ kind: 'done' as const }),
+        (error: unknown) => ({ kind: 'failed' as const, reason: error instanceof Error ? error.message : 'Couldn’t read this file' })
+      ),
+      new Promise<{ kind: 'late' }>((resolve) => (timer = setTimeout(() => resolve({ kind: 'late' }), left))),
+    ]);
+    clearTimeout(timer);
+    if (outcome.kind === 'failed') return { state: 'none', reason: outcome.reason };
+    if (outcome.kind === 'late') return { state: 'loading' };
+  }
+  return peekFileSymbols(source, settings, filter, undefined).value;
+}
+
+/** A file's top-level changes, marked quiet when every one of them is a quiet line, as a quiet symbol is. */
+function treeTop(
+  hunks: readonly GapHunk[],
+  definitions: { after?: readonly SyntaxDefinition[]; before?: readonly SyntaxDefinition[] },
+  quiet: ReadonlySet<string> | undefined
+) {
+  const top = topLevelChanges(hunks, definitions);
+  if (!top || !quiet) return top;
+  return topLevelChanges(hunks, definitions, (side, line) => quiet.has(`${side[0]}${line}`)) ? top : { ...top, quiet: true };
 }
 
 /**
@@ -206,7 +305,8 @@ export function useTreeSymbols(
   };
   useEffect(() => {
     const changed = () => later.current();
-    const stops = [onNoise(changed), onMoves(changed)];
+    // A file's symbols can show (and count) once its parse lands, whoever asked for it: a view, the prefetch, `n`.
+    const stops = [onNoise(changed), onMoves(changed), onDefinitions(changed)];
     return () => {
       stops.forEach((stop) => stop());
       pending.current?.();

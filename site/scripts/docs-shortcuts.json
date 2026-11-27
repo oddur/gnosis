@@ -177,9 +177,57 @@
     },
     {
       "keys": "v",
-      "label": "Mark the symbol selected in the file tree as viewed",
+      "label": "Mark the file or symbol selected in the file tree as viewed",
       "source": "components/ChangesSymbolTree.tsx",
       "evidence": "(event.key === 'v' || event.key === 'V')"
+    },
+    {
+      "keys": "v",
+      "label": "Changes: mark the current symbol or file as viewed, and go to the next one",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "if (!event.repeat) void reviewAndMove();"
+    },
+    {
+      "keys": "Enter",
+      "label": "Changes: comment on the current symbol or file",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "if (!item || !commentOnItem(item, 'diff')) return false;"
+    },
+    {
+      "keys": "⌘ ⇧ Enter",
+      "label": "In a comment opened with Enter: add it and go on",
+      "source": "components/ChangesCommentComposer.tsx",
+      "evidence": "if (e.shiftKey && reviewCommentOpen()) {"
+    },
+    {
+      "keys": "Space",
+      "label": "File tree: peek at the selected symbol or file",
+      "source": "components/ChangesSymbolTree.tsx",
+      "evidence": "// Space peeks at the row's item"
+    },
+    {
+      "keys": "Backspace",
+      "label": "Peek: back to the symbol peeked at before",
+      "source": "components/SymbolPeek.tsx",
+      "evidence": "key === 'Backspace' && canBack"
+    },
+    {
+      "keys": "⇧ V",
+      "label": "Changes: undo the last v",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "void undoTick();"
+    },
+    {
+      "keys": "n",
+      "label": "Changes: go to the next symbol that is not viewed",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1)"
+    },
+    {
+      "keys": "⇧ N",
+      "label": "Changes: go to the previous symbol that is not viewed",
+      "source": "components/PrChangesView.tsx",
+      "evidence": "N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1)"
     }
   ]
 }

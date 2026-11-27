@@ -32,11 +32,36 @@ import {
   commitPositionId,
   inspectionData,
 } from '../lib/inspection-cache';
-import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { finishVHint, useVHint } from '../lib/review-hint';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesSymbolTree } from './ChangesSymbolTree';
-import { hasSymbolTarget, requestSymbolJump } from '../lib/tree-symbol-sync';
-import type { ChangedSymbol } from '../lib/symbol-outline';
+import { beginJump, dropWaitingKey, hasSymbolTarget, jumpOnItsWay, peekReadingPlace, peekReviewTarget, peekTreeCursor, readerMoved, requestSymbolJump, setReviewFile, setReviewTarget, whenJumpLands } from '../lib/tree-symbol-sync';
+import { loadTreeSymbols, peekTreeSymbols, treeSymbolsSupported } from '../lib/use-tree-symbols';
+import {
+  FILE_STOP,
+  countedIds,
+  createTickStack,
+  moveMirrors,
+  currentItem,
+  itemsLeft,
+  readingItem,
+  reviewStops,
+  stepUnviewed,
+  type ReviewFile,
+  type ReviewItem,
+  type ReviewPlace,
+  type ReviewTick,
+} from '../lib/tree-symbol-review';
+import { ensureCarried, updatedCount, useCarry } from '../lib/symbol-carry';
+import { markSeen, pageStep, pagerOf, seenShare, setPaging } from '../lib/review-paging';
+import { commentAnchor, openReviewComment, peekLineSelection } from '../lib/review-comment';
+import { patchHunks } from '../lib/semantic-noise';
+import { markReviewSymbols, registerCountedSymbols, releaseHeld, setBeforeCollapse, useHeldFiles } from '../lib/symbol-file-sync';
+import { readingSymbol, rowDestination, type TopLevelChanges, type TreeSymbolNode } from '../lib/tree-symbols';
+import type { FileSymbols } from '../lib/tree-symbol-paths';
+import { toast } from './ui/toast';
+import { TOP_LEVEL_ID, type ChangedSymbol } from '../lib/symbol-outline';
 import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
 import { patchBounds } from '../lib/chat-citations';
@@ -47,14 +72,29 @@ import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
 import { changesRevision, type PrChanges } from '../lib/pr-changes';
 import { staleDiffRefresh } from '../lib/use-stale-diff-refresh';
-import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
+import { hasViewedMarks, progressVersion, registerChangeProgress, resetViewed, restoreViewed, useFileProgress } from '../lib/file-view-progress';
 import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
+import { preferencesUpdated } from '../lib/use-repository-settings';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { countRender } from '../lib/render-count';
 import { openDiffComments } from '../lib/response-needed';
 
+/** Keys that scroll the diff when it has focus: pressing one there is the reader moving on their own. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+/** How long the place `n` went to stays where the next `n` starts, while the diff scrolls there. */
+const NAV_CURSOR_MS = 1_500;
+/** How long `n` waits for one file's symbols to be read and parsed. */
+const NAV_LOAD_MS = 4_000;
+/** How long a press keeps waiting for one file's symbols, in NAV_LOAD_MS waits, before it says they are still loading. */
+const NAV_GIVE_UP_MS = 30_000;
+/** Files one press of `n` reads at most before it asks the reader to press again. */
+const NAV_MAX_LOADS = 12;
+/** A wait shorter than this shows no "Loading symbols…". */
+const LOADING_NOTICE_MS = 200;
+/** How long `n`'s notices stay. */
+const NOTICE_MS = 2_500;
 interface Position {
   selected: string;
   scroll: Record<string, number>;
@@ -368,7 +408,9 @@ export function PrChangesView({
       !hiddenByFileExtensions(e.file.path, filters.state.hiddenExtensions)
   );
   const hidden = entries.length - allowed.length;
-  const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
+  // A file its ticks just marked Viewed stays listed under Unviewed only until the reader moves on from it.
+  const heldFiles = useHeldFiles();
+  const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)) || heldFiles.has(viewKey(e)));
   const selectionIndex = entries.findIndex((e) => e.key === selected);
   const visibleKeys = new Set(visible.map((e) => e.key));
   const entry =
@@ -435,6 +477,10 @@ export function PrChangesView({
   const quietFiles = useMemo(() => new Map(quietLabels ? quietLabels.split('\n').map((row) => row.split('\u0000') as [string, string]) : []), [quietLabels]);
   // Settings › Review › "Show changed symbols in the file tree" (Beta): off is the file tree as it was.
   const treeSymbols = preferences.treeSymbols !== false;
+  // Settings › Review › "Mark a symbol viewed after you scroll through it" (Beta): off unless chosen, and only with the
+  // tree's symbol rows.
+  const autoViewSymbols = treeSymbols && preferences.autoViewSymbols === true;
+  const peekOnHover = preferences.peekOnHover !== false;
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
     [entries, visibleSignature, viewedSignature]
@@ -538,6 +584,11 @@ export function PrChangesView({
   async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
+    // Choosing a file stops a jump still on its way elsewhere, which would scroll the reader back.
+    beginJump();
+    dropWaitingKey();
+    // The reader moves on: a file its ticks marked Viewed, held open while they were on it, collapses.
+    releaseHeld({ except: viewKey(target) });
     if (!allowed.some((e) => e.key === key)) await reveal();
     if (unviewed && progress.isFileViewed(viewKey(target))) setUnviewed(false);
     setSelected(key);
@@ -552,7 +603,12 @@ export function PrChangesView({
   function goToSymbol(key: string, symbol: ChangedSymbol) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
+    // A jump still on its way in another file stops: this one is the newest (lib/tree-symbol-sync.ts).
+    beginJump();
+    dropWaitingKey();
     const fileKey = viewKey(target);
+    // Going to a symbol is moving on too, unless it is in the held file itself.
+    releaseHeld({ except: fileKey });
     const release = () => stream.current?.releasePosition();
     if (hasSymbolTarget(fileKey)) {
       setSelected(key);
@@ -566,6 +622,550 @@ export function PrChangesView({
     // pulled back to its top.
     void select(key).then(() => requestAnimationFrame(() => requestSymbolJump(fileKey, symbol, release)));
   }
+  /**
+   * `n` and Shift+N (Settings › Review › "Show changed symbols in the file tree"): the next or previous unviewed changed
+   * symbol, in the tree's order across files (lib/tree-symbol-review.ts), from where the reader is. It goes there as a
+   * click on its tree row does. A file on the way whose symbols are not known yet is read and parsed then, at the top
+   * priority, for NAV_LOAD_MS at most; files further on are not read before the walk gets to them.
+   */
+  const [treeReveal, setTreeReveal] = useState<{ key: string; id: string; nonce: number; focus?: boolean }>();
+  // Where the last `n` went: the next press starts there while the diff is still on its way.
+  const navCursor = useRef<ReviewPlace & { at: number }>(undefined);
+  const navRun = useRef(0);
+  const navFrom = (): ReviewPlace | undefined => {
+    // The item the reader was taken to, until they move on their own.
+    const target = peekReviewTarget();
+    if (target && visible.some((e) => e.key === target.key)) return target;
+    const now = Date.now();
+    const cursor = navCursor.current;
+    if (cursor && now - cursor.at < NAV_CURSOR_MS && visible.some((e) => e.key === cursor.key)) return cursor;
+    if (!entry) return undefined;
+    const fileKey = viewKey(entry);
+    const { place, at } = peekReadingPlace(fileKey);
+    // A tree row the reader chose or moved to since they last scrolled.
+    const row = peekTreeCursor();
+    if (row && row.at > at && visible.some((e) => e.key === row.key)) return row;
+    const known = place && treeSymbolsSupported(entry, codeSettings) ? peekTreeSymbols({ fileKey, snapshot: entry.snapshot, file: entry.file }, codeSettings, noiseFilter) : undefined;
+    if (known?.state !== 'ready') return { key: entry.key };
+    // Outside every definition: the file's top-level changes, when it has them.
+    return { key: entry.key, id: place?.length ? readingSymbol(known.nodes, place) : known.top ? TOP_LEVEL_ID : undefined };
+  };
+  /** The files of the walk, in the tree's order, as the caches have them now (`read`: what this press read). */
+  const reviewFiles = (list: readonly Entry[], read: ReadonlyMap<string, FileSymbols> = new Map()) =>
+    list.map((e): ReviewFile & { fileKey: string } => {
+      const source = { fileKey: viewKey(e), snapshot: e.snapshot, file: e.file };
+      return {
+        key: e.key,
+        fileKey: source.fileKey,
+        viewed: progress.isFileViewed(source.fileKey),
+        symbols: treeSymbolsSupported(source, codeSettings) ? (read.get(e.key) ?? peekTreeSymbols(source, codeSettings, noiseFilter)) : undefined,
+      };
+    });
+  /** Goes to a file without symbols, a stop of its own: selected, at its top, its row lit by the selection. */
+  function goToFileStop(key: string, focus: boolean) {
+    beginJump();
+    dropWaitingKey();
+    navCursor.current = { key, id: FILE_STOP, at: Date.now() };
+    setReviewTarget({ key, id: FILE_STOP });
+    setTreeReveal((previous) => ({ key, id: FILE_STOP, nonce: (previous?.nonce ?? 0) + 1, focus }));
+    void select(key);
+    if (focus) keepFocusInWorkspace();
+  }
+  /** Goes to a review item: a symbol, a Body, or the file's top level, which go to their first changed line. */
+  function goToItem(key: string, id: string, target: TreeSymbolNode | TopLevelChanges | undefined, focus: boolean) {
+    const symbol = target && rowDestination(target);
+    if (!symbol) return;
+    navCursor.current = { key, id, at: Date.now() };
+    setReviewTarget({ key, id });
+    setTreeReveal((previous) => ({ key, id, nonce: (previous?.nonce ?? 0) + 1, focus }));
+    goToSymbol(key, symbol);
+    if (focus) keepFocusInWorkspace();
+  }
+  /** V's focus goes to the next row (the tree does that); with no tree to take it, it stays in the diff. */
+  function keepFocusInWorkspace() {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const root = workspace.current;
+        if (root && !root.contains(document.activeElement)) root.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+      })
+    );
+  }
+  /**
+   * The next (`1`) or previous (`-1`) unviewed item from `from` (by default where the reader is), gone to. A file on
+   * the way whose symbols are not known yet is read first. `end` when there is none that way.
+   */
+  async function stepSymbol(direction: 1 | -1, { from: given, focus = false }: { from?: ReviewPlace; focus?: boolean } = {}): Promise<'went' | 'end' | 'stopped'> {
+    const run = ++navRun.current;
+    const from = given ?? navFrom();
+    if (!from) return 'stopped';
+    // What this press read: a file that could not be read is passed, not read again.
+    const read = new Map<string, FileSymbols>();
+    let loadingToast: string | undefined;
+    const loadingTimer = setTimeout(() => {
+      loadingToast = toast.add({ title: 'Loading symbols…', timeout: 0 });
+    }, LOADING_NOTICE_MS);
+    const finish = () => {
+      clearTimeout(loadingTimer);
+      if (loadingToast) toast.close(loadingToast);
+    };
+    try {
+      for (let loads = 0; ; ) {
+        const files = reviewFiles(visible, read);
+        const fileKeys = new Map(files.map((file) => [file.key, file.fileKey]));
+        const step = stepUnviewed(files, from, direction, (key, id) => progress.isSymbolViewed(fileKeys.get(key) ?? '', id));
+        if (step.kind === 'end') return 'end';
+        if (step.kind === 'go') {
+          goToItem(step.key, step.id, step.node ?? step.top, focus);
+          return 'went';
+        }
+        if (step.kind === 'file') {
+          goToFileStop(step.key, focus);
+          return 'went';
+        }
+        const source = visible.find((e) => e.key === step.key);
+        if (!source) return 'stopped';
+        if (++loads > NAV_MAX_LOADS) {
+          toast.add({ title: 'Still looking for unviewed symbols', description: 'Press the key again to read further.', timeout: NOTICE_MS });
+          return 'stopped';
+        }
+        // The press waits for this file's symbols while the reader waits for it (the Loading symbols notice shows): a
+        // busy parse queue on a large PR can take longer than one wait, and a press that gave up would be lost. Another
+        // press, or the reader moving on, ends it; NAV_GIVE_UP_MS is only the backstop.
+        let value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
+        for (const until = Date.now() + NAV_GIVE_UP_MS; value.state === 'loading' && run === navRun.current && Date.now() < until; )
+          value = await loadTreeSymbols({ fileKey: viewKey(source), snapshot: source.snapshot, file: source.file }, codeSettings, noiseFilter, NAV_LOAD_MS);
+        // Another press, or the reader moved on: this one is over.
+        if (run !== navRun.current) return 'stopped';
+        if (value.state === 'loading') {
+          const name = step.key.slice(step.key.lastIndexOf('/') + 1);
+          toast.add({ title: `Still loading the symbols of ${name}`, description: 'Press the key again in a moment.', timeout: NOTICE_MS });
+          return 'stopped';
+        }
+        // The walk goes on from the same place: the file just read is now known.
+        read.set(step.key, value);
+      }
+    } finally {
+      finish();
+    }
+  }
+  // What is left to review, in stops of the walk (symbols, Body, Top level, files without symbols), for the toolbar.
+  // Re-review only what changed (lib/symbol-carry.ts): each file of a PR's new revision takes its earlier ticks once
+  // what it lists is known (files without symbols at once); the tree does the same for files whose parse lands. The
+  // walk's files, what is left and what changed are worked out again only when the files, the marks or a carry do.
+  const carryVersion = useCarry();
+  const allowedSignature = allowed.map((e) => e.key).join('\n');
+  const marksVersion = progressVersion();
+  const leftFiles = useMemo(
+    () => (treeSymbols ? reviewFiles(allowed) : []),
+    [treeSymbols, entries, allowedSignature, marksVersion, carryVersion, codeSettings, noiseFilter]
+  );
+  const { left, updated } = useMemo(() => {
+    const keys = new Map(leftFiles.map((file) => [file.key, file.fileKey]));
+    return {
+      left: itemsLeft(leftFiles, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)),
+      updated: updatedCount(leftFiles.map((file) => file.fileKey)),
+    };
+  }, [leftFiles]);
+  useEffect(() => {
+    if (!treeSymbols || commit || combined) return;
+    for (const file of leftFiles) ensureCarried(file.fileKey, file.symbols);
+  }, [leftFiles]);
+  const endNotice = (direction: 1 | -1) =>
+    toast.add({ title: direction === 1 ? 'No unviewed items after this' : 'No unviewed items before this', timeout: NOTICE_MS });
+  /**
+   * V (Changes, symbol rows on): ticks the item the reader is on and goes on to the next unviewed one, as `n` does.
+   * What it ticks (lib/tree-symbol-review.ts `currentItem`): the item V, `n`, Shift+V or a tree row took the reader to,
+   * until they move on their own (lib/tree-symbol-sync.ts `readerMoved`); else the item under the reading position;
+   * else nothing, and V only goes on. On a tree row (its own V, `intent`), the row's file or the review items under
+   * it. Each V is kept for Shift+V to take back.
+   */
+  const ticks = useRef(createTickStack());
+  const currentReviewItem = (): ReviewItem | undefined => {
+    const target = peekReviewTarget();
+    let reading: ReviewItem | undefined;
+    const file = entry && reviewFiles([entry])[0];
+    if (!target && entry && file?.symbols?.state === 'ready') {
+      const { place, line } = peekReadingPlace(file.fileKey);
+      const id = place ? readingItem(file.symbols.nodes, file.symbols.top, readingSymbol(file.symbols.nodes, place), place.length === 0, line) : undefined;
+      if (id) reading = { key: entry.key, id };
+    }
+    return currentItem({ target, reading, paging: pagingNow() });
+  };
+  /**
+   * Long items: V pages through an item taller than the screen before it ticks it (lib/review-paging.ts). What of the
+   * item V is paging through has been on screen since it became current, sampled at each V and each scroll's end.
+   */
+  const paging = useRef<{ key: string; fileKey: string; id: string; seen: Set<string> }>(undefined);
+  /** The lines of the item under review that were on screen as a scroll ended, before any V paged through it. */
+  const shown = useRef<{ key: string; id: string; seen: Set<string> }>(undefined);
+  const noteShown = () => {
+    const item = peekReviewTarget();
+    const target = item && item.id !== FILE_STOP ? entries.find((e) => e.key === item.key) : undefined;
+    const fileKey = target && viewKey(target);
+    const pager = fileKey ? pagerOf(fileKey) : undefined;
+    const lines = item && pager?.lines(item.id);
+    if (!item || !pager || !lines?.length) return;
+    if (shown.current?.key !== item.key || shown.current.id !== item.id) shown.current = { key: item.key, id: item.id, seen: new Set() };
+    markSeen(shown.current.seen, lines, pager.place, pager.range());
+  };
+  const noteShownLatest = useRef(noteShown);
+  noteShownLatest.current = noteShown;
+  const pagingNow = () => {
+    const state = paging.current;
+    const pager = state && pagerOf(state.fileKey);
+    const lines = state && pager?.lines(state.id);
+    if (!state || !pager || !lines?.length) return undefined;
+    const range = pager.range();
+    markSeen(state.seen, lines, pager.place, range);
+    const onScreen = !!range && lines.some((line) => {
+      const at = pager.place(line);
+      return at !== undefined && at >= range[0] && at <= range[1];
+    });
+    return { item: { key: state.key, id: state.id }, onScreen, done: seenShare(lines, state.seen) >= 100 };
+  };
+  /** Pages through the item instead of ticking it, while some of its changed lines have not been seen; true if it did. */
+  function pageFirst(item: ReviewItem): boolean {
+    const target = item.id === FILE_STOP ? undefined : entries.find((e) => e.key === item.key);
+    const fileKey = target && viewKey(target);
+    const pager = fileKey ? pagerOf(fileKey) : undefined;
+    const lines = pager?.lines(item.id);
+    if (!fileKey || !pager || !lines?.length) return false;
+    if (paging.current?.key !== item.key || paging.current.id !== item.id) {
+      // What of it showed already, when a scroll ended with it on screen (a jump landing on it, the reader's own): seen.
+      const before = shown.current;
+      const seen = before && before.key === item.key && before.id === item.id ? before.seen : new Set<string>();
+      paging.current = { key: item.key, fileKey, id: item.id, seen };
+    }
+    const state = paging.current;
+    const range = pager.range();
+    markSeen(state.seen, lines, pager.place, range);
+    const step = pageStep({ lines, place: pager.place, seen: state.seen, range, atEnd: false });
+    // A page is a jump of its own: one still on its way elsewhere stops.
+    if (step.kind === 'down') beginJump();
+    // Seen whole, or nothing more to scroll to: V ticks it.
+    if (step.kind === 'tick' || (step.kind === 'down' && !pager.page())) {
+      paging.current = undefined;
+      setPaging(undefined);
+      return false;
+    }
+    if (step.kind === 'to') pager.goToPlace(step.place);
+    // The item stays the reader's target: the page is the program's scroll.
+    setReviewTarget({ key: item.key, id: item.id });
+    setPaging({ key: item.key, fileKey, id: item.id, share: seenShare(lines, state.seen) });
+    return true;
+  }
+  // What the reader's own scrolling shows of the item being paged through counts as seen too.
+  useEffect(() => {
+    const root = workspace.current;
+    if (!root) return;
+    const ended = () => {
+      noteShownLatest.current();
+      const state = paging.current;
+      const pager = state && pagerOf(state.fileKey);
+      const lines = state && pager?.lines(state.id);
+      if (!state || !pager || !lines) return;
+      markSeen(state.seen, lines, pager.place, pager.range());
+      setPaging({ key: state.key, fileKey: state.fileKey, id: state.id, share: seenShare(lines, state.seen) });
+    };
+    root.addEventListener('scrollend', ended, { capture: true, passive: true });
+    return () => {
+      root.removeEventListener('scrollend', ended, { capture: true });
+      setPaging(undefined);
+    };
+  }, []);
+  // The reader moving on their own ends the target: their wheel, touch or pointer in the diff, or a key that scrolls
+  // it. The jumps' own scrolls come with none of these, so they never end it; neither does the reading place changing.
+  useEffect(() => {
+    const root = workspace.current;
+    if (!root) return;
+    const inDiff = (event: Event) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('commit-diff-stream'));
+    // The reader moving on their own also ends a press still waiting for a file's symbols: it must not jump them later.
+    const movedOn = () => {
+      readerMoved();
+      dropWaitingKey();
+      navRun.current++;
+    };
+    const moved = (event: Event) => {
+      if (inDiff(event)) movedOn();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && inDiff(event)) movedOn();
+    };
+    const types = ['wheel', 'touchstart', 'pointerdown'] as const;
+    for (const type of types) root.addEventListener(type, moved, { capture: true, passive: true });
+    root.addEventListener('keydown', key, { capture: true });
+    return () => {
+      for (const type of types) root.removeEventListener(type, moved, { capture: true });
+      root.removeEventListener('keydown', key, { capture: true });
+      // Leaving Changes leaves no target behind.
+      readerMoved();
+    };
+  }, []);
+  /** Ticks an item, and says what that did, or undefined when it was ticked already. */
+  async function tickItem(key: string, ids: readonly string[] | 'file'): Promise<ReviewTick | undefined> {
+    const target = entries.find((e) => e.key === key);
+    if (!target) return undefined;
+    const fileKey = viewKey(target);
+    if (progress.isFileViewed(fileKey)) return undefined;
+    if (ids === 'file') {
+      await progress.markFileViewed(fileKey, true);
+      return { key, id: FILE_STOP, ids: [], markedFile: true };
+    }
+    const fresh = ids.filter((id) => !progress.isSymbolViewed(fileKey, id));
+    if (!fresh.length) return undefined;
+    await markReviewSymbols(fileKey, fresh, true);
+    return { key, id: ids[ids.length - 1], ids: fresh, markedFile: progress.isFileViewed(fileKey) };
+  }
+  const vHint = useVHint();
+  async function reviewAndMove(intent?: { key: string; ids: string[]; viewed: boolean; file: boolean }) {
+    // The first V: the tip about it has done its job.
+    finishVHint();
+    // A jump still on its way (a click, n): V acts once it lands, on what it landed on (lib/tree-symbol-sync.ts).
+    if (jumpOnItsWay()) {
+      whenJumpLands(() => void reviewAndMove(intent));
+      return;
+    }
+    let from: ReviewPlace | undefined;
+    let ticked: ReviewTick | undefined;
+    if (intent) {
+      const target = entries.find((e) => e.key === intent.key);
+      if (!target) return;
+      // V on a row that reads viewed takes it back, and stays.
+      if (!intent.viewed) {
+        releaseHeld({ only: viewKey(target) });
+        stream.current?.preservePosition();
+        if (intent.file) void progress.markFileViewed(viewKey(target), false);
+        else void markReviewSymbols(viewKey(target), intent.ids, false);
+        return;
+      }
+      // One item, taller than the screen: V pages through it first.
+      if (!intent.file && intent.ids.length === 1 && pageFirst({ key: intent.key, id: intent.ids[0] })) return;
+      ticked = await tickItem(intent.key, intent.file ? 'file' : intent.ids);
+      from = { key: intent.key, id: intent.file ? FILE_STOP : intent.ids.at(-1) };
+    } else {
+      const item = currentReviewItem();
+      // Taller than the screen, and not all seen yet: V pages through it first.
+      if (item && pageFirst(item)) return;
+      if (item) {
+        ticked = await tickItem(item.key, item.id === FILE_STOP ? 'file' : [item.id]);
+        from = item;
+      }
+    }
+    if (ticked) ticks.current.push(ticked);
+    // The last item: everything is viewed. The review is next.
+    if (ticked) {
+      const all = reviewFiles(allowed);
+      const keys = new Map(all.map((file) => [file.key, file.fileKey]));
+      if (itemsLeft(all, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)) === 0) {
+        everythingViewed();
+        return;
+      }
+    }
+    const moved = await stepSymbol(1, { from, focus: true });
+    if (moved !== 'end') return;
+    // V goes on until nothing is left: past the last item, what is still unviewed is behind the reader (they began part
+    // way down, or skipped some), and V takes them back to the first of it. `n` does not wrap; V's job is to finish.
+    const all = reviewFiles(allowed);
+    const keys = new Map(all.map((file) => [file.key, file.fileKey]));
+    if (itemsLeft(all, (key, id) => progress.isSymbolViewed(keys.get(key) ?? '', id)) > 0) {
+      const back = await stepSymbol(1, { from: { key: '' }, focus: true });
+      if (back === 'went') {
+        toast.add({ title: 'Back to the first unviewed item', timeout: NOTICE_MS });
+        return;
+      }
+    }
+    endNotice(1);
+  }
+  // Leaving Changes (closed, or hidden by another tab) ends the run of V's that Shift+V walks back through.
+  useEffect(() => {
+    const stack = ticks.current;
+    return () => stack.clear();
+  }, []);
+  /**
+   * Enter: a comment on the item under review (lib/review-comment.ts), in the inline composer of its file, which must
+   * be the selected one, as it is once V, n or a click went there. On the lines the reader selected, if any; else over
+   * the item's changed lines (`commentAnchor`). Closing the composer hands the keyboard back to the tree row or the diff,
+   * or, with ⌘⇧↩, ticks the item and goes on as V does. False when there is nothing to comment on.
+   */
+  function commentOnItem(item: ReviewItem, origin: 'tree' | 'diff'): boolean {
+    // A jump still on its way to the item (a click, n): the composer opens once it lands, as V acts then. Opening it
+    // now would stop the jump short, the item's lines under the pinned headers.
+    if (jumpOnItsWay()) {
+      whenJumpLands(() => void commentOnItem(item, origin));
+      return true;
+    }
+    const target = entries.find((e) => e.key === item.key);
+    if (!target || entry?.key !== item.key || !comments.canComment) return false;
+    const fileKey = viewKey(target);
+    let range = peekLineSelection(fileKey);
+    if (!range) {
+      const lines = item.id === FILE_STOP ? undefined : pagerOf(fileKey)?.lines(item.id);
+      if (item.id !== FILE_STOP && !lines?.length) return false;
+      const anchor = commentAnchor({ lines, first: item.id === TOP_LEVEL_ID, hunks: patchHunks(target.file.patch) });
+      if (!anchor) return false;
+      range = { side: anchor.side === 'LEFT' ? 'deletions' : 'additions', start: anchor.startLine ?? anchor.line, end: anchor.line };
+    }
+    // Where the keyboard was when Enter was pressed (the tree row, inside its shadow root, or the diff), to give it back.
+    let from: Element | null = document.activeElement;
+    while (from?.shadowRoot?.activeElement) from = from.shadowRoot.activeElement;
+    const returnTo = from instanceof HTMLElement ? from : null;
+    openReviewComment((how) => {
+      // The composer is still mounted here, and its unmount drops focus to the page: hand the keyboard back after it
+      // has gone, so the next V, n or Enter works without a click.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (how === 'next') {
+            void reviewAndMove({ key: item.key, ids: item.id === FILE_STOP ? [] : [item.id], viewed: true, file: item.id === FILE_STOP });
+            return;
+          }
+          // Back on the item: it is the target again, even if a click into the composer counted as the reader moving.
+          setReviewTarget({ key: item.key, id: item.id });
+          if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+          else if (from === null || origin === 'diff') workspace.current?.querySelector<HTMLElement>('.commit-diff-stream')?.focus({ preventScroll: true });
+          else setTreeReveal((previous) => ({ key: item.key, id: item.id, nonce: (previous?.nonce ?? 0) + 1, focus: true }));
+          keepFocusInWorkspace();
+        })
+      );
+    });
+    comments.begin(range);
+    focusComposer();
+    return true;
+  }
+  /**
+   * Puts the keyboard in the composer once it is drawn. Its textarea has autoFocus, but the key that opened it (Enter on
+   * a tree row) hands focus back to the row as it finishes, so the composer is focused again after that, for a few
+   * frames at most while its file's diff draws it.
+   */
+  function focusComposer(frames = 30) {
+    const find = (root: Document | ShadowRoot | Element | null): HTMLTextAreaElement | null => {
+      if (!root) return null;
+      const own = root.querySelector<HTMLTextAreaElement>('.changes-comment-composer textarea');
+      if (own) return own;
+      for (const element of root.querySelectorAll('*')) {
+        const inner = element.shadowRoot && find(element.shadowRoot);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    requestAnimationFrame(() => {
+      const textarea = find(workspace.current);
+      if (textarea) textarea.focus({ preventScroll: true });
+      if ((!textarea || document.activeElement !== textarea && !textarea.matches(':focus')) && frames > 0) focusComposer(frames - 1);
+    });
+  }
+  function everythingViewed() {
+    const number = entry?.snapshot.url.split('/').pop();
+    const reviewable = ownReview && subject.kind !== 'stack' && !!number;
+    const id = toast.add({
+      type: 'success',
+      title: 'Everything viewed',
+      ...(reviewable
+        ? {
+            actionProps: {
+              children: `Review PR #${number}`,
+              onClick: () => {
+                toast.close(id);
+                headerReview.current.openReview();
+              },
+            },
+          }
+        : {}),
+    });
+  }
+  /** Shift+V: takes back the newest V (its ticks, and the file it marked), and goes back to its item. */
+  async function undoTick() {
+    const tick = ticks.current.pop();
+    if (!tick) return;
+    const target = entries.find((e) => e.key === tick.key);
+    if (!target) return;
+    const fileKey = viewKey(target);
+    releaseHeld({ only: fileKey });
+    stream.current?.preservePosition();
+    if (tick.id === FILE_STOP) await progress.markFileViewed(fileKey, false);
+    else {
+      await markReviewSymbols(fileKey, tick.ids, false);
+      if (tick.markedFile && progress.isFileViewed(fileKey)) await progress.markFileViewed(fileKey, false);
+    }
+    if (tick.id === FILE_STOP) {
+      goToFileStop(tick.key, true);
+      return;
+    }
+    const symbols = reviewFiles([target])[0]?.symbols;
+    if (symbols?.state !== 'ready') return;
+    const stop = reviewStops(symbols.nodes, symbols.top).find((item) => item.id === tick.id);
+    if (stop) goToItem(tick.key, stop.id, stop.node ?? stop.top, true);
+  }
+  useEffect(
+    () => () => {
+      navRun.current++;
+    },
+    []
+  );
+  // In symbol mode a file follows its ticks (lib/symbol-file-sync.ts): each file whose symbols are known counts what
+  // its progress counts, for this revision. A held file that collapses on its own keeps the reader's place.
+  const latestSync = useRef({ visible, codeSettings, noiseFilter });
+  latestSync.current = { visible, codeSettings, noiseFilter };
+  useEffect(() => {
+    if (!treeSymbols) return;
+    const stops = visible.map((e) => {
+      const fileKey = viewKey(e);
+      return registerCountedSymbols(fileKey, () => {
+        const { codeSettings: settings, noiseFilter: filter } = latestSync.current;
+        const source = { fileKey, snapshot: e.snapshot, file: e.file };
+        if (!treeSymbolsSupported(source, settings)) return undefined;
+        const symbols = peekTreeSymbols(source, settings, filter);
+        const ids = countedIds(symbols);
+        if (!ids || symbols.state !== 'ready') return undefined;
+        return { ids, prints: symbols.prints, ...moveMirrors(symbols.nodes) };
+      });
+    });
+    return () => stops.forEach((stop) => stop());
+  }, [visibleSignature, revision, treeSymbols]);
+  useEffect(() => {
+    setBeforeCollapse(() => stream.current?.preservePosition());
+    return () => {
+      setBeforeCollapse(undefined);
+      // Closed or reopened, a held file shows collapsed like any Viewed file.
+      releaseHeld();
+    };
+  }, []);
+  // A held key does not race through the symbols: one step per press. A press while a file loads takes over.
+  const inTree = (event: KeyboardEvent) => event.composedPath().some((node) => node instanceof Element && node.classList.contains('changes-file-tree'));
+  // The selected file is where the review target is: its outline offers Enter to comment on it.
+  useEffect(() => setReviewFile(entry ? viewKey(entry) : undefined), [activeKey]);
+  /** Enter in the diff comments on the item under review: only on the diff itself or its code, not a control in it. */
+  const enterInDiff = (event: KeyboardEvent) => {
+    const path = event.composedPath();
+    if (!path.some((node) => node instanceof Element && node.classList.contains('commit-diff-stream'))) return false;
+    return !path.some((node) => node instanceof Element && node.matches('button, a, input, textarea, select, summary, [role=button], [contenteditable=true]'));
+  };
+  const symbolKeys = {
+    Enter: (event: KeyboardEvent) => {
+      if (event.repeat || inTree(event) || !enterInDiff(event)) return false;
+      const item = currentReviewItem();
+      if (!item || !commentOnItem(item, 'diff')) return false;
+    },
+    n: (event: KeyboardEvent) => void (event.repeat || stepSymbol(1).then((moved) => moved === 'end' && endNotice(1))),
+    N: (event: KeyboardEvent) => void (event.repeat || stepSymbol(-1).then((moved) => moved === 'end' && endNotice(-1))),
+    // V anywhere in Changes; a tree row's own V acts on the row (ChangesSymbolTree's onReviewKey).
+    v: (event: KeyboardEvent) => {
+      if (inTree(event)) return false;
+      if (!event.repeat) void reviewAndMove();
+    },
+    // Shift+V takes the last V back. Caps Lock's V without Shift is V.
+    V: (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (!event.shiftKey) {
+        if (inTree(event)) return false;
+        void reviewAndMove();
+        return;
+      }
+      void undoTick();
+    },
+  };
+  // Only with the tree's symbol rows on: otherwise `n` is not Changes' key. On while the changes have any file, not only
+  // while some are listed: with Unviewed only, the last V empties the tree, and Shift+V must still take it back.
+  useKeyboardShortcuts(symbolKeys, { enabled: treeSymbols && entries.length > 0, capture: true, scope: workspace });
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
     [
@@ -626,6 +1226,51 @@ export function PrChangesView({
         await window.electronAPI.savePreferences({ ...current, ...patch });
       })
       .catch(() => setPreferenceError('Could not save diff preferences.'));
+  }
+  /**
+   * "Show file symbols" beside Unviewed only: the same preference as Settings › Review › "Show changed symbols in the
+   * file tree". It is saved, then announced, so every open Changes view and the Settings dialog agree.
+   */
+  /**
+   * Reset viewed: every file of these changes (all of them, not only those the filters show) loses its Viewed mark
+   * and every symbol tick, at once, keeping the reader's place. A toast offers Undo, which puts back exactly what was
+   * cleared.
+   */
+  const allFileKeys = useMemo(() => entries.map(viewKey), [entries]);
+  const anyViewed = useMemo(() => hasViewedMarks(allFileKeys), [allFileKeys, progressVersion()]);
+  function resetAllViewed() {
+    for (const fileKey of allFileKeys) releaseHeld({ only: fileKey });
+    stream.current?.preservePosition();
+    const { snapshot, saved } = resetViewed(allFileKeys);
+    // Nothing left for Shift+V to take back.
+    ticks.current.clear();
+    void saved;
+    if (!snapshot.marks.length) return;
+    const id = toast.add({
+      type: 'success',
+      title: 'Viewed state reset',
+      description: 'Every file and symbol in these changes is unviewed.',
+      actionProps: {
+        children: 'Undo',
+        onClick: () => {
+          toast.close(id);
+          stream.current?.preservePosition();
+          void restoreViewed(snapshot);
+        },
+      },
+    });
+  }
+  // The tree's review checkboxes: each change loads the saved preferences, merges it in, and saves, one write at a time.
+  function setReviewPreference(patch: Partial<Preferences>, errorText: string) {
+    setPreferenceError('');
+    writes.current = writes.current
+      .catch(() => {})
+      .then(async () => {
+        const next = { ...(await window.electronAPI.loadPreferences()), ...patch };
+        await window.electronAPI.savePreferences(next);
+        preferencesUpdated(next);
+      })
+      .catch(() => setPreferenceError(errorText));
   }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
@@ -715,7 +1360,17 @@ export function PrChangesView({
         {!commit && onOpenFeedback && <Button variant="outline" size="sm" onClick={() => onOpenFeedback()}>Address feedback</Button>}
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
-            {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
+            {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} {entries.length === 1 ? 'file' : 'files'} viewed
+            {treeSymbols && left > 0 && (
+              <span className="changes-progress-left" title="Left to review: changed functions, classes, top-level changes and files without symbols that are not viewed yet">
+                {' '}· {left} left to review
+              </span>
+            )}
+            {updated > 0 && (
+              <span className="changes-progress-updated" title="Changed since you viewed them, in an earlier revision">
+                {' '}· {updated} changed
+              </span>
+            )}
             {incomplete && ' · available files'}
             {quietNote && (
               <span
@@ -852,10 +1507,73 @@ export function PrChangesView({
                       onChange={(e) => setQuery(e.target.value)}
                     />
                   )}
-                  <label>
-                    <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
-                    Unviewed only
-                  </label>
+                  {/* Under the search, a grid of the tree's options in two columns, with the rare reset apart at the end of the first row. */}
+                  <div className="changes-tree-options">
+                    <div className="changes-tree-toggles">
+                      <label>
+                        <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
+                        Unviewed only
+                      </label>
+                      {/* "Symbols", not "Show file symbols": the tree's default width fits both options on one line. */}
+                      <label title="Show file symbols: expand a file to see the functions and classes its changes touch">
+                        <input
+                          type="checkbox"
+                          checked={treeSymbols}
+                          onChange={(e) =>
+                            setReviewPreference({ treeSymbols: e.target.checked }, 'Could not save the file tree setting.')
+                          }
+                        />
+                        Symbols
+                      </label>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="changes-tree-reset"
+                      disabled={!anyViewed}
+                      aria-label="Reset viewed"
+                      title="Reset viewed: clear Viewed for every file and symbol in these changes"
+                      onClick={resetAllViewed}
+                    >
+                      <RotateCcw size={14} aria-hidden="true" />
+                    </Button>
+                    {/* With symbols: how the tree reviews them, a second row in the same two columns as the first. */}
+                    {treeSymbols && (
+                      <div className="changes-tree-suboptions">
+                        <label title="Mark a symbol viewed after all its changed lines have been on screen for a moment">
+                          <input
+                            type="checkbox"
+                            checked={autoViewSymbols}
+                            onChange={(e) =>
+                              setReviewPreference({ autoViewSymbols: e.target.checked }, 'Could not save the auto-mark setting.')
+                            }
+                          />
+                          Auto-mark
+                        </label>
+                        <label title="Show a symbol's diff when you rest the pointer on it in the tree">
+                          <input
+                            type="checkbox"
+                            checked={peekOnHover}
+                            onChange={(e) =>
+                              setReviewPreference({ peekOnHover: e.target.checked }, 'Could not save the peek setting.')
+                            }
+                          />
+                          Peek on hover
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                  {/* Once, until the first V or its ×: the review loop's key, where the reader starts. */}
+                  {treeSymbols && vHint && (
+                    <p className="changes-tree-hint" role="note">
+                      <span>
+                        Press <kbd className="kbd">V</kbd> to mark what you’re reading and go on to the next change
+                      </span>
+                      <button type="button" aria-label="Dismiss tip" title="Dismiss" onClick={finishVHint}>
+                        <X size={12} aria-hidden="true" />
+                      </button>
+                    </p>
+                  )}
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit && !combined &&
@@ -900,6 +1618,8 @@ export function PrChangesView({
                     onGoToSymbol={goToSymbol}
                     onSetViewed={(keys, viewed) => {
                       const targets = new Set(keys);
+                      // Unviewed by hand: a file its ticks held open no longer needs holding.
+                      if (!viewed) for (const e of entries) if (targets.has(e.key)) releaseHeld({ only: viewKey(e) });
                       stream.current?.preservePosition();
                       return progress.markFilesViewed(entries.filter(e => targets.has(e.key)).map(viewKey), viewed);
                     }}
@@ -911,6 +1631,13 @@ export function PrChangesView({
                     revealSelected
                     codeSettings={codeSettings}
                     noiseFilter={noiseFilter}
+                    reveal={treeReveal}
+                    onReviewKey={(intent) => void reviewAndMove(intent)}
+                    onCommentKey={(item) => commentOnItem(item, 'tree')}
+                    peekTheme={diffThemeName(prefs.codeTheme)}
+                    peekAppearance={appearance}
+                    peekOnHover={peekOnHover}
+                    onReviewCurrent={() => void reviewAndMove()}
                   />
                 ) : (
                   <ChangesFileTree
@@ -1004,6 +1731,7 @@ export function PrChangesView({
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
                     onOpenSource={combined?.onOpenSource}
                     onViewedNext={next}
+                    autoViewSymbols={autoViewSymbols}
                     onAsk={(text) => {
                       setChatEntry(e);
                       setSelection(text);

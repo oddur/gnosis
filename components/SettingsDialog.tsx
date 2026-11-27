@@ -192,6 +192,8 @@ export function SettingsDialog({
   const [effort, setEffort] = useState<Effort>('high');
   const [smartImports, setSmartImports] = useState(true);
   const [treeSymbols, setTreeSymbols] = useState(true);
+  const [autoViewSymbols, setAutoViewSymbols] = useState(false);
+  const [peekOnHover, setPeekOnHover] = useState(true);
   const [prInactivityDays, setPrInactivityDays] = useState(DEFAULT_PR_INACTIVITY_DAYS);
   const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
@@ -283,6 +285,8 @@ export function SettingsDialog({
         setEffort(normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking));
         setSmartImports(prefs.smartImports);
         setTreeSymbols(prefs.treeSymbols !== false);
+        setAutoViewSymbols(prefs.autoViewSymbols === true);
+        setPeekOnHover(prefs.peekOnHover !== false);
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
         setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
@@ -812,6 +816,46 @@ export function SettingsDialog({
                     const next = !treeSymbols;
                     setTreeSymbols(next);
                     saveField({ treeSymbols: next });
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Mark a symbol viewed after you scroll through it"
+                description={
+                  treeSymbols
+                    ? 'Tick a changed function or class Viewed once all of its changed lines have been on screen and you have stayed on it for a moment. As with your own ticks, the last one marks the file viewed, and a symbol you untick stays unticked.'
+                    : 'Turn on “Show changed symbols in the file tree” to use this.'
+                }
+                beta
+              >
+                <Toggle
+                  checked={treeSymbols && autoViewSymbols}
+                  disabled={!treeSymbols}
+                  ariaLabel="Mark a symbol viewed after you scroll through it"
+                  onChange={() => {
+                    const next = !autoViewSymbols;
+                    setAutoViewSymbols(next);
+                    saveField({ autoViewSymbols: next });
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Peek at a symbol when you rest the pointer on it"
+                description={
+                  treeSymbols
+                    ? 'Show a symbol’s diff in a small panel beside the file tree when the pointer rests on its row. Space opens the same peek from the keyboard either way.'
+                    : 'Turn on “Show changed symbols in the file tree” to use this.'
+                }
+                beta
+              >
+                <Toggle
+                  checked={treeSymbols && peekOnHover}
+                  disabled={!treeSymbols}
+                  ariaLabel="Peek at a symbol when you rest the pointer on it"
+                  onChange={() => {
+                    const next = !peekOnHover;
+                    setPeekOnHover(next);
+                    saveField({ peekOnHover: next });
                   }}
                 />
               </SettingRow>

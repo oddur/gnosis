@@ -3,6 +3,9 @@ import { DIFF_STAT_COLORS } from './DiffStats';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
 import { selectedTreeFiles } from '../lib/tree-viewed-files';
+import { rowLabel, type SymbolProgress } from '../lib/tree-symbol-review';
+/** Items that changed since the reader viewed them (lib/symbol-carry.ts): the panel's info ink, apart from the diff's. */
+export const CHANGED_COLOR = 'var(--color-info)';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
 // Lucide MessageSquare (ISC), used inside Pierre's shadow-DOM text decoration.
 const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></svg>')}")`;
@@ -11,9 +14,13 @@ export const decorationCSS = `
   [data-item-section="decoration"] { flex: 0 0 auto; }
   [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
 `;
+// The comment icon goes on a file row's comment count only. Pierre's decoration parts carry no attributes, so the
+// count is found by its row's tooltip, which alone names "GitHub comment(s)" or "Comments unavailable": a symbol row's
+// "Enter to comment" must not draw it.
+const COMMENT_COUNT = `[data-item-section="decoration"] > span:is([title*="GitHub comment" i], [title*="Comments unavailable" i]) > span:last-child`;
 export const commentDecorationCSS = `
-  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
-  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
+  ${COMMENT_COUNT} { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
+  ${COMMENT_COUNT}::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
 /** The tree's short word for a quiet file's label (#396); a file of mixed kinds is "Quiet". */
 export const TREE_WORDS: Record<string, string> = {
@@ -34,12 +41,24 @@ export interface ChangeTreeEntry {
   /** Every change is noise the reader hides (#396): "Formatting only", "Comments only" or "Formatting and comments". */
   quiet?: string;
 }
-/** A file row's counts, quiet word and comments, at the row's end (Pierre's decoration lane). */
-export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean) {
-  const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
+/**
+ * A file row's counts, quiet word and comments, at the row's end (Pierre's decoration lane). With the tree's symbol
+ * rows, `symbols` is how many of the file's changed symbols are Viewed, once they are known: from the first one viewed
+ * it takes the counts' place (lib/tree-symbol-review.ts).
+ */
+export function fileRowDecoration(
+  entry: ChangeTreeEntry,
+  showComments: boolean,
+  symbols?: SymbolProgress,
+  /** Items that changed since the reader viewed them (lib/symbol-carry.ts): "2 changed" before the progress. */
+  changed = 0
+) {
+  const progress = entry.viewed ? undefined : rowLabel(symbols, changed);
+  const reviewing = progress && progress.kind !== 'none' ? progress : undefined;
+  const changes = entry.viewed ? 'Viewed' : (reviewing?.text ?? `+${entry.additions} −${entry.deletions}`);
   // A file whose every change is quiet says so in a short word, muted, in place of its counts: the tree is narrow,
   // and the full label and the counts stay in the tooltip and the file's header.
-  const quiet = !entry.viewed && entry.quiet ? (TREE_WORDS[entry.quiet] ?? 'Quiet') : undefined;
+  const quiet = !entry.viewed && !reviewing && entry.quiet ? (TREE_WORDS[entry.quiet] ?? 'Quiet') : undefined;
   const count = entry.commentCount;
   // Files with comments get a count, and files whose comments could not be read get a dash. Nothing is
   // shown while comments load: a placeholder would be removed again for most files once they arrive,
@@ -54,7 +73,16 @@ export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean)
     parts: [
       ...(entry.viewed
         ? [{ text: 'Viewed' }]
-        : quiet
+        : reviewing
+          ? // Changed since viewed, in the info colour; every symbol viewed, a muted check, the outline's "All viewed".
+            [
+              reviewing.kind === 'changed'
+                ? { text: reviewing.text, color: CHANGED_COLOR }
+                : reviewing.kind === 'all'
+                  ? { text: reviewing.text, color: 'var(--muted-foreground)' }
+                  : { text: reviewing.text },
+            ]
+          : quiet
           ? [{ text: quiet, color: 'var(--muted-foreground)' }]
           : [
               { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
@@ -69,7 +97,7 @@ export function fileRowDecoration(entry: ChangeTreeEntry, showComments: boolean)
           ]
         : []),
     ],
-    title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
+    title: `${reviewing?.kind === 'changed' ? `${reviewing.text} since you viewed them. ` : ''}${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${symbols && reviewing && symbols.total ? `. ${symbols.viewed} of ${symbols.total} changed symbols viewed${reviewing.kind === 'all' ? '; right-click to mark the file as viewed' : ''}` : ''}${quiet ? `. ${entry.quiet}: every change is quiet` : ''}${showCommentCount ? `. ${comments}` : ''}`,
   };
 }
 export function ChangesFileTree({
@@ -173,12 +201,11 @@ export function ChangesFileTree({
   };
   const selectedFiles = selectedTreeFiles(entries, selectedPaths, matchingPaths);
   return <div className="file-tree-selection-workspace">
-    <div className="file-tree-selection-status">
-      {selectedPaths.length > 1 ? <>
-        <span role="status">{selectedFiles.length} files selected</span>
-        <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
-      </> : <span>Shift-click to select a range</span>}
-    </div>
+    {/* A multiple selection floats over the tree's foot, so selecting moves no row; the range tip is in the menu. */}
+    {selectedPaths.length > 1 && <div className="file-tree-selection-status">
+      <span role="status">{selectedFiles.length} files selected</span>
+      <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
+    </div>}
     <FileTree
       model={model}
       renderContextMenu={onSetViewed ? (item, context) => (
@@ -225,6 +252,16 @@ export function ChangesFileTree({
         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
           const path = model.getFocusedPath();
           if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
+        }
+        // V marks the file Viewed, or not, as its header's checkbox does; the same key as in the symbol tree.
+        if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !event.altKey && model.getFocusedItem()?.isDirectory() === false) {
+          const entry = current.current.entries.find((e) => e.key === model.getFocusedPath());
+          if (entry && onSetViewed) {
+            event.preventDefault();
+            event.stopPropagation();
+            void onSetViewed([entry.key], !entry.viewed);
+          }
+          return;
         }
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();

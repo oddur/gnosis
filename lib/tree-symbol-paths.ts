@@ -1,4 +1,6 @@
-import { treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
+import { TOP_LEVEL_ID, isBody } from './symbol-outline';
+import { reviewed } from './tree-symbol-review';
+import { rowName, topLevelName, treeSymbolKind, type TopLevelChanges, type TreeSymbolKind, type TreeSymbolNode } from './tree-symbols';
 
 /**
  * The Changes file tree's paths for @pierre/trees when it lists changed symbols (lib/tree-symbols.ts). Pierre builds
@@ -59,7 +61,15 @@ const segmentName = (name: string) => (name.replace(MARKS, '').replaceAll('/', N
 export type FileSymbols =
   | { state: 'loading' }
   | { state: 'none'; reason: string }
-  | { state: 'ready'; nodes: readonly TreeSymbolNode[]; top?: TopLevelChanges };
+  | {
+      state: 'ready';
+      nodes: readonly TreeSymbolNode[];
+      top?: TopLevelChanges;
+      /** Each counted item's print, by id, for its tick to carry to a new revision (lib/review-prints.ts). */
+      prints?: Readonly<Record<string, string>>;
+      /** What each item's changed lines call, by id, for a peek's callers (lib/review-peek.ts). */
+      calls?: Readonly<Record<string, readonly import('./review-peek').ItemCall[]>>;
+    };
 
 /** What one of the tree's rows is. */
 export type TreeRow =
@@ -134,9 +144,13 @@ export function symbolTreePaths(
   const emitNodes = (file: string, base: string, nodes: readonly TreeSymbolNode[]) => {
     const used = new Set<string>();
     for (const node of nodes) {
-      const icon: TreeRowIcon = treeSymbolKind(node.definition.kind);
-      const tint: TreeRowTint = node.change === 'context' ? 'context' : node.change;
-      let segment = `${segmentName(node.definition.name)}${rowCode(icon, tint)}`;
+      // A container's Body (its own changed lines) looks like the file's top-level row; a container, which only rolls
+      // up from what is under it, like a context row (lib/tree-symbol-review.ts).
+      const body = isBody(node);
+      const icon: TreeRowIcon = body ? 'top' : treeSymbolKind(node.definition.kind);
+      const tint: TreeRowTint = body ? 'muted' : node.change === 'context' || (!node.quiet && !reviewed(node)) ? 'context' : node.change;
+      // An impl block, or a name a sibling shares, reads with its keyword (`impl FieldCommand`).
+      let segment = `${segmentName(rowName(node, nodes))}${rowCode(icon, tint)}`;
       while (used.has(segment)) segment = `${segment.slice(0, -CODE_LENGTH)}${REPEAT}${segment.slice(-CODE_LENGTH)}`;
       used.add(segment);
       const row: TreeRow = { type: 'symbol', key: file, node };
@@ -170,8 +184,12 @@ export function symbolTreePaths(
     const before = out.paths.length;
     if (known?.state === 'ready') {
       // Imports and top-level statements head the file, as they do in its source: first, then the symbols.
-      if (known.top)
-        leaf(`${path}${known.top.imports ? 'Imports' : 'Top level'}${rowCode(known.top.imports ? 'imports' : 'top', 'muted')}`, { type: 'top', key, top: known.top });
+      if (known.top) {
+        const top = `${path}${topLevelName(known.top)}${rowCode(known.top.imports ? 'imports' : 'top', 'muted')}`;
+        // Found by its review id as a symbol's row is: it is lit, ticked and gone to the same way.
+        out.symbolPaths.set(symbolRowKey(key, TOP_LEVEL_ID), top);
+        leaf(top, { type: 'top', key, top: known.top });
+      }
       emitNodes(key, path, known.nodes);
       if (out.paths.length === before && expanded.has(key)) note('No symbols changed', false);
     } else if (expanded.has(key)) note(known?.state === 'none' ? known.reason : TEXT.loading, known?.state !== 'none');
@@ -201,5 +219,17 @@ export function symbolTreePaths(
     }
   };
   emitChildren(root, '');
+  return out;
+}
+
+/**
+ * The directory rows above a row, outermost first: every folder (a flattened chain is one), the file's folder of
+ * symbols, and each container symbol. A jump to the row expands them all, so it shows. Names never hold a `/` (it
+ * shows as NAME_SLASH), so the path's slashes are the tree's levels.
+ */
+export function ancestorPaths(path: string): string[] {
+  const out: string[] = [];
+  const own = path.endsWith('/') ? path.length - 1 : path.length;
+  for (let at = path.indexOf('/'); at >= 0 && at < own; at = path.indexOf('/', at + 1)) out.push(path.slice(0, at + 1));
   return out;
 }
