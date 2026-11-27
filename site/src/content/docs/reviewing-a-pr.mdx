@@ -54,7 +54,7 @@ Changes shows the diff of the PR. A file tree is on the left.
 
 ### Find the changed functions and classes
 
-<Prerelease /> A TypeScript, JavaScript, Python, Go, Rust, Java or C# file in the file tree has a chevron. Select the chevron to see the functions, classes and methods that the file's changes touch. The file you read opens by itself.
+<Beta /> A TypeScript, JavaScript, Python, Go, Rust, Java or C# file in the file tree has a chevron. Select the chevron to see the functions, classes and methods that the file's changes touch. The file you read opens by itself.
 
 - Select a symbol to go to it in the diff. As you scroll the diff, the file tree highlights the symbol that you read.
 - Changes outside every function and class show first, as **Imports** or **Top level**.
@@ -72,7 +72,7 @@ When **Symbols** is selected, a second line of checkboxes shows under it:
 
 ### Review symbol by symbol
 
-<Prerelease /> When the file tree shows changed symbols, it also shows your progress through them.
+<Beta /> When the file tree shows changed symbols, it also shows your progress through them.
 
 - After you mark a symbol of a file as viewed, the file shows how many of its changed symbols are viewed, such as **2/5**, instead of its added and removed lines. Symbols with only formatting or comment changes do not count. The **Imports** or **Top level** row counts as one more symbol: mark it as viewed with <Kbd keys="v" />, right-click, or its tick in the outline above the diff.
 - When you mark the last changed symbol of a file as viewed, Gnosis marks the file as viewed. The file stays open while you read it, and it collapses when you go to another file or scroll past it. If you clear the mark of one symbol, the file is not viewed any more, and the other symbols stay marked.
@@ -84,7 +84,7 @@ When **Symbols** is selected, a second line of checkboxes shows under it:
 
 ### Review with V
 
-<Prerelease /> To review a PR one change at a time, turn on **Unviewed only** and **Symbols** above the file tree.
+<Beta /> To review a PR one change at a time, turn on **Unviewed only** and **Symbols** above the file tree.
 
 1. Select the first symbol in the file tree, or press <Kbd keys="n" />. Until you first press <Kbd keys="v" />, a tip under the file tree options reminds you of it.
 2. Read it, then press <Kbd keys="v" />. Gnosis marks it as viewed and goes to the next symbol that is not viewed. A file without symbols, such as a JSON file or an image, is one step.
@@ -108,7 +108,7 @@ If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it 
 
 ### Peek at a symbol
 
-<Prerelease /> To look at a symbol without leaving your place, select it in the file tree and press <Kbd keys="Space" />, or hold the pointer over it. A panel shows its changes, as the diff shows them, and the changed functions and classes in this PR that call it.
+<Beta /> To look at a symbol without leaving your place, select it in the file tree and press <Kbd keys="Space" />, or hold the pointer over it. A panel shows its changes, as the diff shows them, and the changed functions and classes in this PR that call it.
 
 - Press <Kbd keys="Enter" /> to go to the symbol, <Kbd keys="v" /> to mark it as viewed, or <Kbd keys="Esc" /> to close the panel.
 - Use <Kbd keys="↑" /> and <Kbd keys="↓" /> to choose a caller, and <Kbd keys="Enter" /> to peek at it. Press <Kbd keys="Backspace" /> to go back.
@@ -117,7 +117,7 @@ If you press <Kbd keys="v" /> by mistake, press <Kbd keys="⇧ V" /> to undo it 
 
 ### After the author pushes
 
-<Prerelease /> When the file tree shows symbols, a new push keeps your marks on the code that did not change. Gnosis compares each symbol you marked as viewed with the new version of the PR. Changes to spaces and blank lines do not count.
+<Beta /> When the file tree shows symbols, a new push keeps your marks on the code that did not change. Gnosis compares each symbol you marked as viewed with the new version of the PR. Changes to spaces and blank lines do not count.
 
 - A symbol that is the same stays marked as viewed. If every symbol of a file is the same, the file stays viewed.
 - A symbol that changed shows **↻ Changed** in the file tree and in the outline above the diff, and is not viewed any more. Its hunks show **Changed since you viewed**. A file or folder shows how many items in it changed, such as **2 changed**, and so does the toolbar. <Kbd keys="n" /> and <Kbd keys="v" /> go to them like to any other item that is not viewed.

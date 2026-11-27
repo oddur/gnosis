@@ -76,6 +76,6 @@ If new base commits cause new conflicts, Gnosis pushes nothing and shows them to
 ## Settings
 
 - **Type check**: in <Setting name="Local clone" section="Repositories" />, turn on **Type-check conflict resolutions**. Gnosis then runs the TypeScript compiler from your clone. A new error moves the Merged conflicts to Check. The clone needs TypeScript in its node_modules and a tsconfig.json at its root. The check never runs for PRs from forks.
-- **Undo an update** <Prerelease />: in <Setting name="Undo conflict updates" section="Repositories" />, turn on **Allow undoing a conflict update with a force push**. It is off by default. **Undo this update** then resets the branch to its earlier commit, unless someone pushed after you.
+- **Undo an update**: in <Setting name="Undo conflict updates" section="Repositories" />, turn on **Allow undoing a conflict update with a force push**. It is off by default. **Undo this update** then resets the branch to its earlier commit, unless someone pushed after you.
 
 For all the keys, see [Keyboard shortcuts](/docs/keyboard-shortcuts/#resolving-conflicts). For conflicts in a stack, see [Stacks](/docs/stacks/).
