@@ -1,4 +1,5 @@
-import { approximateBytes } from './byte-cache';
+import { createByteCache } from './byte-cache';
+import { RENDERER_EXPLANATION_BYTES, RENDERER_EXPLANATION_ENTRIES } from './inspection-limits';
 import type { ReviewGuide, ReviewHistoryEntry } from './types';
 import type { QueueItem, ReviewSubject } from './workbench';
 import type { SearchDestination } from './command-search';
@@ -57,20 +58,22 @@ export function matchesExplanation(entry: ReviewHistoryEntry, subject: ReviewSub
     ? entry.snapshot.subject.id === subject.id
     : subject.kind === 'pr' && entry.prUrl === subject.members[0].url;
 }
-const loaded = new Map<string, ReviewGuide>();
+/**
+ * Loaded explanations, least recently used first, bounded by bytes as well as count (#355): predictions load the
+ * neighbours' explanations as the reader steps through the queue, and one explanation can take megabytes. Views hold
+ * their own copy (components/PrExplanation.tsx, components/PrSummary.tsx), so one dropped here stays on screen.
+ */
+const loaded = createByteCache<string, ReviewGuide>(RENDERER_EXPLANATION_BYTES, RENDERER_EXPLANATION_ENTRIES, Date.now, {
+  keepNewest: true,
+});
 const pending = new Map<string, Promise<ReviewGuide>>();
 export function rememberExplanation(review: ReviewGuide) {
   if (!review.reviewId) return;
   loaded.set(review.reviewId, review);
-  while (loaded.size > 12) {
-    const key = loaded.keys().next().value;
-    if (key === undefined) break;
-    loaded.delete(key);
-  }
 }
 export const peekExplanation = (id?: string) => (id ? loaded.get(id) : undefined);
 /** Explanations held and their estimated size, for the diagnostics export (#355). */
-export const explanationCacheStats = () => ({ entries: loaded.size, bytes: approximateBytes([...loaded.values()]) });
+export const explanationCacheStats = () => ({ entries: loaded.size, bytes: loaded.bytes });
 export function loadExplanation(id: string): Promise<ReviewGuide> {
   const cached = loaded.get(id);
   if (cached) return Promise.resolve(cached);

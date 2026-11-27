@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  discussionCacheStats,
+  forgetDiscussions,
+  peekDiscussion,
   readDiscussion,
+  receiveDiscussion,
   setDiscussionAccount,
   subscribeDiscussions,
   subscribeDiscussionFailures,
 } from '../lib/review-discussion-cache';
 import type { GitHubReviewThreads } from '../lib/review-threads';
+import { RENDERER_DISCUSSION_BYTES } from '../lib/inspection-limits';
 
 const thread = {
   id: 'T1',
@@ -149,4 +154,32 @@ void test('without a saved copy, readDiscussion waits for GitHub', async () => {
   } finally {
     restore();
   }
+});
+
+void test('discussions are bounded by bytes, least recently used first, and the newest always stays (#355)', () => {
+  setDiscussionAccount('bounded');
+  // Each about 6 MB by the cache's estimate (two bytes a character): two fit in the 16 MB bound, a third does not.
+  const large = (n: number, chars = 3 * 1024 * 1024): GitHubReviewThreads => ({
+    ...saved,
+    checkedAt: n,
+    threads: [{ ...thread, id: `T${n}`, comments: [{ ...thread.comments[0], body: 'x'.repeat(chars) }] }],
+  });
+  const url = (n: number) => `https://github.com/o/r/pull/${200 + n}`;
+  receiveDiscussion(url(1), large(1));
+  receiveDiscussion(url(2), large(2));
+  assert.ok(peekDiscussion(url(1)), 'Reading the first makes the second the least recently used');
+  receiveDiscussion(url(3), large(3));
+  assert.equal(peekDiscussion(url(2)), undefined, 'The least recently used discussion left');
+  assert.ok(peekDiscussion(url(1)) && peekDiscussion(url(3)));
+  assert.ok(discussionCacheStats().bytes <= RENDERER_DISCUSSION_BYTES);
+
+  // One discussion over the whole bound stays, so its readers get back the copy just published.
+  const huge = large(4, 9 * 1024 * 1024);
+  receiveDiscussion(url(4), huge);
+  assert.equal(peekDiscussion(url(4)), huge);
+  assert.equal(discussionCacheStats().entries, 1);
+
+  forgetDiscussions([url(4), url(5)]);
+  assert.equal(peekDiscussion(url(4)), undefined, 'A closed tab’s discussion leaves');
+  assert.deepEqual({ ...discussionCacheStats(), listeners: 0 }, { entries: 0, threads: 0, listeners: 0, bytes: 0 });
 });
