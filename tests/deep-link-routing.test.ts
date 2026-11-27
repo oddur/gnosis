@@ -184,3 +184,13 @@ void test('Feedback links and saved Feedback tabs open the Summary page at their
   assert.equal(conversationTab('changes'), 'changes');
   assert.deepEqual(link('gnosis://pr/oddur/gnosis/160/feedback?thread=PRRT_1'), { kind: 'pr', pr, tab: 'feedback', threadId: 'PRRT_1' }, 'An old Feedback link keeps its thread');
 });
+
+void test('the Overview opens where it already is, so it keeps what it holds, such as a guided session', () => {
+  const overview = tab('t2', { page: 'home', home: { overview: true, item: null } as never });
+  const pr = tab('t3', { page: 'home', home: { item: { subject: { members: [] }, attention: 'other' } } as never });
+  assert.deepEqual(routeDeepLink({ kind: 'queue', section: 'overview' }, { tabs: [tab('t1'), overview, pr], active: 't3' }, { items: [] }).tab, { kind: 'reuse', id: 't2' });
+  // No Overview open: as before, a PR tab opens a new tab for it.
+  assert.deepEqual(routeDeepLink({ kind: 'queue', section: 'overview' }, { tabs: [tab('t1'), pr], active: 't3' }, { items: [] }).tab, { kind: 'new' });
+  // A filtered queue link is not the Overview.
+  assert.notDeepEqual(routeDeepLink({ kind: 'queue', section: 'overview', filters: { repo: 'o/r' } }, { tabs: [overview, pr], active: 't3' }, { items: [] }).tab, { kind: 'reuse', id: 't2' });
+});

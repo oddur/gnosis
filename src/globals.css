@@ -5856,6 +5856,19 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-step-buttons { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .guided-step-primary { display:inline-flex; }
 .guided-step-note { font-size:var(--type-caption); color:var(--muted-foreground); }
+.guided-step-approve-group { display:inline-flex; align-items:center; gap:8px; }
+.guided-step-link { font-size:var(--type-control); color:var(--primary); }
+.guided-step-link:hover { text-decoration:underline; text-underline-offset:3px; }
+.guided-step-link:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:3px; }
+/* The guided session's bar on a PR it opened (components/SessionBar.tsx): a thin line above the PR's header, quiet
+   until the PR is finished here, when Next becomes the filled action. */
+.session-bar { display:flex; align-items:center; gap:10px; min-width:0; margin:0 0 8px; padding:4px 8px 4px 4px; border-radius:6px; background:var(--secondary); font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.session-bar[data-finished] { background:var(--status-success-bg); }
+.session-bar-position { font-variant-numeric:tabular-nums; }
+.session-bar-done { display:inline-flex; align-items:center; gap:6px; font-weight:500; color:var(--color-success); }
+.session-bar-next { flex:1; min-width:0; display:flex; align-items:baseline; justify-content:flex-end; gap:6px; }
+.session-bar-next-label { flex:none; font-weight:600; color:var(--foreground); }
+.session-bar-next-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
 .guided-session kbd { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; margin-left:6px; padding:0 4px; border-radius:3px; border:1px solid color-mix(in oklab, currentColor 30%, transparent); font:500 10px/1 var(--font-sans, inherit); opacity:.8; }
 .guided-session-next { display:flex; align-items:baseline; gap:8px; min-width:0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
 .guided-session-next > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }

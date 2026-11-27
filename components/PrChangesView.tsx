@@ -1,4 +1,5 @@
 import { useRenderSpan } from '../lib/perf-spans';
+import { markSessionFinished } from '../lib/session-store';
 import { LoadingState, LoadingIndicator } from './LoadingState';
 import { watchGitHub } from '../lib/watch-github';
 import { stackFileDiscussions } from '../lib/stack-changes';
@@ -1054,6 +1055,8 @@ export function PrChangesView({
     });
   }
   function everythingViewed() {
+    // Every change viewed on a PR the guided session opened: the session offers the next PR (#596).
+    if (entry) markSessionFinished(entry.snapshot.url);
     const number = entry?.snapshot.url.split('/').pop();
     const reviewable = ownReview && subject.kind !== 'stack' && !!number;
     const id = toast.add({

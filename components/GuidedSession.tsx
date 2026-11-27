@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, MessageSquare, MessagesSquare, ScanSearch, SkipForward, TextSearch, X } from 'lucide-react';
 import { Button } from './ui/button';
-import { mergeBlockers, plainText, primaryAction, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DigestLine, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { toast } from './ui/toast';
+import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DigestLine, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { SinceEvent } from '../lib/since-log';
 import type { WaitingReply } from '../lib/use-morning';
@@ -21,8 +22,6 @@ export interface GuidedSessionProps {
   live: ReadonlyMap<string, SessionStep>;
   index: number;
   outcomes: Readonly<Partial<Record<string, StepOutcome>>>;
-  /** Per step: the depth the reader chose instead of the suggestion. */
-  depths: Readonly<Partial<Record<string, Depth>>>;
   login: string;
   now: number;
   statusOf: (member: { url: string }) => QueueSignals | undefined;
@@ -41,7 +40,6 @@ export interface GuidedSessionProps {
   onOpen: (step: SessionStep, where: SessionOpen) => void;
   onIndex: (index: number) => void;
   onOutcome: (id: string, outcome: StepOutcome) => void;
-  onDepth: (id: string, depth: Depth) => void;
   onExit: () => void;
 }
 
@@ -68,7 +66,7 @@ const PRIMARY = '[data-session-primary]';
  * depth; S skips; ← and → move; Esc leaves.
  */
 export function GuidedSession(props: GuidedSessionProps) {
-  const { steps, live, index, outcomes, depths, onExit, onIndex, onOutcome, onDepth, onOpen } = props;
+  const { steps, live, index, outcomes, onExit, onIndex, onOutcome, onOpen } = props;
   const root = useRef<HTMLElement>(null);
   const done = index >= steps.length;
   useEffect(() => {
@@ -77,7 +75,6 @@ export function GuidedSession(props: GuidedSessionProps) {
   const current = done ? undefined : (live.get(steps[index].id) ?? steps[index]);
   const gone = !done && !live.has(steps[index].id);
   const go = (to: number) => onIndex(Math.max(0, Math.min(steps.length, to)));
-  const depthOf = (step: SessionStep) => depths[step.id] ?? suggestDepth(step, props.rereviewLines[step.member.url]).depth;
   const skip = () => {
     if (!current) return;
     if (!outcomes[current.id]) onOutcome(current.id, 'skipped');
@@ -93,11 +90,11 @@ export function GuidedSession(props: GuidedSessionProps) {
     else if (key === 'ArrowLeft') go(index - 1);
     else if (done) return;
     else if (key === 's') skip();
-    else if (key === 'd' && current) onDepth(current.id, depthOf(current) === 'deep' ? 'summary' : 'deep');
-    else if (key === 'o' && current) {
+    else if ((key === 'd' || key === 'o') && current) {
       if (!outcomes[current.id]) onOutcome(current.id, 'opened');
-      onOpen(current, depthOf(current) === 'deep' ? 'review' : 'summary');
-    } else if (key === 'Enter' && event.target === root.current) {
+      onOpen(current, key === 'd' ? 'review' : 'summary');
+    } else if (key === 'a' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-approve-now]')?.click();
+    else if (key === 'Enter' && event.target === root.current) {
       // The primary action: a reply box takes the keyboard, a button is pressed.
       const target = root.current.querySelector<HTMLElement>(`textarea${PRIMARY}, ${PRIMARY} button, button${PRIMARY}`);
       if (target instanceof HTMLTextAreaElement) target.focus();
@@ -162,7 +159,7 @@ function newHeading(lead: string): string {
 type Busy = 'reply' | 'approve' | undefined;
 
 function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; next: () => void }) {
-  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, depths, outcomes, about, renderAction, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome, onDepth } = props;
+  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, about, renderAction, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
   const waiting = replies[step.member.url];
@@ -171,8 +168,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   // Your approval clears the review it was waiting on at once; the next status read confirms the rest.
   const blockers = mergeBlockers(step.member, signals, login).filter((blocker) => !(approved && blocker.action.kind === 'review' && blocker.owner === 'me'));
   const suggested = suggestDepth(step, lines);
-  const depth = depths[step.id] ?? suggested.depth;
-  const chosen = depths[step.id] !== undefined && depths[step.id] !== suggested.depth;
+  const depth: Depth = suggested.depth;
   const summary = about(step);
   const outcome = outcomes[step.id];
   const moved = gone || outcome === 'done';
@@ -188,8 +184,8 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   // After a reply or an approval, the keyboard goes back to the session, so → and Enter go on at once.
   const backToSession = () => card.current?.closest<HTMLElement>('[data-guided-session]')?.focus({ preventScroll: true });
   const own = step.member.author.toLowerCase() === login.toLowerCase();
-  // Approve in place: a review a summary is enough for, on someone else's PR.
-  const canApprove = !own && !moved && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview');
+  // Approve from the step: any PR that is not yours, until you have approved it here.
+  const canApprove = !own && !moved && !approved;
   const replyHere = !!waiting?.threadId && !moved && !sent;
   const full = (where: 'review' | 'summary') => {
     if (!outcome) onOutcome(step.id, 'opened');
@@ -203,7 +199,12 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       setResult(done);
       if (what === 'reply') setSent(replyText.trim());
       onOutcome(step.id, 'done');
-      requestAnimationFrame(backToSession);
+      toast.add({ type: 'success', title: done });
+      // Done here means on to the next PR: no extra press. ← comes back.
+      requestAnimationFrame(() => {
+        backToSession();
+        next();
+      });
     } catch (failure) {
       const message = failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(failure);
       setError(`${what === 'reply' ? 'The reply was not sent' : 'The approval was not sent'}: ${message} Your text is kept. Try again, or open the full PR.`);
@@ -217,11 +218,19 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     void write('reply', () => reply(step, threadId, replyText.trim(), resolveToo), resolveToo ? `Replied to ${waiting.author} and resolved the thread.` : `Replied to ${waiting.author}.`);
   };
   const sendApproval = () => {
-    if (busy) return;
+    if (busy || !canApprove) return;
     void write('approve', async () => { await approve(step, note.trim()); setApproved(true); }, `Approved #${step.member.number}.`);
   };
   const inline = renderAction(step);
-  // The one primary action: what moves this PR on from here. A waiting reply's box is the primary when there is one.
+  // The one primary action: what moves this PR on from here. A waiting reply's box is the primary when there is one;
+  // otherwise the step's own action (Merge, Rerun), else the depth Gnosis suggests.
+  const openButton = (where: 'summary' | 'review', filled: boolean) => (
+    <Button size="sm" variant={filled ? 'default' : 'outline'} data-session-primary={filled || undefined} onClick={() => full(where)}
+      title={where === 'review' ? `Open #${step.member.number} on Changes, for a full read · D` : `Open #${step.member.number} on Summary · O`}>
+      {where === 'review' ? 'Deep review' : 'Summary'}
+      <kbd>{where === 'review' ? 'D' : 'O'}</kbd>
+    </Button>
+  );
   const primary: ReactNode = moved ? (
     <Button size="sm" data-session-primary onClick={next}>
       Next PR
@@ -229,18 +238,8 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     </Button>
   ) : inline ? (
     <span data-session-primary className="guided-step-primary">{inline}</span>
-  ) : replyHere || (canApprove && approving) ? null : canApprove ? (
-    <Button size="sm" data-session-primary onClick={() => setApproving(true)}>
-      <Check size={14} aria-hidden="true" />
-      Approve…
-      <kbd>↵</kbd>
-    </Button>
-  ) : (
-    <Button size="sm" data-session-primary onClick={() => full(depth === 'deep' ? 'review' : 'summary')}>
-      {primaryAction(step, blockers, depth)}
-      <kbd>↵</kbd>
-    </Button>
-  );
+  ) : null;
+  const suggestedOpen = !moved && !inline && !replyHere;
   const blockerAction = (blocker: Blocker): ReactNode => {
     if (moved) return null;
     switch (blocker.action.kind) {
@@ -444,23 +443,31 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
             {result}
           </p>
         )}
-        <p className="guided-step-depth" data-depth={depth}>
-          {depth === 'deep' ? <ScanSearch size={14} aria-hidden="true" /> : <TextSearch size={14} aria-hidden="true" />}
-          <span>
-            <strong>{depth === 'deep' ? 'Deep review' : 'Summary is enough'}</strong>
-            {chosen ? ': your choice for this PR.' : `: ${suggested.reason.charAt(0).toLowerCase()}${suggested.reason.slice(1)}`}
-          </span>
-          <button type="button" className="guided-step-switch" onClick={() => onDepth(step.id, depth === 'deep' ? 'summary' : 'deep')}>
-            {depth === 'deep' ? 'A summary is enough' : 'Go deeper'}
-            <kbd>D</kbd>
-          </button>
-        </p>
+        {!moved && (
+          <p className="guided-step-depth" data-depth={depth}>
+            {depth === 'deep' ? <ScanSearch size={14} aria-hidden="true" /> : <TextSearch size={14} aria-hidden="true" />}
+            <span>
+              <strong>{depth === 'deep' ? 'Worth a deep review' : 'A summary is enough'}</strong>: {suggested.reason.charAt(0).toLowerCase()}
+              {suggested.reason.slice(1)}
+            </span>
+          </p>
+        )}
         <div className="guided-step-buttons">
           {primary}
-          <Button size="sm" variant="outline" onClick={() => full(depth === 'deep' ? 'review' : 'summary')} title={`Open #${step.member.number} ${depth === 'deep' ? 'on Changes' : 'on Summary'} · O`}>
-            Open full PR
-            <kbd>O</kbd>
-          </Button>
+          {canApprove && (
+            <span className="guided-step-approve-group">
+              <Button size="sm" variant={suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview') ? 'default' : 'outline'}
+                data-session-approve-now data-session-primary={(suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview')) || undefined}
+                disabled={!!busy} onClick={sendApproval} title={`Approve #${step.member.number} now · A`}>
+                <Check size={14} aria-hidden="true" />
+                {busy === 'approve' ? 'Approving…' : 'Approve'}
+                <kbd>A</kbd>
+              </Button>
+              {!approving && <button type="button" className="guided-step-link" onClick={() => setApproving(true)}>with a comment…</button>}
+            </span>
+          )}
+          {openButton('summary', suggestedOpen && depth === 'summary' && !(canApprove && (step.kind === 'review' || step.kind === 'rereview')))}
+          {openButton('review', suggestedOpen && depth === 'deep')}
           {!moved && (
             <Button size="sm" variant="ghost" onClick={skip} title="Skip for now · S">
               <SkipForward size={14} aria-hidden="true" />

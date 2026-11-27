@@ -100,7 +100,8 @@ import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { GuidedSession, type SessionOpen, type StepAbout } from './GuidedSession';
-import { plainText, sessionSteps, type Depth, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { plainText, sessionSteps, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { answerSessionRequests, peekSessionState, publishSession, takeSessionRequest, type SessionRequest } from '../lib/session-store';
 import { toast } from './ui/toast';
 
 export interface OverviewPageProps {
@@ -206,6 +207,28 @@ interface RowRef {
   also?: boolean;
 }
 
+/** A guided session's run (#596): its steps as they were when it started, where it is, and what happened to each. */
+interface GuidedRun {
+  steps: SessionStep[];
+  index: number;
+  outcomes: Partial<Record<string, StepOutcome>>;
+  open: boolean;
+}
+/** The run outlives the page: the app keeps one Overview, but bringing its tab back can mount the page anew. */
+let keptSession: GuidedRun | null = null;
+/**
+ * Back or Next from a PR's session bar, applied to a run: back to the PR's step, or on to the one after it. A PR
+ * finished where it was opened (a review, or every change viewed) moved on in this run.
+ */
+function answerRequest(run: GuidedRun | null, request: SessionRequest, url: string): GuidedRun | null {
+  if (!run) return run;
+  const at = run.steps.findIndex((step) => step.member.url === url);
+  if (at < 0) return run;
+  const finished = peekSessionState()?.finished.has(url);
+  const outcomes = finished ? { ...run.outcomes, [run.steps[at].id]: 'done' as const } : run.outcomes;
+  return { ...run, outcomes, open: true, index: request === 'next' ? at + 1 : at };
+}
+
 export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRepositories, onConnect, onModel } = props;
   // Starred work: main's starred entries. The section lists only their open PRs (lib/overview-starred.ts).
@@ -252,9 +275,39 @@ export function OverviewPage(props: OverviewPageProps) {
   // started; the page's live steps say which have moved on (they left the page).
   const liveSteps = useMemo(() => sessionSteps(morning), [morning]);
   const liveById = useMemo(() => new Map(liveSteps.map((step) => [step.id, step])), [liveSteps]);
-  const [session, setSession] = useState<{ steps: SessionStep[]; index: number; outcomes: Partial<Record<string, StepOutcome>>; depths: Partial<Record<string, Depth>>; open: boolean } | null>(null);
+  // Kept outside the page too (`keptSession`): bringing the Overview tab back can mount the page anew.
+  const [session, setSessionState] = useState<GuidedRun | null>(() => {
+    // A Back or Next that came while the page was not mounted: the bar brought this tab forward to answer it.
+    const waiting = takeSessionRequest();
+    if (waiting) keptSession = answerRequest(keptSession, waiting.request, waiting.url);
+    return keptSession;
+  });
+  const setSession = useCallback((update: GuidedRun | null | ((value: GuidedRun | null) => GuidedRun | null)) => {
+    keptSession = typeof update === 'function' ? update(keptSession) : update;
+    setSessionState(keptSession);
+  }, []);
+  // A PR the session opened shows where it is in the run, and its way back and on (components/SessionBar.tsx).
+  const running = session && session.index < session.steps.length ? session : null;
+  const sessionKey = running ? `${running.index}|${running.steps.map((step) => step.id).join(' ')}` : '';
+  useEffect(() => {
+    if (!running) {
+      publishSession(null);
+      return;
+    }
+    publishSession({
+      index: running.index,
+      steps: running.steps.map((step) => ({ id: step.id, url: step.member.url, number: step.member.number, title: step.title, why: step.why })),
+    });
+    // `sessionKey` is what the published steps depend on: a status tick that changes no step publishes nothing.
+  }, [sessionKey]);
+  useEffect(
+    () =>
+      // Back and Next from a PR's session bar while the page is mounted, applied to the kept run at once.
+      answerSessionRequests((request, url) => setSession((value) => answerRequest(value, request, url))),
+    [setSession]
+  );
   const startSession = () =>
-    setSession((value) => (value && value.index < value.steps.length ? { ...value, open: true } : { steps: liveSteps, index: 0, outcomes: {}, depths: {}, open: true }));
+    setSession((value) => (value && value.index < value.steps.length ? { ...value, open: true } : { steps: liveSteps, index: 0, outcomes: {}, open: true }));
   // Which PRs are starred, for the row menus' Star and Unstar: one string, so a sync tick that changes no star keeps
   // the row actions, and with them every memoized row, as they were.
   const starKey = (queue.starredPrs ?? []).map((entry) => entry.member.url).sort().join(' ');
@@ -695,7 +748,6 @@ export function OverviewPage(props: OverviewPageProps) {
           live={liveById}
           index={session.index}
           outcomes={session.outcomes}
-          depths={session.depths}
           login={account ?? ''}
           now={now}
           statusOf={view.statusOf}
@@ -711,7 +763,6 @@ export function OverviewPage(props: OverviewPageProps) {
           onOpen={openFromSession}
           onIndex={(index) => setSession((value) => value && { ...value, index })}
           onOutcome={(id, outcome) => setSession((value) => value && { ...value, outcomes: { ...value.outcomes, [id]: outcome } })}
-          onDepth={(id, depth) => setSession((value) => value && { ...value, depths: { ...value.depths, [id]: depth } })}
           onExit={() => setSession((value) => value && (value.index >= value.steps.length ? null : { ...value, open: false }))}
         />
       ) : (

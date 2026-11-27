@@ -1,4 +1,5 @@
 import { hasVisibleNavigationOverlay } from '../lib/workspace-navigation';
+import { SessionBar } from './SessionBar';
 import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '../lib/feedback';
 import { PrFeedbackView } from './PrFeedbackView';
 import { ConversationSidebar } from './ConversationSidebar';
@@ -714,6 +715,7 @@ function PrSummaryContent({
             </nav>
           </div>
         </div>
+        <SessionBar urls={item.subject.members.map((member) => member.url)} />
         <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
           busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute} extra={menuExtra}
           conflictState={conflictStateFrom([...signals, ...item.subject.members.map((m) => statuses[m.url]?.signals)])}

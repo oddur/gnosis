@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { markSessionFinished } from '../lib/session-store';
 import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs';
 import type { PrChanges } from '../lib/pr-changes';
 import type { GitHubReviewThread as Thread } from '../lib/review-threads';
@@ -474,6 +475,8 @@ export function useChangesComments({
                     );
                   }
                   onSubmitted?.(url, event);
+                  // A review submitted on a PR the guided session opened: the session offers the next PR (#596).
+                  markSessionFinished(url);
                   void refresh(url);
                   return result;
                 } finally {
