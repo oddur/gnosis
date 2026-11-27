@@ -6,13 +6,16 @@
  * frame callbacks run, so the last check runs in the next frame. That check counts scroll events, not time: under
  * heavy load the work in a frame (layout, other callbacks) can take longer than `settleMs` by itself, so a scroll event
  * delivered at the start of the frame can look old by the time the check runs. Any scroll event since the frame was
- * asked for means the view moved, and the wait goes on.
+ * asked for means the view moved, and the wait goes on. So does a scroller that is not where its last scroll event left
+ * it (`moved`): a scroll made earlier in the same frame, or one whose event has not come yet, counts as a scroll then.
  */
 export interface SettleEnvironment {
   now: () => number;
   /** Undefined where there are no frames (a hidden window, a test without a page): the wait ends without one. */
   frame?: (run: () => void) => () => void;
   setTimer: (run: () => void, ms: number) => () => void;
+  /** Whether a scroller moved since its last scroll event; asked in the wait's last frame. */
+  moved?: () => boolean;
 }
 
 export interface SettleWait {
@@ -51,6 +54,10 @@ export function createSettleWait(settleMs: number, environment: SettleEnvironmen
         cancelFrame = frame(() => {
           cancelFrame = undefined;
           if (done) return;
+          if (environment.moved?.()) {
+            lastScrollAt = environment.now();
+            scrolls++;
+          }
           if (scrolls !== seen) {
             check();
             return;

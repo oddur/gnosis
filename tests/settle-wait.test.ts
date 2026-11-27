@@ -5,6 +5,8 @@ import { createSettleWait } from '../lib/settle-wait';
 /** A clock, timers and animation frames the test moves by hand. */
 function fakePage(frames = true) {
   let time = 0;
+  /** A scroll whose event has not come yet. */
+  let unheard = false;
   let timers: { at: number; run: () => void }[] = [];
   let pending: (() => void)[] = [];
   const settle = createSettleWait(150, {
@@ -23,6 +25,11 @@ function fakePage(frames = true) {
       return () => {
         timers = timers.filter((other) => other !== timer);
       };
+    },
+    moved: () => {
+      const moved = unheard;
+      unheard = false;
+      return moved;
     },
   });
   return {
@@ -43,9 +50,11 @@ function fakePage(frames = true) {
      * Draws a frame: its scroll steps (`scroll` delivers a scroll event), then `work` ms of other work in it (layout,
      * other callbacks), then the frame callbacks asked for before it.
      */
-    frame({ scroll = false, work = 0 } = {}) {
+    frame({ scroll = false, work = 0, silent = false } = {}) {
       if (scroll) settle.scrolled();
       time += work;
+      // A callback that runs before the wait's scrolls the view; its event comes in the next frame.
+      if (silent) unheard = true;
       const callbacks = pending;
       pending = [];
       for (const run of callbacks) run();
@@ -92,6 +101,21 @@ void test('a scroll event in the frame holds the read, though the frame came lon
   page.advance(150);
   page.frame({ work: 200 });
   assert.equal(runs, 1, 'Read once the view is still');
+});
+
+void test('a scroller that moved without its event yet holds the read', () => {
+  const page = fakePage();
+  let runs = 0;
+  page.settle.whenSettled(() => runs++);
+  page.frame({ silent: true });
+  assert.equal(runs, 0, 'The scroll counts though no event came');
+  page.frame({ scroll: true });
+  page.advance(100);
+  page.frame();
+  assert.equal(runs, 0, 'Its event restarts the wait');
+  page.advance(50);
+  page.frame();
+  assert.equal(runs, 1);
 });
 
 void test('a cancelled wait never runs', () => {

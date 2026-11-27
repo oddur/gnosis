@@ -120,12 +120,14 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
 /**
  * How long the view must be still before a file near it queues its read, so files that only flash past are not read.
  * Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for longer than this,
- * so time near the view alone is not enough. Still means no scroll event for this long, and then a whole frame with no
- * scroll event (lib/settle-wait.ts): under heavy load a frame's own work can outlast this wait, so a file that came
- * near mid-scroll would look as if it came near while the view was still (#430). A file that came near without a
- * scroll (the PR opened, a file expanded) asks after one frame.
+ * so time near the view alone is not enough. Still means no scroll event for this long, then a whole frame with no
+ * scroll event in which no scroller moved (lib/settle-wait.ts). Under heavy load a frame's own work can outlast this
+ * wait, so a file that came near mid-scroll would look as if it came near while the view was still (#430). A file
+ * that came near without a scroll (the PR opened, a file expanded) asks after one frame.
  */
 const SETTLE_MS = 150;
+/** Each element that scrolled, with its offsets as its last scroll event left them. */
+const scrollers = new Map<Element, { top: number; left: number }>();
 const settle = createSettleWait(SETTLE_MS, {
   now: () => performance.now(),
   // A hidden window draws no frames, and has no scroll to wait out.
@@ -139,6 +141,22 @@ const settle = createSettleWait(SETTLE_MS, {
   setTimer: (run, ms) => {
     const id = setTimeout(run, ms);
     return () => clearTimeout(id);
+  },
+  // A scroller moved since its last event: its offsets are taken as they are now, so the wait starts again from here.
+  moved: () => {
+    let moved = false;
+    for (const [element, at] of scrollers) {
+      if (!element.isConnected) {
+        scrollers.delete(element);
+        continue;
+      }
+      const top = element.scrollTop;
+      const left = element.scrollLeft;
+      if (top === at.top && left === at.left) continue;
+      scrollers.set(element, { top, left });
+      moved = true;
+    }
+    return moved;
   },
 });
 /**
@@ -246,7 +264,15 @@ if (typeof window !== 'undefined') {
   for (const type of ['wheel', 'keydown', 'input', 'touchmove'] as const)
     window.addEventListener(type, pause, { capture: true, passive: true });
   document.addEventListener('scroll', pause, { capture: true, passive: true });
-  document.addEventListener('scroll', settle.scrolled, { capture: true, passive: true });
+  document.addEventListener(
+    'scroll',
+    (event) => {
+      const element = event.target instanceof Element ? event.target : document.scrollingElement;
+      if (element) scrollers.set(element, { top: element.scrollTop, left: element.scrollLeft });
+      settle.scrolled();
+    },
+    { capture: true, passive: true }
+  );
   let hiddenTimer: ReturnType<typeof setTimeout> | undefined,
     stopped = false;
   const visibility = () => {
