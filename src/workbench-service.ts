@@ -67,6 +67,7 @@ import {
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
 import { getPrMetadataBatch, PR_METADATA_PER_QUERY } from '../lib/pr-metadata-graphql';
 import { mapBounded, settleInOrder } from '../lib/bounded';
+import { ancestryRequests, readAncestry, unanswered, withParentHead, type AncestryAnswer } from '../lib/stack-ancestry';
 import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import { parseModelJson } from '../lib/json-repair';
@@ -121,6 +122,8 @@ interface State {
   discoveryWarnings?: string[];
   listings?: DiscoveryListings;
   parentLookups?: Record<string, { checkedAt: number; urls: string[]; ambiguous?: boolean }>;
+  /** Ancestry answers for PRs moved onto their merged parent's base, by URL (`lib/stack-ancestry.ts`). */
+  parentHeads?: Record<string, AncestryAnswer>;
   discoveryProgress?: {
     key: string;
     members: ReviewMember[];
@@ -286,6 +289,9 @@ export function createWorkbenchService(deps: Deps) {
     const latest = latestMetadata.get(member.url);
     return latest && Date.parse(latest.updatedAt) > Date.parse(member.updatedAt) ? { ...member, ...latest } : member;
   };
+  /** `withLatestMetadata`, plus the saved ancestry answer for a PR moved onto its merged parent's base (#468). */
+  const withQueueFacts = (saved: State['parentHeads']) => (member: ReviewMember): ReviewMember =>
+    withParentHead(withLatestMetadata(member), saved);
   const requestedBriefings = new Set<string>();
   const requestKey = (key: string) => `${deps.auth().login ?? 'guest'}:${key}`;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
@@ -807,7 +813,7 @@ export function createWorkbenchService(deps: Deps) {
         // Keep unseen members until reconciliation completes; partial results must not erase stacks.
         const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
         for (const [url, member] of members) merged.set(url, member);
-        s.subjects = groupSubjects([...merged.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
+        s.subjects = groupSubjects([...merged.values()].map(withQueueFacts(s.parentHeads)).filter(member => !isArchived(member)), s.overrides, s.subjects);
       });
       dirty = false;
       shown = true;
@@ -1103,7 +1109,31 @@ export function createWorkbenchService(deps: Deps) {
       if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
         return { items: [], warnings: [], remaining: 0 };
       progress('Updating your queue');
-      const updatedSubjects = groupSubjects([...members.values()].map(withLatestMetadata).filter(member => !isArchived(member)), s.overrides, s.subjects);
+      let updatedSubjects = groupSubjects([...members.values()].map(withQueueFacts(s.parentHeads)).filter(member => !isArchived(member)), s.overrides, s.subjects);
+      // A PR moved onto its merged parent's base may still carry the parent's commits (#468): one batched read for
+      // the PRs whose head, base or parent head changed since their last answer.
+      const ancestry = ancestryRequests(updatedSubjects);
+      const missing = unanswered(ancestry, s.parentHeads);
+      let read = new Map<string, AncestryAnswer>();
+      if (missing.length)
+        try {
+          checkAllowance();
+          read = await readAncestry(octokit, missing);
+        } catch (error) {
+          if (error instanceof DiscoverySuperseded) throw error;
+          // Fail closed: without an answer the PR is not flagged, and the next pass asks again.
+        }
+      if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
+        return { items: [], warnings: [], remaining: 0 };
+      // Answers are kept only for the PRs that still need one, so the saved map stays as small as the moved PRs.
+      s.parentHeads = Object.fromEntries(
+        ancestry.flatMap((request) => {
+          const answer = read.get(request.url) ?? s.parentHeads?.[request.url];
+          return answer ? [[request.url, answer] as const] : [];
+        })
+      );
+      if (read.size)
+        updatedSubjects = updatedSubjects.map((subject) => ({ ...subject, members: subject.members.map((member) => withParentHead(member, s.parentHeads)) }));
       // Keep unrelated saved subjects for an instant return to the full queue.
       // Previously personal subjects absent from the new result may have closed
       // or been unassigned, so do not retain those as current personal work.
@@ -1294,7 +1324,7 @@ export function createWorkbenchService(deps: Deps) {
           s.unreadActivityPending = [...new Set([...(s.unreadActivityPending ?? []), member.url])];
         merged.set(member.url, member);
       }
-      s.subjects = groupSubjects([...merged.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
+      s.subjects = groupSubjects([...merged.values()].map(member => withParentHead(member, s.parentHeads)).filter(member => !isArchived(member)), s.overrides, s.subjects);
       stars.update(s.account, changed);
       reads.observe(s.account, changed);
       notifyMembers(s.account, changed);
