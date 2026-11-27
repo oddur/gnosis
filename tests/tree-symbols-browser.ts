@@ -237,18 +237,25 @@ void app.whenReady().then(async () => {
     const notices = await js<number>('window.__log.length');
     const atEnd = `window.__log.slice(${notices}).some(m=>/^\\d+ toast No unviewed items after this/.test(m))`;
     const litName = () => js<string | undefined>(`window.treeRows().find(r=>r.lit)?.name`);
+    // Each press must move the item under review, or end in the notice. The item, not the light: the light follows it,
+    // but two items can share a light for a moment, while the next one's row is still being drawn.
+    const targetNow = () => js<string>('JSON.stringify(window.__review.target()??null)');
     const walked: string[] = [];
     for (let step = 0; step < 40 && !(await js<boolean>(atEnd)); step++) {
-      const before = await litName();
+      const before = await targetNow();
       await press('n');
-      await wait(`${atEnd}||window.treeRows().find(r=>r.lit)?.name!==${JSON.stringify(before ?? '')}`).catch(async (error: unknown) => {
+      await wait(`${atEnd}||JSON.stringify(window.__review.target()??null)!==${JSON.stringify(before)}`).catch(async (error: unknown) => {
         const state = await js(
           `({walked:${JSON.stringify(walked)},log:(window.__log||[]).slice(-20),target:window.__review.target(),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
         ).catch(() => 'unreadable');
         throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
       });
-      const now = await litName();
-      if (now && now !== before) walked.push(now);
+      if (await js<boolean>(atEnd)) break;
+      // The item's row lights once it is drawn; a file without symbols lights its own row.
+      const target = await js<{ key: string; id: string } | null>('window.__review.target()');
+      const fileName = target ? target.key.slice(target.key.lastIndexOf('/') + 1) : '';
+      await wait(target?.id === '@file' ? `window.treeRows().find(r=>r.lit)?.name===${JSON.stringify(fileName)}` : 'window.treeRows().some(r=>r.lit)');
+      walked.push((await litName()) ?? '');
     }
     await wait(atEnd);
     console.log(`n walked after stop: ${walked.join(', ') || '(nothing)'}`);

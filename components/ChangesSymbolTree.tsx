@@ -443,12 +443,14 @@ export function ChangesSymbolTree({
   // The item the reader was taken to stays lit until they move on their own, whatever the pinned crumb names: a jump to
   // a top-level line between two functions lands with one of them named. Then the light follows the reader.
   // A file stop (a file without symbols, or one whose symbols could not be listed) lights the file's own row.
-  const targetPath =
-    target && target.key === selected
-      ? target.id === FILE_STOP
-        ? layout.pierreOf.get(target.key)
-        : layout.symbolPaths.get(symbolRowKey(target.key, target.id))
-      : undefined;
+  // Not only once its file is the selected one: `n` and V set the item first and select its file a moment later, and
+  // meanwhile the light would follow the diff's scroll to another row.
+  // Until the item's own row is drawn (its file's symbols still loading, or the file just opening), its file's row.
+  const targetPath = target
+    ? target.id === FILE_STOP
+      ? layout.pierreOf.get(target.key)
+      : (layout.symbolPaths.get(symbolRowKey(target.key, target.id)) ?? layout.pierreOf.get(target.key))
+    : undefined;
   const readingPath = targetPath ?? (held && !arrived && held.key === selected ? layout.symbolPaths.get(symbolRowKey(held.key, held.id)) : live.path);
   applyStatus.current = () => {
     const status: GitStatusEntry[] = [];
