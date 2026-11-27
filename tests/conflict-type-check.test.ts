@@ -217,6 +217,11 @@ async function eventuallyCleanedUp(sessionDir: string) {
   await cleanedUp(sessionDir);
 }
 const HANG = 'setInterval(() => {}, 1000);\n';
+/**
+ * A time limit the compiler starts within and then runs past: it also covers Git's worktree, which a busy Windows
+ * runner can take over 1.5 s to prepare, and then the check times out before the compiler ever starts.
+ */
+const STARTS_THEN_TIMES_OUT = 5_000;
 /** A file's buckets as the view shows them: the checks' verdict with the type check's demotion (`typeErrorOf`). */
 const shown = (file: ConflictFile, status?: ConflictTypeCheck | null) =>
   blockBuckets(file, file.result, withTypeError(file.verdict?.verdict, typeErrorOf(file, status)));
@@ -331,7 +336,7 @@ void test('type check: never runs for a fork, or with a clone whose remote is an
 
 void test('type check: a compiler that hangs times out, and Stop cancels it; the worktree is removed either way', async (t) => {
   const hang = HANG;
-  const slow = await fixture(t, { clone: await clone(t, { tsc: hang }), timeout: 1500 });
+  const slow = await fixture(t, { clone: await clone(t, { tsc: hang }), timeout: STARTS_THEN_TIMES_OUT });
   assert.deepEqual(await slow.settled(), { state: 'skipped', reason: TIMED_OUT } satisfies ConflictTypeCheck);
   await cleanedUp(slow.sessionDir);
   const stopped = await fixture(t, { clone: await clone(t, { tsc: hang }) });
@@ -445,7 +450,7 @@ void test('type check: the time limit covers Git too (item 9)', async (t) => {
 
 void test('type check: cleanup survives an account change, and startup removes leftovers (item 10)', async (t) => {
   const linked = await clone(t, { tsc: HANG });
-  const f = await fixture(t, { clone: linked, timeout: 1500 });
+  const f = await fixture(t, { clone: linked, timeout: STARTS_THEN_TIMES_OUT });
   await f.started();
   // The account changes while the compiler runs; the run times out and still removes its worktree.
   f.live.account = 'someone-else';
