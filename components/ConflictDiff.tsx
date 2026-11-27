@@ -54,18 +54,30 @@ import { ConflictCard, InlineEdit, WrittenLegend } from './ConflictCard';
 import { useConflictChoices, type ConflictViewHandle } from './useConflictChoices';
 import { SIDES_CSS, conflictSideRows, markSides, prSideOf, type SideRange, type SideTone } from '../lib/conflict-sides';
 
-/** Each diff key's latest text and its number: a mount with the same text reuses it, other text takes a new one. */
+/**
+ * Each diff key's latest text and its number: a mount with the same text reuses it, other text takes a new one. Each
+ * entry holds both whole files, so the texts are bounded by size as well as count (#355); a key dropped here only takes
+ * a new number on its next mount.
+ */
 const revisions = new Map<string, { before: string; after: string; patch?: FileDiffMetadata; n: number }>();
 let revisionCount = 0;
+let revisionChars = 0;
 const KEPT_REVISIONS = 200;
+/** About 16 MB at two bytes a character. */
+const KEPT_REVISION_CHARS = 8 * 1024 * 1024;
+const revisionLength = (entry: { before: string; after: string }) => entry.before.length + entry.after.length;
 function revisionOf(key: string, before: string, after: string, patch: FileDiffMetadata | undefined) {
   const known = revisions.get(key);
   if (known && known.before === before && known.after === after && known.patch === patch) return known.n;
   const n = ++revisionCount;
+  if (known) revisionChars -= revisionLength(known);
   revisions.delete(key);
   revisions.set(key, { before, after, patch, n });
-  for (const old of revisions.keys()) {
-    if (revisions.size <= KEPT_REVISIONS) break;
+  revisionChars += before.length + after.length;
+  for (const [old, entry] of revisions) {
+    // The newest entry stays, however large.
+    if ((revisions.size <= KEPT_REVISIONS && revisionChars <= KEPT_REVISION_CHARS) || old === key) break;
+    revisionChars -= revisionLength(entry);
     revisions.delete(old);
   }
   return n;

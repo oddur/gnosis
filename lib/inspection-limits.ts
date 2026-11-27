@@ -24,6 +24,15 @@ export const RENDERER_PREVIEW_ENTRIES = 64;
 /** Stack comparisons. */
 export const RENDERER_STACK_BYTES = 8 * 1024 * 1024;
 export const RENDERER_STACK_ENTRIES = 12;
+/**
+ * PR discussions (review threads with their diff hunks, and conversation feedback). They were held by count alone,
+ * 100 of them, and a discussion with long threads can take a megabyte. The newest one always stays.
+ */
+export const RENDERER_DISCUSSION_BYTES = 16 * 1024 * 1024;
+export const RENDERER_DISCUSSION_ENTRIES = 100;
+/** Loaded explanations, as the Explanation tab and predictions read them. The newest one always stays. */
+export const RENDERER_EXPLANATION_BYTES = 16 * 1024 * 1024;
+export const RENDERER_EXPLANATION_ENTRIES = 12;
 /** A PR not read for this long leaves the renderer's caches. */
 export const RENDERER_IDLE_MS = 15 * 60 * 1000;
 

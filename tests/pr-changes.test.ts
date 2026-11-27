@@ -9,7 +9,7 @@ import { createPrChangesService } from '../src/pr-changes-service';
 import { GitHubDiffSource, getPrDiff } from '../lib/github';
 import { preparedDiff } from '../lib/prepared-pr';
 import { fileRevisionKey } from '../lib/pr-changes';
-import { registerChangeProgress, markFileViewed, isFileViewed } from '../lib/file-view-progress';
+import { registerChangeProgress, markFileViewed, isFileViewed, revisionFileUses, forgetRevisionFiles } from '../lib/file-view-progress';
 const url = 'https://github.com/o/r/pull/1';
 function fixture() {
   const reads: URL[] = [];
@@ -267,6 +267,17 @@ void test('Viewed is shared by revision, retained only for unchanged content, an
   assert.equal(isFileViewed(key(url + '2', 'src/new.ts', 'head2')), false);
   markFileViewed(key(url, 'src/new.ts', 'head2'), false);
   assert.equal(isFileViewed(key(url, 'src/new.ts', 'head1')), false);
+  // The registered patches count as a use of their PR, from when they were registered, so the idle sweep finds a PR
+  // that only they still hold (#355).
+  const uses = new Map([[url, 0]]);
+  const before = Date.now();
+  registerChangeProgress(next);
+  revisionFileUses(uses);
+  assert.ok((uses.get(url) ?? 0) >= before);
+  forgetRevisionFiles(new Set([url]));
+  const after = new Map<string, number>();
+  revisionFileUses(after);
+  assert.equal(after.has(url), false, 'Forgotten patches report no use');
 });
 
 void test('cached inventories and opened contents survive a process restart without network access', async () => {

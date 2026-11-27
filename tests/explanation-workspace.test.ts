@@ -266,3 +266,35 @@ void test('review submission waits for draft removal and recovers after a failed
     dom.window.close();
   }
 });
+
+void test('loaded explanations are bounded by bytes, least recently used first, and the newest stays (#355)', async () => {
+  const { loadExplanation, peekExplanation, explanationCacheStats } = await import('../lib/explanation-workspace');
+  const { RENDERER_EXPLANATION_BYTES } = await import('../lib/inspection-limits');
+  // About 6 MB each by the cache's estimate: two fit in the bound, a third does not.
+  const sizes: Record<string, number> = { a: 3, b: 3, c: 3, huge: 9 };
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    value: {
+      electronAPI: {
+        loadReview: (id: string) =>
+          Promise.resolve({ reviewId: id, slides: [], summary: 'x'.repeat(sizes[id] * 1024 * 1024) } as unknown as import('../lib/types').ReviewGuide),
+      },
+    },
+    configurable: true,
+  });
+  try {
+    await loadExplanation('a');
+    await loadExplanation('b');
+    assert.ok(peekExplanation('a'), 'Reading the first makes the second the least recently used');
+    await loadExplanation('c');
+    assert.equal(peekExplanation('b'), undefined, 'The least recently used explanation left');
+    assert.ok(peekExplanation('a') && peekExplanation('c'));
+    assert.ok(explanationCacheStats().bytes <= RENDERER_EXPLANATION_BYTES);
+    const huge = await loadExplanation('huge');
+    assert.equal(peekExplanation('huge'), huge, 'One explanation over the bound stays as the newest');
+    assert.equal(explanationCacheStats().entries, 1);
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'window', original);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
