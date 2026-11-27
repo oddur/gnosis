@@ -10,21 +10,25 @@ The Checks workflow uses different browser coverage for pull requests and pushes
 | Explainer, workbench, and D2 browser suites | Full, in 6 shards | Full (4 / 5 shards) unless only docs change | Full                                |
 | Unsigned app and installers                 | Yes               | Yes                                         | Yes                                 |
 
-A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` gets a unique concurrency group: a later push does not cancel or replace an earlier full run. There are no path filters on the workflow.
+A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` gets a unique concurrency group: a later push does not cancel or replace an earlier full run. The table is for a change to the app; see [What each change runs](#what-each-change-runs) for changes that touch only docs, the website or the browser extension.
 
-## Native browser suites on pull requests
+## What each change runs
 
-The `Native suites needed` job decides whether a run gets the full macOS and Windows browser suites (`Browser (macos-latest n/4)` and `Browser (windows-latest n/5)`). They run on every push to `main`, and on every pull request unless each file it changes is on a short list known not to affect them:
+The `Which checks run` job (`changes`) lists the files that a PR changes, or that a push to `main` changes since the commit before it, with [`dorny/paths-filter`](https://github.com/dorny/paths-filter) (pinned to a commit). Its filters in `checks.yml` sort them into three parts, and each job runs only for its part:
 
-- `docs/`, `site/` and `.github/ISSUE_TEMPLATE/`
-- Markdown files, except under `tests/`, `src/`, `lib/`, `components/`, `scripts/`, `resources/` and `extensions/` (there Markdown can be test data, as in `tests/fixtures/conflicts`)
-- license files: `LICENSE`, `COPYING`, `NOTICE`, with or without an extension
+| Part      | Jobs                                                                                                   | Changed by                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| App       | Check, Browser (Linux shards), Unit tests (Windows), Package, and the macOS and Windows browser suites | any file that is not documentation, the website or the extension; also the extension (its unit tests run in `npm test`) |
+| Website   | Website (the site build with its docs check, PRs only; `site.yml` builds `main`)                       | `site/`                                                                                                                 |
+| Extension | Browser extension                                                                                      | `extensions/`                                                                                                           |
 
-**Draft pull requests skip the macOS and Windows browser suites.** Iterating on a PR, with review fixes and updates from `main`, pushes again and again, and each push cancels the run before it. On 2026-11-25, 57% of runner time went to runs that were later cancelled. On a draft, the Linux browser suites run. The macOS and Windows Check, Unit tests and Package jobs still run; only the macOS and Windows browser suites are skipped. Marking the PR ready for review starts a new run with every suite (the `ready_for_review` trigger). Nothing enforces waiting for it: `main` has no required checks. So **before merging a PR, wait for the ready run's macOS and Windows browser jobs to pass**, not just for the checks to look green. Right after `gh pr ready`, `gh pr checks` can still show the draft run, with those jobs skipped. To run them on a draft, add the `native-ci` label and re-run all jobs: adding a label doesn't start a run.
+Documentation runs nothing: `docs/`, `.github/ISSUE_TEMPLATE/`, license files (`LICENSE`, `COPYING`, `NOTICE`, with or without an extension), and Markdown files, except under `tests/`, `src/`, `lib/`, `components/`, `scripts/`, `resources/` and `extensions/` (there Markdown can be test data, as in `tests/fixtures/conflicts`). A docs-only PR or push shows every job as skipped, and its Checks run still counts as passed, also for the release guard.
 
-Any other path runs them, so a new kind of file is covered without a change here. If the job cannot read the PR's labels or files, or fails, the suites run too. To run them on a docs-only PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, not from the event.
+Everything runs when a change touches `package.json`, `package-lock.json`, `tsconfig.json` or `.github/workflows/checks.yml`, when the PR has the `native-ci` label, or when the files can't be listed. The `app` filter is every path except the documentation and website ones, so a new kind of file runs the app's checks without a change here.
 
-On docs-only PRs the native jobs show as skipped, and Check runs the browser smoke suite. `main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a native job becomes required, a skipped job counts as passed.
+**Draft pull requests skip the macOS and Windows browser suites.** Iterating on a PR, with review fixes and updates from `main`, pushes again and again, and each push cancels the run before it. On 2026-11-25, 57% of runner time went to runs that were later cancelled. On a draft, the Linux browser suites run. The macOS and Windows Check, Unit tests and Package jobs still run; only the macOS and Windows browser suites are skipped. Marking the PR ready for review starts a new run with every suite (the `ready_for_review` trigger). Nothing enforces waiting for it: `main` has no required checks. So **before merging a PR, wait for the ready run's macOS and Windows browser jobs to pass**, not just for the checks to look green. Right after `gh pr ready`, `gh pr checks` can still show the draft run, with those jobs skipped. To run everything on a draft or a docs-only PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, and adding a label doesn't start a run.
+
+`main` has no required status checks (the `protect-main` ruleset requires a pull request, and blocks deletion and force pushes), so a skipped job does not block a merge. If a job becomes required, a skipped job counts as passed.
 
 The PR's own CI runs these suites, so you don't need to run them locally. These runs take over the machine. If you choose to run them on your own Mac or Windows machine:
 
