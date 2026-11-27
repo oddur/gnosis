@@ -109,6 +109,7 @@ void app.whenReady().then(async () => {
   };
   const setToggle = async (key: 'hideWhitespace' | 'hideFormatting' | 'hideComments' | 'hideImports', on: boolean) => {
     await openMenu();
+    await wait(`!!document.querySelector('[data-noise-toggle=${key}]')`);
     const checked = () => js<boolean>(`document.querySelector('[data-noise-toggle=${key}]').checked`);
     if ((await checked()) !== on) await js(`document.querySelector('[data-noise-toggle=${key}]').click()`);
     await wait(`window.electronAPI.loadPreferences().then(p=>(p.diffAppearance?.${key}??${key === 'hideWhitespace' || key === 'hideFormatting'})===${on})`);
@@ -260,6 +261,8 @@ void app.whenReady().then(async () => {
     // ── Imports: shown by default; on, a name from a module the file imports is a bar; a new package shows ──
     const imports = 'src/noise/imports.ts';
     await openMenu();
+    // openMenu waits for any toggle; the one read here can draw a moment later on a slow runner.
+    await wait(`!!document.querySelector('[data-noise-toggle=hideImports]')`);
     assert.equal(await js(`document.querySelector('[data-noise-toggle=hideImports]').checked`), false, 'Imports show by default');
     await closeMenu();
     await openFile(imports);

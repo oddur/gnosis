@@ -241,7 +241,12 @@ void app.whenReady().then(async () => {
     for (let step = 0; step < 40 && !(await js<boolean>(atEnd)); step++) {
       const before = await litName();
       await press('n');
-      await wait(`${atEnd}||window.treeRows().find(r=>r.lit)?.name!==${JSON.stringify(before ?? '')}`);
+      await wait(`${atEnd}||window.treeRows().find(r=>r.lit)?.name!==${JSON.stringify(before ?? '')}`).catch(async (error: unknown) => {
+        const state = await js(
+          `({walked:${JSON.stringify(walked)},log:(window.__log||[]).slice(-20),target:window.__review.target(),lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        ).catch(() => 'unreadable');
+        throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+      });
       const now = await litName();
       if (now && now !== before) walked.push(now);
     }

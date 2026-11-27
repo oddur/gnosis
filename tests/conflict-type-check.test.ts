@@ -208,7 +208,9 @@ async function cleanedUp(sessionDir: string) {
 }
 /** Waits for a check that was stopped to let go of its worktree. */
 async function eventuallyCleanedUp(sessionDir: string) {
-  for (let i = 0; i < 200; i++) {
+  // Up to 30 s: on Windows, ending a hung compiler's process tree and removing its worktree can take well over 5 s on a
+  // busy runner. The wait ends as soon as the folder is gone.
+  for (const end = Date.now() + 30_000; Date.now() < end; ) {
     if (!(await fs.stat(path.join(sessionDir, 'type-check')).catch(() => undefined))) break;
     await new Promise((r) => setTimeout(r, 25));
   }
