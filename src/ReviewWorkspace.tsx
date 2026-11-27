@@ -172,11 +172,11 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   async function moveHistory(direction: HistoryDirection) {
     const target = navigationHistory.move(direction);
     if (!target) return;
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     await openHistoryLocation(target);
   }
   async function openHistoryLocation(target: AppLocation, reportError = true) {
-    // The reader chose where to go: the queue, once shown, is kept again (#355).
-    setQueueDeferred(false);
     pendingHistory.current = locationKey(target);
     const version = ++navigationVersion.current;
     try {
@@ -377,6 +377,12 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       if (parent && member) item = focusStackPr(parent, member);
     }
     if (subjectId && !item && url) return navigate({ kind: 'home', url }, true);
+    if (subjectId && !item) {
+      // The saved PR left the queue and has no link to open it by: the queue is where the tab opens. It records the
+      // reader's moves from here, and is kept like any queue the reader has on screen (#355).
+      initialRecorded.current = true;
+      setQueueDeferred(false);
+    }
     return openHistoryLocation(
       {
         page: 'home',
