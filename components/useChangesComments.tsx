@@ -474,9 +474,10 @@ export function useChangesComments({
                       'Review posted. Could not remove the local drafts; remove them before starting another review.'
                     );
                   }
-                  onSubmitted?.(url, event);
                   // A review submitted on a PR the guided session opened: the session offers the next PR (#596).
+                  // Before the caller's callback, so a callback that throws cannot keep the bar from saying so.
                   markSessionFinished(url);
+                  onSubmitted?.(url, event);
                   void refresh(url);
                   return result;
                 } finally {
