@@ -175,6 +175,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     await openHistoryLocation(target);
   }
   async function openHistoryLocation(target: AppLocation, reportError = true) {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     pendingHistory.current = locationKey(target);
     const version = ++navigationVersion.current;
     try {
@@ -209,6 +211,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     }
   }
   async function openRecent(visit: RecentVisit) {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     if (visit.location.page === 'home' && visit.location.home.account !== historyAccount.current)
       throw new Error('This item belongs to a different GitHub account.');
     await openHistoryLocation(visit.location, false);
@@ -243,6 +247,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   );
 
   async function openActivity(task: ActivityTask) {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     if (task.kind === 'briefing') {
       navigationVersion.current++;
       cancelHistoryLoad();
@@ -265,6 +271,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }
 
   function handleBack() {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     navigationVersion.current++;
     cancelHistoryLoad();
     setExplanationDestination(undefined);
@@ -276,6 +284,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }
 
   function handleReReview(prUrl: string, previousReviewId?: string) {
+    setQueueDeferred(false);
     setPrefillReviewId(previousReviewId);
     navigationVersion.current++;
     cancelHistoryLoad();

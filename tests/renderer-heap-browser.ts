@@ -276,7 +276,10 @@ void app.whenReady().then(async () => {
     if (open.heapMB > peak.heapMB) peak = open;
     // A tab opened onto a PR keeps no queue behind it until the reader goes back to its queue (#355): only the queue
     // tab renders one.
-    const queues = await js<number>("[...document.querySelectorAll('.workspace-panel')].filter(p=>p.querySelector('.workbench-body')).length");
+    // The last tab's queue shows while its PR opens: wait for the count to settle, then read it.
+    const queueCount = "[...document.querySelectorAll('.workspace-panel')].filter(p=>p.querySelector('.workbench-body')).length";
+    await wait(`${queueCount}===1`).catch(() => undefined);
+    const queues = await js<number>(queueCount);
     await snapshot('peak');
     for (let count = await js<number>(`${tabs}.length`); count > 1; count--) await closeTab(count - 1);
     await toQueue();
