@@ -19,15 +19,13 @@ concurrency:
 
 jobs:
   changes:
-    # What this run needs, from the files it changes (scripts/ci-changes.mjs): the app's checks, the website build, the
-    # browser extension build, and the full macOS and Windows browser suites. Documentation alone runs nothing, and the
-    # website alone runs only its build. Only known paths skip a part: any other path, a change to dependencies or to
-    # this workflow, the `native-ci` label, or a list the job cannot read, runs everything. The label is read from the
-    # API when the job runs, so re-running all jobs after adding it is enough.
-    #
-    # A pull request's files come from the API; a push to main compares it with the commit before. The macOS and
-    # Windows suites run on every push to main that changes the app, and on a ready pull request that does; a draft
-    # runs the Linux suites only.
+    # What this run needs, from the files it changes: the app's checks, the website build, the browser extension
+    # build, and the full macOS and Windows browser suites. dorny/paths-filter lists the files: from the API for a pull
+    # request, and against the commit before for a push to main. Documentation alone runs nothing, and the website
+    # alone runs only its build. `app` is every path except the ones known not to affect the app, so a new kind of file
+    # runs it. Everything runs for a change to dependencies, the TypeScript config or this workflow, for the
+    # `native-ci` label (read from the API when the job runs, so re-running all jobs after adding it is enough), and
+    # when the files can't be listed. A draft pull request skips only the macOS and Windows browser suites.
     name: Which checks run
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -41,17 +39,46 @@ jobs:
       native: ${{ steps.decide.outputs.native }}
     steps:
       - uses: actions/checkout@v4
+      - id: filter
+        # A failure here runs everything (see `decide`).
+        continue-on-error: true
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          sparse-checkout: scripts/ci-changes.mjs
-          sparse-checkout-cone-mode: false
+          # A file counts for a filter when it matches one of its patterns and none of its `!` patterns.
+          predicate-quantifier: some-with-excludes
+          filters: |
+            shared:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/checks.yml'
+            app:
+              - '**'
+              - '!docs/**'
+              - '!site/**'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!**/*.md'
+              - '!**/{LICENSE,LICENCE,COPYING,NOTICE}{,.*,-*}'
+            # Markdown under the code and test folders can be test data (tests/fixtures/conflicts): it is the app's.
+            app_markdown:
+              - '{tests,src,lib,components,scripts,resources,extensions}/**/*.md'
+            site:
+              - 'site/**'
+            # The extension's unit tests run in `npm test`, so a change to it runs the app's checks too.
+            extension:
+              - 'extensions/**'
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          BEFORE: ${{ github.event.before }}
-          SHA: ${{ github.sha }}
+          LISTED: ${{ steps.filter.outcome }}
+          SHARED: ${{ steps.filter.outputs.shared }}
+          APP: ${{ steps.filter.outputs.app }}
+          APP_MARKDOWN: ${{ steps.filter.outputs.app_markdown }}
+          SITE: ${{ steps.filter.outputs.site }}
+          EXTENSION: ${{ steps.filter.outputs.extension }}
         run: |
           # Actions runs this with bash -e. A grep that matches nothing must not end the step, so -e is off;
           # every failure path below decides on its own, and fails open to running everything.
@@ -61,41 +88,32 @@ jobs:
             printf 'app=true\nsite=true\nextension=true\nnative=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           }
+          [ "$LISTED" = success ] || everything "Could not list the changed files: everything runs."
+          [ "$SHARED" = true ] && everything "Dependencies, the TypeScript config or this workflow changed: everything runs."
           if [ "$EVENT" = pull_request ]; then
             labels=$(gh api --paginate "repos/$REPO/issues/$PR/labels" --jq '.[].name') ||
               everything "Could not read the PR's labels: everything runs."
             if printf '%s\n' "$labels" | grep -qx native-ci; then
               everything "The PR has the native-ci label: everything runs."
             fi
-            # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs everything.
-            files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||
-              everything "Could not read the PR's files: everything runs."
-            [ "$(printf '%s\n' "$files" | wc -l)" -lt 3000 ] || everything "The PR changes 3000 files or more: everything runs."
-          else
-            # A push to main: what changed since the commit before it. A new branch has no commit before.
-            case "$BEFORE" in '' | 0000000000000000000000000000000000000000) everything "Nothing to compare the push with: everything runs." ;; esac
-            compare=$(gh api "repos/$REPO/compare/$BEFORE...$SHA") || everything "Could not compare the push with the commit before: everything runs."
-            # The compare API lists at most 300 files.
-            [ "$(jq '.files | length' <<<"$compare")" -lt 300 ] || everything "The push changes 300 files or more: everything runs."
-            files=$(jq -r '.files[] | .filename, (.previous_filename // empty)' <<<"$compare") ||
-              everything "Could not read the push's files: everything runs."
           fi
-          [ -n "$files" ] || everything "No changed files are listed: everything runs."
-          echo "Changed files:"
-          printf '%s\n' "$files" | sed -n '1,30p'
-          needs=$(printf '%s\n' "$files" | node scripts/ci-changes.mjs) || everything "Could not sort the changed files: everything runs."
-          [ -n "$needs" ] || everything "Sorting the changed files gave no answer: everything runs."
-          printf '%s\n' "$needs" | tee -a "$GITHUB_OUTPUT"
-          if ! printf '%s\n' "$needs" | grep -qx app=true; then
+          app=false
+          if [ "$APP" = true ] || [ "$APP_MARKDOWN" = true ] || [ "$EXTENSION" = true ]; then app=true; fi
+          printf 'app=%s\nsite=%s\nextension=%s\n' "$app" "${SITE:-true}" "${EXTENSION:-true}" | tee -a "$GITHUB_OUTPUT"
+          if [ "$app" != true ]; then
             echo "No app change: the app's checks, and the macOS and Windows browser suites, are skipped."
             echo native=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          [ "$EVENT" = pull_request ] || { echo "A push that changes the app: the macOS and Windows browser suites run."; echo native=true >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "$EVENT" != pull_request ]; then
+            echo "A push that changes the app: the macOS and Windows browser suites run."
+            echo native=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # A draft runs the Linux suites only, so iterating on a PR doesn't spend macOS and Windows runners. Marking it
           # ready for review runs everything once more (ready_for_review above), before it can be merged. Read live, so a
           # re-run after marking it ready sees it. If the state can't be read, the suites run.
-          draft=$(gh api "repos/$REPO/pulls/$PR" --jq .draft) || { echo "Could not read whether the PR is a draft: the macOS and Windows suites run."; echo native=true >> "$GITHUB_OUTPUT"; exit 0; }
+          draft=$(gh api "repos/$REPO/pulls/$PR" --jq .draft) || draft=unknown
           if [ "$draft" = true ]; then
             echo "A draft PR: only the Linux suites run. Mark it ready for review to run the macOS and Windows suites."
             echo native=false >> "$GITHUB_OUTPUT"

@@ -14,7 +14,7 @@ A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` 
 
 ## What each change runs
 
-The `Which checks run` job (`changes`) reads the files that a PR changes, or that a push to `main` changes since the commit before it. `scripts/ci-changes.mjs` sorts them into three parts, and each job runs only for its part:
+The `Which checks run` job (`changes`) lists the files that a PR changes, or that a push to `main` changes since the commit before it, with [`dorny/paths-filter`](https://github.com/dorny/paths-filter) (pinned to a commit). Its filters in `checks.yml` sort them into three parts, and each job runs only for its part:
 
 | Part      | Jobs                                                                                                   | Changed by                                                                                                              |
 | --------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -24,7 +24,7 @@ The `Which checks run` job (`changes`) reads the files that a PR changes, or tha
 
 Documentation runs nothing: `docs/`, `.github/ISSUE_TEMPLATE/`, license files (`LICENSE`, `COPYING`, `NOTICE`, with or without an extension), and Markdown files, except under `tests/`, `src/`, `lib/`, `components/`, `scripts/`, `resources/` and `extensions/` (there Markdown can be test data, as in `tests/fixtures/conflicts`). A docs-only PR or push shows every job as skipped, and its Checks run still counts as passed, also for the release guard.
 
-Everything runs when a change touches `package.json`, `package-lock.json`, `tsconfig.json`, `.github/workflows/checks.yml` or `scripts/ci-changes.mjs`, when the PR has the `native-ci` label, or when the job cannot list the files (an API error, a PR of 3000 files or more, a push of 300 files or more, or a push with no commit before it). Any path that no rule names runs the app's checks, so a new kind of file is covered without a change here. `tests/ci-changes.test.ts` checks the rules.
+Everything runs when a change touches `package.json`, `package-lock.json`, `tsconfig.json` or `.github/workflows/checks.yml`, when the PR has the `native-ci` label, or when the files can't be listed. The `app` filter is every path except the documentation and website ones, so a new kind of file runs the app's checks without a change here.
 
 **Draft pull requests skip the macOS and Windows browser suites.** Iterating on a PR, with review fixes and updates from `main`, pushes again and again, and each push cancels the run before it. On 2026-11-25, 57% of runner time went to runs that were later cancelled. On a draft, the Linux browser suites run. The macOS and Windows Check, Unit tests and Package jobs still run; only the macOS and Windows browser suites are skipped. Marking the PR ready for review starts a new run with every suite (the `ready_for_review` trigger). Nothing enforces waiting for it: `main` has no required checks. So **before merging a PR, wait for the ready run's macOS and Windows browser jobs to pass**, not just for the checks to look green. Right after `gh pr ready`, `gh pr checks` can still show the draft run, with those jobs skipped. To run everything on a draft or a docs-only PR, add the `native-ci` label and re-run all jobs: the job reads the labels when it runs, and adding a label doesn't start a run.
 
