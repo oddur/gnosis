@@ -100,7 +100,7 @@ import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { GuidedSession, type SessionOpen, type StepAbout } from './GuidedSession';
-import { plainText, sessionSteps, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { heldForkRuns, plainText, sessionSteps, settlePark, type DepthContext, type Park, type ParkAction, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import { answerSessionRequests, peekSessionState, publishSession, takeSessionRequest, type SessionRequest } from '../lib/session-store';
 import { toast } from './ui/toast';
 
@@ -213,6 +213,10 @@ interface GuidedRun {
   index: number;
   outcomes: Partial<Record<string, StepOutcome>>;
   open: boolean;
+  /** Steps parked while a slow action runs, by id; each leaves once it resolves. */
+  parked?: Partial<Record<string, Park>>;
+  /** What each resolved park came to, by id. */
+  results?: Partial<Record<string, ParkResult>>;
 }
 /** The run outlives the page: the app keeps one Overview, but bringing its tab back can mount the page anew. */
 let keptSession: GuidedRun | null = null;
@@ -306,6 +310,102 @@ export function OverviewPage(props: OverviewPageProps) {
       answerSessionRequests((request, url) => setSession((value) => answerRequest(value, request, url))),
     [setSession]
   );
+  // A slow action started from the session (rerun failed checks, update the branch) parks its step: the session
+  // moves on at once, and the step comes back, with its result, once GitHub shows one (`settlePark`).
+  const parkStep = useCallback(
+    (step: SessionStep, action: ParkAction) =>
+      setSession((value) => {
+        if (!value || !value.steps.some((each) => each.id === step.id)) return value;
+        const head = liveById.get(step.id)?.member.headSha ?? step.member.headSha;
+        // A park started again drops the result of the last one.
+        const results = Object.fromEntries(Object.entries(value.results ?? {}).filter(([id]) => id !== step.id));
+        const here = value.steps[value.index]?.id === step.id;
+        return {
+          ...value,
+          outcomes: { ...value.outcomes, [step.id]: 'parked' },
+          parked: { ...value.parked, [step.id]: { action, headSha: head, at: Date.now() } },
+          results,
+          index: here ? value.index + 1 : value.index,
+        };
+      }),
+    [setSession, liveById]
+  );
+  const announced = useRef(new Set<string>());
+  useEffect(() => {
+    const parked = session?.parked;
+    if (!parked || !Object.keys(parked).length) return;
+    const settled: Partial<Record<string, ParkResult>> = {};
+    const going: Partial<Record<string, Park>> = {};
+    let changed = false;
+    for (const [id, park] of Object.entries(parked)) {
+      if (!park) continue;
+      const step = liveById.get(id);
+      // A step that left the page moved on: its park has nothing left to wait for.
+      if (!step) {
+        changed = true;
+        continue;
+      }
+      const next = settlePark(park, step.member.headSha, view.statusOf(step.member), now);
+      if ('result' in next) {
+        settled[id] = next.result;
+        changed = true;
+      } else {
+        going[id] = next.park;
+        if (next.park !== park) changed = true;
+      }
+    }
+    if (!changed) return;
+    setSession((value) => {
+      if (!value) return value;
+      // A resolved step is back on your list, or moved on when its action came to that.
+      const outcomes = Object.fromEntries(
+        Object.entries(value.outcomes).flatMap(([id, outcome]): [string, StepOutcome][] => {
+          if (!(id in parked) || going[id]) return outcome ? [[id, outcome]] : [];
+          return settled[id]?.outcome === 'done' ? [[id, 'done']] : [];
+        })
+      );
+      return { ...value, outcomes, parked: going, results: { ...value.results, ...settled } };
+    });
+    // The step comes back: a toast says what its action came to, with the way back to it.
+    for (const [id, result] of Object.entries(settled)) {
+      const at = session.steps.findIndex((step) => step.id === id);
+      const key = `${id}@${parked[id]?.at}`;
+      if (!result || at < 0 || announced.current.has(key)) continue;
+      announced.current.add(key);
+      const toastId = toast.add({
+        type: result.tone === 'success' ? 'success' : result.tone === 'danger' ? 'error' : 'info',
+        title: `#${session.steps[at].member.number}: ${result.text}`,
+        actionProps: { children: 'Show', onClick: () => { toast.close(toastId); setSession((value) => value && { ...value, index: at, open: true }); } },
+      });
+    }
+  }, [session?.parked, liveById, view, now, setSession]);
+  // What the depth rules read beyond the step: the PR's paths, read once per head for a PR you review, and its author's
+  // association from the status read.
+  const [sessionPaths, setSessionPaths] = useState<Partial<Record<string, readonly string[] | null>>>({});
+  const currentStep = session?.open && session.index < session.steps.length ? (liveById.get(session.steps[session.index].id) ?? session.steps[session.index]) : undefined;
+  const pathsKey = currentStep && (currentStep.kind === 'review' || currentStep.kind === 'rereview') ? `${currentStep.member.url}@${currentStep.member.headSha}` : undefined;
+  useEffect(() => {
+    if (!pathsKey || !currentStep || sessionPaths[pathsKey] !== undefined) return;
+    // Optional in test fixtures that mock no file list: then no path rule fires.
+    if (typeof window.electronAPI.getPrFiles !== 'function') return;
+    let cancelled = false;
+    void window.electronAPI
+      .getPrFiles(currentStep.member.url)
+      .then((files) => files.flatMap((file) => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])]))
+      // Unread paths make no rule fire; the next step that needs them tries again.
+      .catch(() => null)
+      .then((paths) => {
+        if (!cancelled) setSessionPaths((value) => ({ ...value, [pathsKey]: paths }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathsKey]);
+  const sessionDepthContext = (step: SessionStep): DepthContext => {
+    const paths = sessionPaths[`${step.member.url}@${step.member.headSha}`];
+    const association = view.statusOf(step.member)?.authorAssociation;
+    return { ...(paths ? { paths } : {}), ...(association ? { authorAssociation: association } : {}) };
+  };
   const startSession = () =>
     setSession((value) => (value && value.index < value.steps.length ? { ...value, open: true } : { steps: liveSteps, index: 0, outcomes: {}, open: true }));
   // Which PRs are starred, for the row menus' Star and Unstar: one string, so a sync tick that changes no star keeps
@@ -666,8 +766,15 @@ export function OverviewPage(props: OverviewPageProps) {
   const sessionAction = (step: SessionStep): ReactNode | undefined => {
     if (step.kind === 'merge') return <MergeAction row={step.row} actions={actions} />;
     if (step.kind === 'fix' && step.next?.fix === 'failing') {
-      const failing = step.row.entries.filter((entry) => entry.reasons.includes('checks-failed') && step.urls.includes(entry.member.url)).map((entry) => entry.member);
-      if (failing.length) return <RerunFailed members={failing} onChanged={actions.refresh} />;
+      // Fork runs held for approval are not failures a rerun can clear (#595): a PR with only those has no Rerun.
+      const failing = step.row.entries
+        .filter((entry) => entry.reasons.includes('checks-failed') && step.urls.includes(entry.member.url))
+        .map((entry) => entry.member)
+        .filter((member) => {
+          const signals = view.statusOf(member);
+          return !signals || (signals.checks.failed ?? 0) > heldForkRuns(member, signals);
+        });
+      if (failing.length) return <RerunFailed members={failing} onChanged={actions.refresh} onRequested={() => parkStep(step, 'rerun-failed')} />;
     }
     return undefined;
   };
@@ -690,7 +797,11 @@ export function OverviewPage(props: OverviewPageProps) {
   const sessionPrAction = (step: SessionStep, kind: 'update-branch' | 'mark-ready'): ReactNode => (
     <PrActions
       member={step.member}
-      onChanged={actions.refresh}
+      onChanged={() => {
+        actions.refresh();
+        // GitHub took the update: its new head and checks come later, so the step parks and the session goes on.
+        if (kind === 'update-branch') parkStep(step, 'update-branch');
+      }}
       onResult={(message) => toast.add({ type: 'success', title: message })}
       trigger={(open, busy) => (
         <Button size="xs" variant="outline" disabled={busy} onClick={() => open(kind === 'update-branch' ? 'update-merge' : 'mark-ready')}>
@@ -710,8 +821,8 @@ export function OverviewPage(props: OverviewPageProps) {
     actions.refresh();
   };
   const openFromSession = (step: SessionStep, where: SessionOpen) => {
-    if (where === 'github') {
-      void window.electronAPI.openExternal(step.member.url);
+    if (where === 'github' || where === 'github-checks') {
+      void window.electronAPI.openExternal(where === 'github' ? step.member.url : `${step.member.url}/checks`);
       return;
     }
     // A deep review opens Changes; a summary, conflicts and threads open the PR's Summary, where readiness and its
@@ -748,6 +859,9 @@ export function OverviewPage(props: OverviewPageProps) {
           live={liveById}
           index={session.index}
           outcomes={session.outcomes}
+          parked={session.parked ?? {}}
+          results={session.results ?? {}}
+          depthContext={sessionDepthContext}
           login={account ?? ''}
           now={now}
           statusOf={view.statusOf}
@@ -1423,7 +1537,7 @@ const NextRow = memo(
     a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );
 
-function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMember[]; onChanged: () => void; reveal?: boolean }) {
+function RerunFailed({ members, onChanged, onRequested, reveal = false }: { members: ReviewMember[]; onChanged: () => void; onRequested?: () => void; reveal?: boolean }) {
   const load = useCallback(async () => {
     const values: Partial<Record<string, PrChecks>> = {};
     await Promise.all(
@@ -1439,6 +1553,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
       members={members}
       values={{}}
       onChanged={onChanged}
+      onRequested={onRequested}
       load={load}
       trigger={(open, busy) => (
         <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Rerun failed checks… · A" disabled={busy} onClick={open}>

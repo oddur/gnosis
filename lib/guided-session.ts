@@ -134,7 +134,9 @@ export function stepDigest({ step, signals, login, now, since, rereviewLines, re
   const turns = since.filter((event) => event.url === member.url && event.at > after && (event.type === 'checks-red' || event.type === 'checks-green')).sort((a, b) => b.at - a.at);
   const turn = turns.length ? turns[0] : undefined;
   const checks = signals?.checks;
-  if (checks && checks.state === 'failure') lines.push({ tone: 'danger', text: `${checks.failed ?? 0} of ${checks.total} checks failing${turn?.type === 'checks-red' ? ` since ${ago(turn.at, now)}` : ''}` });
+  const held = heldForkRuns(member, signals);
+  if (held) lines.push({ tone: 'attention', text: `${held} workflow run${held === 1 ? '' : 's'} wait${held === 1 ? 's' : ''} for a maintainer’s approval` });
+  if (checks && checks.state === 'failure' && (checks.failed ?? 0) - held > 0) lines.push({ tone: 'danger', text: `${(checks.failed ?? 0) - held} of ${checks.total} checks failing${turn?.type === 'checks-red' ? ` since ${ago(turn.at, now)}` : ''}` });
   else if (checks && checks.state === 'pending') lines.push({ tone: 'neutral', text: `${checks.running ?? 0} of ${checks.total} checks running` });
   else if (turn?.type === 'checks-green') lines.push({ tone: 'success', text: `Checks passing again since ${ago(turn.at, now)}` });
   const unresolved = signals?.threads?.unresolved.length ?? 0;
@@ -144,7 +146,20 @@ export function stepDigest({ step, signals, login, now, since, rereviewLines, re
   return { lead, lines: lines.slice(0, 5) };
 }
 
-export type BlockerOwner = 'me' | 'author' | 'reviewer' | 'anyone';
+/**
+ * How many of the PR's workflow runs from a fork wait for a maintainer's approval (#595): checks GitHub reports as
+ * ACTION_REQUIRED on a PR whose head repository is not its base. 0 when the PR is not from a fork, when Gnosis can't
+ * tell (no head or base repository, or signals from before `awaitingApproval` was read), or when none wait.
+ */
+export function heldForkRuns(member: Partial<Pick<ReviewMember, 'headRepo' | 'baseRepo' | 'headRepoUnknown'>>, signals: Pick<QueueSignals, 'checks'> | undefined): number {
+  const held = signals?.checks.awaitingApproval ?? 0;
+  if (!held || !member.baseRepo) return 0;
+  // A deleted fork has no head repository, and is still a fork.
+  const fork = member.headRepoUnknown === true || (!!member.headRepo && member.headRepo.toLowerCase() !== member.baseRepo.toLowerCase());
+  return fork ? held : 0;
+}
+
+export type BlockerOwner = 'me' | 'author' | 'reviewer' | 'maintainer' | 'anyone';
 export type BlockerAction =
   | { kind: 'rerun-failed' }
   | { kind: 'update-branch' }
@@ -153,6 +168,7 @@ export type BlockerAction =
   | { kind: 'reply' }
   | { kind: 'show-threads'; count: number }
   | { kind: 'mark-ready' }
+  | { kind: 'approve-workflows'; count: number }
   | { kind: 'wait' }
   | { kind: 'open-on-github' };
 export interface Blocker {
@@ -162,13 +178,13 @@ export interface Blocker {
   owner: BlockerOwner;
 }
 /** The order blockers are listed in: what unblocks the most first. */
-const BLOCKER_ORDER: readonly BlockerAction['kind'][] = ['resolve-conflicts', 'rerun-failed', 'wait', 'update-branch', 'review', 'reply', 'show-threads', 'mark-ready', 'open-on-github'];
+const BLOCKER_ORDER: readonly BlockerAction['kind'][] = ['approve-workflows', 'resolve-conflicts', 'rerun-failed', 'wait', 'update-branch', 'review', 'reply', 'show-threads', 'mark-ready', 'open-on-github'];
 
 /**
  * Why the PR cannot merge, from its signals: each cause with its one next action and who can take it. Empty when it
  * can merge. A PR whose readiness Gnosis has not read yet has no blockers here: the step says so instead.
  */
-export function mergeBlockers(member: Pick<ReviewMember, 'author' | 'isDraft' | 'baseBranch'>, signals: QueueSignals | undefined, login: string): Blocker[] {
+export function mergeBlockers(member: Pick<ReviewMember, 'author' | 'isDraft' | 'baseBranch'> & Partial<Pick<ReviewMember, 'headRepo' | 'baseRepo' | 'headRepoUnknown'>>, signals: QueueSignals | undefined, login: string): Blocker[] {
   const status = signals?.readiness;
   if (!signals || !status) return [];
   const own = member.author.toLowerCase() === login.toLowerCase();
@@ -177,7 +193,13 @@ export function mergeBlockers(member: Pick<ReviewMember, 'author' | 'isDraft' | 
   if (status.mergeable === 'CONFLICTING' || status.mergeState === 'DIRTY')
     blockers.push({ cause: `Conflicts with ${status.baseBranch || member.baseBranch}`, action: { kind: 'resolve-conflicts' }, owner: 'anyone' });
   const { checks } = signals;
-  if (checks.state === 'failure') blockers.push({ cause: `${checks.failed ?? 0} of ${checks.total} checks failing`, action: { kind: 'rerun-failed' }, owner: 'anyone' });
+  // Fork workflow runs GitHub holds for a maintainer's approval (#595): nothing runs until one approves them. They
+  // count as failed in `failed`, so they come off it here. Only when the counts carry them and the PR is from a fork:
+  // in the same repository, ACTION_REQUIRED means something else and stays a failure.
+  const held = heldForkRuns(member, signals);
+  if (held) blockers.push({ cause: `${held} workflow run${held === 1 ? '' : 's'} from a fork wait${held === 1 ? 's' : ''} for a maintainer’s approval`, action: { kind: 'approve-workflows', count: held }, owner: 'maintainer' });
+  const failed = (checks.failed ?? 0) - held;
+  if (checks.state === 'failure' && (failed > 0 || !held)) blockers.push({ cause: `${failed} of ${checks.total} checks failing`, action: { kind: 'rerun-failed' }, owner: 'anyone' });
   else if (checks.state === 'pending') blockers.push({ cause: `${checks.running ?? 0} of ${checks.total} checks running`, action: { kind: 'wait' }, owner: 'anyone' });
   if (status.mergeState === 'BEHIND')
     blockers.push({ cause: `Behind ${status.baseBranch || member.baseBranch}${status.behindBy ? ` by ${status.behindBy} commit${status.behindBy === 1 ? '' : 's'}` : ''}`, action: { kind: 'update-branch' }, owner: 'anyone' });
@@ -200,9 +222,51 @@ export interface DepthSuggestion {
 /** An update this small to code you have reviewed reads well from the digest. */
 export const SUMMARY_LINES = 50;
 
-/** Summary or deep review, by the session's rules, and why. */
-export function suggestDepth(step: Pick<SessionStep, 'kind' | 'member'>, rereviewLines: number | undefined): DepthSuggestion {
+/**
+ * Paths whose changes get a full read whatever their size, each with the words a reason uses. Matched on the path's
+ * segments, case-insensitive; the first match names the reason.
+ */
+const RISKY_PATHS: readonly { test: RegExp; what: string }[] = [
+  { test: /^\.github\/(workflows|actions)\//i, what: 'a CI workflow' },
+  { test: /(^|\/)CODEOWNERS$/i, what: 'code owners' },
+  { test: /(^|\/)(migrations?|migrate)\//i, what: 'a database migration' },
+  { test: /(^|[/._-])(auth|authn|authz|oauth|security|crypto|permissions?|secrets?|credentials?|passwords?)([/._-]|$)/i, what: 'security-sensitive code' },
+  { test: /(\.tf|\.tfvars)$|(^|\/)(terraform|helm|k8s|kubernetes|infra)\//i, what: 'infrastructure' },
+  { test: /(^|\/)Dockerfile[^/]*$/i, what: 'a container build' },
+];
+/** What makes a path risky, in a few words ("a CI workflow"), or undefined when nothing does. */
+export function riskyPath(path: string): string | undefined {
+  return RISKY_PATHS.find((rule) => rule.test.test(path))?.what;
+}
+/** GitHub's author associations for someone with no merged commits in the repository yet, as a reason says it. */
+const NEW_AUTHOR: Readonly<Partial<Record<string, (author: string) => string>>> = {
+  FIRST_TIMER: (author) => `${author}'s first PR on GitHub`,
+  FIRST_TIME_CONTRIBUTOR: (author) => `${author}'s first PR in this repository`,
+  NONE: (author) => `${author} has no merged commits here yet`,
+};
+/** What else the depth rules read, when Gnosis has it. Unknown facts make no rule fire. */
+export interface DepthContext {
+  /** The PR's changed paths. Undefined when not read. */
+  paths?: readonly string[];
+  /** GitHub's `authorAssociation` for the author (`QueueSignals.authorAssociation`). */
+  authorAssociation?: string;
+}
+
+/**
+ * Summary or deep review, by the session's rules, and why. On someone else's PR to review, two rules come first and
+ * ask for a deep review whatever the size: it touches a risky path (`riskyPath`), or its author is new to the
+ * repository.
+ */
+export function suggestDepth(step: Pick<SessionStep, 'kind' | 'member'>, rereviewLines: number | undefined, context: DepthContext = {}): DepthSuggestion {
   const size = (step.member.additions ?? 0) + (step.member.deletions ?? 0);
+  if (step.kind === 'review' || step.kind === 'rereview') {
+    for (const path of context.paths ?? []) {
+      const what = riskyPath(path);
+      if (what) return { depth: 'deep', reason: `Touches ${what} (${path}): read it in full.` };
+    }
+    const newcomer = context.authorAssociation ? NEW_AUTHOR[context.authorAssociation] : undefined;
+    if (newcomer) return { depth: 'deep', reason: `${newcomer(step.member.author)}: read it in full.` };
+  }
   switch (step.kind) {
     case 'merge':
       return { depth: 'summary', reason: 'Approved and ready: merging needs no new read.' };
@@ -237,6 +301,8 @@ export function primaryAction(step: Pick<SessionStep, 'kind'>, blockers: readonl
 export type StepOutcome = 'done' | 'skipped' | 'parked' | 'opened' | 'open';
 export interface RunSummary {
   done: number;
+  /** Parked steps whose action has not resolved yet. */
+  waiting: number;
   total: number;
   lines: { id: string; outcome: StepOutcome; text: string }[];
 }
@@ -247,5 +313,63 @@ export function runSummary(steps: readonly Pick<SessionStep, 'id' | 'member'>[],
     const outcome = outcomes[step.id] ?? 'open';
     return { id: step.id, outcome, text: `${OUTCOME_WORD[outcome]}: #${step.member.number} ${step.member.title}` };
   });
-  return { done: lines.filter((line) => line.outcome === 'done' || line.outcome === 'opened').length, total: lines.length, lines };
+  return { done: lines.filter((line) => line.outcome === 'done' || line.outcome === 'opened').length, waiting: lines.filter((line) => line.outcome === 'parked').length, total: lines.length, lines };
+}
+
+/** A slow action started from the session, whose result comes later: a rerun's checks, or an update's new head. */
+export type ParkAction = 'rerun-failed' | 'update-branch';
+/** A step parked while its action runs: the session moves on, and the step comes back when the action resolves. */
+export interface Park {
+  action: ParkAction;
+  /** The PR's head when the action started. */
+  headSha: string;
+  at: number;
+  /** The checks were seen running since: a rerun's red is no longer the old red. */
+  running?: boolean;
+}
+export interface ParkResult {
+  /** `done`: the PR moved on. `open`: it needs you again. */
+  outcome: 'done' | 'open';
+  tone: DigestTone;
+  text: string;
+}
+/** How long a parked step waits for its result before it comes back anyway, saying none came. */
+export const PARK_LIMIT = 30 * 60_000;
+
+const failing = (checks: QueueSignals['checks']) => `${checks.failed ?? 0} of ${checks.total} check${checks.total === 1 ? '' : 's'} failing`;
+/**
+ * A parked step against what GitHub says now: still waiting (the park, maybe updated), or its result. Pure: `headSha`
+ * is the PR's head as the page has it now, `signals` its status, `now` the time.
+ *
+ * - **Rerun failed checks:** waits until the checks have run again. A red read before any running is the old red.
+ * - **Update branch:** waits for the new head, then for its checks.
+ * - Either way, past `PARK_LIMIT` with nothing running the step comes back, saying no result came. Running checks are
+ *   waited for. Gnosis never reads a result it can't see as good: status not read for the head keeps waiting.
+ */
+export function settlePark(park: Park, headSha: string, signals: QueueSignals | undefined, now: number): { park: Park } | { result: ParkResult } {
+  const late = now - park.at > PARK_LIMIT;
+  const waited: { result: ParkResult } = {
+    result: {
+      outcome: 'open',
+      tone: 'attention',
+      text: park.action === 'rerun-failed' ? 'No result from the rerun after 30 minutes.' : 'The branch update shows no result after 30 minutes.',
+    },
+  };
+  // Status for another head, or none yet: nothing to read a result from.
+  const current = signals && signals.headSha === headSha ? signals : undefined;
+  if (park.action === 'rerun-failed') {
+    if (headSha !== park.headSha) return { result: { outcome: 'open', tone: 'neutral', text: 'New commits came in after the rerun.' } };
+    if (!current) return late ? waited : { park };
+    const { checks } = current;
+    if (checks.state === 'pending') return { park: park.running ? park : { ...park, running: true } };
+    if (checks.state === 'success') return { result: { outcome: 'done', tone: 'success', text: 'Checks pass after the rerun.' } };
+    if (checks.state === 'failure' && park.running) return { result: { outcome: 'open', tone: 'danger', text: `Still ${failing(checks)} after the rerun.` } };
+    return late ? waited : { park };
+  }
+  // Update branch: first the new head, then its checks.
+  if (headSha === park.headSha || !current) return late ? waited : { park };
+  const { checks } = current;
+  if (checks.state === 'pending') return { park: park.running ? park : { ...park, running: true } };
+  if (checks.state === 'failure') return { result: { outcome: 'open', tone: 'danger', text: `Branch updated; ${failing(checks)}.` } };
+  return { result: { outcome: 'done', tone: 'success', text: checks.state === 'success' ? 'Branch updated; checks pass.' : 'Branch updated.' } };
 }

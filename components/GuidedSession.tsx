@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, MessageSquare, MessagesSquare, ScanSearch, SkipForward, TextSearch, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
-import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DigestLine, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { SinceEvent } from '../lib/since-log';
 import type { WaitingReply } from '../lib/use-morning';
 
-/** Where a step's button takes the reader: the PR's review, its summary, its conflicts, or GitHub. */
-export type SessionOpen = 'review' | 'summary' | 'conflicts' | 'github';
+/** Where a step's button takes the reader: the PR's review, its summary, its conflicts, or GitHub (its checks page). */
+export type SessionOpen = 'review' | 'summary' | 'conflicts' | 'github' | 'github-checks';
 /** What the PR is about, under its title: the generated summary, or the start of its description. */
 export interface StepAbout {
   text: string;
@@ -22,6 +22,12 @@ export interface GuidedSessionProps {
   live: ReadonlyMap<string, SessionStep>;
   index: number;
   outcomes: Readonly<Partial<Record<string, StepOutcome>>>;
+  /** Steps parked while a slow action runs (a rerun, a branch update), by id. */
+  parked: Readonly<Partial<Record<string, Park>>>;
+  /** What a parked step's action came to, once it resolved, by id. */
+  results: Readonly<Partial<Record<string, ParkResult>>>;
+  /** What the depth rules read beyond the step: its paths, its author's association. */
+  depthContext: (step: SessionStep) => DepthContext;
   login: string;
   now: number;
   statusOf: (member: { url: string }) => QueueSignals | undefined;
@@ -52,10 +58,11 @@ const BLOCKER_ICON: Readonly<Record<Blocker['action']['kind'], typeof CircleAler
   reply: MessageSquare,
   'show-threads': MessagesSquare,
   'mark-ready': GitBranch,
+  'approve-workflows': ShieldCheck,
   wait: Clock3,
   'open-on-github': CircleAlert,
 };
-const OWNER_LABEL: Readonly<Record<Blocker['owner'], string | undefined>> = { me: undefined, anyone: undefined, author: 'Waiting on the author', reviewer: 'Waiting on a reviewer' };
+const OWNER_LABEL: Readonly<Record<Blocker['owner'], string | undefined>> = { me: undefined, anyone: undefined, author: 'Waiting on the author', reviewer: 'Waiting on a reviewer', maintainer: 'Needs a maintainer' };
 const PRIMARY = '[data-session-primary]';
 
 /**
@@ -159,7 +166,7 @@ function newHeading(lead: string): string {
 type Busy = 'reply' | 'approve' | undefined;
 
 function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; next: () => void }) {
-  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, about, renderAction, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
+  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
   const waiting = replies[step.member.url];
@@ -167,11 +174,14 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   const [approved, setApproved] = useState(false);
   // Your approval clears the review it was waiting on at once; the next status read confirms the rest.
   const blockers = mergeBlockers(step.member, signals, login).filter((blocker) => !(approved && blocker.action.kind === 'review' && blocker.owner === 'me'));
-  const suggested = suggestDepth(step, lines);
+  const suggested = suggestDepth(step, lines, depthContext(step));
   const depth: Depth = suggested.depth;
   const summary = about(step);
   const outcome = outcomes[step.id];
-  const moved = gone || outcome === 'done';
+  // A parked step's action runs on GitHub: nothing more to do here until it resolves.
+  const park = outcome === 'parked' ? parked[step.id] : undefined;
+  const settled = results[step.id];
+  const moved = gone || outcome === 'done' || !!park;
   const [busy, setBusy] = useState<Busy>();
   const [error, setError] = useState<string>();
   const [replyText, setReplyText] = useState('');
@@ -258,6 +268,14 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
         return blocker.owner === 'me' ? renderPrAction(step, 'mark-ready') : null;
       case 'show-threads':
         return replyHere ? null : <Button size="xs" variant="outline" onClick={() => full('summary')}>Show threads</Button>;
+      case 'approve-workflows':
+        // Approve and run from Gnosis is #595; until then, GitHub's checks page, where the button is.
+        return (
+          <Button size="xs" variant="outline" onClick={() => onOpen(step, 'github-checks')} title="Approve and run the held workflow runs on GitHub">
+            Approve on GitHub
+            <ExternalLink size={12} aria-hidden="true" />
+          </Button>
+        );
       case 'open-on-github':
         return (
           <Button size="xs" variant="outline" onClick={() => onOpen(step, 'github')}>
@@ -299,6 +317,19 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
         <p className="guided-step-status" data-tone="success" role="status">
           <CircleCheck size={14} aria-hidden="true" />
           Moved on: it left Next up.
+        </p>
+      )}
+      {park && !gone && (
+        <p className="guided-step-status" data-tone="neutral" role="status" data-session-parked={park.action}>
+          <Hourglass size={14} aria-hidden="true" />
+          {park.action === 'rerun-failed' ? 'Rerun requested.' : 'Branch update requested.'} The session went on; this PR comes back here when{' '}
+          {park.action === 'rerun-failed' ? 'the checks finish' : 'the new head’s checks finish'}.
+        </p>
+      )}
+      {settled && !park && !gone && (
+        <p className="guided-step-status" data-tone={settled.tone} role="status" data-session-result={settled.outcome}>
+          {settled.tone === 'success' ? <CircleCheck size={14} aria-hidden="true" /> : <CircleAlert size={14} aria-hidden="true" />}
+          {settled.text}
         </p>
       )}
       <div className="guided-step-block">
@@ -482,7 +513,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   );
 }
 
-function RunEnd({ steps, live, outcomes, onExit, onIndex }: GuidedSessionProps) {
+function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessionProps) {
   // A step that left the page moved on, whatever the reader did there.
   const settled = Object.fromEntries(steps.map((step) => [step.id, live.has(step.id) ? (outcomes[step.id] ?? 'open') : 'done'])) as Record<string, StepOutcome>;
   const summary = runSummary(steps, settled);
@@ -490,11 +521,15 @@ function RunEnd({ steps, live, outcomes, onExit, onIndex }: GuidedSessionProps) 
     <div className="guided-end" data-session-end>
       <p className="guided-end-lead">
         {summary.done === summary.total ? `All ${summary.total} moved forward.` : summary.done ? `${summary.done} of ${summary.total} moved forward.` : `Nothing moved yet: ${summary.total} still on your list.`}
+        {summary.waiting > 0 && ` ${summary.waiting} still wait${summary.waiting === 1 ? 's' : ''} on checks, and come${summary.waiting === 1 ? 's' : ''} back here when they finish.`}
       </p>
       <ul className="guided-end-lines">
         {summary.lines.map((line, i) => (
           <li key={line.id} data-outcome={line.outcome}>
-            <button type="button" onClick={() => onIndex(i)}>{line.text}</button>
+            <button type="button" onClick={() => onIndex(i)}>
+              {line.text}
+              {results[line.id] && <span className="guided-end-result"> · {results[line.id]?.text}</span>}
+            </button>
           </li>
         ))}
       </ul>

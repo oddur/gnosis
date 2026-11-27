@@ -5815,6 +5815,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-step-status[data-tone=success] { color:var(--color-success); background:var(--status-success-bg); }
 .guided-step-status[data-tone=danger] { align-items:flex-start; color:var(--color-danger); background:var(--status-danger-bg); }
 .guided-step-status[data-tone=danger] > svg { margin-top:3px; flex:none; }
+.guided-step-status[data-tone=neutral] { color:var(--muted-foreground); background:var(--secondary); }
+.guided-step-status[data-tone=attention] { color:var(--color-warning); background:var(--status-warning-bg); }
+.guided-end-result { color:var(--muted-foreground); }
 .guided-step-block { display:flex; flex-direction:column; gap:8px; }
 .guided-step-heading { font-size:var(--type-control); font-weight:600; line-height:1.5; letter-spacing:.01em; color:var(--muted-foreground); }
 .guided-step-quiet { font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ago, mergeBlockers, plainText, primaryAction, runSummary, stepDigest, suggestDepth, type SessionStep } from '../lib/guided-session';
+import { PARK_LIMIT, ago, heldForkRuns, mergeBlockers, plainText, primaryAction, riskyPath, runSummary, settlePark, stepDigest, suggestDepth, type Park, type SessionStep } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewMember } from '../lib/workbench';
 
@@ -84,4 +84,84 @@ void test('plain text and ages', () => {
   assert.equal(ago(NOW - 30_000, NOW), 'just now');
   assert.equal(ago(NOW - 5 * 60_000, NOW), '5 minutes ago');
   assert.equal(ago(NOW - 26 * 3_600_000, NOW), 'yesterday');
+});
+
+void test('fork runs held for a maintainer: their own blocker, not a failure to rerun (#595)', () => {
+  const fork = member({ headRepo: 'sam/r', baseRepo: 'o/r' });
+  const held = signals({ checks: { state: 'failure', passed: 2, failed: 2, awaitingApproval: 2, total: 4 } }, { mergeState: 'BLOCKED' });
+  assert.deepEqual(mergeBlockers(fork, held, 'me').map((b) => [b.action, b.cause, b.owner]), [
+    [{ kind: 'approve-workflows', count: 2 }, '2 workflow runs from a fork wait for a maintainer’s approval', 'maintainer'],
+  ], 'Held runs only: no "checks failing" and no Rerun');
+  const mixed = signals({ checks: { state: 'failure', passed: 1, failed: 3, awaitingApproval: 1, total: 4 } });
+  assert.deepEqual(mergeBlockers(fork, mixed, 'me').map((b) => [b.action.kind, b.cause]), [
+    ['approve-workflows', '1 workflow run from a fork waits for a maintainer’s approval'],
+    ['rerun-failed', '2 of 4 checks failing'],
+  ]);
+  // In the same repository, ACTION_REQUIRED means something else: it stays a failure.
+  const same = member({ headRepo: 'o/r', baseRepo: 'o/r' });
+  assert.deepEqual(mergeBlockers(same, held, 'me').map((b) => b.cause), ['2 of 4 checks failing']);
+  assert.equal(heldForkRuns(member({ headRepoUnknown: true, baseRepo: 'o/r' }), held), 2, 'A deleted fork is still a fork');
+  assert.equal(heldForkRuns(member(), held), 0, 'No repositories to compare: Gnosis cannot tell, so no blocker');
+  assert.equal(heldForkRuns(fork, signals({ checks: { state: 'failure', passed: 2, failed: 2, total: 4 } })), 0, 'A read from before the count: none claimed');
+  const digest = stepDigest({ step: { kind: 'review', member: fork }, signals: held, login: 'me', now: NOW, since: [] });
+  assert.deepEqual(digest.lines.slice(1).map((line) => [line.tone, line.text]), [['attention', '2 workflow runs wait for a maintainer’s approval']]);
+});
+
+void test('depth: risky paths and authors new to the repository get a deep review', () => {
+  assert.equal(riskyPath('.github/workflows/ci.yml'), 'a CI workflow');
+  assert.equal(riskyPath('db/migrations/0042_add_index.sql'), 'a database migration');
+  assert.equal(riskyPath('src/auth/session.ts'), 'security-sensitive code');
+  assert.equal(riskyPath('lib/oauth-client.ts'), 'security-sensitive code');
+  assert.equal(riskyPath('infra/main.tf'), 'infrastructure');
+  assert.equal(riskyPath('docker/Dockerfile.ci'), 'a container build');
+  assert.equal(riskyPath('.github/CODEOWNERS'), 'code owners');
+  for (const path of ['lib/author.ts', 'src/tokenizer.ts', 'docs/safety-notes.md', 'components/Button.tsx'])
+    assert.equal(riskyPath(path), undefined, path);
+  // A small update that would be a summary is a deep review when it touches a risky path.
+  assert.deepEqual(suggestDepth(step('rereview'), 14, { paths: ['README.md', '.github/workflows/release.yml'] }), {
+    depth: 'deep',
+    reason: 'Touches a CI workflow (.github/workflows/release.yml): read it in full.',
+  });
+  assert.deepEqual(suggestDepth(step('rereview'), 14, { authorAssociation: 'FIRST_TIME_CONTRIBUTOR' }), {
+    depth: 'deep',
+    reason: "sam's first PR in this repository: read it in full.",
+  });
+  assert.match(suggestDepth(step('review'), undefined, { authorAssociation: 'FIRST_TIMER' }).reason, /^sam's first PR on GitHub/);
+  assert.match(suggestDepth(step('review'), undefined, { authorAssociation: 'NONE' }).reason, /^sam has no merged commits here yet/);
+  assert.equal(suggestDepth(step('rereview'), 14, { paths: ['README.md'], authorAssociation: 'MEMBER' }).depth, 'summary', 'Nothing risky, a known author');
+  assert.equal(suggestDepth(step('rereview'), 14, {}).depth, 'summary', 'Unknown paths and author: no rule fires');
+  // The rules are about reading someone else's code: your own PR and a merge keep their depth.
+  assert.equal(suggestDepth(step('fix'), undefined, { paths: ['.github/workflows/ci.yml'] }).depth, 'summary');
+  assert.equal(suggestDepth(step('merge'), undefined, { authorAssociation: 'FIRST_TIMER' }).depth, 'summary');
+});
+
+void test('parked steps: a rerun waits for its checks, an update for its new head, and both give up after a while', () => {
+  const at = NOW;
+  const rerun: Park = { action: 'rerun-failed', headSha: 'h', at };
+  const red = signals({ checks: { state: 'failure', passed: 3, failed: 1, total: 4 } });
+  const running = signals({ checks: { state: 'pending', passed: 3, running: 1, total: 4 } });
+  const green = signals();
+  assert.deepEqual(settlePark(rerun, 'h', red, at + 1000), { park: rerun }, 'The red read before any running is the old red');
+  assert.deepEqual(settlePark(rerun, 'h', undefined, at + 1000), { park: rerun }, 'Not read: still waiting');
+  const seen = settlePark(rerun, 'h', running, at + 1000);
+  assert.deepEqual(seen, { park: { ...rerun, running: true } });
+  assert.deepEqual(settlePark({ ...rerun, running: true }, 'h', red, at + 2000), { result: { outcome: 'open', tone: 'danger', text: 'Still 1 of 4 checks failing after the rerun.' } });
+  assert.deepEqual(settlePark(rerun, 'h', green, at + 2000), { result: { outcome: 'done', tone: 'success', text: 'Checks pass after the rerun.' } });
+  assert.equal((settlePark(rerun, 'h2', green, at + 2000) as { result: { outcome: string } }).result.outcome, 'open', 'New commits: back to you');
+  assert.deepEqual(settlePark(rerun, 'h', red, at + PARK_LIMIT + 1), { result: { outcome: 'open', tone: 'attention', text: 'No result from the rerun after 30 minutes.' } });
+  assert.deepEqual(settlePark({ ...rerun, running: true }, 'h', running, at + PARK_LIMIT + 1), { park: { ...rerun, running: true } }, 'Checks still running are waited for');
+
+  const update: Park = { action: 'update-branch', headSha: 'h', at };
+  const onNew = (over: Partial<QueueSignals>) => signals({ headSha: 'h2', ...over });
+  assert.deepEqual(settlePark(update, 'h', green, at + 1000), { park: update }, 'Same head: not updated yet');
+  assert.deepEqual(settlePark(update, 'h2', green, at + 1000), { park: update }, 'Status of the old head says nothing of the new one');
+  assert.deepEqual(settlePark(update, 'h2', onNew({ checks: { state: 'pending', passed: 0, running: 4, total: 4 } }), at + 1000), { park: { ...update, running: true } });
+  assert.deepEqual(settlePark(update, 'h2', onNew({}), at + 1000), { result: { outcome: 'done', tone: 'success', text: 'Branch updated; checks pass.' } });
+  assert.deepEqual(settlePark(update, 'h2', onNew({ checks: { state: 'failure', passed: 2, failed: 2, total: 4 } }), at + 1000), { result: { outcome: 'open', tone: 'danger', text: 'Branch updated; 2 of 4 checks failing.' } });
+  assert.equal((settlePark(update, 'h', green, at + PARK_LIMIT + 1) as { result: { tone: string } }).result.tone, 'attention');
+
+  const steps = [1, 2].map((n) => ({ id: `s${n}`, member: member({ number: n, title: `PR ${n}` }) }));
+  const summary = runSummary(steps, { s1: 'parked', s2: 'done' });
+  assert.equal(summary.waiting, 1);
+  assert.deepEqual(summary.lines.map((line) => line.text), ['Still waiting: #1 PR 1', 'Moved: #2 PR 2']);
 });
