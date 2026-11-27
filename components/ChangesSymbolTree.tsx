@@ -559,9 +559,11 @@ export function ChangesSymbolTree({
       !active ||
       active === document.body ||
       !!active.closest('.commit-diff-stream') ||
+      // The peek gives the keyboard back to its row as it closes, while focus is still inside it.
+      !!active.closest('.symbol-peek') ||
       // Another tree row is the reader's own choice, unless V or n is taking them on (`fromTree`).
       (fromTree && (!!active.closest('[role=tree], [role=treeitem]') || active.tagName === 'FILE-TREE-CONTAINER'));
-    const editable = !!active?.closest('input, textarea, select, [contenteditable=true], [role=menu], [role=dialog]');
+    const editable = !active?.closest('.symbol-peek') && !!active?.closest('input, textarea, select, [contenteditable=true], [role=menu], [role=dialog]');
     if (!free || editable) return;
     model.getItem(path)?.focus();
     if (frames > 0) requestAnimationFrame(() => focusWhenDrawn(path, { fromTree }, frames - 1));
