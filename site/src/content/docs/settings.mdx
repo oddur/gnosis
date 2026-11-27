@@ -33,10 +33,10 @@ Press <Kbd keys="⌘ ," /> to open Settings. Settings has eight tabs: **Queue & 
 
 The Repositories tab lists the repositories that you watch. Select **Add repository** to watch one more. Select a repository to give it its own settings:
 
-- <Setting name="Explanations" section="Repositories" />: the default style, Reduce noise level <Prerelease />, model and Focused sections <Prerelease />.
+- <Setting name="Explanations" section="Repositories" />: the default style, Reduce noise level, model and Focused sections.
 - <Setting name="Ignore PRs inactive for" section="Repositories" />, automatic briefings and <Setting name="Daily automatic briefings" section="Repositories" />.
 - <Setting name="Repository notifications" section="Repositories" />.
-- <Setting name="Undo conflict updates" section="Repositories" /> <Prerelease />. See [Resolving conflicts](/docs/resolving-conflicts/#settings).
+- <Setting name="Undo conflict updates" section="Repositories" />. See [Resolving conflicts](/docs/resolving-conflicts/#settings).
 - <Setting name="Repository appearance" section="Repositories" />: an emoji and a color for the repository.
 - <Setting name="Local clone" section="Repositories" />: a clone of the repository on your computer. Gnosis then reads changes, commits and files from Git. PR details, comments and checks still come from GitHub. When the clone is not available, Gnosis reads from GitHub.
 
@@ -55,9 +55,9 @@ A repository setting that you do not change uses the global default.
 - <Setting name="Apply project's Claude conventions" section="Review" /> uses the repository's CLAUDE.md and .claude files.
 - <Setting name="Explanation model" section="Review" /> is the default model and effort for explanations, chat and interactive diagrams.
 - <Setting name="Simplify import changes" section="Review" /> condenses changes that touch only imports.
-- <Setting name="Show changed symbols in the file tree" section="Review" /> <Prerelease /> shows the functions and classes that each file's changes touch under the file in the Changes file tree. It is on by default. See [Reviewing a PR](/docs/reviewing-a-pr/#find-the-changed-functions-and-classes).
-- <Setting name="Mark a symbol viewed after you scroll through it" section="Review" /> <Prerelease /> marks a changed function or class as viewed after all of its changed lines were on the screen and you stayed on it for a moment. It is off by default, and you can turn it on only when changed symbols show in the file tree. When the last symbol of a file is marked this way, the file is marked as viewed too, as with your own marks. If you clear the mark of a symbol, Gnosis does not mark it again in that session.
-- <Setting name="Peek at a symbol when you rest the pointer on it" section="Review" /> <Prerelease /> shows the changes of a symbol in a panel when you hold the pointer over its row in the file tree. It is on by default, and you can use it only when changed symbols show in the file tree. When it is off, <Kbd keys="Space" /> still opens the panel. See [Reviewing a PR](/docs/reviewing-a-pr/#peek-at-a-symbol).
+- <Setting name="Show changed symbols in the file tree" section="Review" /> <Beta /> shows the functions and classes that each file's changes touch under the file in the Changes file tree. It is on by default. See [Reviewing a PR](/docs/reviewing-a-pr/#find-the-changed-functions-and-classes).
+- <Setting name="Mark a symbol viewed after you scroll through it" section="Review" /> <Beta /> marks a changed function or class as viewed after all of its changed lines were on the screen and you stayed on it for a moment. It is off by default, and you can turn it on only when changed symbols show in the file tree. When the last symbol of a file is marked this way, the file is marked as viewed too, as with your own marks. If you clear the mark of a symbol, Gnosis does not mark it again in that session.
+- <Setting name="Peek at a symbol when you rest the pointer on it" section="Review" /> <Beta /> shows the changes of a symbol in a panel when you hold the pointer over its row in the file tree. It is on by default, and you can use it only when changed symbols show in the file tree. When it is off, <Kbd keys="Space" /> still opens the panel. See [Reviewing a PR](/docs/reviewing-a-pr/#peek-at-a-symbol).
 - **Review instructions** apply to every explanation. For example: "Focus on security."
 
 <DocShot
@@ -93,11 +93,11 @@ Choose the events that notify you, the repositories and bots, and the menu bar i
 
 ## Updates
 
-<Setting name="This version" section="Updates" /> shows the version that you use. <Setting name="Update channel" section="Updates" /> chooses **Stable**, for tested releases, or **Pre-release**, for early builds. Features marked <Prerelease /> in these docs are only in pre-release builds.
+<Setting name="This version" section="Updates" /> shows the version that you use. <Setting name="Update channel" section="Updates" /> chooses **Stable**, for tested releases, or **Pre-release**, for early builds. Features marked in these docs are only in pre-release builds.
 
 ## Diagnostics
 
 - <Setting name="Export" section="Diagnostics" /> saves one JSON file that you can attach to a problem report. It stays on your computer until you share it.
 - <Setting name="Sync health" section="Diagnostics" /> compares Gnosis with GitHub and lists mismatches.
 - <Setting name="Slow interactions" section="Diagnostics" /> counts slow clicks and key presses.
-- <Setting name="Conflict resolution stats" section="Diagnostics" /> <Prerelease /> counts how you handled Merged, Check and Decide conflicts. The counts stay on your computer.
+- <Setting name="Conflict resolution stats" section="Diagnostics" /> counts how you handled Merged, Check and Decide conflicts. The counts stay on your computer.

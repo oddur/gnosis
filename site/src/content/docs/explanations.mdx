@@ -39,9 +39,9 @@ Gnosis shows the progress. You can read other PRs while you wait.
 ### Options
 
 - **Exclude from the explanation**: leave out **Generated files** or **Test files**, or single files. The model can still read excluded files as context.
-- **Reduce noise** <Prerelease />: **Off** explains every hunk. **Conservative** leaves out imports, formatting, comments and other clear noise. **Aggressive** also leaves out small edits that are not part of the main change. Changes still shows the left-out code.
-- **Model and reasoning effort** <Prerelease />: choose the provider, the model and the effort for this explanation. Claude has Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5. Codex has GPT-6.2 Sol, GPT-6.2 Astra, GPT-6.1 Terra and GPT-6 Luna. Higher effort can take longer. Regenerate uses the same model. If the chosen tool is not installed, generation stops. Gnosis never switches to the other tool.
-- **Focused sections** <Prerelease />: see [Focused sections](#focused-sections).
+- **Reduce noise**: **Off** explains every hunk. **Conservative** leaves out imports, formatting, comments and other clear noise. **Aggressive** also leaves out small edits that are not part of the main change. Changes still shows the left-out code.
+- **Model and reasoning effort**: choose the provider, the model and the effort for this explanation. Claude has Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5. Codex has GPT-6.2 Sol, GPT-6.2 Astra, GPT-6.1 Terra and GPT-6 Luna. Higher effort can take longer. Regenerate uses the same model. If the chosen tool is not installed, generation stops. Gnosis never switches to the other tool.
+- **Focused sections**: see [Focused sections](#focused-sections).
 
 Set the defaults for each repository in <Setting name="Explanations" section="Repositories" />. The model comes from this explanation's choice, then the repository default, then <Setting name="Explanation model" section="Review" />.
 
@@ -62,7 +62,7 @@ When you change a repository's **Reduce noise** level, the explanations that use
 
 Inline explanations show on a blue background below a line of code. They explain behavior that is not obvious, and they are not GitHub comments. The **Inline explanations** checkbox shows or hides them.
 
-## Focused sections <Prerelease />
+## Focused sections
 
 A large hunk can hold code for more than one section. With **Focused sections**, each section shows only the parts of the hunk that it explains. A labelled gap marks the code that the section leaves out.
 

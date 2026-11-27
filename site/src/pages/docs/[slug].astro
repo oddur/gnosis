@@ -5,6 +5,7 @@ import DocShot from '../../components/docs/DocShot.astro';
 import Kbd from '../../components/docs/Kbd.astro';
 import Setting from '../../components/docs/Setting.astro';
 import Prerelease from '../../components/docs/Prerelease.astro';
+import Beta from '../../components/docs/Beta.astro';
 
 export async function getStaticPaths() {
   const entries = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
@@ -24,5 +25,5 @@ const { Content, headings } = await render(entry);
   prerelease={entry.data.prerelease}
   headings={headings}
 >
-  <Content components={{ DocShot, Kbd, Setting, Prerelease }} />
+  <Content components={{ DocShot, Kbd, Setting, Prerelease, Beta }} />
 </Docs>
