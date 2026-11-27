@@ -536,6 +536,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             prefillReviewId={prefillReviewId}
             initialSubjectId={destination.subjectId}
             deferQueue={queueDeferred}
+            hidden={page !== 'home'}
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}
             navigationRestoration={homeRestoration}

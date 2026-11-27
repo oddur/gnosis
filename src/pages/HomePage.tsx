@@ -163,6 +163,8 @@ interface Props {
   initialSubjectId?: string;
   /** The tab is opening onto a PR: the queue renders while it shows, but is not kept behind the PR (#355). */
   deferQueue?: boolean;
+  /** The workspace shows another page (a local review): a deferred queue does not render behind it. */
+  hidden?: boolean;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
 /** Each workspace tab shows its own saved view over the shared queue. */
@@ -197,7 +199,7 @@ function markQueuePainted() {
     prefetchScreens();
   }));
 }
-export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, deferQueue, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, deferQueue, hidden, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const repositories = useRepositorySettings();
@@ -631,6 +633,10 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     [summarySource, statuses]
   );
   if (!summaryItem && !deferQueue) queueMounted.current = true;
+  // A deferred queue renders while it is the page on screen; behind a PR or another page only once kept.
+  const queueRendered = queueMounted.current || (!summaryItem && !(deferQueue && hidden));
+  // The reader acting in the queue keeps it, whatever way they came to it: its rows, search and scroll survive.
+  const keepQueue = () => { queueMounted.current = true; };
   // Saved tabs and navigation history store the opened item, so they restore the fresh state as well.
   useEffect(() => {
     if (!openedItem) return;
@@ -1962,7 +1968,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
       <TitlebarScope active={!summaryItem}>
       <Activity mode={summaryItem ? 'hidden' : 'visible'}>
-        {(!summaryItem || queueMounted.current) && <div className="workbench-body">
+        {queueRendered && <div className="workbench-body" onPointerDownCapture={keepQueue} onKeyDownCapture={keepQueue}>
         <QueueSidebar
           currentReview={
             overviewOpen ? 'Overview' : !tool && (savedView || !activeQueueView)
