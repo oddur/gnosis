@@ -11,8 +11,16 @@ export function approximateBytes(value: unknown, seen = new Set<object>()): numb
 /**
  * Byte and entry bounds both apply, including to a single oversized value. Each entry remembers when it was last
  * read or written, so a caller can drop what has not been used for a while (#355).
+ *
+ * `keepNewest` keeps the value set last even when it alone is over the byte bound, for a cache whose readers rely on
+ * getting back what was just stored (the discussion cache keeps references stable that way).
  */
-export function createByteCache<K, V>(maxBytes: number, maxEntries: number, now: () => number = Date.now) {
+export function createByteCache<K, V>(
+  maxBytes: number,
+  maxEntries: number,
+  now: () => number = Date.now,
+  { keepNewest = false }: { keepNewest?: boolean } = {}
+) {
   const entries = new Map<K, { value: V; bytes: number; at: number }>();
   let bytes = 0;
   const remove = (key: K) => {
@@ -41,10 +49,10 @@ export function createByteCache<K, V>(maxBytes: number, maxEntries: number, now:
     /** Stores a value. `size` replaces the estimate when the caller knows it more cheaply. */
     set(key: K, value: V, size = approximateBytes(value)) {
       remove(key);
-      if (size > maxBytes) return;
+      if (size > maxBytes && !keepNewest) return;
       entries.set(key, { value, bytes: size, at: now() });
       bytes += size;
-      while (bytes > maxBytes || entries.size > maxEntries) {
+      while ((bytes > maxBytes || entries.size > maxEntries) && !(keepNewest && entries.size === 1)) {
         const oldest = entries.keys().next();
         if (oldest.done) break;
         remove(oldest.value);

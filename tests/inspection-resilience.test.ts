@@ -108,6 +108,17 @@ void test('byte caches take a known size, remember each entry’s last use and p
   assert.deepEqual([...cache.keys()], ['c']);
   assert.equal(cache.bytes, 40);
 });
+void test('byte caches that keep the newest value hold it alone when it is over the bound (#355)', () => {
+  const cache = createByteCache<string, string>(100, 10, Date.now, { keepNewest: true });
+  cache.set('a', 'a', 40);
+  cache.set('b', 'b', 40);
+  cache.set('large', 'x', 150);
+  assert.deepEqual([...cache.keys()], ['large'], 'The oversized newest value stays; the others leave');
+  assert.equal(cache.bytes, 150);
+  cache.set('c', 'c', 40);
+  assert.deepEqual([...cache.keys()], ['c'], 'The next value pushes the oversized one out');
+  assert.equal(cache.bytes, 40);
+});
 void test('byte caches make room by rank, then by recency within a rank (#355)', () => {
   const cache = createByteCache<string, number>(100, 3);
   cache.set('open', 0, 30);

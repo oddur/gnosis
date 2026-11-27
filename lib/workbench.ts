@@ -9,6 +9,17 @@ export interface ReviewMember extends PrMetadata {
   headRepo: string;
   baseRepo: string;
   role: PrSearchResult['role'];
+  /**
+   * The PR's own commits (those on its head and not on its base) still include its merged stack parent's last head
+   * commit, as read for this head, base and parent head (`lib/stack-ancestry.ts`). Set by the queue only when they
+   * do; absent when they don't or when nobody could tell. Not part of the fingerprint.
+   */
+  parentHeadInPr?: ParentHeadInPr;
+}
+export interface ParentHeadInPr {
+  headSha: string;
+  baseBranch: string;
+  parentHeadSha: string;
 }
 export interface StackEdge {
   parent: string;

@@ -1,6 +1,13 @@
-import { approximateBytes } from './byte-cache';
+import { createByteCache } from './byte-cache';
+import { RENDERER_DISCUSSION_BYTES, RENDERER_DISCUSSION_ENTRIES } from './inspection-limits';
 import type { GitHubReviewThread, GitHubReviewThreads } from './review-threads';
-const values = new Map<string, GitHubReviewThreads>();
+/**
+ * Each PR's latest discussion, least recently used first, bounded by bytes as well as count (#355). A view that shows
+ * one holds its own reference, so a discussion dropped here stays on screen; the next read loads it again from main.
+ */
+const values = createByteCache<string, GitHubReviewThreads>(RENDERER_DISCUSSION_BYTES, RENDERER_DISCUSSION_ENTRIES, Date.now, {
+  keepNewest: true,
+});
 const pending = new Map<string, Promise<GitHubReviewThreads>>();
 const listeners = new Set<(url: string, data: GitHubReviewThreads) => void>();
 const failureListeners = new Set<(url: string, error: unknown) => void>();
@@ -19,8 +26,15 @@ export const peekDiscussion = (url: string) => values.get(url);
 /** Discussions held, their threads and listeners, for the diagnostics export. */
 export function discussionCacheStats() {
   let threads = 0;
-  for (const value of values.values()) threads += value.threads.length;
-  return { entries: values.size, threads, listeners: listeners.size, bytes: approximateBytes([...values.values()]) };
+  for (const [, value] of values) threads += value.threads.length;
+  return { entries: values.size, threads, listeners: listeners.size, bytes: values.bytes };
+}
+/**
+ * Drops these PRs' discussions, for a closed tab's PRs (src/App.tsx, with the inspection caches). Views still showing
+ * one keep their copy; a later read loads it from main's saved copy.
+ */
+export function forgetDiscussions(urls: Iterable<string>) {
+  for (const url of urls) values.delete(url);
 }
 let optimistic: (() => void) | undefined;
 /**
@@ -60,11 +74,6 @@ function publish(url: string, data: GitHubReviewThreads) {
       data = { ...data, threads, ...(feedback ? { feedback } : {}) };
   }
   values.set(url, data);
-  while (values.size > 100) {
-    const key = values.keys().next().value;
-    if (key === undefined) break;
-    values.delete(key);
-  }
   listeners.forEach((fn) => fn(url, data));
 }
 function request(url: string, version: number, refresh: boolean, revalidate = false) {

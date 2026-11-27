@@ -23,31 +23,64 @@ export interface MergedParent {
   onto: string;
 }
 
-/**
- * The merged parent of an open PR that still targets the parent's head branch, so it has to move onto the branch the
- * parent merged into. Once the base changes the row clears. The base is the PR's own (`member.baseBranch`), never a
- * status read's, so the stack plan, the Overview, Next up and the menu bar always agree. Fail quiet, ignored:
- * - a parent whose head repository is unknown, such as a deleted fork's;
- * - a parent that merged into the PR's own base, or from a branch into itself;
- * - a parent from a long-lived branch that is still there (`LONG_LIVED`);
- * - a parent whose branch lives on and that merged before the PR was opened, or when it merged is unknown.
- *
- * Not detected yet: a PR GitHub moved onto main after its parent was squash-merged. It still carries the parent's
- * commits, but telling that needs an ancestry read that no queue read makes yet.
- */
-export function mergedParent(
-  subject: Pick<ReviewSubject, 'members' | 'edges'>,
-  member: ReviewMember
-): MergedParent | undefined {
+/** The merged stack parent of an open PR that `mergedParent` may name, before it looks at the PR's base. */
+function candidateParent(subject: Pick<ReviewSubject, 'members' | 'edges'>, member: ReviewMember): ReviewMember | undefined {
   if (!isOpenPr(member)) return undefined;
   const parent = subject.edges
     .filter((edge) => edge.child === member.url)
     .map((edge) => subject.members.find((candidate) => candidate.url === edge.parent))
     .find((candidate) => candidate?.merged);
-  if (!parent || parent.headRepoUnknown) return undefined;
-  if (parent.baseBranch === member.baseBranch || parent.headBranch === parent.baseBranch) return undefined;
+  if (!parent || parent.headRepoUnknown || parent.headBranch === parent.baseBranch) return undefined;
   if (!parent.headRefDeleted && LONG_LIVED.test(parent.headBranch)) return undefined;
   if (parent.headRefDeleted === false && !(Date.parse(parent.mergedAt ?? '') >= Date.parse(member.createdAt))) return undefined;
+  return parent;
+}
+
+/**
+ * The merged parent of a PR that already targets the parent's base, such as one GitHub moved onto main after the
+ * parent was squash-merged. Only such a PR can still carry the parent's commits; whether it does takes an ancestry
+ * read (`lib/stack-ancestry.ts`). Undefined for every other PR.
+ */
+export function movedChildParent(
+  subject: Pick<ReviewSubject, 'members' | 'edges'>,
+  member: ReviewMember
+): ReviewMember | undefined {
+  const parent = candidateParent(subject, member);
+  return parent && parent.baseBranch === member.baseBranch && parent.baseRepo === member.baseRepo && parent.headSha
+    ? parent
+    : undefined;
+}
+
+/**
+ * The merged parent of an open PR that has to move onto the branch the parent merged into:
+ * - the PR still targets the parent's head branch; once the base changes, this clears;
+ * - or the PR already targets the parent's base, such as after GitHub moved it there when the parent was
+ *   squash-merged, but its own commits still include the parent's last head commit (`member.parentHeadInPr`, read
+ *   for this head and base). Once the PR is moved off those commits, its new head clears this.
+ *
+ * The base is the PR's own (`member.baseBranch`), never a status read's, so the stack plan, the Overview, Next up and
+ * the menu bar always agree. Fail quiet, ignored:
+ * - a parent whose head repository is unknown, such as a deleted fork's;
+ * - a parent that merged from a branch into itself;
+ * - a parent from a long-lived branch that is still there (`LONG_LIVED`);
+ * - a parent whose branch lives on and that merged before the PR was opened, or when it merged is unknown;
+ * - a PR on the parent's base whose ancestry was not read, could not be read, or is from an older head or base.
+ */
+export function mergedParent(
+  subject: Pick<ReviewSubject, 'members' | 'edges'>,
+  member: ReviewMember
+): MergedParent | undefined {
+  const parent = candidateParent(subject, member);
+  if (!parent) return undefined;
+  if (parent.baseBranch === member.baseBranch) {
+    const carried = member.parentHeadInPr;
+    const carries =
+      parent.baseRepo === member.baseRepo &&
+      carried?.headSha === member.headSha &&
+      carried.baseBranch === member.baseBranch &&
+      carried.parentHeadSha === parent.headSha;
+    return carries ? { parent, onto: member.baseBranch } : undefined;
+  }
   const targetsParent =
     member.baseBranch === parent.headBranch && (!parent.headRepo || !member.baseRepo || parent.headRepo === member.baseRepo);
   return targetsParent ? { parent, onto: parent.baseBranch } : undefined;
