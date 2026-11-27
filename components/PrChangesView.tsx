@@ -968,6 +968,12 @@ export function PrChangesView({
    * or, with ⌘⇧↩, ticks the item and goes on as V does. False when there is nothing to comment on.
    */
   function commentOnItem(item: ReviewItem, origin: 'tree' | 'diff'): boolean {
+    // A jump still on its way to the item (a click, n): the composer opens once it lands, as V acts then. Opening it
+    // now would stop the jump short, the item's lines under the pinned headers.
+    if (jumpOnItsWay()) {
+      whenJumpLands(() => void commentOnItem(item, origin));
+      return true;
+    }
     const target = entries.find((e) => e.key === item.key);
     if (!target || entry?.key !== item.key || !comments.canComment) return false;
     const fileKey = viewKey(target);

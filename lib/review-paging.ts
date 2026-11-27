@@ -90,6 +90,8 @@ export function registerPager(fileKey: string, pager: Pager): () => void {
   };
 }
 export const pagerOf = (fileKey: string) => pagers.get(fileKey);
+/** The files with a pager now, for the browser suites' reports. */
+export const pagerKeys = () => [...pagers.keys()];
 
 /** The item V is paging through, and how much of it has been seen: its tree row and outline chip say so. */
 export interface Paging {

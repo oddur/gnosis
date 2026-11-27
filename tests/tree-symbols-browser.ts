@@ -439,7 +439,7 @@ void app.whenReady().then(async () => {
     await enterOn('Imports');
     await wait(`!!document.querySelector(${JSON.stringify(composer)})`).catch(async (error: unknown) => {
       const state = await js(
-        `({lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),focused:window.focusedTreeRow(),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,composers:[...document.querySelectorAll('.changes-comment-composer')].map(c=>c.closest('.commit-stream-row')?.dataset.file),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),activeElement:document.activeElement&&(document.activeElement.className||document.activeElement.tagName),rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+        `({lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),focused:window.focusedTreeRow(),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,composers:[...document.querySelectorAll('.changes-comment-composer')].map(c=>c.closest('.commit-stream-row')?.dataset.file),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),activeElement:document.activeElement&&(document.activeElement.className||document.activeElement.tagName),target:window.__review.target(),pagers:window.__review.pagers(),selection:String(getSelection()),rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
       ).catch(() => 'unreadable');
       throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
     });
