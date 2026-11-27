@@ -5,6 +5,7 @@ import { pathFileKinds } from './file-kinds';
 import { inspectionFileRequest, inspectionFiles, onInspectionForget, onInspectionUses } from './inspection-cache';
 import { addDiagnosticsSource } from './diagnostics-sources';
 import { forgetCarry } from './symbol-carry';
+import { revisionFileUses } from './file-view-progress';
 import { onMoves, peekFileMoves } from './moved-symbols-store';
 import type { PrChangeFile, PrChanges, PrFileSide } from './pr-changes';
 import { imageMimeType } from './review-images';
@@ -96,6 +97,8 @@ onInspectionForget((urls) => {
 onInspectionUses((into) => {
   // A PR whose files only these still hold is swept when idle, as its definitions are.
   for (const entry of patches.values()) if (!into.has(entry.url)) into.set(entry.url, -Infinity);
+  // Carry-over's registered patches count from when they were registered, so they leave with their PR too.
+  revisionFileUses(into);
 });
 addDiagnosticsSource('treeSymbols', () => ({
   patches: { entries: patches.size, bytes: [...patches.values()].reduce((sum, entry) => sum + 2 * (entry.patch?.length ?? 0), 0) },

@@ -71,13 +71,21 @@ function revisionsByPath(s: Progress): Map<string, string[]> {
 /** A renamed file's old path, by its revision key, as the PR's file list reports it. */
 const renamedFrom = new Map<string, string>();
 /** Each registered file revision's patch, for the print a file's Viewed mark saves: no read, nothing hashed till then. */
-const revisionFiles = new Map<string, { url: string; patch?: string }>();
+const revisionFiles = new Map<string, { url: string; patch?: string; at: number }>();
 /**
  * Drops the registered patches of these PRs (all, for undefined), with their inspection data (lib/symbol-carry.ts):
  * a later visit registers them again.
  */
 export function forgetRevisionFiles(urls: ReadonlySet<string> | undefined) {
   for (const [key, file] of revisionFiles) if (!urls || urls.has(file.url)) revisionFiles.delete(key);
+}
+/**
+ * When each PR's patches were last registered, merged into `into` (the latest wins), for the inspection caches' idle
+ * sweep (lib/use-tree-symbols.ts). Without it a PR whose other entries left by their bounds was never swept, and its
+ * patches stayed for the session (#355).
+ */
+export function revisionFileUses(into: Map<string, number>) {
+  for (const { url, at } of revisionFiles.values()) if ((into.get(url) ?? -Infinity) < at) into.set(url, at);
 }
 /** How many registered patches are held, and their size, for the diagnostics export. */
 export const revisionFileStats = () => ({
@@ -96,11 +104,12 @@ export function filePrint(fileKey: string): string | undefined {
 export const isRegistered = (fileKey: string) => revisionFiles.has(fileKey);
 export function registerChangeProgress(snapshot: PrChanges) {
   const store = load();
+  const now = Date.now();
   let dirty = false;
   const patch: FileProgressPatch = { aliases: {}, marks: {} };
   for (const file of snapshot.files) {
     const revision = fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha);
-    revisionFiles.set(revision, { url: snapshot.url, patch: file.patch });
+    revisionFiles.set(revision, { url: snapshot.url, patch: file.patch, at: now });
     // A rename's earlier revisions are under its old path.
     if (file.previousPath && file.previousPath !== file.path) renamedFrom.set(revision, file.previousPath);
     const content = JSON.stringify([snapshot.url, file.path, file.changeId]);
