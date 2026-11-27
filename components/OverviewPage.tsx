@@ -764,7 +764,9 @@ export function OverviewPage(props: OverviewPageProps) {
   // The session's step card draws its primary action as Next up's row does: Merge and Rerun act in place; anything
   // else opens the PR, at the depth the step suggests.
   const sessionAction = (step: SessionStep): ReactNode | undefined => {
-    if (step.kind === 'merge') return <MergeAction row={step.row} actions={actions} />;
+    if (step.kind === 'merge') return <MergeAction row={step.row} actions={actions} session />;
+    // A decision: merge it when it can merge (the Overview's merge rule, unchanged); closing is the step's other way.
+    if (step.kind === 'decide' && step.row.merge) return <MergeAction row={step.row} actions={actions} session />;
     if (step.kind === 'fix' && step.next?.fix === 'failing') {
       // Fork runs held for approval are not failures a rerun can clear (#595): a PR with only those has no Rerun.
       const failing = step.row.entries
@@ -778,6 +780,14 @@ export function OverviewPage(props: OverviewPageProps) {
     }
     return undefined;
   };
+  const sessionSecondary = (step: SessionStep): ReactNode | undefined =>
+    step.kind === 'decide' ? (
+      <Button size="sm" variant="outline" title={`Close #${step.member.number}… · C`} data-session-close onClick={() => actions.close(step.member)}>
+        <CloseIcon size={14} aria-hidden="true" />
+        Close PR
+        <kbd>C</kbd>
+      </Button>
+    ) : undefined;
   const sessionIdentity = (step: SessionStep): ReactNode => (
     <span className="guided-step-id">
       <PrIcon member={step.member} />
@@ -869,6 +879,7 @@ export function OverviewPage(props: OverviewPageProps) {
           rereviewLines={extras.rereviewLines}
           replies={extras.replies}
           renderAction={sessionAction}
+          renderSecondary={sessionSecondary}
           renderPrAction={sessionPrAction}
           about={sessionAbout}
           reply={sessionReply}
@@ -2145,7 +2156,7 @@ function stackMenu(id: string, listed: readonly ReviewMember[], actions: RowActi
   ];
 }
 /** Merge, with its confirmation (`PrActions`). `caveats`: what the merge goes ahead without, for the tooltip. */
-function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions: RowActions; caveats?: readonly string[] }) {
+function MergeAction({ row, actions, caveats = [], session = false }: { row: OverviewRow; actions: RowActions; caveats?: readonly string[]; session?: boolean }) {
   // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
   const member = row.merge?.member ?? row.focus;
   return (
@@ -2155,7 +2166,9 @@ function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions
       onResult={(message) => toast.add({ type: 'success', title: message })}
       trigger={(open, busy, _quick, methods) => (
         // The same split button as the PR header's (#542): Merge opens its confirmation, the chevron picks the method.
-        <MergeSplit size="xs" label="Merge" primary={false} busy={busy} extra={{ ...SHORTCUT, title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A` }}
+        // In a guided session it is the step's primary action, at the card's size, pressed with Enter.
+        <MergeSplit size={session ? 'sm' : 'xs'} label="Merge" primary={session} busy={busy}
+          extra={{ ...(session ? {} : SHORTCUT), title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · ${session ? '↵' : 'A'}` }}
           icon={<MergeIcon size={13} aria-hidden="true" />} methods={['SQUASH', 'MERGE', 'REBASE']} allowed={methods.allowed} onMethods={methods.load} onMerge={(method) => open('merge', method)} />
       )}
     />

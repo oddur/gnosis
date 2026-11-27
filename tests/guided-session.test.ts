@@ -47,7 +47,7 @@ void test('depth: summary or deep review, with the rule that chose it', () => {
   assert.deepEqual(suggestDepth(step('rereview'), 14), { depth: 'summary', reason: 'Small update to code you reviewed (14 lines).' });
   assert.equal(suggestDepth(step('rereview'), 120).depth, 'deep');
   assert.equal(suggestDepth(step('rereview'), undefined).depth, 'deep', 'An update of unknown size is read in full');
-  assert.match(suggestDepth(step('review'), undefined).reason, /^First review: you haven't read this PR yet \(38 lines\)\.$/);
+  assert.match(suggestDepth(step('review'), undefined).reason, /^You haven’t read this PR yet \(38 lines\)\.$/);
   for (const kind of ['merge', 'fix', 'reply', 'changes', 'decide'] as const) assert.equal(suggestDepth(step(kind), undefined).depth, 'summary', kind);
 });
 
@@ -120,11 +120,11 @@ void test('depth: risky paths and authors new to the repository get a deep revie
   // A small update that would be a summary is a deep review when it touches a risky path.
   assert.deepEqual(suggestDepth(step('rereview'), 14, { paths: ['README.md', '.github/workflows/release.yml'] }), {
     depth: 'deep',
-    reason: 'Touches a CI workflow (.github/workflows/release.yml): read it in full.',
+    reason: 'Touches a CI workflow (.github/workflows/release.yml).',
   });
   assert.deepEqual(suggestDepth(step('rereview'), 14, { authorAssociation: 'FIRST_TIME_CONTRIBUTOR' }), {
     depth: 'deep',
-    reason: "sam's first PR in this repository: read it in full.",
+    reason: "sam's first PR in this repository.",
   });
   assert.match(suggestDepth(step('review'), undefined, { authorAssociation: 'FIRST_TIMER' }).reason, /^sam's first PR on GitHub/);
   assert.match(suggestDepth(step('review'), undefined, { authorAssociation: 'NONE' }).reason, /^sam has no merged commits here yet/);

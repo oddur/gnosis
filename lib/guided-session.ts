@@ -262,28 +262,28 @@ export function suggestDepth(step: Pick<SessionStep, 'kind' | 'member'>, rerevie
   if (step.kind === 'review' || step.kind === 'rereview') {
     for (const path of context.paths ?? []) {
       const what = riskyPath(path);
-      if (what) return { depth: 'deep', reason: `Touches ${what} (${path}): read it in full.` };
+      if (what) return { depth: 'deep', reason: `Touches ${what} (${path}).` };
     }
     const newcomer = context.authorAssociation ? NEW_AUTHOR[context.authorAssociation] : undefined;
-    if (newcomer) return { depth: 'deep', reason: `${newcomer(step.member.author)}: read it in full.` };
+    if (newcomer) return { depth: 'deep', reason: `${newcomer(step.member.author)}.` };
   }
   switch (step.kind) {
     case 'merge':
-      return { depth: 'summary', reason: 'Approved and ready: merging needs no new read.' };
+      return { depth: 'summary', reason: 'Approved and ready to merge.' };
     case 'fix':
-      return { depth: 'summary', reason: 'Your PR: clear what blocks it.' };
+      return { depth: 'summary', reason: 'Your PR. Clear what blocks it.' };
     case 'reply':
-      return { depth: 'summary', reason: 'A reply waits on you: the thread is enough.' };
+      return { depth: 'summary', reason: 'A reply waits on you, and the thread has what you need.' };
     case 'changes':
-      return { depth: 'summary', reason: 'Changes were requested on your PR: read the review.' };
+      return { depth: 'summary', reason: 'Changes were requested. The review says what.' };
     case 'decide':
-      return { depth: 'summary', reason: 'Stuck for over a week: decide whether it goes on.' };
+      return { depth: 'summary', reason: 'Stuck for over a week. Move it on, or close it.' };
     case 'rereview':
       if (rereviewLines !== undefined && rereviewLines < SUMMARY_LINES)
         return { depth: 'summary', reason: `Small update to code you reviewed (${rereviewLines} line${rereviewLines === 1 ? '' : 's'}).` };
       return { depth: 'deep', reason: rereviewLines !== undefined ? `Large update since your review (${rereviewLines} lines).` : 'Updated since your review.' };
     case 'review':
-      return { depth: 'deep', reason: `First review: you haven't read this PR yet${size ? ` (${size} lines)` : ''}.` };
+      return { depth: 'deep', reason: `You haven’t read this PR yet${size ? ` (${size} lines)` : ''}.` };
   }
 }
 
@@ -305,15 +305,24 @@ export interface RunSummary {
   waiting: number;
   total: number;
   lines: { id: string; outcome: StepOutcome; text: string }[];
+  /** The steps by what happened to them, in this order: moved, waiting, opened, skipped, still on the list. */
+  groups: { outcome: StepOutcome; label: string; steps: { id: string; index: number; text: string }[] }[];
 }
 const OUTCOME_WORD: Readonly<Record<StepOutcome, string>> = { done: 'Moved', skipped: 'Skipped', parked: 'Still waiting', opened: 'Opened', open: 'Still on your list' };
+const GROUP_ORDER: readonly StepOutcome[] = ['done', 'parked', 'opened', 'skipped', 'open'];
+const GROUP_LABEL: Readonly<Record<StepOutcome, string>> = { done: 'Moved', parked: 'Waiting on checks', opened: 'Opened', skipped: 'Skipped', open: 'Still on your list' };
 /** The end of a run: what moved, what you skipped, what still waits on something else. */
 export function runSummary(steps: readonly Pick<SessionStep, 'id' | 'member'>[], outcomes: Readonly<Partial<Record<string, StepOutcome>>>): RunSummary {
   const lines = steps.map((step) => {
     const outcome = outcomes[step.id] ?? 'open';
     return { id: step.id, outcome, text: `${OUTCOME_WORD[outcome]}: #${step.member.number} ${step.member.title}` };
   });
-  return { done: lines.filter((line) => line.outcome === 'done' || line.outcome === 'opened').length, waiting: lines.filter((line) => line.outcome === 'parked').length, total: lines.length, lines };
+  const groups = GROUP_ORDER.map((outcome) => ({
+    outcome,
+    label: GROUP_LABEL[outcome],
+    steps: steps.flatMap((step, index) => ((outcomes[step.id] ?? 'open') === outcome ? [{ id: step.id, index, text: `#${step.member.number} ${step.member.title}` }] : [])),
+  })).filter((group) => group.steps.length);
+  return { done: lines.filter((line) => line.outcome === 'done' || line.outcome === 'opened').length, waiting: lines.filter((line) => line.outcome === 'parked').length, total: lines.length, lines, groups };
 }
 
 /** A slow action started from the session, whose result comes later: a rerun's checks, or an update's new head. */

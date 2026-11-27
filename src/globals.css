@@ -5858,6 +5858,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-step-switch:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:3px; }
 .guided-step-buttons { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .guided-step-primary { display:inline-flex; }
+.guided-step-primary > .pr-actions { margin:0; }
 .guided-step-note { font-size:var(--type-caption); color:var(--muted-foreground); }
 .guided-step-approve-group { display:inline-flex; align-items:center; gap:8px; }
 .guided-step-link { font-size:var(--type-control); color:var(--primary); }
@@ -5880,6 +5881,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-session-nav { margin-left:auto; display:flex; gap:2px; align-self:center; }
 .guided-end { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:8px 0; }
 .guided-end-lead { font-size:var(--type-panel-title); font-weight:650; letter-spacing:-0.02em; }
+.guided-end-group { display:flex; flex-direction:column; gap:4px; }
+.guided-end-group h3 { display:flex; align-items:baseline; gap:6px; font-size:var(--type-control); font-weight:600; letter-spacing:.01em; color:var(--muted-foreground); }
+.guided-end-count { font-variant-numeric:tabular-nums; font-weight:500; }
 .guided-end-lines { display:flex; flex-direction:column; gap:2px; font-size:var(--type-body); }
 .guided-end-lines button { padding:2px 0; text-align:left; color:var(--foreground); }
 .guided-end-lines button:hover { text-decoration:underline; text-underline-offset:3px; }

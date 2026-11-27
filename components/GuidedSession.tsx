@@ -37,6 +37,8 @@ export interface GuidedSessionProps {
   about: (step: SessionStep) => StepAbout | undefined;
   /** The step's in-place action as the Overview row draws it (Merge, Rerun), or undefined. */
   renderAction: (step: SessionStep) => ReactNode | undefined;
+  /** A step's other way forward, beside Skip: a decision's Close PR. Its button carries `data-session-close` for C. */
+  renderSecondary?: (step: SessionStep) => ReactNode | undefined;
   /** Update branch and Mark ready, through the PR header's actions and their confirmations. */
   renderPrAction: (step: SessionStep, kind: 'update-branch' | 'mark-ready') => ReactNode;
   /** The PR's icon and repository label, as the Overview rows draw them. */
@@ -101,6 +103,7 @@ export function GuidedSession(props: GuidedSessionProps) {
       if (!outcomes[current.id]) onOutcome(current.id, 'opened');
       onOpen(current, key === 'd' ? 'review' : 'summary');
     } else if (key === 'a' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-approve-now]')?.click();
+    else if (key === 'c' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-close]')?.click();
     else if (key === 'Enter' && event.target === root.current) {
       // The primary action: a reply box takes the keyboard, a button is pressed.
       const target = root.current.querySelector<HTMLElement>(`textarea${PRIMARY}, ${PRIMARY} button, button${PRIMARY}`);
@@ -123,10 +126,12 @@ export function GuidedSession(props: GuidedSessionProps) {
             </li>
           ))}
         </ol>
-        <Button size="xs" variant="ghost" onClick={onExit} title="Leave the session · Esc">
-          <X size={13} aria-hidden="true" />
-          Leave
-        </Button>
+        {!done && (
+          <Button size="xs" variant="ghost" onClick={onExit} title="Leave the session · Esc">
+            <X size={13} aria-hidden="true" />
+            Leave
+          </Button>
+        )}
       </header>
       {current ? <StepCard key={current.id} {...props} step={current} gone={gone} skip={skip} next={() => go(index + 1)} /> : <RunEnd {...props} />}
       {!done && (
@@ -166,7 +171,7 @@ function newHeading(lead: string): string {
 type Busy = 'reply' | 'approve' | undefined;
 
 function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; next: () => void }) {
-  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
+  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
   const waiting = replies[step.member.url];
@@ -335,7 +340,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       <div className="guided-step-block">
         <h4 className="guided-step-heading">{newHeading(digest.lead)}</h4>
         {others.length === 0 && !waiting ? (
-          <p className="guided-step-quiet">Nothing new that Gnosis can see.</p>
+          <p className="guided-step-quiet">{step.kind === 'rereview' ? 'New commits since your review. Gnosis can’t tell yet what they change.' : 'Nothing new that Gnosis can see.'}</p>
         ) : (
           others.length > 0 && (
             <ul className="guided-step-digest">
@@ -478,8 +483,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           <p className="guided-step-depth" data-depth={depth}>
             {depth === 'deep' ? <ScanSearch size={14} aria-hidden="true" /> : <TextSearch size={14} aria-hidden="true" />}
             <span>
-              <strong>{depth === 'deep' ? 'Worth a deep review' : 'A summary is enough'}</strong>: {suggested.reason.charAt(0).toLowerCase()}
-              {suggested.reason.slice(1)}
+              <strong>{depth === 'deep' ? 'Worth a deep review.' : 'A summary is enough.'}</strong> {suggested.reason}
             </span>
           </p>
         )}
@@ -499,6 +503,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           )}
           {openButton('summary', suggestedOpen && depth === 'summary' && !(canApprove && (step.kind === 'review' || step.kind === 'rereview')))}
           {openButton('review', suggestedOpen && depth === 'deep')}
+          {!moved && renderSecondary?.(step)}
           {!moved && (
             <Button size="sm" variant="ghost" onClick={skip} title="Skip for now · S">
               <SkipForward size={14} aria-hidden="true" />
@@ -520,19 +525,27 @@ function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessi
   return (
     <div className="guided-end" data-session-end>
       <p className="guided-end-lead">
-        {summary.done === summary.total ? `All ${summary.total} moved forward.` : summary.done ? `${summary.done} of ${summary.total} moved forward.` : `Nothing moved yet: ${summary.total} still on your list.`}
-        {summary.waiting > 0 && ` ${summary.waiting} still wait${summary.waiting === 1 ? 's' : ''} on checks, and come${summary.waiting === 1 ? 's' : ''} back here when they finish.`}
+        {summary.done === summary.total ? `All ${summary.total} moved forward.` : summary.done ? `${summary.done} of ${summary.total} moved forward.` : 'Nothing moved this time.'}
+        {summary.waiting > 0 && ` ${summary.waiting} still wait${summary.waiting === 1 ? 's' : ''} on checks and come${summary.waiting === 1 ? 's' : ''} back here when they finish.`}
       </p>
-      <ul className="guided-end-lines">
-        {summary.lines.map((line, i) => (
-          <li key={line.id} data-outcome={line.outcome}>
-            <button type="button" onClick={() => onIndex(i)}>
-              {line.text}
-              {results[line.id] && <span className="guided-end-result"> · {results[line.id]?.text}</span>}
-            </button>
-          </li>
-        ))}
-      </ul>
+      {summary.groups.map((group) => (
+        <section key={group.outcome} className="guided-end-group" data-outcome={group.outcome}>
+          <h3>
+            {group.label}
+            <span className="guided-end-count">{group.steps.length}</span>
+          </h3>
+          <ul className="guided-end-lines">
+            {group.steps.map((line) => (
+              <li key={line.id} data-outcome={group.outcome}>
+                <button type="button" onClick={() => onIndex(line.index)}>
+                  {line.text}
+                  {results[line.id] && <span className="guided-end-result"> · {results[line.id]?.text}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
       <Button size="sm" onClick={onExit}>Back to Overview</Button>
     </div>
   );
