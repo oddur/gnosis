@@ -552,7 +552,11 @@ export function ChangesSymbolTree({
    * later, and focusing it before then does nothing. It takes the keyboard only from places that hold no input of the
    * reader's (the page, the diff stream, the tree itself), never from a text field, the composer or a menu.
    */
-  const focusWhenDrawn = (path: string, { fromTree = true }: { fromTree?: boolean } = {}, frames = 20) => {
+  // Each call takes a new number, and its retries stop once another call, or a peek opening, takes a newer one: a late
+  // retry would take the keyboard back from where it went since.
+  const focusRun = useRef(0);
+  const focusWhenDrawn = (path: string, { fromTree = true }: { fromTree?: boolean } = {}, frames = 20, run = ++focusRun.current) => {
+    if (run !== focusRun.current) return;
     let active: Element | null = document.activeElement;
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
     if (active?.closest('[data-item-path]')?.getAttribute('data-item-path') === path) return;
@@ -572,7 +576,7 @@ export function ChangesSymbolTree({
     const host = workspaceRef.current?.querySelector('file-tree-container');
     const drawn = host?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`);
     drawn?.focus({ preventScroll: true });
-    if (frames > 0) requestAnimationFrame(() => focusWhenDrawn(path, { fromTree }, frames - 1));
+    if (frames > 0) requestAnimationFrame(() => focusWhenDrawn(path, { fromTree }, frames - 1, run));
   };
   const pathOf = (target: { key: string; id: string }) =>
     target.id === FILE_STOP ? layout.pierreOf.get(target.key) : layout.symbolPaths.get(symbolRowKey(target.key, target.id));
@@ -685,6 +689,8 @@ export function ChangesSymbolTree({
   const rowElement = (event: Event) => event.composedPath().find((node): node is Element => node instanceof Element && node.hasAttribute('data-item-path'));
   const openPeek = (item: { key: string; id: string }, path: string, anchor: Element, focus: boolean) => {
     clearTimeout(closeTimer.current);
+    // A row still waiting for the keyboard (a peek just closed) gives it up to the peek opening now.
+    if (focus) focusRun.current++;
     setPeek({ stack: [item], focus, path, anchor });
   };
   const closePeek = (returnFocus = peek?.focus) => {
