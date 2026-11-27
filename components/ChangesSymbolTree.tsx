@@ -18,7 +18,7 @@ import { SymbolPeek, type PeekView } from './SymbolPeek';
 import { callerCoverage, findCallers, type CallerFile } from '../lib/review-peek';
 import type { DiffAppearance } from '../lib/review-diff';
 import { readingLabel, usePaging } from '../lib/review-paging';
-import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, rowName, topLevelName, treeSymbolKind } from '../lib/tree-symbols';
+import { matchingSymbols, movedMirrorId, pruneSymbols, readingSymbol, rowDestination, rowName, topLevelName, treeSymbolKind, type TreeSymbolNode } from '../lib/tree-symbols';
 import { FILE_STOP, itemCounts, treeOrder, folderProgress, folderSums as sumFolders, rowLabel, rowReviewIds, reviewIds, reviewed, rolledUp, symbolProgress, type SymbolProgress } from '../lib/tree-symbol-review';
 import { ancestorPaths, symbolRowKey, symbolTreePaths, type FileSymbols, type SymbolTreePaths, type TreeRow } from '../lib/tree-symbol-paths';
 import { loadTreeSymbols, treeSymbolsSupported, useTreeSymbols, type TreeSymbolSource } from '../lib/use-tree-symbols';
@@ -599,6 +599,18 @@ export function ChangesSymbolTree({
       const away = row.node.moveAway;
       const target = current.current.entries.find((e) => e.source?.fileKey === away.other.file);
       const { other } = away;
+      // The new copy is where the reader now is: V there marks it, as it would had they chosen it.
+      const into = target && known.get(target.key);
+      const findInto = (nodes: readonly TreeSymbolNode[]): TreeSymbolNode | undefined => {
+        for (const node of nodes) {
+          if (node.moveInto && node.definition.start === other.start) return node;
+          const found = findInto(node.children);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      const newCopy = into?.state === 'ready' ? findInto(into.nodes) : undefined;
+      setReviewTarget(target && newCopy && reviewed(newCopy) ? { key: target.key, id: newCopy.id } : undefined);
       if (target)
         onGoToSymbol(target.key, {
           id: '',
