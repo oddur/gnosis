@@ -1030,7 +1030,8 @@ void app.whenReady().then(async () => {
     const readsAsked = async () => {
       await waitSettled(win.webContents, 'diff-stream', 30_000);
       await waitSettled(win.webContents, 'structure-reads', 30_000);
-      await wait(`(async()=>{const s=${contents}.stats();return !s.queued&&!s.running})()`, 500);
+      // Prefetch waits while the window is hidden (as here): only the view's reads count.
+      await wait(`(async()=>{const s=${contents}.stats();return !s.viewQueued&&!s.running})()`, 500);
     };
     await js(`window.scrollEvents=[];document.addEventListener('scroll',()=>window.scrollEvents.push(performance.now()),{capture:true,passive:true});void 0`);
     /**
