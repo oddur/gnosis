@@ -130,7 +130,7 @@ const SETTLE_MS = 150;
  * Each element that scrolled, with its offsets as its last scroll event left them. Held weakly: a closed tab's scroller
  * must not keep its tree alive.
  */
-let scrollers: { element: WeakRef<Element>; top: number; left: number }[] = [];
+let scrollers: { element: WeakRef<Element>; top?: number; left?: number }[] = [];
 const settle = createSettleWait(SETTLE_MS, {
   now: () => performance.now(),
   // A hidden window draws no frames, and has no scroll to wait out.
@@ -145,12 +145,21 @@ const settle = createSettleWait(SETTLE_MS, {
     const id = setTimeout(run, ms);
     return () => clearTimeout(id);
   },
-  // A scroller moved since its last event: its offsets are taken as they are now, so the wait starts again from here.
+  // Where each scroller is as the wait's last frame is asked for: once per wait, not on every scroll event.
+  mark: () => {
+    for (const at of scrollers) {
+      const element = at.element.deref();
+      if (!element?.isConnected) continue;
+      at.top = element.scrollTop;
+      at.left = element.scrollLeft;
+    }
+  },
+  // A scroller moved since `mark`: its offsets are taken as they are now, so the wait starts again from here.
   moved: () => {
     let moved = false;
     for (const at of scrollers) {
       const element = at.element.deref();
-      if (!element?.isConnected) continue;
+      if (!element?.isConnected || at.top === undefined) continue;
       const { scrollTop: top, scrollLeft: left } = element;
       if (top === at.top && left === at.left) continue;
       at.top = top;
@@ -275,7 +284,8 @@ if (typeof window !== 'undefined') {
           const other = at.element.deref();
           return !!other?.isConnected && other !== element;
         });
-        scrollers.push({ element: new WeakRef(element), top: element.scrollTop, left: element.scrollLeft });
+        // Its offsets are read when a wait needs them (`mark`): reading them here could force a layout every frame.
+        scrollers.push({ element: new WeakRef(element) });
       }
       settle.scrolled();
     },
@@ -551,10 +561,17 @@ export function useSyntaxContents(
         if (!file || !target?.isConnected || !syntaxContentsPlan(file.snapshot, file.file, allowed)) return true;
         const root = target.closest(DIFF_SCROLLER);
         if (!root) return true;
-        // NEAR, from the layout as it is now: a viewport above and below the scroller.
+        // A hidden tab or row has no layout to be near: the observer says nothing about it.
+        if (!target.checkVisibility() || !root.checkVisibility()) return true;
+        // NEAR, from the layout as it is now: a viewport above and below the scroller's padding box, as the observer
+        // measures its root. Within a pixel of either edge both answers are right.
         const box = root.getBoundingClientRect();
+        const top = box.top + root.clientTop;
+        const height = root.clientHeight;
         const own = target.getBoundingClientRect();
-        const near = own.bottom >= box.top - box.height && own.top <= box.bottom + box.height;
+        const edge = Math.min(Math.abs(own.bottom - (top - height)), Math.abs(own.top - (top + 2 * height)));
+        if (edge <= 1) return true;
+        const near = own.bottom >= top - height && own.top <= top + 2 * height;
         if (near !== seenNear.current) return `${file.file.path} has not heard that it is ${near ? 'near' : 'away from'} the view`;
         if (near && asked.current !== file.key) return `${file.file.path} waits for a still view to ask for its read`;
         return true;

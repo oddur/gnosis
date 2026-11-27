@@ -140,3 +140,38 @@ void test('without frames (a hidden window) a still view runs at once', () => {
   page.advance(150);
   assert.equal(runs, 2);
 });
+
+void test('positions are taken once, as the last frame is asked for, not on each scroll', () => {
+  let time = 0;
+  const marks: number[] = [];
+  const page: { frame?: () => void; timer?: { at: number; run: () => void } } = {};
+  const settle = createSettleWait(150, {
+    now: () => time,
+    frame: (run) => {
+      page.frame = run;
+      return () => (page.frame = undefined);
+    },
+    setTimer: (run, ms) => {
+      page.timer = { at: time + ms, run };
+      return () => (page.timer = undefined);
+    },
+    mark: () => marks.push(time),
+    moved: () => false,
+  });
+  let ran = false;
+  for (let i = 0; i < 5; i++) {
+    time += 16;
+    settle.scrolled();
+  }
+  settle.whenSettled(() => (ran = true));
+  assert.deepEqual(marks, [], 'No position is read while the view scrolls');
+  const { timer } = page;
+  assert.ok(timer);
+  time = timer.at;
+  timer.run();
+  assert.deepEqual(marks, [time], 'Taken once, when the view has been still long enough');
+  const { frame } = page;
+  assert.ok(frame);
+  frame();
+  assert.equal(ran, true);
+});
