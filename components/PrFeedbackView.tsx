@@ -250,6 +250,8 @@ export function PrFeedbackView({
   const complete = useRef<HTMLHeadingElement>(null);
   const writeLock = useRef(false);
   const readPending = useRef(new Set<string>());
+  // Each item's read write while it is on its way, so a Mark unread made meanwhile lands after it, not before.
+  const readWrites = useRef(new Map<string, Promise<unknown>>());
   /** Marked unread in this visit: stays unread while on screen, until the reader acts on it. */
   const keptUnread = useRef(new Set<string>());
   const stack = subject.kind === 'stack';
@@ -466,7 +468,9 @@ export function PrFeedbackView({
     if (!fingerprint || keptUnread.current.has(key) || readReviewState(key) === fingerprint) return;
     if (readPending.current.has(key + fingerprint)) return;
     readPending.current.add(key + fingerprint);
-    void writeReviewState(key, fingerprint)
+    const write = writeReviewState(key, fingerprint);
+    readWrites.current.set(key, write);
+    void write
       .then(
         () => {
           setReadError('');
@@ -474,13 +478,18 @@ export function PrFeedbackView({
         },
         () => setReadError('Could not save read status. Scroll back to the conversation to retry.')
       )
-      .finally(() => readPending.current.delete(key + fingerprint));
+      .finally(() => {
+        readPending.current.delete(key + fingerprint);
+        if (readWrites.current.get(key) === write) readWrites.current.delete(key);
+      });
   }
   async function markUnread(item: FeedbackItem) {
     if (!account) return;
     const key = feedbackReadKey(account, item);
     try {
       keptUnread.current.add(key);
+      // A read on its way (its dwell ended just before) must not land after this and mark it read again.
+      await readWrites.current.get(key)?.catch(() => undefined);
       await writeReviewState(key, null);
       rerender((n) => n + 1);
     } catch {

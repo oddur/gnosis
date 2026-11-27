@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { RENDERER_DISCUSSION_BYTES } from '../lib/inspection-limits';
 
 /**
  * Renderer heap in a long session (#355). A reader opens 20 PRs with large diffs one after another, each in a workspace
@@ -11,7 +12,9 @@ import { app, BrowserWindow } from 'electron';
  *
  * Structural checks, free of GC timing, once every tab closes: only the queue tab stays mounted, no diff stays
  * rendered, live React fibers return near the baseline, and the inspection caches' own byte estimates stay within
- * their bounds (before #355 they reported about 85 MB here).
+ * their bounds (before #355 they reported about 85 MB here). Each PR also has a large discussion (about 3 MB by the
+ * cache's estimate): with six tabs open the discussion cache stays within its byte bound, and once the tabs close it
+ * holds none of their PRs.
  *
  * Heap checks, after garbage collection has settled (CI once kept 18 MB more after a single pass):
  * - with six large PRs open, the heap stays under a budget;
@@ -172,6 +175,15 @@ void app.whenReady().then(async () => {
         if(r.path==='src/a-generated/huge.ts')return {before:{kind:'absent'},after:{kind:'text',content:huge(pr)}};
         const i=Number(r.path.match(/module(\d+)/)?.[1]??0);
         return {before:{kind:'text',content:before(pr,i)},after:{kind:'text',content:before(pr,i).replaceAll('keeps','holds')}}};
+      // A long-running discussion per PR: resolved, outdated threads on paths outside the diff, so nothing renders them
+      // in Changes, but the discussion cache holds them all.
+      const threadsRead=api.getReviewThreads,threadsCached=api.getCachedReviewThreads;
+      const discussion=pr=>({headSha:'heap-head-'+pr,baseSha:'base',checkedAt:Date.now(),threads:Array.from({length:80},(_,i)=>({
+        id:'heap-thread-'+pr+'-'+i,path:'docs/heap-notes-'+i+'.md',line:1,startLine:null,diffSide:'RIGHT',isResolved:true,isOutdated:true,
+        viewerCanResolve:false,viewerCanUnresolve:false,comments:[{id:'heap-comment-'+pr+'-'+i,createdAt:'2026-01-01T00:00:00Z',url:'',author:null,
+          body:('Heap PR '+pr+' thread '+i+' keeps a long review note about the worker. ').repeat(300)}]}))});
+      api.getReviewThreads=async(url,...rest)=>prOf(url)<0?threadsRead(url,...rest):discussion(prOf(url));
+      api.getCachedReviewThreads=async(url,...rest)=>prOf(url)<0?threadsCached?.(url,...rest):undefined;
       api.getPrChangeFile=async(r,...rest)=>prOf(r.url)<0?read(r,...rest):contents(r);
       api.getPrChangeFileAfter=async(r,...rest)=>prOf(r.url)<0?after(r,...rest):contents(r).after;
       const originalQueue=api.workbenchQueue;
@@ -263,6 +275,10 @@ void app.whenReady().then(async () => {
     await snapshot('peak');
     for (let count = await js<number>(`${tabs}.length`); count > 1; count--) await closeTab(count - 1);
     await toQueue();
+    // Closed tabs' discussions leave the cache with their inspection data (#355).
+    const heapDiscussionsLeft = `(async()=>{const m=await import('/lib/review-discussion-cache.ts');
+      return Array.from({length:24},(_,n)=>'https://github.com/fixture/heap/pull/'+(30000+n)).filter(u=>m.peekDiscussion(u)).length})()`;
+    await wait(`${heapDiscussionsLeft}.then(n=>n===0)`);
     await sleep(3000);
     // A heap over the budget is measured again a few times before it counts. On the macOS runner the same structure,
     // with the same cache bytes to the byte, once measured 77.9 MB and once 137.3 MB, and the extra was gone a
@@ -339,6 +355,14 @@ void app.whenReady().then(async () => {
     assert.equal((swept.caches.inspection as { prs: number }).prs, 0, 'Idle PRs stay out of every inspection cache');
     // Structural checks, free of GC timing: the closed tabs' trees are gone, and the caches' own byte counts stay
     // within their bounds. Before #355 the caches still reported about 85 MB here.
+    const discussions = (caches: Record<string, unknown>) => caches.discussions as { entries: number; bytes: number };
+    console.log('Discussions (tabs open, tabs closed):', JSON.stringify([discussions(open.caches), discussions(closed.caches)]));
+    assert.ok(discussions(open.caches).entries >= 2, `The open tabs' discussions are cached: ${JSON.stringify(discussions(open.caches))}`);
+    assert.ok(
+      discussions(open.caches).bytes <= RENDERER_DISCUSSION_BYTES,
+      `The discussion cache stays within its byte bound: ${JSON.stringify(discussions(open.caches))}`
+    );
+    assert.equal(await js<number>(heapDiscussionsLeft), 0, 'No closed tab keeps its discussion cached');
     assert.equal(closed.caches.mountedTabs, 1, 'Only the queue tab stays mounted');
     assert.equal(closed.caches.shadowDomNodes, 0, 'No diff stays rendered once its tab closes');
     assert.ok(
