@@ -489,7 +489,7 @@ void test('the jump settle check for the browser checks: settled until a jump ta
   const first = beginJump();
   jumpTakesOff(first);
   assert.equal(jumpsSettled(), 'a jump is on its way');
-  jumpEnds(first, false);
+  jumpEnds(first, 'stopped');
   assert.equal(jumpsSettled(), true);
   // A jump taken over by a newer one that never took off (a page of V) is no longer on its way.
   jumpTakesOff(beginJump());

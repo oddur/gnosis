@@ -122,6 +122,8 @@ void app.whenReady().then(async () => {
       `[...document.querySelectorAll('.review-diff .github-thread')].slice(0,2).map(t=>{const slot=t.closest('[slot]');return slot?.assignedSlot?.parentElement?.getAttribute('data-side')??slot?.getAttribute('slot');})`
     );
     assert.ok(slotSides.every(Boolean), 'Threads are rendered through Pierre annotations');
+    // The split layout redraws the annotations: the explanation's slot can come a moment after the threads'.
+    await wait(`!!document.querySelector('.inline-code-explanation')?.closest('[slot]')?.assignedSlot`);
     assert.equal(
       await js(`(() => {
       const slot = document.querySelector('.inline-code-explanation').closest('[slot]');
