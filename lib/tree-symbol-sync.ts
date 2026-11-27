@@ -192,3 +192,15 @@ export const whenJumpLands = (run: () => void) => {
 export const dropWaitingKey = () => {
   afterLanding = undefined;
 };
+
+/**
+ * For the browser checks (lib/test-settled.ts, key 'changes-jump'): no jump waits for its file's diff, and none is on
+ * its way. An eased jump takes a few hundred milliseconds, longer on a slow runner, and the line it goes to can pass
+ * through view on the way there: a check reads where the reader is after this, not as soon as the line shows.
+ */
+export function jumpsSettled(): true | string {
+  const now = Date.now();
+  for (const [fileKey, jump] of jumps) if (now - jump.at < JUMP_WAIT_MS) return `a jump waits for the diff of ${fileKey}`;
+  if (flying && isNewestJump(flying.jump)) return 'a jump is on its way';
+  return true;
+}

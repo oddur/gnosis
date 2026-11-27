@@ -7,6 +7,7 @@ import { TOP_LEVEL_ID, bodyId, type ChangedSymbol } from '../lib/symbol-outline'
 import { symbolTree } from '../lib/tree-symbols';
 import { FILE_STOP, folderSums, itemCounts, rowLabel, rowReviewIds, countedIds, createTickStack, currentItem, fileAfterTick, folderProgress, itemsLeft, readingItem, progressLabel, reviewIds, reviewStops, rolledUp, stepUnviewed, symbolProgress, treeOrder, type ReviewFile } from '../lib/tree-symbol-review';
 import { AUTO_VIEW_DWELL_MS, MAX_LOOK_GAP_MS, createAutoViewer, diffRowPositions } from '../lib/symbol-auto-view';
+import { beginJump, jumpEnds, jumpsSettled, jumpTakesOff } from '../lib/tree-symbol-sync';
 
 /** The tree as a review list (lib/tree-symbol-review.ts) and scrolled-through ticks (lib/symbol-auto-view.ts). */
 
@@ -481,4 +482,17 @@ void test("a symbol row's counts leave out the zero half; both zero reads +0", (
   assert.equal(itemCounts(1, 1).text, '+1 −1');
   assert.equal(itemCounts(0, 0).text, '+0');
   assert.deepEqual(itemCounts(0, 2).parts, [{ sign: '−', count: 2 }]);
+});
+
+void test('the jump settle check for the browser checks: settled until a jump takes off, again once it ends', () => {
+  assert.equal(jumpsSettled(), true);
+  const first = beginJump();
+  jumpTakesOff(first);
+  assert.equal(jumpsSettled(), 'a jump is on its way');
+  jumpEnds(first, false);
+  assert.equal(jumpsSettled(), true);
+  // A jump taken over by a newer one that never took off (a page of V) is no longer on its way.
+  jumpTakesOff(beginJump());
+  beginJump();
+  assert.equal(jumpsSettled(), true);
 });
