@@ -173,24 +173,40 @@ export const isNewestJump = (jump: number) => jump === newestJump;
  * stop the jump short of the item. The reader scrolling, or going somewhere else (n, a click), drops the waiting V.
  */
 let flying: { jump: number; at: number } | undefined;
-let afterLanding: (() => void) | undefined;
+let waiting: { run: () => void; timer: ReturnType<typeof setTimeout> } | undefined;
+const takeWaiting = () => {
+  const key = waiting;
+  waiting = undefined;
+  if (key) clearTimeout(key.timer);
+  return key?.run;
+};
 export const jumpTakesOff = (jump: number) => {
   flying = { jump, at: Date.now() };
 };
-/** The jump ended: landed, or stopped by the reader. Only a landing runs the V that waited for it. */
-export function jumpEnds(jump: number, landed: boolean) {
+/**
+ * How a jump ended: `landed`; `stopped` by the reader's own scroll, which drops the waiting key; or `over` some other
+ * way (its diff re-rendered or went away, or a newer jump took over), which runs the key where the reader is now. A key
+ * is never left waiting: a new navigation drops it (dropWaitingKey), and after JUMP_WAIT_MS it runs anyway.
+ */
+export function jumpEnds(jump: number, how: 'landed' | 'stopped' | 'over') {
   if (flying?.jump !== jump) return;
   flying = undefined;
-  const next = afterLanding;
-  afterLanding = undefined;
-  if (landed && isNewestJump(jump)) next?.();
+  const run = takeWaiting();
+  if (how !== 'stopped') run?.();
 }
 export const jumpOnItsWay = () => !!flying && isNewestJump(flying.jump) && Date.now() - flying.at < JUMP_WAIT_MS;
 export const whenJumpLands = (run: () => void) => {
-  afterLanding = run;
+  takeWaiting();
+  const timer = setTimeout(() => {
+    if (waiting?.run !== run) return;
+    takeWaiting();
+    flying = undefined;
+    run();
+  }, JUMP_WAIT_MS);
+  waiting = { run, timer };
 };
 export const dropWaitingKey = () => {
-  afterLanding = undefined;
+  takeWaiting();
 };
 
 /**

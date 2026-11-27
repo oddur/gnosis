@@ -2169,8 +2169,8 @@ export function ChangesDiff<A>({
     let jumpId = 0;
     // The jump scrolling now, by its newest-jump number: a V pressed meanwhile waits for it (lib/tree-symbol-sync.ts).
     let flyingJump = 0;
-    const endFlight = (landed: boolean) => {
-      if (flyingJump) jumpEnds(flyingJump, landed);
+    const endFlight = (how: 'landed' | 'stopped' | 'over') => {
+      if (flyingJump) jumpEnds(flyingJump, how);
       flyingJump = 0;
     };
     const cancelFrames = () => {
@@ -2178,15 +2178,16 @@ export function ChangesDiff<A>({
       jumpFrame = 0;
       for (const type of READER_SCROLLS) scroller.removeEventListener(type, readerStops);
     };
-    // The reader's own scroll, or the diff going away, stops the jump short.
-    const stopJump = () => {
+    // The reader's own scroll (`stopped`: a key waiting for the jump is dropped), or the diff going away (`over`: the key
+    // runs), stops the jump short.
+    const stopJump = (how: 'stopped' | 'over') => {
       cancelFrames();
-      endFlight(false);
+      endFlight(how);
     };
     // A key that does not scroll (V, Enter) is no reader's scroll: one pressed meanwhile waits for the landing.
     const readerStops = (event: Event) => {
       if (event instanceof KeyboardEvent && !JUMP_STOPPING_KEYS.has(event.key)) return;
-      stopJump();
+      stopJump('stopped');
     };
     const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
       // A new jump takes over from one on its way, and a V waiting for that one waits for this one.
@@ -2256,7 +2257,11 @@ export function ChangesDiff<A>({
       let still = 0;
       const step = (now: number) => {
         jumpFrame = 0;
-        if (id !== jumpId || !isNewestJump(newest)) return;
+        // Taken over by a newer jump: this one is over (a no-op when the newer one is in this diff, already flying).
+        if (id !== jumpId || !isNewestJump(newest)) {
+          jumpEnds(newest, 'over');
+          return;
+        }
         // The revealed lines render first; scroll anchoring keeps the reader's lines in place meanwhile.
         if (revealing && latestParts.current === revealing && waited++ < REVEAL_WAIT_FRAMES) {
           jumpFrame = requestAnimationFrame(step);
@@ -2312,7 +2317,7 @@ export function ChangesDiff<A>({
           markHere(rows);
         }
         onLanded?.();
-        endFlight(true);
+        endFlight('landed');
       };
       for (const type of READER_SCROLLS) scroller.addEventListener(type, readerStops, { passive: true });
       step(performance.now());
@@ -2403,7 +2408,7 @@ export function ChangesDiff<A>({
       unregister?.();
       unsettled();
       if (treeKey) setReadingPlace(treeKey, undefined);
-      stopJump();
+      stopJump('over');
       clearHere();
       element.removeEventListener('click', onClick);
       element.removeEventListener('keydown', onKey);
