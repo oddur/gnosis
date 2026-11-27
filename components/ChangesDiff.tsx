@@ -1416,6 +1416,8 @@ export interface DiffNavigator {
 
 /** What the reader does to scroll: any of these stops a pinned crumb's jump from correcting the view (#417). */
 const READER_SCROLLS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+/** The keys that scroll the diff, and so stop a jump on its way; any other key (V, Enter, n) leaves it to land. */
+const JUMP_STOPPING_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 /**
  * The diffs under `scope`, without a diff or an editor inside one's annotations, such as a conflict's in-place editor
@@ -2173,12 +2175,17 @@ export function ChangesDiff<A>({
     const cancelFrames = () => {
       cancelAnimationFrame(jumpFrame);
       jumpFrame = 0;
-      for (const type of READER_SCROLLS) scroller.removeEventListener(type, stopJump);
+      for (const type of READER_SCROLLS) scroller.removeEventListener(type, readerStops);
     };
     // The reader's own scroll, or the diff going away, stops the jump short.
     const stopJump = () => {
       cancelFrames();
       endFlight(false);
+    };
+    // A key that does not scroll (V, Enter) is no reader's scroll: one pressed meanwhile waits for the landing.
+    const readerStops = (event: Event) => {
+      if (event instanceof KeyboardEvent && !JUMP_STOPPING_KEYS.has(event.key)) return;
+      stopJump();
     };
     const goTo = ({ side, line: start, reveal, here = [start, start], section, onLanded }: DiffDestination & { onLanded?: () => void }) => {
       // A new jump takes over from one on its way, and a V waiting for that one waits for this one.
@@ -2306,7 +2313,7 @@ export function ChangesDiff<A>({
         onLanded?.();
         endFlight(true);
       };
-      for (const type of READER_SCROLLS) scroller.addEventListener(type, stopJump, { passive: true });
+      for (const type of READER_SCROLLS) scroller.addEventListener(type, readerStops, { passive: true });
       step(performance.now());
     };
     // A pinned crumb goes to its definition's first line (#417): it reveals every hidden line from there down to where

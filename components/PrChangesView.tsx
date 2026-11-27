@@ -796,6 +796,20 @@ export function PrChangesView({
    * item V is paging through has been on screen since it became current, sampled at each V and each scroll's end.
    */
   const paging = useRef<{ key: string; fileKey: string; id: string; seen: Set<string> }>(undefined);
+  /** The lines of the item under review that were on screen as a scroll ended, before any V paged through it. */
+  const shown = useRef<{ key: string; id: string; seen: Set<string> }>(undefined);
+  const noteShown = () => {
+    const item = peekReviewTarget();
+    const target = item && item.id !== FILE_STOP ? entries.find((e) => e.key === item.key) : undefined;
+    const fileKey = target && viewKey(target);
+    const pager = fileKey ? pagerOf(fileKey) : undefined;
+    const lines = item && pager?.lines(item.id);
+    if (!item || !pager || !lines?.length) return;
+    if (shown.current?.key !== item.key || shown.current.id !== item.id) shown.current = { key: item.key, id: item.id, seen: new Set() };
+    markSeen(shown.current.seen, lines, pager.place, pager.range());
+  };
+  const noteShownLatest = useRef(noteShown);
+  noteShownLatest.current = noteShown;
   const pagingNow = () => {
     const state = paging.current;
     const pager = state && pagerOf(state.fileKey);
@@ -816,7 +830,12 @@ export function PrChangesView({
     const pager = fileKey ? pagerOf(fileKey) : undefined;
     const lines = pager?.lines(item.id);
     if (!fileKey || !pager || !lines?.length) return false;
-    if (paging.current?.key !== item.key || paging.current.id !== item.id) paging.current = { key: item.key, fileKey, id: item.id, seen: new Set() };
+    if (paging.current?.key !== item.key || paging.current.id !== item.id) {
+      // What of it showed already, when a scroll ended with it on screen (a jump landing on it, the reader's own): seen.
+      const before = shown.current;
+      const seen = before && before.key === item.key && before.id === item.id ? before.seen : new Set<string>();
+      paging.current = { key: item.key, fileKey, id: item.id, seen };
+    }
     const state = paging.current;
     const range = pager.range();
     markSeen(state.seen, lines, pager.place, range);
@@ -840,6 +859,7 @@ export function PrChangesView({
     const root = workspace.current;
     if (!root) return;
     const ended = () => {
+      noteShownLatest.current();
       const state = paging.current;
       const pager = state && pagerOf(state.fileKey);
       const lines = state && pager?.lines(state.id);
