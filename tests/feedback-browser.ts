@@ -98,8 +98,11 @@ void app.whenReady().then(async () => {
     // Opening the tab reads nothing by itself: only what stays on screen for a moment becomes read.
     assert.match(await js<string>("document.querySelector('.feedback-filters').textContent"), /Unread 9/, 'Opening the tab must not read all conversations');
     await js(`(async()=>{const t=document.querySelector('[data-feedback-scroller]');for(let i=0;i<60&&!document.querySelector('.feedback-entry[data-feedback-id]');i++){t.scrollTop+=300;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))}document.querySelector('.feedback-entry[data-feedback-id]')?.scrollIntoView({block:'start'})})()`);
-    await sleep(2000);
-    const unreadAfter = Number((await js<string>("document.querySelector('.feedback-filters').textContent")).match(/Unread (\d+)/)?.[1]);
+    // What stays on screen for READ_DWELL_MS (components/PrFeedbackView.tsx) becomes read; a busy runner runs that timer
+    // late, so the count is waited for rather than read after a fixed sleep.
+    const unread = "Number(document.querySelector('.feedback-filters').textContent.match(/Unread (\\d+)/)?.[1])";
+    await wait(`${unread}<9`).catch(() => undefined);
+    const unreadAfter = await js<number>(unread);
     assert.ok(unreadAfter > 0 && unreadAfter < 9, `Only conversations seen on screen become read: ${unreadAfter}`);
     assert.equal(await js("!!document.querySelector('.feedback-new-since')"), false, 'A first visit has nothing to divide');
     assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);

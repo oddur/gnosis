@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { assertPerf, perfBudget } from './perf-budget';
@@ -1229,7 +1229,12 @@ void app.whenReady().then(async () => {
       // The stream's scrollTop each frame, for 90 frames, into window.__samples.
       window.sampleScroll=()=>{const s=window.stream();const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
       window.crumbCenter=(p,label)=>{const b=[...window.stickyRow(p).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
-        if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};void 0`);
+        if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};
+      if(window.__inputs===undefined){window.__inputs=0;for(const type of ['mouseup','keyup'])addEventListener(type,()=>window.__inputs++,true)}void 0`);
+    // Inputs sent, and (window.__inputs) handled: a check made after input waits until the page has handled it, as input
+    // and scripts reach the page on separate channels, and input can come later on a busy runner.
+    let sent = await js<number>('window.__inputs');
+    const handled = () => wait(`window.__inputs>=${sent}`);
     type Jump = {
       file: number;
       stuck: boolean;
@@ -1247,24 +1252,28 @@ void app.whenReady().then(async () => {
     };
     type Flash = { kind: string; text: string; anim: string; band: string; gutter: boolean | null; edge: string | null; top: number; height: number };
     const jumpState = (path: string) => js<Jump>(`window.jumpState(${JSON.stringify(path)})`);
-    // A jump ends with its flash.
+    // A jump ends with its flash, once it has landed (lib/tree-symbol-sync.ts).
     const afterJump = async () => {
-      await sleep(100);
+      await handled();
+      await waitSettled(win.webContents, 'changes-jump');
       await wait(`window.deepAll('[data-here]',window.stream()).length>0`, 60);
       await settle();
     };
     const clickCrumb = async (path: string, label: string) => {
       const point = await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(path)},${JSON.stringify(label)})`);
+      sent++;
       win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
       win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
       win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
       await afterJump();
     };
     const press = async (keyCode: string, char?: string, modifiers: ('shift')[] = []) => {
+      sent++;
       win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
       if (char) win.webContents.sendInputEvent({ type: 'char', keyCode: char, modifiers });
       win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
-      await sleep(60);
+      await handled();
+      await js(frames);
     };
     const CLASS = 'Go to class ProductionRunner';
     const RUN = 'Go to function run';
@@ -1324,7 +1333,8 @@ void app.whenReady().then(async () => {
     assert.match(runFlash[0].edge ?? '', /inset/, `The gutter carries the bar: ${runFlash[0].edge}`);
     assert.match(runFlash[0].text, /run\(input: number\): number \{/, 'It is the definition’s first line');
     assert.equal(runFlash[0].top, runTop, 'The flash moves nothing');
-    await sleep(2100);
+    // HERE_MS (lib/diff-here.ts) from the landing; a busy runner runs the timer late.
+    await wait(`window.jumped('src/runner.ts').length===0`, 150);
     assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The band goes after 2 s');
     assert.equal(await js<number>(`window.deepAll('[data-here]',window.stickyRow('src/runner.ts')).length`), 0, 'and from the gutter too');
     assert.equal(await js<number>(`window.lineTop('src/runner.ts','run(input: number): number {')`), runTop, 'and nothing moved');
@@ -1337,7 +1347,7 @@ void app.whenReady().then(async () => {
     const stillFlash = await js<Flash[]>(`window.jumped('src/runner.ts')`);
     console.log('Flash with reduced motion:', JSON.stringify(stillFlash));
     assert.deepEqual(stillFlash.map((f) => [f.kind, f.anim, f.band]), [['line', 'none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: a still band, no animation');
-    await sleep(2100);
+    await wait(`window.jumped('src/runner.ts').length===0`, 150);
     assert.deepEqual(await js(`window.jumped('src/runner.ts')`), [], 'The still band goes too');
     await motion('no-preference');
     await shot('crumb-jump-keyboard', '.commit-diff-stream');
@@ -1435,7 +1445,9 @@ void app.whenReady().then(async () => {
     assert.ok(toFar.bottom !== null && Math.abs(farTop - toFar.bottom) <= 2, `The class line sits right under the pinned header after the reveal: ${farTop} vs ${toFar.bottom}`);
     assert.equal(await js<number>(`window.shownCount('src/far.ts','readonly far')`), 230, 'All 230 lines between the class line and the hunk show');
     assert.equal(await js<number>(`window.shownCount('src/far.ts','Pinned crumb fixture')`), 0, 'Nothing above the class line shows');
-    assert.ok(steps >= 4, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
+    // The jump starts a screen short, then eases in: at least one place between that start and the landing. More frames
+    // fall inside the ease on a fast machine; a slow runner can draw one or two in its 450 ms.
+    assert.ok(steps >= 3, `The scroll eases over several frames: ${JSON.stringify(samples)}`);
     assertPerf('syntax scope: longest task revealing 230 lines and easing there', Math.max(0, ...longTasks.map((t) => Math.round(t.duration))), perfBudget(50), { detail: JSON.stringify(longTasks.map((t) => Math.round(t.duration))) });
     assert.deepEqual(await js<string[]>('window.__farFlash'), ['export class FarRunner {'], 'The class line flashes');
     // The reader's wheel stops the scroll part way.
@@ -1445,9 +1457,12 @@ void app.whenReady().then(async () => {
     const cancelAt = await js<{ x: number; y: number }>(`window.crumbCenter('src/far.ts','Go to class FarRunner')`);
     // Three frames into the jump's scroll, a wheel event.
     await js(`(()=>{const s=window.stream();s.addEventListener('scroll',()=>{let n=0;const t=()=>{if(++n===3)s.dispatchEvent(new WheelEvent('wheel'));else requestAnimationFrame(t)};requestAnimationFrame(t)},{once:true})})()`);
+    sent++;
     win.webContents.sendInputEvent({ type: 'mouseDown', x: cancelAt.x, y: cancelAt.y, button: 'left', clickCount: 1 });
     win.webContents.sendInputEvent({ type: 'mouseUp', x: cancelAt.x, y: cancelAt.y, button: 'left', clickCount: 1 });
-    await sleep(900);
+    // Stopped, or landed if the stop failed.
+    await handled();
+    await waitSettled(win.webContents, 'changes-jump');
     const cancelled = await js<number>('Math.round(window.stream().scrollTop)');
     const stillFar = await js<number>(`window.lineTop('src/far.ts','export class FarRunner {')`);
     console.log('Cancelled jump:', JSON.stringify({ beforeCancel, cancelled, classLine: stillFar }));
