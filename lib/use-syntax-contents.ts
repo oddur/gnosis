@@ -126,8 +126,11 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
  * that came near without a scroll (the PR opened, a file expanded) asks after one frame.
  */
 const SETTLE_MS = 150;
-/** Each element that scrolled, with its offsets as its last scroll event left them. */
-const scrollers = new Map<Element, { top: number; left: number }>();
+/**
+ * Each element that scrolled, with its offsets as its last scroll event left them. Held weakly: a closed tab's scroller
+ * must not keep its tree alive.
+ */
+let scrollers: { element: WeakRef<Element>; top: number; left: number }[] = [];
 const settle = createSettleWait(SETTLE_MS, {
   now: () => performance.now(),
   // A hidden window draws no frames, and has no scroll to wait out.
@@ -145,15 +148,13 @@ const settle = createSettleWait(SETTLE_MS, {
   // A scroller moved since its last event: its offsets are taken as they are now, so the wait starts again from here.
   moved: () => {
     let moved = false;
-    for (const [element, at] of scrollers) {
-      if (!element.isConnected) {
-        scrollers.delete(element);
-        continue;
-      }
-      const top = element.scrollTop;
-      const left = element.scrollLeft;
+    for (const at of scrollers) {
+      const element = at.element.deref();
+      if (!element?.isConnected) continue;
+      const { scrollTop: top, scrollLeft: left } = element;
       if (top === at.top && left === at.left) continue;
-      scrollers.set(element, { top, left });
+      at.top = top;
+      at.left = left;
       moved = true;
     }
     return moved;
@@ -268,7 +269,14 @@ if (typeof window !== 'undefined') {
     'scroll',
     (event) => {
       const element = event.target instanceof Element ? event.target : document.scrollingElement;
-      if (element) scrollers.set(element, { top: element.scrollTop, left: element.scrollLeft });
+      if (element) {
+        // Scrollers that left the page are dropped; there are only a few at a time.
+        scrollers = scrollers.filter((at) => {
+          const other = at.element.deref();
+          return !!other?.isConnected && other !== element;
+        });
+        scrollers.push({ element: new WeakRef(element), top: element.scrollTop, left: element.scrollLeft });
+      }
       settle.scrolled();
     },
     { capture: true, passive: true }
