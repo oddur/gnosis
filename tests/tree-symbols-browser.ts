@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { chooseWorkspaceMenuItem } from './workspace-menu';
@@ -141,6 +141,8 @@ void app.whenReady().then(async () => {
     await wait(
       `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(fileRow)})).find(e=>e.textContent.includes('flush() {'));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
     );
+    // Landed, as the reader is before the V below (an eased jump passes the line through view on its way).
+    await waitSettled(win.webContents, 'changes-jump');
 
     // ── The one-time tip names V, until the first V ──
     const hint = "!!document.querySelector('.changes-tree-hint')";
@@ -199,10 +201,16 @@ void app.whenReady().then(async () => {
         throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
       });
     const nextRow = `.commit-stream-row[data-file=${JSON.stringify(TREE_SYMBOLS_NEXT_FILE)}]`;
-    const inView = (row: string, text: string) =>
-      wait(
+    // The line is in the top half of the view once the jump to it has landed. An eased jump can pass the line through
+    // view on its way (components/ChangesDiff.tsx), so the check waits for the landing, before and after (a jump can
+    // start a frame after the key or click), and the next key acts on where the reader landed.
+    const inView = async (row: string, text: string) => {
+      await waitSettled(win.webContents, 'changes-jump');
+      await wait(
         `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const line=window.deepAll('[data-line]',document.querySelector(${JSON.stringify(row)})).find(e=>e.textContent.includes(${JSON.stringify(text)}));if(!line)return false;const b=line.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`
       );
+      await waitSettled(win.webContents, 'changes-jump');
+    };
     // V on flush went on to the next unviewed item, gone, as V does (it stays the target, so n starts there); n then
     // goes to added.
     await lit('gone');
@@ -224,7 +232,10 @@ void app.whenReady().then(async () => {
     await lit('stop');
     // On through the rest, until a notice says nothing is left. Which items new.ts, old.ts and worker.ts have depends on their parse, so the walk
     // is followed rather than listed. Each press must move the light, or end in the notice.
-    const atEnd = "[...document.querySelectorAll('.app-toast')].some(t=>t.textContent.includes('No unviewed items after this'))";
+    // The notice leaves after NOTICE_MS (components/PrChangesView.tsx): read from the log of notices since here, so a
+    // slow step between presses cannot miss it.
+    const notices = await js<number>('window.__log.length');
+    const atEnd = `window.__log.slice(${notices}).some(m=>/^\\d+ toast No unviewed items after this/.test(m))`;
     const litName = () => js<string | undefined>(`window.treeRows().find(r=>r.lit)?.name`);
     const walked: string[] = [];
     for (let step = 0; step < 40 && !(await js<boolean>(atEnd)); step++) {
@@ -450,7 +461,7 @@ void app.whenReady().then(async () => {
     await submitComment(false);
     await wait(`!document.querySelector(${JSON.stringify(composer)})`);
     await wait(`document.querySelectorAll(${JSON.stringify(fileRow + ' .changes-pending-comment')}).length===${draftsBefore + 1}`);
-    await wait("(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='Imports'})()");
+    await wait("window.focusedTreeRow()==='Imports'");
     assert.notEqual((await rows()).find((r) => r.name === 'Imports')?.decoration, '✓', 'A comment does not tick the item');
     // Esc cancels, and hands the keyboard back to the item's row: the next V ticks that item, not a row focused before.
     await enterOn('Imports');
@@ -458,7 +469,7 @@ void app.whenReady().then(async () => {
     await wait("document.activeElement?.tagName==='TEXTAREA'&&!!document.activeElement.closest('.changes-comment-composer')");
     await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
     await wait(`!document.querySelector(${JSON.stringify(composer)})`);
-    await wait("(()=>{const e=window.deepAll('[role=treeitem]').find(e=>e.matches(':focus'));return !!e&&window.treeName(e)==='Imports'})()");
+    await wait("window.focusedTreeRow()==='Imports'");
     // The reader closes the class and the folder above it: going on must open both again.
     const expandedOf = (row: string) => js<string | null>(`window.treeRow(${JSON.stringify(row)})?.getAttribute('aria-expanded')??null`);
     const symbolRows = ['Imports', 'Store', 'flush', 'gone', 'added'];

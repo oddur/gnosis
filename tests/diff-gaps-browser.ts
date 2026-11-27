@@ -107,7 +107,7 @@ void app.whenReady().then(async () => {
     await js(`document.documentElement.classList.toggle('dark',${dark})`);
   };
   type Sample = {
-    firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number;
+    firstPaint: number; settled: number; longest: number; total: number; tasks: number[]; event: number; shift: number | null;
     /** With accessibility on: the longest renderer task less its accessibility work, that work at most in one task,
      * and in all tasks. */
     withoutAccessibility?: number; accessibility?: number; accessibilityTotal?: number;
@@ -244,13 +244,19 @@ void app.whenReady().then(async () => {
     await js(frames);
     const firstPaint = await js<number>('performance.now()-window.__t0');
     // The first line in view must stay where it is while the rest of the file fills in.
+    // By its number, type and text too: a re-render can replace the line's element while the line stays put.
     await js(`(()=>{const top=document.querySelector('.commit-diff-stream').getBoundingClientRect().top;
-      window.__anchor=window.firstLineInView(top+60);
-      window.__anchorTop=window.__anchor?.getBoundingClientRect().top})()`);
+      const a=window.__anchor=window.firstLineInView(top+60);
+      window.__anchorKey=a&&{line:a.dataset.line,type:a.dataset.lineType,text:a.textContent};
+      window.__anchorTop=a?.getBoundingClientRect().top})()`);
     await wait(settled, 500);
     await js(frames);
     const settledAt = await js<number>('performance.now()-window.__t0');
-    const shift = await js<number>('window.__anchor?.isConnected?Math.round(window.__anchor.getBoundingClientRect().top-window.__anchorTop):-1');
+    // Null when the line is gone from the DOM. A shift under a pixel is rounding, not a move: Windows lays out lines at
+    // fractional offsets.
+    const shift = await js<number | null>(`(()=>{const k=window.__anchorKey;if(!k)return null;
+      const a=window.__anchor?.isConnected?window.__anchor:window.deepAll('[data-line]').find(e=>e.dataset.line===k.line&&e.dataset.lineType===k.type&&e.textContent===k.text&&e.getBoundingClientRect().height>0);
+      if(!a)return null;const d=a.getBoundingClientRect().top-window.__anchorTop;return Math.abs(d)<1?0:Math.round(d)})()`);
     await sleep(300);
     await stopTrace(name);
     const cost = traced() && accessibility ? accessibilityCost() : {};
@@ -417,7 +423,7 @@ void app.whenReady().then(async () => {
       const worst = Math.max(...samples.map((s) => (accessibility ? (s.withoutAccessibility ?? s.longest) : s.longest)));
       const spent = accessibility ? `, ${Math.max(...samples.map((s) => s.accessibility ?? 0))} ms more of accessibility work (#366)` : '';
       assertPerf(`diff gaps: longest task, ${name}`, worst, LONG_TASK_BUDGET, { detail: spent.slice(2) });
-      assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved: ${samples.map((s) => s.shift).join(', ')}`);
+      assert.ok(samples.every((s) => s.shift === 0), `${name}: the first line in view moved (null: it left the DOM): ${samples.map((s) => String(s.shift)).join(', ')}`);
       const restyled = Math.max(...samples.map((s) => s.pageRestyles ?? 0));
       assert.ok(restyled <= PAGE_RESTYLE_LIMIT, `${name}: ${restyled} style recalculations of more than one slice (at most ${PAGE_RESTYLE_LIMIT}, #366)`);
       if (!accessibility) continue;

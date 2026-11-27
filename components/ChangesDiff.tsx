@@ -28,7 +28,8 @@ import { definitionNoun, jumpLabel, revealLabel, spokenChain, type HunkScope, ty
 import type { ScopeRail } from '../lib/show-scope';
 import type { ChangedSymbol } from '../lib/symbol-outline';
 import { DiffOutline, type OutlineProps } from './DiffOutline';
-import { beginJump, isNewestJump, jumpEnds, jumpTakesOff, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { beginJump, isNewestJump, jumpEnds, jumpsSettled, jumpTakesOff, peekReviewTarget, registerSymbolTarget, setReadingPlace } from '../lib/tree-symbol-sync';
+import { registerSettled } from '../lib/test-settled';
 import { FAST_SCROLL_PX_PER_MS, createAutoViewer, diffRowPositions, type AutoViewSymbol } from '../lib/symbol-auto-view';
 import { PAGE_OVERLAP_LINES, registerPager } from '../lib/review-paging';
 import { isFileViewed, isSymbolViewed, wasSymbolUnticked } from '../lib/file-view-progress';
@@ -2351,6 +2352,9 @@ export function ChangesDiff<A>({
     if (navigator) navigator.current = navigation;
     // The tree's symbol rows go where the outline's do, now that the diff can take the reader there.
     const unregister = treeKey ? registerSymbolTarget(treeKey, (symbol) => latestGoToSymbol.current(symbol)) : undefined;
+    // The browser checks wait for jumps to land before they read the screen. A check of its own for each diff, so one
+    // unmounting leaves the others'.
+    const unsettled = registerSettled('changes-jump', () => jumpsSettled());
     const onClick = (event: MouseEvent) => {
       const target = event.target as Element | null;
       const more = target?.closest<HTMLElement>('.diff-gap-live button[data-more]');
@@ -2397,6 +2401,7 @@ export function ChangesDiff<A>({
       if (navigator?.current === navigation) navigator.current = null;
       if (own.current === navigation) own.current = null;
       unregister?.();
+      unsettled();
       if (treeKey) setReadingPlace(treeKey, undefined);
       stopJump();
       clearHere();

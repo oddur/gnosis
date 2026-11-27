@@ -1,4 +1,4 @@
-import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue, waitSettled } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import { assertPerf, perfBudget } from './perf-budget';
@@ -65,13 +65,20 @@ void app.whenReady().then(async () => {
     await sleep(150);
     await js(frames);
   };
+  // Inputs sent, and (window.__inputs) handled: a check made after input waits until the page has handled it, as input
+  // and scripts reach the page on separate channels, and input can come later on a busy runner.
+  let sent = 0;
+  const handled = () => wait(`window.__inputs>=${sent}`);
   const press = async (keyCode: string, char?: string, modifiers: 'shift'[] = []) => {
+    sent++;
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     if (char) win.webContents.sendInputEvent({ type: 'char', keyCode: char, modifiers });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
-    await sleep(60);
+    await handled();
+    await js(frames);
   };
   const clickPoint = (point: { x: number; y: number }) => {
+    sent++;
     win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
     win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
@@ -103,6 +110,7 @@ void app.whenReady().then(async () => {
     js(`window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];
       window.__longTasks=[];new PerformanceObserver(l=>{for(const e of l.getEntries())window.__longTasks.push({start:e.startTime,duration:e.duration})}).observe({type:'longtask'});
       window.q=s=>document.querySelector(s);
+      if(window.__inputs===undefined){window.__inputs=0;for(const type of ['mouseup','keyup'])addEventListener(type,()=>window.__inputs++,true)}
       window.symbols=root=>[...(window.q(root)?.querySelectorAll('.diff-gap-where > .diff-gap-scope:not([data-provisional]) .diff-gap-symbol')??[])].map(e=>[...e.querySelectorAll('.diff-gap-crumb')].map(c=>c.textContent.trim()).join(' › '));
       window.lineRow=(root,text,deleted)=>window.deepAll('[data-line]',window.q(root)).find(e=>e.textContent.includes(text)&&(e.dataset.lineType==='change-deletion')===!!deleted&&e.getBoundingClientRect().height>0);
       window.lineTop=(root,text,deleted)=>{const l=window.lineRow(root,text,deleted);return l?Math.round(l.getBoundingClientRect().top):null};
@@ -218,8 +226,10 @@ void app.whenReady().then(async () => {
   type Here = { kind: string; text: string; anim: string; band: string; gutter: boolean | null; top: number };
   const state = (root: string) => js<Jump>(`window.jumpState(${JSON.stringify(root)})`);
   const here = (root: string) => js<Here[]>(`window.hereMarks(${JSON.stringify(root)})`);
+  /** The jump the last input started has landed (lib/tree-symbol-sync.ts), and marked where. */
   const landed = async (root: string) => {
-    await sleep(80);
+    await handled();
+    await waitSettled(win.webContents, 'changes-jump');
     await wait(`window.hereMarks(${JSON.stringify(root)}).length>0`, 80);
     await settle();
   };
@@ -301,6 +311,7 @@ void app.whenReady().then(async () => {
     await waitForWorkbenchQueue(win.webContents);
     await logMotion();
     await install();
+    sent = await js<number>('window.__inputs');
     await js("[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await click('Open PR overview');
     await click('Changes');
@@ -432,7 +443,8 @@ void app.whenReady().then(async () => {
       const far = rowOf('src/nav/far_mod.rs');
       await wait(`!!window.lineRow(${JSON.stringify(far)},'total += 40 * 2;',false)`, 500);
       console.log('Changes, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(far)},'${STREAM}','total += 40 * 2;')`)));
-      await wait(`window.jumpState(${JSON.stringify(far)}).crumbs.length>0`, 50).catch(() => undefined);
+      // The crumbs wait for the file's parse, which a slow runner takes seconds over: the check below reports the state.
+      await wait(`window.jumpState(${JSON.stringify(far)}).crumbs.length>0`).catch(() => undefined);
       const direct = await state(far);
       assert.ok(direct.stuck && direct.live === 'scope', `Changes: a direct jump into a file never shown pins its header: ${JSON.stringify(direct)}`);
       assert.deepEqual(direct.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Changes: and it follows the reader');
@@ -562,6 +574,7 @@ void app.whenReady().then(async () => {
     await js(`[...window.q(${JSON.stringify(deep)}).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')==='Go to function step').focus()`);
     await js('window.__longTasks=[]');
     for (let i = 0; i < 5; i++) {
+      sent++;
       win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
       win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
       win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
@@ -621,11 +634,13 @@ void app.whenReady().then(async () => {
     await select('Navmesh.cs');
     await js(`(()=>{const s=window.q('${STREAM}');const h=[...window.q(${JSON.stringify(nav)}).querySelectorAll('.diff-gap-where > .diff-gap-scope')].at(-1);s.scrollTop+=h.getBoundingClientRect().top-s.getBoundingClientRect().top-260})()`);
     await settle();
-    await sleep(2100);
+    // A mark from an earlier jump clears after HERE_MS (lib/diff-here.ts): gone before the check below that none is made.
+    await wait(`window.hereMarks(${JSON.stringify(nav)}).length===0`, 150);
     assert.equal(await js<number>(`window.shownCount(${JSON.stringify(nav)},'private int other10 = 10;')`), 0, 'The lines between the property and Update() start hidden');
     await js(`[...[...window.q(${JSON.stringify(nav)}).querySelectorAll('.diff-gap-where > .diff-gap-scope')].at(-1).querySelectorAll('button[data-crumb]')].find(b=>b.textContent.trim()==='namespace Seed.World').click()`);
     await wait(`window.shownCount(${JSON.stringify(nav)},'private int other10 = 10;')===1`);
     await settle();
+    await waitSettled(win.webContents, 'changes-jump');
     assert.deepEqual(await here(nav), [], 'An unpinned crumb reveals its definition; it does not jump, so it marks nothing');
     const far = rowOf('src/nav/far_mod.rs');
     await select('far_mod.rs');
@@ -641,14 +656,18 @@ void app.whenReady().then(async () => {
     console.log('Far jump:', JSON.stringify({ steps, slices, longTasks: farTasks, hidden: farJump.hidden }));
     assert.ok(slices > 1, `The revealed hunk is sliced, and its slices mount as they are reached: ${slices}`);
     assert.equal(await js<number>(`window.shownCount(${JSON.stringify(far)},'pub const FAR_')`), 240, 'All 240 lines from the module down to the reader show');
-    assert.ok(steps >= 4, `The scroll eases over several frames: ${steps}`);
+    // The jump starts a screen short, then eases in: at least one place between that start and the landing. More frames
+    // fall inside the ease on a fast machine; a slow runner can draw one or two in its 450 ms.
+    assert.ok(steps >= 3, `The scroll eases over several frames: ${steps}`);
     assertPerf('breadcrumb nav: longest task revealing 240 lines and easing there', longest(farTasks), perfBudget(50), { detail: JSON.stringify(farTasks) });
     // A jump stopped by the wheel, and by a key, mid-way: it does not land, and nothing is marked.
     for (const stop of ['wheel', 'key'] as const) {
       await pin(far, STREAM, 'total += 50 * 2;');
       await js(`(()=>{const s=window.q('${STREAM}');s.addEventListener('scroll',()=>{let n=0;const t=()=>{if(++n===3)s.dispatchEvent(${stop === 'wheel' ? "new WheelEvent('wheel')" : "new KeyboardEvent('keydown',{key:'ArrowDown'})"});else requestAnimationFrame(t)};requestAnimationFrame(t)},{once:true})})()`);
       clickPoint(await js<{ x: number; y: number }>(`window.crumbCenter(${JSON.stringify(far)},'Go to impl Client')`));
-      await sleep(900);
+      // Stopped, or landed if the stop failed.
+      await handled();
+      await waitSettled(win.webContents, 'changes-jump');
       const stopped = await js<number | null>(`window.lineTop(${JSON.stringify(far)},'impl Client {',false)`);
       const bottom = (await state(far)).bottom ?? 0;
       console.log(`Stopped by ${stop}:`, JSON.stringify({ line: stopped, bottom }));
@@ -890,12 +909,12 @@ void app.whenReady().then(async () => {
     const slideFar = topicFile('src/nav/far_mod.rs');
     await wait(`!!window.lineRow(${JSON.stringify(slideFar)},'total += 40 * 2;',false)`, 500);
     console.log('Topic, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideFar)},'${DOC}','total += 40 * 2;')`)));
-    await wait(`window.jumpState(${JSON.stringify(slideFar)}).crumbs.length>0`, 50).catch(() => undefined);
+    await wait(`window.jumpState(${JSON.stringify(slideFar)}).crumbs.length>0`).catch(() => undefined);
     const farDirect = await state(slideFar);
     assert.ok(farDirect.stuck && farDirect.live === 'scope', `Topic: a direct jump into a file never shown pins its header: ${JSON.stringify(farDirect)}`);
     assert.deepEqual(farDirect.crumbs, ['Go to module api', 'Go to impl Client', 'Go to function handle'], 'Topic: and it follows the reader');
     console.log('Topic deep.ts, arriving:', JSON.stringify(await js(`window.arrive(${JSON.stringify(slideDeep)},'${DOC}','next += 30 * 2;')`)));
-    await wait(`window.jumpState(${JSON.stringify(slideDeep)}).crumbs.length>0`, 50).catch(() => undefined);
+    await wait(`window.jumpState(${JSON.stringify(slideDeep)}).crumbs.length>0`).catch(() => undefined);
     const deepDirect = await state(slideDeep);
     assert.ok(deepDirect.stuck && deepDirect.live === 'scope', `Topic: arriving straight in deep.ts pins its header: ${JSON.stringify(deepDirect)}`);
     const slidePinned = await pin(slideDeep, DOC, 'next += 30 * 2;');
