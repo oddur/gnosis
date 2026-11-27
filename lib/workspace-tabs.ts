@@ -7,6 +7,19 @@ export type WorkspaceTarget =
   | SearchDestination
   | { kind: 'location'; location: AppLocation }
   | { kind: 'restore'; saved: SavedWorkspaceTab; account: string };
+/**
+ * Whether a tab's first destination is a PR, stack or explanation rather than a list. Such a tab keeps no queue behind
+ * the PR until the reader goes back to it (#355).
+ */
+export function workspaceOpensSubject(initial: WorkspaceTarget): boolean {
+  return !!(
+    initial.kind === 'review' ||
+    (initial.kind === 'home' && (initial.subject || initial.url)) ||
+    (initial.kind === 'restore' &&
+      (initial.saved.reviewId || initial.saved.home?.subjectId || initial.saved.destination?.url)) ||
+    (initial.kind === 'location' && initial.location.page === 'home' && initial.location.home.item)
+  );
+}
 export interface WorkspaceTabEntry {
   id: string;
   title: string;

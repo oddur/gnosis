@@ -6,6 +6,7 @@ import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interfac
 import { homeVisit, reviewVisit, type RecentVisit } from '../lib/recently-viewed';
 
 import { useCommandScope, type AppCommand } from '../lib/command-center';
+import { workspaceOpensSubject } from '../lib/workspace-tabs';
 import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftBoundary } from '../lib/session-drafts';
 
@@ -81,20 +82,19 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     pendingHistory.current = undefined;
   }, [navigationHistory]);
   const initialRecorded = useRef(false);
+  // A tab that opens onto a PR does not render its queue behind it until the reader goes back to the queue: each
+  // hidden queue held about 10 MB of rows and React state (#355). The queue still shows while the PR opens, and
+  // renders as usual once the PR is on screen, the open fails or the reader goes elsewhere.
+  const [queueDeferred, setQueueDeferred] = useState(() => !!initial && workspaceOpensSubject(initial));
   const [initialError, setInitialError] = useState('');
   const initialAttempt = useRef(0);
   const openingInitial = useRef(false);
   const failedInitial = useRef(false);
   const recordHome = useCallback(
     (home: HomeLocation, mutedUrls?: Set<string>) => {
+      if (home.item) setQueueDeferred(false);
       if (initial && !initialRecorded.current) {
-        const expectsSubject =
-          initial.kind === 'review' ||
-          (initial.kind === 'home' && (initial.subject || initial.url)) ||
-          (initial.kind === 'restore' &&
-            (initial.saved.reviewId || initial.saved.home?.subjectId || initial.saved.destination?.url)) ||
-          (initial.kind === 'location' && initial.location.page === 'home' && initial.location.home.item);
-        if (expectsSubject && !home.item) return;
+        if (workspaceOpensSubject(initial) && !home.item) return;
         initialRecorded.current = true;
       }
       if ((openingInitial.current || failedInitial.current) && home.item) {
@@ -290,6 +290,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
 
   async function navigate(target: SearchDestination, restoring = false) {
     if (!restoring) {
+      setQueueDeferred(false);
       initialAttempt.current++;
       openingInitial.current = false;
       initialRecorded.current = true;
@@ -387,6 +388,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     } catch (error) {
       if (attempt === initialAttempt.current) {
         failedInitial.current = true;
+        setQueueDeferred(false);
         setInitialError(error instanceof Error ? error.message : String(error));
         onStatus(id, 'error');
       }
@@ -533,6 +535,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             prefillPrUrl={prefillPrUrl}
             prefillReviewId={prefillReviewId}
             initialSubjectId={destination.subjectId}
+            deferQueue={queueDeferred}
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}
             navigationRestoration={homeRestoration}
