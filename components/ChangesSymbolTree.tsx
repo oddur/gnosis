@@ -546,6 +546,7 @@ export function ChangesSymbolTree({
       if (folder && !folder.isExpanded()) folder.expand();
     }
   };
+  const workspaceRef = useRef<HTMLDivElement>(null);
   /**
    * Puts the keyboard on the row at `path` once Pierre has drawn it: a row whose folders just opened is drawn a frame
    * later, and focusing it before then does nothing. It takes the keyboard only from places that hold no input of the
@@ -566,6 +567,11 @@ export function ChangesSymbolTree({
     const editable = !active?.closest('.symbol-peek') && !!active?.closest('input, textarea, select, [contenteditable=true], [role=menu], [role=dialog]');
     if (!free || editable) return;
     model.getItem(path)?.focus();
+    // Pierre moves the browser's focus only while the tree holds it: from the page (a peek just closed, the diff), the
+    // drawn row takes it itself.
+    const host = workspaceRef.current?.querySelector('file-tree-container');
+    const drawn = host?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`);
+    drawn?.focus({ preventScroll: true });
     if (frames > 0) requestAnimationFrame(() => focusWhenDrawn(path, { fromTree }, frames - 1));
   };
   const pathOf = (target: { key: string; id: string }) =>
@@ -789,7 +795,7 @@ export function ChangesSymbolTree({
   const peeking = peek?.stack.at(-1);
   const peekShown = peeking && peekView(peeking);
   return (
-    <div className="file-tree-selection-workspace" onPointerLeave={leaveSoon}>
+    <div className="file-tree-selection-workspace" ref={workspaceRef} onPointerLeave={leaveSoon}>
       {peek && peeking && peekShown && (
         <SymbolPeek
           view={peekShown}
