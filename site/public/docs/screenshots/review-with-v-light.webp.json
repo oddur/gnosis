@@ -1,0 +1,15 @@
+{
+  "prompt": "Origin: actual Gnosis application captured from commit fbf542a by scripts/capture-docs-screenshots.mjs, recipe \"review-with-v\" in the light theme, from tests/fixtures/workbench.html?tree-symbols (as tests/tree-symbols-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 1600px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-27T08:20:05.373Z",
+  "commit": "fbf542a25318ce2d8defe449ac13b0536abe85e5",
+  "recipe": "review-with-v",
+  "theme": "light",
+  "fixture": "tests/fixtures/workbench.html?tree-symbols",
+  "viewport": {
+    "width": 1600,
+    "height": 960
+  },
+  "deviceScaleFactor": 2,
+  "width": 1600,
+  "source": "synthetic fixture data, actual Gnosis UI"
+}
