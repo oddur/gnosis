@@ -34,6 +34,7 @@ import {
 } from './moved-symbols-store';
 import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
 import { registerSettled } from './test-settled';
+import { createSettleWait } from './settle-wait';
 /** The moves reads' budgets, one per head: `moves:<head>`. */
 const MOVES_BUDGET = 'moves:';
 
@@ -119,46 +120,32 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
 /**
  * How long the view must be still before a file near it queues its read, so files that only flash past are not read.
  * Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for longer than this,
- * so time near the view alone is not enough. Still means no scroll event for this long, as seen from a frame: a slow
- * frame can hold back the scroll events of a scroll that goes on, so the last check waits for the next frame, whose
- * scroll steps deliver them first. A file that came near without a scroll (the PR opened, a file expanded) asks then.
+ * so time near the view alone is not enough. Still means no scroll event for this long, and then a whole frame with no
+ * scroll event (lib/settle-wait.ts): under heavy load a frame's own work can outlast this wait, so a file that came
+ * near mid-scroll would look as if it came near while the view was still (#430). A file that came near without a
+ * scroll (the PR opened, a file expanded) asks after one frame.
  */
 const SETTLE_MS = 150;
-let lastScrollAt = 0;
+const settle = createSettleWait(SETTLE_MS, {
+  now: () => performance.now(),
+  // A hidden window draws no frames, and has no scroll to wait out.
+  get frame() {
+    if (typeof requestAnimationFrame === 'undefined' || document.visibilityState === 'hidden') return undefined;
+    return (run: () => void) => {
+      const id = requestAnimationFrame(run);
+      return () => cancelAnimationFrame(id);
+    };
+  },
+  setTimer: (run, ms) => {
+    const id = setTimeout(run, ms);
+    return () => clearTimeout(id);
+  },
+});
 /**
- * Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. Reads wait for it, and so
- * do the renders that show structure that lands while the reader scrolls: they would add work to the scroll's frames.
+ * Runs `run` once the view is still; the returned function cancels it. Reads wait for it, and so do the renders that
+ * show structure that lands while the reader scrolls: they would add work to the scroll's frames.
  */
-export function whenSettled(run: () => void): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let frame: number | undefined;
-  let cancelled = false;
-  const still = () => performance.now() - lastScrollAt >= SETTLE_MS;
-  const check = () => {
-    const wait = lastScrollAt + SETTLE_MS - performance.now();
-    if (wait > 0) {
-      timer = setTimeout(check, wait);
-      return;
-    }
-    // A hidden window draws no frames, and has no scroll to wait out.
-    if (typeof requestAnimationFrame === 'undefined' || document.visibilityState === 'hidden') {
-      if (!cancelled) run();
-      return;
-    }
-    frame = requestAnimationFrame(() => {
-      frame = undefined;
-      if (cancelled) return;
-      if (still()) run();
-      else check();
-    });
-  };
-  check();
-  return () => {
-    cancelled = true;
-    clearTimeout(timer);
-    if (frame !== undefined) cancelAnimationFrame(frame);
-  };
-}
+export const whenSettled = settle.whenSettled;
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
 const NEAR = '100% 0px';
 /** The scrollers diffs sit in (components/ChangesDiff.tsx `DIFF_SCROLLER`). */
@@ -259,13 +246,7 @@ if (typeof window !== 'undefined') {
   for (const type of ['wheel', 'keydown', 'input', 'touchmove'] as const)
     window.addEventListener(type, pause, { capture: true, passive: true });
   document.addEventListener('scroll', pause, { capture: true, passive: true });
-  document.addEventListener(
-    'scroll',
-    () => {
-      lastScrollAt = performance.now();
-    },
-    { capture: true, passive: true }
-  );
+  document.addEventListener('scroll', settle.scrolled, { capture: true, passive: true });
   let hiddenTimer: ReturnType<typeof setTimeout> | undefined,
     stopped = false;
   const visibility = () => {
