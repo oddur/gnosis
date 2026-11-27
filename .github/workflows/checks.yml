@@ -19,71 +19,96 @@ concurrency:
 
 jobs:
   changes:
-    # Whether this run needs the full macOS and Windows browser suites. They run on every push to main, and on a pull
-    # request unless every file it changes is on a short list known not to affect them (docs, the site, issue
-    # templates, license files, and Markdown outside the code and test folders), or the PR is a draft. A path that is not on the list runs them. So does the `native-ci` label, read
-    # from the API when the job runs, so re-running all jobs after adding it is enough. If the job cannot tell (an API
-    # call fails, or the job fails), the suites run.
-    name: Native suites needed
+    # What this run needs, from the files it changes (scripts/ci-changes.mjs): the app's checks, the website build, the
+    # browser extension build, and the full macOS and Windows browser suites. Documentation alone runs nothing, and the
+    # website alone runs only its build. Only known paths skip a part: any other path, a change to dependencies or to
+    # this workflow, the `native-ci` label, or a list the job cannot read, runs everything. The label is read from the
+    # API when the job runs, so re-running all jobs after adding it is enough.
+    #
+    # A pull request's files come from the API; a push to main compares it with the commit before. The macOS and
+    # Windows suites run on every push to main that changes the app, and on a ready pull request that does; a draft
+    # runs the Linux suites only.
+    name: Which checks run
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
+      app: ${{ steps.decide.outputs.app }}
+      site: ${{ steps.decide.outputs.site }}
+      extension: ${{ steps.decide.outputs.extension }}
       native: ${{ steps.decide.outputs.native }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci-changes.mjs
+          sparse-checkout-cone-mode: false
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
           # Actions runs this with bash -e. A grep that matches nothing must not end the step, so -e is off;
-          # every failure path below decides on its own, and fails open to running the native suites.
+          # every failure path below decides on its own, and fails open to running everything.
           set +e -uo pipefail
-          run_native() {
+          everything() {
             echo "$1"
-            echo native=true >> "$GITHUB_OUTPUT"
+            printf 'app=true\nsite=true\nextension=true\nnative=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           }
-          [ "$EVENT" = pull_request ] || run_native "A push: the native suites run."
-          labels=$(gh api --paginate "repos/$REPO/issues/$PR/labels" --jq '.[].name') ||
-            run_native "Could not read the PR's labels: the native suites run."
-          if printf '%s\n' "$labels" | grep -qx native-ci; then
-            run_native "The PR has the native-ci label: the native suites run."
+          if [ "$EVENT" = pull_request ]; then
+            labels=$(gh api --paginate "repos/$REPO/issues/$PR/labels" --jq '.[].name') ||
+              everything "Could not read the PR's labels: everything runs."
+            if printf '%s\n' "$labels" | grep -qx native-ci; then
+              everything "The PR has the native-ci label: everything runs."
+            fi
+            # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs everything.
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||
+              everything "Could not read the PR's files: everything runs."
+            [ "$(printf '%s\n' "$files" | wc -l)" -lt 3000 ] || everything "The PR changes 3000 files or more: everything runs."
+          else
+            # A push to main: what changed since the commit before it. A new branch has no commit before.
+            case "$BEFORE" in '' | 0000000000000000000000000000000000000000) everything "Nothing to compare the push with: everything runs." ;; esac
+            compare=$(gh api "repos/$REPO/compare/$BEFORE...$SHA") || everything "Could not compare the push with the commit before: everything runs."
+            # The compare API lists at most 300 files.
+            [ "$(jq '.files | length' <<<"$compare")" -lt 300 ] || everything "The push changes 300 files or more: everything runs."
+            files=$(jq -r '.files[] | .filename, (.previous_filename // empty)' <<<"$compare") ||
+              everything "Could not read the push's files: everything runs."
           fi
-          # A draft runs the Linux suites only, so iterating on a PR doesn't spend macOS and Windows runners. Marking it
-          # ready for review runs everything once more (ready_for_review above), before it can be merged. Read live, so a
-          # re-run after marking it ready sees it. If the state can't be read, the suites run.
-          draft=$(gh api "repos/$REPO/pulls/$PR" --jq .draft) ||
-            run_native "Could not read whether the PR is a draft: the native suites run."
-          if [ "$draft" = true ]; then
-            echo "A draft PR: only the Linux suites run. Mark it ready for review to run the macOS and Windows suites."
+          [ -n "$files" ] || everything "No changed files are listed: everything runs."
+          echo "Changed files:"
+          printf '%s\n' "$files" | sed -n '1,30p'
+          needs=$(printf '%s\n' "$files" | node scripts/ci-changes.mjs) || everything "Could not sort the changed files: everything runs."
+          [ -n "$needs" ] || everything "Sorting the changed files gave no answer: everything runs."
+          printf '%s\n' "$needs" | tee -a "$GITHUB_OUTPUT"
+          if ! printf '%s\n' "$needs" | grep -qx app=true; then
+            echo "No app change: the app's checks, and the macOS and Windows browser suites, are skipped."
             echo native=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # A rename counts under its old path too. The API lists at most 3000 files; a PR that large runs them.
-          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||
-            run_native "Could not read the PR's files: the native suites run."
-          [ -n "$files" ] || run_native "The PR lists no files: the native suites run."
-          [ "$(printf '%s\n' "$files" | wc -l)" -lt 3000 ] || run_native "The PR changes 3000 files or more: the native suites run."
-          safe='^(docs/|site/|\.github/ISSUE_TEMPLATE/)|\.md$|(^|/)(LICENSE|LICENCE|COPYING|NOTICE)([.-][^/]*)?$'
-          # Markdown under the code and test folders can be test data (tests/fixtures/conflicts), so it is not safe.
-          code='^(tests|src|lib|components|scripts|resources|extensions)/'
-          others=$( { printf '%s\n' "$files" | grep -Ev "$safe"; printf '%s\n' "$files" | grep -E "$code"; } | sort -u || true)
-          if [ -n "$others" ]; then
-            echo "These files are not on the list that skips the native suites:"
-            printf '%s\n' "$others" | sed -n '1,20p'
-            run_native "The native suites run."
+          [ "$EVENT" = pull_request ] || { echo "A push that changes the app: the macOS and Windows browser suites run."; echo native=true >> "$GITHUB_OUTPUT"; exit 0; }
+          # A draft runs the Linux suites only, so iterating on a PR doesn't spend macOS and Windows runners. Marking it
+          # ready for review runs everything once more (ready_for_review above), before it can be merged. Read live, so a
+          # re-run after marking it ready sees it. If the state can't be read, the suites run.
+          draft=$(gh api "repos/$REPO/pulls/$PR" --jq .draft) || { echo "Could not read whether the PR is a draft: the macOS and Windows suites run."; echo native=true >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "$draft" = true ]; then
+            echo "A draft PR: only the Linux suites run. Mark it ready for review to run the macOS and Windows suites."
+            echo native=false >> "$GITHUB_OUTPUT"
+          else
+            echo native=true >> "$GITHUB_OUTPUT"
           fi
-          echo "Every changed file is documentation or similar: the native suites are skipped. Add the native-ci label to run them."
-          echo native=false >> "$GITHUB_OUTPUT"
 
   check:
     # Preserve the existing required-check names.
     name: Check (${{ matrix.os }})
+    needs: changes
+    # Only an explicit `false` skips it: a failed or cancelled gate leaves no output, and it runs.
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -150,6 +175,9 @@ jobs:
     # The full Linux browser suite, split into shards balanced by measured suite durations
     # (scripts/browser-suite-durations.json). A failed shard reruns on its own.
     name: Browser (shard ${{ matrix.shard }}/6)
+    needs: changes
+    # Only an explicit `false` skips it: a failed or cancelled gate leaves no output, and it runs.
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -199,6 +227,9 @@ jobs:
     # minutes when Check ran npm test. scripts/run-unit-tests.mjs gives each half half of the other files, and half of
     # the tests of each file that uses tests/support/test-part.ts.
     name: Unit tests (windows-latest ${{ matrix.shard }}/2)
+    needs: changes
+    # Only an explicit `false` skips it: a failed or cancelled gate leaves no output, and it runs.
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
@@ -229,15 +260,15 @@ jobs:
         run: node scripts/run-unit-tests.mjs --shard ${{ matrix.shard }}/2
 
   native-browser:
-    # The full browser suite on macOS and Windows: on pushes to main, and on pull requests unless `changes` finds only
-    # documentation-like files (see there). Those pull requests run the smoke suite in Check. The shards
+    # The full browser suite on macOS and Windows: on pushes to main and ready pull requests that change the app (see
+    # `changes`). A draft runs the smoke suite in Check instead. The shards
     # are balanced by each platform's measured durations (scripts/browser-suite-durations-<platform>.json); their
     # counts must match NATIVE_SHARDS (main) and NATIVE_PR_SHARDS (pull requests) in scripts/run-browser-suites.mjs.
     # The account runs at most 5 macOS jobs at once, and Check and Package take one each.
     name: Browser (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.shards }})
     needs: changes
     # Only an explicit `false` skips them: a failed or cancelled gate leaves no output, and the suites run.
-    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.native != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -290,6 +321,8 @@ jobs:
     # Builds the "Open in Gnosis" browser extension (extensions/browser) and uploads the unsigned packages.
     # Its unit and DOM tests run in Check with `npm test`. No publishing and no store credentials here.
     name: Browser extension
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.extension != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -320,8 +353,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  site:
+    # The website build, as site.yml runs it on main, for a pull request that changes site/ (see `changes`). It runs
+    # the docs check first (site/scripts/check-docs.mjs), so docs that no longer match the app fail here, not at deploy.
+    name: Website
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.site != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          # src/pages/changelog.astro reads the releases; without a token the call is capped at 60 an hour.
+          GITHUB_TOKEN: ${{ github.token }}
+
   package:
     name: Package (${{ matrix.os }})
+    needs: changes
+    # Only an explicit `false` skips it: a failed or cancelled gate leaves no output, and it runs.
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
