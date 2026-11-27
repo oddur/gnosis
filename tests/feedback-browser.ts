@@ -53,6 +53,7 @@ void app.whenReady().then(async () => {
         await js(`${scroller}.scrollTop+=300`);
       }
     }
+    assert.ok(await js(`!!${entry(id)}`), `The feedback timeline never mounted entry ${id}`);
     await js(`${entry(id)}.scrollIntoView({block:'start'})`);
     await waitSettled(win.webContents, 'feedback-timeline');
     await js(`${entry(id)}.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
