@@ -356,3 +356,26 @@ void test('the Overview reads status at visible priority while shown in a visibl
   assert.deepEqual(overviewStatusOptions('visible'), { active: true });
   assert.deepEqual(overviewStatusOptions('background'), {});
 });
+void test('held fork runs and the author association come from the same read (#595, #596)', async () => {
+  const h = harness();
+  h.respond({
+    p0: {
+      pullRequest: {
+        headRefOid: 'abc123',
+        authorAssociation: 'FIRST_TIME_CONTRIBUTOR',
+        comments: { totalCount: 0 },
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE', contexts: { totalCount: 3, checkRunCountsByState: [{ state: 'ACTION_REQUIRED', count: 2 }, { state: 'SUCCESS', count: 1 }], statusContextCountsByState: [] } } } }] },
+      },
+    },
+  });
+  const [value] = await h.get(h.client, [request]);
+  // A scalar on the PR: no connection, so no added rate-limit cost.
+  assert.match(h.queries[0], /baseRefOid authorAssociation/);
+  assert.equal(value.authorAssociation, 'FIRST_TIME_CONTRIBUTOR');
+  assert.equal(value.checks.awaitingApproval, 2);
+  assert.equal(value.checks.failed, 2, 'Still counted as failed, as before');
+  h.respond({ p0: { pullRequest: { headRefOid: 'abc123', comments: { totalCount: 0 }, commits: { nodes: [{ commit: { statusCheckRollup: null } }] } } } });
+  const [none] = await h.get(h.client, [request], { force: true });
+  assert.equal(none.checks.awaitingApproval, undefined, 'None held: absent');
+  assert.equal(none.authorAssociation, undefined);
+});

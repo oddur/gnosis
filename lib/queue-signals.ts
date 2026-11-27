@@ -78,7 +78,17 @@ export interface QueueSignals extends QueueSignalRequest {
    * first 100 threads. Absent in older cache entries.
    */
   threads?: { unresolved: string[]; complete: boolean };
-  checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; failed?: number; running?: number; skipped?: number; total: number };
+  /**
+   * `awaitingApproval`: checks GitHub reports as ACTION_REQUIRED, such as fork workflow runs held for a maintainer's
+   * approval (#595). They are counted in `failed` too. Set only when some are: absent means none, or a read
+   * from before this was counted.
+   */
+  checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; failed?: number; running?: number; skipped?: number; awaitingApproval?: number; total: number };
+  /**
+   * GitHub's `authorAssociation` for the PR's author: FIRST_TIMER, FIRST_TIME_CONTRIBUTOR, NONE, CONTRIBUTOR, MEMBER,
+   * COLLABORATOR or OWNER. Absent in older cache entries.
+   */
+  authorAssociation?: string;
   readiness?: {
     state: string;
     isDraft: boolean;
@@ -98,6 +108,8 @@ export const ACTIVE_SIGNALS_TTL = 25_000;
 export const OVERVIEW_STATUS_SWEEP_MS = 30_000;
 export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;
 /** Queue check counts from a check list, so rows agree with the Checks tab. */
+/** `awaitingApproval` when any check waits for approval: absent means none, or a read that could not tell. */
+export const awaiting = (count: number): { awaitingApproval?: number } => (count > 0 ? { awaitingApproval: count } : {});
 export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
   const counts = checkCounts(checks);
   return {
@@ -106,6 +118,7 @@ export function checkSignals(checks: CiCheck[]): QueueSignals['checks'] {
     failed: counts.attention,
     running: counts.running,
     skipped: counts.skipped,
+    ...awaiting(checks.filter((check) => check.status === 'completed' && check.conclusion === 'action_required').length),
     total: checks.length,
   };
 }
