@@ -37,7 +37,7 @@
  * show, so a sync tick that changes nothing renders nothing, and a moved row gets its focus back without scrolling.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowDown, ArrowUp, ChevronRight, ListChecks, MessageSquare, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ChevronRight, ListChecks, MessageSquare, Play, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
@@ -99,6 +99,8 @@ import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
+import { GuidedSession, type SessionOpen } from './GuidedSession';
+import { sessionSteps, type Depth, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import { toast } from './ui/toast';
 
 export interface OverviewPageProps {
@@ -246,6 +248,13 @@ export function OverviewPage(props: OverviewPageProps) {
     () => morningPage({ model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies, hidden: closing, starred }),
     [view, now, account, extras.rereviewLines, extras.replies, closing, starred]
   );
+  // A guided session (#596): one run through Next up, then the decisions. It walks the steps as they were when it
+  // started; the page's live steps say which have moved on (they left the page).
+  const liveSteps = useMemo(() => sessionSteps(morning), [morning]);
+  const liveById = useMemo(() => new Map(liveSteps.map((step) => [step.id, step])), [liveSteps]);
+  const [session, setSession] = useState<{ steps: SessionStep[]; index: number; outcomes: Partial<Record<string, StepOutcome>>; depths: Partial<Record<string, Depth>>; open: boolean } | null>(null);
+  const startSession = () =>
+    setSession((value) => (value && value.index < value.steps.length ? { ...value, open: true } : { steps: liveSteps, index: 0, outcomes: {}, depths: {}, open: true }));
   // Which PRs are starred, for the row menus' Star and Unstar: one string, so a sync tick that changes no star keeps
   // the row actions, and with them every memoized row, as they were.
   const starKey = (queue.starredPrs ?? []).map((entry) => entry.member.url).sort().join(' ');
@@ -599,6 +608,33 @@ export function OverviewPage(props: OverviewPageProps) {
       <GroupRows key={value.key} id={id} group={value} now={now} open={inside} tabStop={tabStop(section)} nudged={nudged.has(value.key)} actions={actions} />
     );
   };
+  // The session's step card draws its primary action as Next up's row does: Merge and Rerun act in place; anything
+  // else opens the PR, at the depth the step suggests.
+  const sessionAction = (step: SessionStep): ReactNode | undefined => {
+    if (step.kind === 'merge') return <MergeAction row={step.row} actions={actions} />;
+    if (step.kind === 'fix' && step.next?.fix === 'failing') {
+      const failing = step.row.entries.filter((entry) => entry.reasons.includes('checks-failed') && step.urls.includes(entry.member.url)).map((entry) => entry.member);
+      if (failing.length) return <RerunFailed members={failing} onChanged={actions.refresh} />;
+    }
+    return undefined;
+  };
+  const sessionIdentity = (step: SessionStep): ReactNode => (
+    <span className="guided-step-ref">
+      <PrIcon member={step.member} />
+      <span>{repositoryLabel(repoNames, step.member.repo)}</span>
+      <span className="guided-step-number">#{step.member.number}</span>
+    </span>
+  );
+  const openFromSession = (step: SessionStep, where: SessionOpen) => {
+    if (where === 'github') {
+      void window.electronAPI.openExternal(step.member.url);
+      return;
+    }
+    // A deep review opens Changes; a summary, conflicts and threads open the PR's Summary, where readiness and its
+    // actions are.
+    const target = prTarget(step.member.url, where === 'review' ? 'changes' : 'summary') ?? step.row.target;
+    actions.open(step.row, target);
+  };
   const body = !authenticated ? (
     <div className="overview-state">
       <p>Connect GitHub to see what needs you across your repositories.</p>
@@ -622,6 +658,28 @@ export function OverviewPage(props: OverviewPageProps) {
           <Button size="sm" variant="outline" onClick={setup}>Getting started</Button>
         </div>
       )}
+      {session?.open ? (
+        <GuidedSession
+          steps={session.steps}
+          live={liveById}
+          index={session.index}
+          outcomes={session.outcomes}
+          depths={session.depths}
+          login={account ?? ''}
+          now={now}
+          statusOf={view.statusOf}
+          since={extras.since.events}
+          rereviewLines={extras.rereviewLines}
+          replies={extras.replies}
+          renderAction={sessionAction}
+          renderIdentity={sessionIdentity}
+          onOpen={openFromSession}
+          onIndex={(index) => setSession((value) => value && { ...value, index })}
+          onOutcome={(id, outcome) => setSession((value) => value && { ...value, outcomes: { ...value.outcomes, [id]: outcome } })}
+          onDepth={(id, depth) => setSession((value) => value && { ...value, depths: { ...value.depths, [id]: depth } })}
+          onExit={() => setSession((value) => value && (value.index >= value.steps.length ? null : { ...value, open: false }))}
+        />
+      ) : (
       <div className="morning">
         {/* Only when something is starred: with no stars, the page starts at Next up. */}
         {starred.entries.length > 0 && (
@@ -637,6 +695,13 @@ export function OverviewPage(props: OverviewPageProps) {
           </MorningSection>
         )}
         <MorningSection section="next" count={counts.next}
+          action={liveSteps.length > 0 && (
+            <Button size="xs" variant="outline" className="morning-session-start" data-session-start onClick={startSession}
+              title={session && session.index < session.steps.length ? 'Go on with the session where you left it' : 'Go through these one at a time: what changed, what blocks each, and the next step'}>
+              <Play size={12} aria-hidden="true" />
+              {session && session.index < session.steps.length ? `Resume · ${session.index + 1} of ${session.steps.length}` : `Start · ${liveSteps.length}`}
+            </Button>
+          )}
           empty={morning.starredHolds.next ? 'Nothing else needs you right now.' : 'Nothing needs you right now.'}
           footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
@@ -671,6 +736,7 @@ export function OverviewPage(props: OverviewPageProps) {
           )}
         </MorningSection>
       </div>
+      )}
       <p className="sr-only" id="overview-keyboard-help">
         <kbd>Tab</kbd> moves between sections · <kbd>j</kbd> <kbd>k</kbd> or arrows move within a section · <kbd>Enter</kbd> opens or expands ·{' '}
         <kbd>a</kbd> runs the row's action · <kbd>z</kbd> snoozes · <kbd>Shift</kbd>+<kbd>F10</kbd> opens its menu
@@ -991,8 +1057,10 @@ function RepoName({ repos }: { repos: readonly string[] }) {
   );
 }
 
-function MorningSection({ section, count, empty, quiet = false, note, footer, children }: {
+function MorningSection({ section, count, empty, quiet = false, note, footer, action, children }: {
   section: Section;
+  /** A control at the end of the heading, such as Next up's Start. */
+  action?: ReactNode;
   count: number;
   empty: ReactNode;
   quiet?: boolean;
@@ -1011,6 +1079,7 @@ function MorningSection({ section, count, empty, quiet = false, note, footer, ch
           {label}
           <span className="morning-section-count" data-section-count>{count}</span>
         </h2>
+        {action}
       </div>
       {note}
       {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}

@@ -5774,6 +5774,76 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Measured from the Overview's width, as the toolbar is, so the scrollbar gutter does not shift the edges apart. */
 .morning { display:flex; flex-direction:column; gap:28px; width:auto; max-width:calc(var(--overview-content) + 48px); margin:0 auto 0 max(0px, calc((100cqi - var(--overview-content)) / 2 - 24px)); padding:4px 24px 0; }
 .morning-section { min-width:0; }
+
+/* A guided session (#596) takes the morning page's place and column while it runs: a header with the run's steps, one
+   step at a time, and the next step under it. The step is one surface, not a stack of cards: hairlines between its
+   parts, the depth suggestion on a quiet band, and the primary action first in the action row. */
+.morning-section-head .morning-session-start { margin-left:auto; align-self:center; }
+/* One step at a time reads best narrower than the Overview: the session keeps the page's left edge and a focused width. */
+.guided-session { display:flex; flex-direction:column; gap:16px; max-width:min(calc(var(--overview-content) + 48px), 1008px); margin:0 auto 0 max(0px, calc((100cqi - var(--overview-content)) / 2 - 24px)); padding:4px 24px 32px; outline:none; }
+.guided-session-head { display:flex; align-items:center; gap:16px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.guided-session-head h2 { display:flex; align-items:baseline; gap:8px; font-size:var(--type-section-title); font-weight:600; line-height:1.35; letter-spacing:-0.01em; }
+.guided-session-count { font-size:var(--type-body); font-weight:400; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+/* The run's steps: one mark per PR, its state by shape and colour, the current one wider. Each is a way to jump. */
+.guided-session-progress { flex:1; display:flex; gap:4px; min-width:0; }
+.guided-session-progress li { flex:0 1 28px; min-width:8px; }
+.guided-session-progress button { display:block; width:100%; height:6px; border-radius:3px; background:var(--secondary); box-shadow:inset 0 0 0 1px var(--border); transition:background-color 150ms ease-out, height 150ms ease-out; }
+.guided-session-progress li[aria-current=step] { flex-basis:44px; }
+.guided-session-progress li[aria-current=step] button { height:8px; background:var(--primary); box-shadow:none; }
+.guided-session-progress li[data-outcome=done] button, .guided-session-progress li[data-outcome=opened] button { background:var(--color-success); box-shadow:none; }
+.guided-session-progress li[data-outcome=parked] button { background:var(--color-warning); box-shadow:none; }
+.guided-session-progress li[data-outcome=skipped] button { background:transparent; box-shadow:inset 0 0 0 1px var(--muted-foreground); }
+.guided-session-progress button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+
+.guided-step { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-card, 10.4px); background:var(--card); }
+.guided-step > * { padding:16px 20px; }
+.guided-step > * + * { border-top:1px solid var(--border); }
+.guided-step-identity { display:grid; grid-template-columns:1fr auto; align-items:baseline; gap:4px 16px; padding-bottom:14px; }
+.guided-step-ref { grid-column:1 / -1; display:flex; align-items:center; gap:6px; font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); }
+.guided-step-ref .morning-icon { display:inline-flex; }
+.guided-step-number { font-variant-numeric:tabular-nums; }
+.guided-step-title { min-width:0; font-size:var(--type-panel-title); font-weight:650; line-height:1.35; letter-spacing:-0.02em; text-wrap:balance; overflow-wrap:anywhere; }
+.guided-step-meta { font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.guided-step-add { color:var(--color-success); }
+.guided-step-del { color:var(--color-danger); }
+.guided-step-status { display:flex; align-items:center; gap:8px; font-size:var(--type-control); color:var(--color-success); background:var(--status-success-bg, var(--secondary)); }
+.guided-step-block { display:flex; flex-direction:column; gap:8px; }
+.guided-step-lead { font-size:var(--type-body); font-weight:600; line-height:1.5; }
+.guided-step-heading { font-size:var(--type-body); font-weight:600; line-height:1.5; }
+.guided-step-quiet { font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.guided-step-digest, .guided-step-blockers { display:flex; flex-direction:column; gap:6px; }
+.guided-step-digest li { display:grid; grid-template-columns:16px 1fr; gap:8px; font-size:var(--type-body); line-height:1.5; max-width:75ch; }
+.guided-step-digest li > svg, .guided-step-blockers li > svg { margin-top:4px; color:var(--muted-foreground); }
+.guided-step-digest li[data-tone=danger] > svg, .guided-step-blockers li[data-blocker=rerun-failed] > svg, .guided-step-blockers li[data-blocker=resolve-conflicts] > svg { color:var(--color-danger); }
+.guided-step-digest li[data-tone=success] > svg { color:var(--color-success); }
+.guided-step-digest li[data-tone=attention] > svg, .guided-step-blockers li[data-blocker=wait] > svg { color:var(--color-warning); }
+.guided-step-quote { display:block; margin-top:2px; color:var(--muted-foreground); quotes:"“" "”"; }
+.guided-step-blockers li { display:grid; grid-template-columns:16px minmax(0, 1fr) auto auto; align-items:start; gap:4px 8px; min-height:28px; font-size:var(--type-body); line-height:1.5; }
+.guided-step-cause { min-width:0; padding-top:1px; }
+.guided-step-owner { align-self:center; font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; }
+.guided-step-fix { align-self:center; }
+/* The suggestion is a statement with its reason, not a control panel: one quiet line, the switch at its end. */
+.guided-step-depth { display:flex; align-items:center; gap:10px; background:var(--secondary); font-size:var(--type-control); line-height:1.5; color:var(--foreground); }
+.guided-step-depth > svg { flex:none; color:var(--muted-foreground); }
+.guided-step-depth[data-depth=deep] > svg { color:var(--primary); }
+.guided-step-depth p { flex:1; min-width:0; }
+.guided-step-depth strong { font-weight:600; }
+.guided-step-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.guided-step-primary { display:inline-flex; }
+.guided-step-note { font-size:var(--type-caption); color:var(--muted-foreground); }
+.guided-session kbd { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; margin-left:6px; padding:0 4px; border-radius:3px; border:1px solid color-mix(in oklab, currentColor 30%, transparent); font:500 10px/1 var(--font-sans, inherit); opacity:.8; }
+.guided-session-next { display:flex; align-items:baseline; gap:8px; min-width:0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.guided-session-next > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
+.guided-session-next-label { flex:none; font-weight:600; }
+.guided-session-next-why { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.guided-session-nav { margin-left:auto; display:flex; gap:2px; align-self:center; }
+.guided-end { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:8px 0; }
+.guided-end-lead { font-size:var(--type-panel-title); font-weight:650; letter-spacing:-0.02em; }
+.guided-end-lines { display:flex; flex-direction:column; gap:2px; font-size:var(--type-body); }
+.guided-end-lines button { padding:2px 0; text-align:left; color:var(--foreground); }
+.guided-end-lines button:hover { text-decoration:underline; text-underline-offset:3px; }
+.guided-end-lines li[data-outcome=skipped] button, .guided-end-lines li[data-outcome=parked] button, .guided-end-lines li[data-outcome=open] button { color:var(--muted-foreground); }
+@media (prefers-reduced-motion: reduce) { .guided-session-progress button { transition:none; } }
 /* Section titles take DESIGN.md's section step (18px), a real level above the 15px row titles, with the count inline. */
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--border); }
 .morning-section-head h2 { display:flex; align-items:baseline; gap:8px; font-size:var(--type-section-title); font-weight:600; line-height:1.35; letter-spacing:-0.01em; color:var(--foreground); text-wrap:balance; }
