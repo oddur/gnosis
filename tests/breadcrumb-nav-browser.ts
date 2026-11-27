@@ -664,19 +664,18 @@ void app.whenReady().then(async () => {
     await js(frames);
     clickPoint(point);
     await landed(far);
+    // The mark clears after HERE_MS (2 s, lib/diff-here.ts), and 90 frames can take longer than that on a slow runner:
+    // it is read as the jump lands.
+    const still = await here(far);
+    const restOfSection = await js<string>(`(()=>{const e=window.deepAll('[data-line][data-here][data-here-part=body]',window.q(${JSON.stringify(far)}))[0];return e?getComputedStyle(e,'::after').animationName+' '+getComputedStyle(e,'::after').backgroundColor:''})()`);
     await wait('window.__samples.length>=90');
     const instant = await js<number[]>('window.__samples');
     const moves = instant.filter((v, i) => i > 0 && v !== instant[i - 1]);
-    const still = await here(far);
     console.log('Reduced motion:', JSON.stringify({ start: instant[0], moves, still }));
     assert.ok(Math.abs(instant[0] - (instant.at(-1) ?? 0)) > 40, `Reduced motion: the jump starts away from its target: ${instant[0]} → ${instant.at(-1)}`);
     assert.ok(moves.length >= 1 && Math.abs(moves[0] - (instant.at(-1) ?? 0)) <= 2, `Reduced motion: the first move lands: ${JSON.stringify(moves)}`);
     assert.deepEqual(still.map((m) => [m.anim, m.band]), [['none', 'rgba(47, 85, 212, 0.22)']], 'Reduced motion: the band is still');
-    assert.equal(
-      await js<string>(`(()=>{const e=window.deepAll('[data-line][data-here][data-here-part=body]',window.q(${JSON.stringify(far)}))[0];return e?getComputedStyle(e,'::after').animationName+' '+getComputedStyle(e,'::after').backgroundColor:''})()`),
-      'none rgba(47, 85, 212, 0.12)',
-      'Reduced motion: the rest of the section has its softer band, still'
-    );
+    assert.equal(restOfSection, 'none rgba(47, 85, 212, 0.12)', 'Reduced motion: the rest of the section has its softer band, still');
     await reducedMotion(false);
     // The reader is followed after a jump: Landed on impl Client, the pinned breadcrumb names it.
     assert.deepEqual((await state(far)).crumbs, ['Go to module api', 'Go to impl Client'], 'After a jump, the breadcrumb names the definitions around the line landed on');

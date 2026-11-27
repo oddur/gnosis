@@ -1227,7 +1227,7 @@ void app.whenReady().then(async () => {
       // Distinct shown lines whose text has \`text\`, by their number.
       window.shownCount=(p,text)=>new Set(window.deepAll('[data-line]',window.stickyRow(p)).filter(e=>e.textContent.includes(text)&&e.getBoundingClientRect().height>0).map(e=>e.textContent)).size;
       // The stream's scrollTop each frame, for 90 frames, into window.__samples.
-      window.sampleScroll=()=>{const s=window.stream();const v=[];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
+      window.sampleScroll=()=>{const s=window.stream();const v=[Math.round(s.scrollTop)];window.__samples=v;let n=0;const t=()=>{v.push(Math.round(s.scrollTop));if(++n<90)requestAnimationFrame(t)};requestAnimationFrame(t);void 0};
       window.crumbCenter=(p,label)=>{const b=[...window.stickyRow(p).querySelectorAll('[data-stuck] .diff-gap-live button[data-jump]')].find(b=>b.getAttribute('aria-label')===label);
         if(!b)throw Error('No pinned crumb '+label);const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}};void 0`);
     type Jump = {
@@ -1457,7 +1457,10 @@ void app.whenReady().then(async () => {
     await motion('reduce');
     await js(`window.pinAt('src/far.ts','total += 40 * 2;')`);
     await wait(`window.jumpState('src/far.ts').crumbs.length===2`);
+    // Recording starts, with the place before the jump, and settles a frame before the click: a reduced-motion jump
+    // lands within the click itself (as tests/breadcrumb-nav-browser.ts).
     await js('window.sampleScroll()');
+    await js(frames);
     await clickCrumb('src/far.ts', 'Go to class FarRunner');
     await wait('window.__samples.length>=90');
     const instant = await js<number[]>('window.__samples');

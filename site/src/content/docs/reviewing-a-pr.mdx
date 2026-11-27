@@ -90,9 +90,17 @@ When **Symbols** is selected, a second line of checkboxes shows under it:
 2. Read it, then press <Kbd keys="v" />. Gnosis marks it as viewed and goes to the next symbol that is not viewed. A file without symbols, such as a JSON file or an image, is one step.
 3. Press <Kbd keys="v" /> again until nothing is left. The toolbar shows how many files are viewed, and how many changes are left to review, such as **2 / 10 files viewed · 14 left to review**. When you mark the last symbol of a file, Gnosis marks the file as viewed and goes on to the next file.
 
+<DocShot
+  name="review-with-v"
+  alt="The Changes tab with changed symbols in the file tree. Under src/symbols/store.ts, Imports, Store and flush show a check, the row gone is selected, and store.ts shows 2/4. The toolbar reads 0 / 10 files viewed · 14 left to review."
+  caption="Review with V: each V marks a symbol as viewed and goes to the next one."
+/>
+
 A function or class that moved to another file, or was renamed, is one step: its new copy. Its old copy shows **Moved**, goes to the new copy when you select it, and shows **✓ moved** when you mark the new copy.
 
 A symbol that is taller than the screen is not marked at once: <Kbd keys="v" /> scrolls down one screen at a time, and the symbol shows how much of it you have read, such as **Reading 40%**. When all of its changed lines have been on the screen, it shows **Read**, and the next <Kbd keys="v" /> marks it.
+
+If you press <Kbd keys="v" /> or <Kbd keys="Enter" /> while the diff still scrolls to a symbol, Gnosis waits until the symbol is on the screen, and then marks it or opens the comment. A scroll of your own, such as with the mouse wheel or the arrow keys, cancels the key.
 
 To comment on the symbol you are on, press <Kbd keys="Enter" />: in the file tree, press it again on the selected row. The comment covers the symbol's changed lines, or the lines you selected. Press <Kbd keys="⌘ ⇧ Enter" /> to add the comment and go to the next symbol.
 

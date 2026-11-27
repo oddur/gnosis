@@ -1,7 +1,7 @@
 {
-  "prompt": "Origin: actual Gnosis application captured from commit ddf5ffa by scripts/capture-docs-screenshots.mjs, recipe \"pr-changes-split\" in the light theme, from tests/fixtures/workbench.html?pr-summary (as tests/pr-changes-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 960px wide with sharp, WebP quality 86. No generated imagery.",
-  "createdAt": "2026-11-26T02:57:43.552Z",
-  "commit": "ddf5ffa3778de2b02c0c2a41b4cc3d7082ec8e25",
+  "prompt": "Origin: actual Gnosis application captured from commit fbf542a by scripts/capture-docs-screenshots.mjs, recipe \"pr-changes-split\" in the light theme, from tests/fixtures/workbench.html?pr-summary (as tests/pr-changes-browser.ts drives it) at 1600×960 CSS pixels and device scale factor 2. Synthetic fixture data, actual Gnosis UI. Resized to 960px wide with sharp, WebP quality 86. No generated imagery.",
+  "createdAt": "2026-11-27T08:20:05.373Z",
+  "commit": "fbf542a25318ce2d8defe449ac13b0536abe85e5",
   "recipe": "pr-changes-split",
   "theme": "light",
   "fixture": "tests/fixtures/workbench.html?pr-summary",

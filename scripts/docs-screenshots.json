@@ -104,6 +104,16 @@
       "note": "Open Changes, pick src/worker.ts, press s for the split layout."
     },
     {
+      "name": "review-with-v",
+      "page": "pr-page",
+      "title": "Review with V: changed symbols in the file tree, two marked as viewed",
+      "fixture": "workbench.html?tree-symbols",
+      "suite": "tests/tree-symbols-browser.ts",
+      "scene": "reviewWithV",
+      "ready": "js:document.querySelector('.changes-progress-left') !== null",
+      "note": "Open Changes, open store.ts in the file tree, select Imports, press v twice."
+    },
+    {
       "name": "pr-commits",
       "page": "pr-page",
       "title": "The Commits tab with a commit's diff",
