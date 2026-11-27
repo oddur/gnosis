@@ -210,6 +210,36 @@ export const scenes: Record<string, Scene> = {
     await prTab(c, 'Local notes');
   },
 
+  /**
+   * Review with V in the Changes file tree (tests/tree-symbols-browser.ts): store.ts open to its symbols, Imports and
+   * flush marked with V, and the review on gone, its row lit.
+   */
+  async reviewWithV(c) {
+    await openPr(c);
+    await prTab(c, 'Changes');
+    await c.step('wait .changes-file-tree');
+    // Row names carry invisible marks (lib/tree-symbol-paths.ts).
+    const row = (name: string) =>
+      `window.__docs.all('[role=treeitem]').find(e=>(e.getAttribute('aria-label')||'').replace(/[\\u2061-\\u2064\\u200b\\u200c]/g,'')===${q(name)})`;
+    const decoration = (name: string) => `${row(name)}?.querySelector('[data-item-section=decoration]')?.textContent.trim()`;
+    const lit = (name: string) => `${row(name)}?.getAttribute('data-item-git-status')==='untracked'`;
+    const line = (text: string) =>
+      `(()=>{const s=document.querySelector('.commit-diff-stream').getBoundingClientRect();const l=window.__docs.all('[data-line]',document.querySelector('.commit-stream-row[data-file="src/symbols/store.ts"]')).find(e=>e.textContent.includes(${q(text)}));if(!l)return false;const b=l.getBoundingClientRect();return b.top>=s.top&&b.bottom<=s.top+s.height/2})()`;
+    const press = (key: string) => c.js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${q(key)},bubbles:true,cancelable:true}))`);
+    await c.until(row('store.ts'), 'the file tree row store.ts');
+    if ((await c.js<string | null>(`${row('store.ts')}.getAttribute('aria-expanded')`)) !== 'true') await c.js(`${row('store.ts')}.querySelector('[data-item-section=icon]').click()`);
+    await c.until(row('Imports'), 'the Imports row of store.ts');
+    await c.js(`${row('Imports')}.querySelector('[data-item-section=content]').click()`);
+    await c.until(lit('Imports'), 'Imports lit');
+    await c.until(line("import { b } from 'b';"), 'the import on screen');
+    await press('v');
+    await c.until(`${lit('flush')}&&${decoration('Imports')}==='✓'`, 'Imports marked, flush lit');
+    await c.until(line('flush()'), 'flush on screen');
+    await press('v');
+    await c.until(`${lit('gone')}&&${decoration('flush')}==='✓'`, 'flush marked, gone lit');
+    await c.js(`document.activeElement?.blur()`);
+  },
+
   /** A draft inline comment on a changed line (tests/pr-changes-browser.ts, comments-composer capture). */
   async inlineComment(c) {
     await openPr(c);
