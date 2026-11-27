@@ -33,6 +33,7 @@ import {
   trackMoves,
 } from './moved-symbols-store';
 import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
+import { registerSettled } from './test-settled';
 /** The moves reads' budgets, one per head: `moves:<head>`. */
 const MOVES_BUDGET = 'moves:';
 
@@ -160,6 +161,8 @@ export function whenSettled(run: () => void): () => void {
 }
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
 const NEAR = '100% 0px';
+/** The scrollers diffs sit in (components/ChangesDiff.tsx `DIFF_SCROLLER`). */
+const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 /** Files read as view reads as soon as a PR's Changes opens, before any of them is near the view. */
 export const SYNTAX_OPEN_FILES = 3;
 /** Prefetch waits this long after the last scroll or key press. */
@@ -467,7 +470,7 @@ export function useViewTier(
   useEffect(() => {
     const target = element.current;
     if (!enabled || !target || typeof IntersectionObserver === 'undefined') return;
-    const root = target.closest('.commit-diff-stream, [data-diff-scroller]');
+    const root = target.closest(DIFF_SCROLLER);
     let onScreen = false,
       near = true;
     const update = () => {
@@ -519,6 +522,30 @@ export function useSyntaxContents(
   const [result, setResult] = useState<{ key: string; state: 'done' | 'failed' | 'refused' }>();
   const [attempt, setAttempt] = useState(0);
   const active = !!want;
+  // For the browser checks (lib/test-settled.ts): whether the observer last said the file is near, and the file whose
+  // read was asked for since it came near.
+  const seenNear = useRef(false);
+  const asked = useRef<string>(undefined);
+  const wanted = useRef(want);
+  wanted.current = want;
+  useEffect(
+    () =>
+      registerSettled('structure-reads', () => {
+        const target = element.current;
+        const file = wanted.current;
+        if (!file || !target?.isConnected || !syntaxContentsPlan(file.snapshot, file.file, allowed)) return true;
+        const root = target.closest(DIFF_SCROLLER);
+        if (!root) return true;
+        // NEAR, from the layout as it is now: a viewport above and below the scroller.
+        const box = root.getBoundingClientRect();
+        const own = target.getBoundingClientRect();
+        const near = own.bottom >= box.top - box.height && own.top <= box.bottom + box.height;
+        if (near !== seenNear.current) return `${file.file.path} has not heard that it is ${near ? 'near' : 'away from'} the view`;
+        if (near && asked.current !== file.key) return `${file.file.path} waits for a still view to ask for its read`;
+        return true;
+      }),
+    []
+  );
   // Contents another read brought in (the PR's opening reads, prefetch, another view) show as soon as they land.
   useEffect(() => {
     if (!want) return;
@@ -536,13 +563,17 @@ export function useSyntaxContents(
   useEffect(() => {
     const target = element.current;
     if (!active || !target || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver((entries) => setNear(entries[entries.length - 1].isIntersecting), {
-      root: target.closest('.commit-diff-stream, [data-diff-scroller]'),
-      rootMargin: NEAR,
-    });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        seenNear.current = entries[entries.length - 1].isIntersecting;
+        setNear(seenNear.current);
+      },
+      { root: target.closest(DIFF_SCROLLER), rootMargin: NEAR }
+    );
     observer.observe(target);
     return () => {
       observer.disconnect();
+      seenNear.current = false;
       setNear(false);
     };
   }, [active]);
@@ -554,6 +585,7 @@ export function useSyntaxContents(
     let cancel = () => {};
     traceStructure(key, { near: performance.now() });
     const stopWaiting = whenSettled(() => {
+      asked.current = key;
       traceStructure(key, { viewRequest: performance.now() });
       cancel = syntaxContents.request(
         syntaxContentsJob(want, plan),
@@ -562,6 +594,7 @@ export function useSyntaxContents(
       );
     });
     return () => {
+      asked.current = undefined;
       stopWaiting();
       cancel();
     };
