@@ -830,7 +830,8 @@ void test('the reply quoted on a row is the last human comment of a thread waiti
       { id: 't2', path: 'a', line: 2, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: false, viewerCanResolve: true, viewerCanUnresolve: true, comments: [comment('2', LOGIN, 'mine'), comment('3', 'owen', 'Could we keep it?'), comment('4', 'ci-bot', 'beep', true)] },
     ],
   } as unknown as GitHubReviewThreads;
-  assert.deepEqual(waitingReply(discussion, LOGIN, LOGIN), { author: 'owen', text: 'Could we keep it?' });
+  // The thread comes with it, so the guided session can reply in place (components/GuidedSession.tsx).
+  assert.deepEqual(waitingReply(discussion, LOGIN, LOGIN), { author: 'owen', text: 'Could we keep it?', threadId: 't2', canResolve: true });
   assert.equal(waitingReply(undefined, LOGIN, LOGIN), undefined);
 });
 

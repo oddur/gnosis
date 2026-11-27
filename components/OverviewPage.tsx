@@ -99,8 +99,8 @@ import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
-import { GuidedSession, type SessionOpen } from './GuidedSession';
-import { sessionSteps, type Depth, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { GuidedSession, type SessionOpen, type StepAbout } from './GuidedSession';
+import { plainText, sessionSteps, type Depth, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import { toast } from './ui/toast';
 
 export interface OverviewPageProps {
@@ -619,12 +619,43 @@ export function OverviewPage(props: OverviewPageProps) {
     return undefined;
   };
   const sessionIdentity = (step: SessionStep): ReactNode => (
-    <span className="guided-step-ref">
+    <span className="guided-step-id">
       <PrIcon member={step.member} />
       <span>{repositoryLabel(repoNames, step.member.repo)}</span>
       <span className="guided-step-number">#{step.member.number}</span>
     </span>
   );
+  // What the PR is about, under its title: its briefing's summary when one is ready, else the start of its description.
+  const sessionAbout = (step: SessionStep): StepAbout | undefined => {
+    const briefing = step.row.item.briefing;
+    if (briefing?.status === 'ready' && briefing.summary?.trim()) return { text: briefing.summary.trim(), generated: true };
+    const text = plainText(step.member.description);
+    if (!text) return undefined;
+    return { text: text.length > 280 ? `${text.slice(0, 279).replace(/\s+\S*$/, '')}…` : text, generated: false };
+  };
+  // Update branch and Mark ready from the card, through the PR header's actions: the same confirmations and refresh.
+  const sessionPrAction = (step: SessionStep, kind: 'update-branch' | 'mark-ready'): ReactNode => (
+    <PrActions
+      member={step.member}
+      onChanged={actions.refresh}
+      onResult={(message) => toast.add({ type: 'success', title: message })}
+      trigger={(open, busy) => (
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => open(kind === 'update-branch' ? 'update-merge' : 'mark-ready')}>
+          {kind === 'update-branch' ? 'Update branch' : 'Mark ready'}
+        </Button>
+      )}
+    />
+  );
+  const sessionReply = async (step: SessionStep, threadId: string, body: string, resolve: boolean) => {
+    await window.electronAPI.reviewThreadAction({ prUrl: step.member.url, threadId, action: 'reply', body });
+    if (resolve) await window.electronAPI.reviewThreadAction({ prUrl: step.member.url, threadId, action: 'resolve' });
+    actions.refresh();
+  };
+  const sessionApprove = async (step: SessionStep, body: string) => {
+    const { member } = step;
+    await window.electronAPI.submitReview({ prUrl: member.url, headSha: member.headSha, baseSha: member.baseSha, baseBranch: member.baseBranch, event: 'APPROVE', body, comments: [] });
+    actions.refresh();
+  };
   const openFromSession = (step: SessionStep, where: SessionOpen) => {
     if (where === 'github') {
       void window.electronAPI.openExternal(step.member.url);
@@ -672,6 +703,10 @@ export function OverviewPage(props: OverviewPageProps) {
           rereviewLines={extras.rereviewLines}
           replies={extras.replies}
           renderAction={sessionAction}
+          renderPrAction={sessionPrAction}
+          about={sessionAbout}
+          reply={sessionReply}
+          approve={sessionApprove}
           renderIdentity={sessionIdentity}
           onOpen={openFromSession}
           onIndex={(index) => setSession((value) => value && { ...value, index })}

@@ -182,6 +182,18 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     single(waiting1),
     single(waiting2),
   ];
+  // `?overview&session`: briefings on a few PRs, as the guided session shows them under the title (#596).
+  if (new URLSearchParams(location.search).has('session')) {
+    const briefed: Partial<Record<number, string>> = {
+      321: 'Streams each build step’s log lines to the dashboard as they arrive, through a new server-sent events endpoint, instead of loading the whole log when the step ends. Old builds still load their stored log at once.',
+      312: 'Documents the order in which plugins load: built-ins first, then workspace plugins by name, then user plugins. It also explains how the new hooks replace the old load order.',
+      324: 'Replaces the hand-written config parser with a schema-based one. Unknown keys now warn instead of failing, and the error messages name the file, line and key.',
+    };
+    for (const item of next) {
+      const summary = briefed[item.subject.members[0].number];
+      if (summary) item.briefing = { key: `session-${item.subject.members[0].number}`, status: 'ready', summary, updatedAt: new Date().toISOString() };
+    }
+  }
   items.splice(0, items.length, ...next);
   const members = () => items.flatMap((item) => item.subject.members);
   const find = (url: string) => members().find((member) => member.url === url);
@@ -340,6 +352,18 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         threads: [{ id: `t-${member.number}`, path: 'src/loader.ts', line: 12, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: false, viewerCanResolve: true, viewerCanUnresolve: false,
           comments: [comment(`${member.number}1`, LOGIN, 'Moved the loader up.', 5 * HOUR), comment(`${member.number}2`, reply.author, reply.text, 3 * HOUR)] }],
       });
+    },
+    // The guided session's replies and approvals (components/GuidedSession.tsx): recorded, never sent.
+    reviewThreadAction: (request: { prUrl: string; threadId: string; action: string }) => {
+      writes.push({ kind: `thread-${request.action}`, url: request.prUrl });
+      if (request.action === 'reply') replies.delete(request.prUrl);
+      changed();
+      return Promise.resolve({ id: request.threadId, comments: [], isResolved: request.action === 'resolve' });
+    },
+    submitReview: (request: { prUrl: string; event: string; body: string }) => {
+      writes.push({ kind: `review-${request.event.toLowerCase()}`, url: request.prUrl, comment: request.body });
+      changed();
+      return Promise.resolve({ reviewUrl: `${request.prUrl}#pullrequestreview-1`, droppedCommentCount: 0 });
     },
     feedbackAction: (request: { prUrl: string; action: string; reviewer?: string }) => {
       writes.push({ kind: `${request.action}:${request.reviewer ?? ''}`, url: request.prUrl });
