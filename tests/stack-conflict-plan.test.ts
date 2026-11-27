@@ -50,7 +50,8 @@ void test('a PR whose parent merged has to move only while it targets the merged
   const subject = stack([parent, child]);
   const found = mergedParent(subject, child);
   assert.deepEqual([found?.parent.number, found?.onto], [101, 'main']);
-  // On main, conflicting for any reason: not a move. A squash-merged parent GitHub already moved is not detected.
+  // On main, conflicting for any reason: not a move until an ancestry read shows it still carries the parent's
+  // commits (tests/stack-ancestry.test.ts).
   const moved = { ...child, baseBranch: 'main' };
   assert.equal(mergedParent(stack([parent, moved]), moved), undefined);
   // The PR's own base decides, never a status read's: every surface reads the same (#468).
@@ -114,7 +115,7 @@ void test('"parent merged" is derived as an attention row on your PR, with one w
   assert.deepEqual(row.target, { kind: 'pr', pr: { host: 'github.com', owner: 'o', repo: 'r', number: 102 }, tab: 'summary' });
   assert.deepEqual(menubarRow(row, LOGIN).labels, ['Parent #101 merged']);
   assert.equal(rebaseWords(item.subject, child), 'needs to move onto main after #101 merged');
-  // Moved onto main: the row clears, even when the PR conflicts.
+  // Moved onto main, with no ancestry answer: the row clears, even when the PR conflicts.
   item.subject = stack([parent, { ...child, baseBranch: 'main' }]);
   assert.deepEqual(rows(conflicted({ ...child, baseBranch: 'main' }))[0].kinds, ['conflicts']);
   // Someone else's PR is not yours to move.

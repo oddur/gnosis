@@ -1,6 +1,7 @@
 /**
  * Notification events: the moment an attention kind enters a PR's set (`lib/attention.ts`), plus "approved",
- * which is edge-only and has no row. Pure. The persisted basis makes the same snapshot, a replay or a restart
+ * which is edge-only and has no row. `restack` ("Needs to move") is the one kind with no event: the menu bar and the
+ * Overview show it, and `STATUS_KINDS` leaves it out on purpose. Pure. The persisted basis makes the same snapshot, a replay or a restart
  * derive nothing; `src/notification-store.ts` adds a persisted key per event on top.
  */
 import { attentionTarget, memberAttention, type AttentionKind, type AttentionMember } from './attention';
