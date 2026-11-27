@@ -437,7 +437,12 @@ void app.whenReady().then(async () => {
     const drafts = () => js<number>(`document.querySelectorAll(${JSON.stringify(fileRow + ' .changes-pending-comment')}).length`);
     const draftsBefore = await drafts();
     await enterOn('Imports');
-    await wait(`!!document.querySelector(${JSON.stringify(composer)})`);
+    await wait(`!!document.querySelector(${JSON.stringify(composer)})`).catch(async (error: unknown) => {
+      const state = await js(
+        `({lit:window.treeRows().filter(r=>r.lit).map(r=>r.name),focused:window.focusedTreeRow(),active:document.querySelector('.commit-stream-row[data-active="true"]')?.dataset.file,composers:[...document.querySelectorAll('.changes-comment-composer')].map(c=>c.closest('.commit-stream-row')?.dataset.file),toasts:[...document.querySelectorAll('.app-toast')].map(t=>t.textContent),activeElement:document.activeElement&&(document.activeElement.className||document.activeElement.tagName),rows:window.treeRows().map(r=>r.name+' '+r.decoration)})`
+      ).catch(() => 'unreadable');
+      throw new Error(`${(error as Error).message}\nState: ${JSON.stringify(state)}`);
+    });
     // On the import the item changed, the new file's line 2, with the keyboard in the composer.
     assert.match(await js<string>(`document.querySelector(${JSON.stringify(composer + ' label')}).textContent`), /new line 2\b/);
     await wait("document.activeElement?.tagName==='TEXTAREA'&&!!document.activeElement.closest('.changes-comment-composer')");
