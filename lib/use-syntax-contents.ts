@@ -127,8 +127,8 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
  */
 const SETTLE_MS = 150;
 /**
- * Each element that scrolled, with its offsets as its last scroll event left them. Held weakly: a closed tab's scroller
- * must not keep its tree alive.
+ * Each element that scrolled, and each diff scroller, with its offsets as the last `mark` took them. Held weakly: a
+ * closed tab's scroller must not keep its tree alive.
  */
 let scrollers: { element: WeakRef<Element>; top?: number; left?: number }[] = [];
 const settle = createSettleWait(SETTLE_MS, {
@@ -147,6 +147,9 @@ const settle = createSettleWait(SETTLE_MS, {
   },
   // Where each scroller is as the wait's last frame is asked for: once per wait, not on every scroll event.
   mark: () => {
+    // A diff scroller that has not scrolled yet is watched too: its first scroll can come in the wait's last frame.
+    for (const element of document.querySelectorAll(DIFF_SCROLLER))
+      if (!scrollers.some((at) => at.element.deref() === element)) scrollers.push({ element: new WeakRef(element) });
     for (const at of scrollers) {
       const element = at.element.deref();
       if (!element?.isConnected) continue;
