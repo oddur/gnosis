@@ -918,9 +918,10 @@ export function OverviewPage(props: OverviewPageProps) {
     if (resolve) await window.electronAPI.reviewThreadAction({ prUrl: step.member.url, threadId, action: 'resolve' });
     actions.refresh();
   };
-  const sessionApprove = async (step: SessionStep, body: string) => {
+  // Approve, or request changes (GitHub requires its comment): the review write the PR page's Submit review uses.
+  const sessionApprove = async (step: SessionStep, body: string, event: 'APPROVE' | 'REQUEST_CHANGES' = 'APPROVE') => {
     const { member } = step;
-    await window.electronAPI.submitReview({ prUrl: member.url, headSha: member.headSha, baseSha: member.baseSha, baseBranch: member.baseBranch, event: 'APPROVE', body, comments: [] });
+    await window.electronAPI.submitReview({ prUrl: member.url, headSha: member.headSha, baseSha: member.baseSha, baseBranch: member.baseBranch, event, body, comments: [] });
     actions.refresh();
   };
   const openFromSession = (step: SessionStep, where: SessionOpen) => {

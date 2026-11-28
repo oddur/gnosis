@@ -232,7 +232,7 @@ export function stepFacts(input: { member: Pick<ReviewMember, 'author' | 'headSh
     const asked = member.requestedReviewers.filter((name) => !latest.has(name)).map((name) => (name.toLowerCase() === me ? 'your review requested' : `${name} requested`));
     const all = [...said, ...asked];
     facts.push(all.length
-      ? { key: 'reviews', text: all.length > 3 ? `${all.slice(0, 3).join(', ')} +${all.length - 3}` : all.join(', '), ...(all.length > 3 ? { title: all.join(', ') } : {}) }
+      ? { key: 'reviews', text: all.length > 3 ? `${all.slice(0, 3).join(', ')} +${all.length - 3}` : all.join(', '), title: all.join(', ') }
       : { key: 'reviews', text: 'No reviewers' });
   }
   if (input.paths?.length) {

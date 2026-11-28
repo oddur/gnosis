@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { AlarmClock, ArrowLeft, ChevronDown, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
+import { AlarmClock, ArrowLeft, ChevronDown, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessageSquareDiff, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { DropdownMenu } from 'radix-ui';
@@ -7,7 +7,7 @@ import { conflictHeaderLine } from '../lib/conflict-header';
 import { presetDetail, snoozePresets, type SnoozeOn } from '../lib/snooze';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { useConflictHeader } from '../lib/use-conflict-header';
-import { decideEvidence, mergeBlockers, plainText, runSummary, stepDigest, stepFacts, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { decideEvidence, mergeBlockers, plainText, runSummary, showsDepth, stepDigest, stepFacts, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { SinceEvent } from '../lib/since-log';
 import type { WaitingReply } from '../lib/use-morning';
@@ -66,7 +66,8 @@ export interface GuidedSessionProps {
   /** The PR's icon and repository label, as the Overview rows draw them. */
   renderIdentity: (step: SessionStep) => ReactNode;
   reply: (step: SessionStep, threadId: string, body: string, resolve: boolean) => Promise<void>;
-  approve: (step: SessionStep, body: string) => Promise<void>;
+  /** Submit a review from the step: an approval (the body optional), or a request for changes (the body required). */
+  approve: (step: SessionStep, body: string, event?: 'APPROVE' | 'REQUEST_CHANGES') => Promise<void>;
   onOpen: (step: SessionStep, where: SessionOpen) => void;
   onIndex: (index: number) => void;
   onOutcome: (id: string, outcome: StepOutcome) => void;
@@ -198,6 +199,7 @@ export function GuidedSession(props: GuidedSessionProps) {
       if (!outcomes[current.id]) onOutcome(current.id, 'opened');
       onOpen(current, key === 'd' ? 'review' : 'summary');
     } else if (key === 'a' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-approve-now]')?.click();
+    else if (key === 'x' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-changes]')?.click();
     else if (key === 'c' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-close]')?.click();
     else if (key === 'r' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-remind]')?.click();
     else if (key === 'Enter' && event.target === root.current) {
@@ -241,8 +243,8 @@ export function GuidedSession(props: GuidedSessionProps) {
           {index + 1 < steps.length ? (
             <>
               <span className="guided-session-next-label">Next</span>
-              <span>#{steps[index + 1].member.number} {steps[index + 1].title}</span>
-              <span className="guided-session-next-why">{steps[index + 1].why}</span>
+              <span title={`#${steps[index + 1].member.number} ${steps[index + 1].title}`}>#{steps[index + 1].member.number} {steps[index + 1].title}</span>
+              <span className="guided-session-next-why" title={steps[index + 1].why}>{steps[index + 1].why}</span>
             </>
           ) : (
             <span className="guided-session-next-label">Last one</span>
@@ -270,7 +272,9 @@ function newHeading(lead: string): string {
   return match ? `Since you ${match[1]} ${match[2]}` : lead;
 }
 
-type Busy = 'reply' | 'approve' | undefined;
+type Busy = 'reply' | 'approve' | 'changes' | undefined;
+/** The review form under the card: an approval with an optional comment, or a request for changes with a required one. */
+type ReviewForm = 'approve' | 'changes';
 
 function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; snoozeStep?: (choice?: SnoozeChoice | 'custom') => void; muteStep?: () => void; muting?: boolean; next: () => void }) {
   const { step, gone, skip, snoozeStep, muteStep, muting, next, login, now, statusOf, since, rereviewLines, replies, outcomes, read, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
@@ -296,7 +300,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   const [error, setError] = useState<string>();
   const [replyText, setReplyText] = useState('');
   const [resolveToo, setResolveToo] = useState(false);
-  const [approving, setApproving] = useState(false);
+  const [approving, setApproving] = useState<ReviewForm>();
   const [note, setNote] = useState('');
   const [result, setResult] = useState<string>();
   const [sent, setSent] = useState<string>();
@@ -310,7 +314,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   // the approval form, so approving unread code takes a second, deliberate press. A summary-depth step approves at once.
   const unread = depth === 'deep' && !read[step.id];
   const closeForm = () => {
-    setApproving(false);
+    setApproving(undefined);
     backToSession();
   };
   const replyHere = !!waiting?.threadId && !moved && !sent;
@@ -334,7 +338,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       });
     } catch (failure) {
       const message = failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(failure);
-      setError(`${what === 'reply' ? 'The reply was not sent' : 'The approval was not sent'}: ${message} Your text is kept. Try again, or open the full PR.`);
+      setError(`${what === 'reply' ? 'The reply was not sent' : what === 'changes' ? 'The request for changes was not sent' : 'The approval was not sent'}: ${message} Your text is kept. Try again, or open the full PR.`);
     } finally {
       setBusy(undefined);
     }
@@ -348,6 +352,12 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     if (busy || !canApprove) return;
     void write('approve', async () => { await approve(step, note.trim()); setApproved(true); }, `Approved #${step.member.number}.`);
   };
+  // Request changes: the same review write, with the comment GitHub requires.
+  const sendChanges = () => {
+    if (busy || !canApprove || !note.trim()) return;
+    void write('changes', async () => { await approve(step, note.trim(), 'REQUEST_CHANGES'); setApproved(true); }, `Requested changes on #${step.member.number}.`);
+  };
+  const sendForm = () => (approving === 'changes' ? sendChanges() : sendApproval());
   const inline = renderAction(step);
   // The one primary action: what moves this PR on from here. A waiting reply's box is the primary when there is one;
   // otherwise the step's own action (Merge, Rerun), else the depth Gnosis suggests.
@@ -376,6 +386,10 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     </Button>
   ) : null;
   const suggestedOpen = !moved && !inline && !replyHere && !update;
+  // On a review a summary is enough for, Approve is the primary: one press, A.
+  const approveFills = canApprove && (step.kind === 'review' || step.kind === 'rereview');
+  const approvePrimary = suggestedOpen && depth === 'summary' && approveFills;
+  const secondary = renderSecondary?.(step);
   const blockerAction = (blocker: Blocker): ReactNode => {
     if (moved) return null;
     switch (blocker.action.kind) {
@@ -575,21 +589,22 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       </div>}
       {approving && !moved && (
         <div className="guided-step-block guided-step-approve" data-session-approve>
-          <label className="guided-step-heading" htmlFor={`approve-${step.id}`}>Approve #{step.member.number}</label>
-          {unread && <p className="guided-step-quiet" data-session-unread>You haven’t opened this PR yet. Approve only if you’ve read it elsewhere.</p>}
+          <label className="guided-step-heading" htmlFor={`approve-${step.id}`}>{approving === 'changes' ? `Request changes on #${step.member.number}` : `Approve #${step.member.number}`}</label>
+          {unread && approving === 'approve' && <p className="guided-step-quiet" data-session-unread>You haven’t opened this PR yet. Approve only if you’ve read it elsewhere.</p>}
           <textarea
             id={`approve-${step.id}`}
             data-session-primary
-            placeholder="Add a comment (optional)"
+            placeholder={approving === 'changes' ? 'What should change? (required)' : 'Add a comment (optional)'}
+            aria-required={approving === 'changes' || undefined}
             rows={2}
             value={note}
-            disabled={busy === 'approve'}
+            disabled={!!busy}
             autoFocus
             onChange={(event) => setNote(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
-                sendApproval();
+                sendForm();
               } else if (event.key === 'Escape') {
                 event.preventDefault();
                 closeForm();
@@ -597,11 +612,19 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
             }}
           />
           <div className="guided-step-compose-actions">
-            <Button size="sm" disabled={!!busy} onClick={sendApproval}>
-              <Check size={14} aria-hidden="true" />
-              {busy === 'approve' ? 'Approving…' : 'Approve'}
-              <kbd>⌘↵</kbd>
-            </Button>
+            {approving === 'changes' ? (
+              <Button size="sm" disabled={!!busy || !note.trim()} onClick={sendChanges} data-session-send-changes>
+                <MessageSquareDiff size={14} aria-hidden="true" />
+                {busy === 'changes' ? 'Sending…' : 'Request changes'}
+                <kbd>⌘↵</kbd>
+              </Button>
+            ) : (
+              <Button size="sm" disabled={!!busy} onClick={sendApproval}>
+                <Check size={14} aria-hidden="true" />
+                {busy === 'approve' ? 'Approving…' : 'Approve'}
+                <kbd>⌘↵</kbd>
+              </Button>
+            )}
             <Button size="sm" variant="ghost" disabled={!!busy} onClick={closeForm}>Cancel</Button>
           </div>
         </div>
@@ -619,7 +642,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
             {result}
           </p>
         )}
-        {!moved && (
+        {!moved && showsDepth(step.kind) && (
           <p className="guided-step-depth" data-depth={depth}>
             {depth === 'deep' ? <ScanSearch size={14} aria-hidden="true" /> : <TextSearch size={14} aria-hidden="true" />}
             <span>
@@ -628,37 +651,74 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           </p>
         )}
         <div className="guided-step-buttons">
-          {primary}
-          {canApprove && (
-            <span className="guided-step-approve-group">
-              <Button size="sm" variant={suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview') ? 'default' : 'outline'}
-                data-session-approve-now data-session-primary={(suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview')) || undefined}
-                disabled={!!busy} onClick={unread ? () => setApproving(true) : sendApproval}
-                title={unread ? `Approve #${step.member.number}… You haven’t opened it yet · A` : `Approve #${step.member.number} now · A`}>
-                <Check size={14} aria-hidden="true" />
-                {busy === 'approve' ? 'Approving…' : unread ? 'Approve…' : 'Approve'}
-                <kbd>A</kbd>
-              </Button>
-              {!approving && <button type="button" className="guided-step-link" onClick={() => setApproving(true)}>with a comment…</button>}
+          {/* Move it: the primary, and at most one more way forward. */}
+          {(primary || canApprove || (!moved && secondary)) && (
+            <span className="guided-step-group" data-group="move" role="group" aria-label="Move it">
+              {primary}
+              {canApprove && (
+                <>
+                  <span className="pr-action-split session-approve-split">
+                    <Button size="sm" variant={approvePrimary ? 'default' : 'outline'}
+                      data-session-approve-now data-session-primary={approvePrimary || undefined}
+                      disabled={!!busy} onClick={unread ? () => setApproving('approve') : sendApproval}
+                      title={unread ? `Approve #${step.member.number}… You haven’t opened it yet · A` : `Approve #${step.member.number} now · A`}>
+                      <Check size={14} aria-hidden="true" />
+                      {busy === 'approve' ? 'Approving…' : unread ? 'Approve…' : 'Approve'}
+                      <kbd>A</kbd>
+                    </Button>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <Button size="icon-sm" variant={approvePrimary ? 'default' : 'outline'} className="pr-action-chevron" aria-label="Approve with a comment…" title="Approve with a comment…" disabled={!!busy}>
+                          <ChevronDown size={14} aria-hidden="true" />
+                        </Button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content className="pr-update-menu pr-method-menu" align="start" sideOffset={5}>
+                          <DropdownMenu.Item onSelect={() => setApproving('approve')}>Approve with a comment…</DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </span>
+                  <Button size="sm" variant="outline" disabled={!!busy} onClick={() => setApproving('changes')} title={`Request changes on #${step.member.number}, with a comment · X`} data-session-changes>
+                    <MessageSquareDiff size={14} aria-hidden="true" />
+                    Request changes…
+                    <kbd>X</kbd>
+                  </Button>
+                </>
+              )}
+              {!moved && !canApprove && secondary}
             </span>
           )}
-          {openButton('summary', suggestedOpen && depth === 'summary' && !(canApprove && (step.kind === 'review' || step.kind === 'rereview')))}
-          {openButton('review', suggestedOpen && depth === 'deep')}
-          {!moved && renderSecondary?.(step)}
-          {!moved && snoozeStep && <SnoozeSplit number={step.member.number} own={!!login && step.member.author.toLowerCase() === login.toLowerCase()} onSnooze={snoozeStep} />}
-          {!moved && muteStep && !own && (
-            <Button size="sm" variant="ghost" onClick={muteStep} disabled={muting} title={`Mute #${step.member.number}: stop following it · M`} data-session-mute>
-              <VolumeX size={14} aria-hidden="true" />
-              {muting ? 'Muting…' : 'Mute'}
-              <kbd>M</kbd>
-            </Button>
-          )}
+          {/* Read: the PR itself, at either depth. */}
           {!moved && (
-            <Button size="sm" variant="ghost" onClick={skip} title="Skip for now · S">
-              <SkipForward size={14} aria-hidden="true" />
-              Skip
-              <kbd>S</kbd>
-            </Button>
+            <span className="guided-step-group" data-group="read" role="group" aria-label="Read">
+              {openButton('summary', suggestedOpen && depth === 'summary' && !approveFills)}
+              {openButton('review', suggestedOpen && depth === 'deep')}
+            </span>
+          )}
+          {moved && (
+            <span className="guided-step-group" data-group="read" role="group" aria-label="Read">
+              {openButton('summary', false)}
+              {openButton('review', false)}
+            </span>
+          )}
+          {/* Put off: quieter, after a divider. */}
+          {!moved && (
+            <span className="guided-step-group" data-group="later" role="group" aria-label="Put off">
+              {snoozeStep && <SnoozeSplit number={step.member.number} own={own} onSnooze={snoozeStep} />}
+              {muteStep && !own && (
+                <Button size="sm" variant="ghost" onClick={muteStep} disabled={muting} title={`Mute #${step.member.number}: stop following it · M`} data-session-mute>
+                  <VolumeX size={14} aria-hidden="true" />
+                  {muting ? 'Muting…' : 'Mute'}
+                  <kbd>M</kbd>
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={skip} title="Skip for now · S">
+                <SkipForward size={14} aria-hidden="true" />
+                Skip
+                <kbd>S</kbd>
+              </Button>
+            </span>
           )}
           {outcome === 'opened' && !moved && <span className="guided-step-note" role="status">Opened in its own tab. Come back here to go on.</span>}
         </div>
@@ -756,7 +816,7 @@ function SnoozeSplit({ number, own, onSnooze }: { number: number; own: boolean; 
   const tomorrow = presets.find((preset) => preset.id === 'tomorrow');
   return (
     <span className="pr-action-split session-snooze-split">
-      <Button size="sm" variant="outline" onClick={() => onSnooze()} data-session-snooze
+      <Button size="sm" variant="ghost" onClick={() => onSnooze()} data-session-snooze
         title={`Snooze #${number} ${tomorrow ? `until ${presetDetail(tomorrow.until, now)}` : 'until new activity'} · Z`}>
         <AlarmClock size={14} aria-hidden="true" />
         Snooze
@@ -764,7 +824,7 @@ function SnoozeSplit({ number, own, onSnooze }: { number: number; own: boolean; 
       </Button>
       <DropdownMenu.Root onOpenChange={(open) => open && setNow(Date.now())}>
         <DropdownMenu.Trigger asChild>
-          <Button size="icon-sm" variant="outline" className="pr-action-chevron" aria-label="Snooze until…" title="Snooze until…">
+          <Button size="icon-sm" variant="ghost" className="pr-action-chevron" aria-label="Snooze until…" title="Snooze until…">
             <ChevronDown size={14} aria-hidden="true" />
           </Button>
         </DropdownMenu.Trigger>
