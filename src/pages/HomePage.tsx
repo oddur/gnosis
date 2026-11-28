@@ -161,6 +161,10 @@ interface Props {
   prefillPrUrl?: string;
   prefillReviewId?: string;
   initialSubjectId?: string;
+  /** The tab is opening onto a PR: the queue renders while it shows, but is not kept behind the PR (#355). */
+  deferQueue?: boolean;
+  /** The workspace shows another page (a local review): a deferred queue does not render behind it. */
+  hidden?: boolean;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
 /** Each workspace tab shows its own saved view over the shared queue. */
@@ -195,7 +199,7 @@ function markQueuePainted() {
     prefetchScreens();
   }));
 }
-export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, deferQueue, hidden, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   useRenderSpan('queue page render');
   const tabs = useWorkspaceNavigation();
   const repositories = useRepositorySettings();
@@ -291,6 +295,9 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   // Mounted once shown, then kept behind the queue, so switching home tabs is instant. A lane filter needs its lanes.
   const overviewMounted = useRef(false);
   if (overviewOpen || filters.lane) overviewMounted.current = true;
+  // The queue stays mounted behind a PR once the reader has had it on screen. A tab opened onto a PR renders it the
+  // first time the reader goes back to it (#355).
+  const queueMounted = useRef(false);
   // A tile, its count or "All N" opens the whole queue grouped by Action, scrolled to that lane's group.
   const [revealGroup, setRevealGroup] = useState<{ key: string; nonce: number }>();
   const showLane = (lane: OverviewLane | OverviewActionGroup) => {
@@ -625,6 +632,11 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
     () => summarySource && itemWithLifecycle(summarySource, url => freshPr(statuses[url])),
     [summarySource, statuses]
   );
+  if (!summaryItem && !deferQueue) queueMounted.current = true;
+  // A deferred queue renders while it is the page on screen; behind a PR or another page only once kept.
+  const queueRendered = queueMounted.current || (!summaryItem && !(deferQueue && hidden));
+  // The reader acting in the queue keeps it, whatever way they came to it: its rows, search and scroll survive.
+  const keepQueue = () => { queueMounted.current = true; };
   // Saved tabs and navigation history store the opened item, so they restore the fresh state as well.
   useEffect(() => {
     if (!openedItem) return;
@@ -1956,7 +1968,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
       <TitlebarScope active={!summaryItem}>
       <Activity mode={summaryItem ? 'hidden' : 'visible'}>
-        <div className="workbench-body">
+        {queueRendered && <div className="workbench-body" onPointerDownCapture={keepQueue} onKeyDownCapture={keepQueue}>
         <QueueSidebar
           currentReview={
             overviewOpen ? 'Overview' : !tool && (savedView || !activeQueueView)
@@ -2787,7 +2799,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
           </div>
           </></Activity>}
         </main>
-        </div>
+        </div>}
       </Activity>
       </TitlebarScope>
       {onboarding.open && onboarding.state.draft && <OnboardingSetup draft={onboarding.state.draft} onChange={onboarding.change}

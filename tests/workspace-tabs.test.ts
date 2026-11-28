@@ -10,6 +10,7 @@ import {
   saveWorkspaceTabs,
   restoreWorkspaceTabs,
   sameTabChrome,
+  workspaceOpensSubject,
 } from '../lib/workspace-tabs';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import type { AppLocation } from '../lib/navigation-history';
@@ -214,4 +215,19 @@ void test('a closed tab’s PRs leave the inspection caches unless another open 
   state = retainTabPrs(state.next, [{ id: 'queue', location: at(c) }, { id: 'two', location: at(b) }]);
   assert.deepEqual(state.forget, [a], 'c stays: the queue tab shows it');
   assert.deepEqual(retainTabPrs(state.next, [{ id: 'queue', location: home }]).forget, [b]);
+});
+
+void test('a tab opened onto a PR, stack or explanation defers its queue; a tab opened onto a list does not (#355)', () => {
+  const item = { attention: 'other', subject: { id: 'pr', members: [{ url: 'https://github.com/o/r/pull/1' }] } } as unknown as QueueItem;
+  const saved = { id: 't', title: 'T', label: 'T', detail: '', section: 'all' };
+  const homeWithoutItem: Omit<typeof home.home, 'item'> = home.home;
+  assert.equal(workspaceOpensSubject({ kind: 'home', subject: item }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'home', url: 'https://github.com/o/r/pull/1' }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'review', reviewId: 'r1' }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'restore', account: 'maya', saved: { ...saved, home: { ...homeWithoutItem, subjectId: 'pr' } } }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'restore', account: 'maya', saved: { ...saved, reviewId: 'r1' } }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'location', location: { ...home, home: { ...home.home, item } } }), true);
+  assert.equal(workspaceOpensSubject({ kind: 'home', section: 'all' }), false);
+  assert.equal(workspaceOpensSubject({ kind: 'restore', account: 'maya', saved: { ...saved, home: homeWithoutItem } }), false);
+  assert.equal(workspaceOpensSubject({ kind: 'location', location: home }), false);
 });

@@ -34,8 +34,10 @@ const KEEP_TABS = 6;
 const FILES_PER_PR = 300;
 
 /** Heap budgets in MB. Calibrated in Docker; see the numbers this suite prints. */
-// Six hidden PR tabs stay mounted, with their Changes views; in this development build that is most of the peak.
-const PEAK_OVER_BASELINE_MB = 170;
+// Six hidden PR tabs stay mounted, with their Changes views; in this development build that is most of the peak. Each
+// PR tab also kept a hidden copy of the queue behind its PR until #355: locally 170-180 MB over the baseline with it,
+// about 104 MB without it (CI measured 140-162 MB with it).
+const PEAK_OVER_BASELINE_MB = 140;
 const CLOSED_OVER_BASELINE_MB = 30;
 // Measurements of the heap after the tabs close, 3 s apart, while it stays over the budget.
 const CLOSED_TRIES = 5;
@@ -272,6 +274,12 @@ void app.whenReady().then(async () => {
     const open = await measure();
     samples['tabs open'] = open.heapMB;
     if (open.heapMB > peak.heapMB) peak = open;
+    // A tab opened onto a PR keeps no queue behind it until the reader goes back to its queue (#355): only the queue
+    // tab renders one.
+    // The last tab's queue shows while its PR opens: wait for the count to settle, then read it.
+    const queueCount = "[...document.querySelectorAll('.workspace-panel')].filter(p=>p.querySelector('.workbench-body')).length";
+    await wait(`${queueCount}===1`).catch(() => undefined);
+    const queues = await js<number>(queueCount);
     await snapshot('peak');
     for (let count = await js<number>(`${tabs}.length`); count > 1; count--) await closeTab(count - 1);
     await toQueue();
@@ -363,6 +371,7 @@ void app.whenReady().then(async () => {
       `The discussion cache stays within its byte bound: ${JSON.stringify(discussions(open.caches))}`
     );
     assert.equal(await js<number>(heapDiscussionsLeft), 0, 'No closed tab keeps its discussion cached');
+    assert.equal(queues, 1, `Only the queue tab renders a queue while ${KEEP_TABS} PR tabs are open: ${queues}`);
     assert.equal(closed.caches.mountedTabs, 1, 'Only the queue tab stays mounted');
     assert.equal(closed.caches.shadowDomNodes, 0, 'No diff stays rendered once its tab closes');
     assert.ok(
