@@ -42,7 +42,10 @@ npm run build:extension
 This writes:
 
 - `dist-extension/chrome/` and `dist-extension/open-in-gnosis-chrome-<version>.zip` (Chrome and Edge)
-- `dist-extension/firefox/` and `dist-extension/open-in-gnosis-firefox-<version>.xpi` (Firefox, unsigned)
+- `dist-extension/firefox/` and `dist-extension/open-in-gnosis-firefox-<version>.zip` (Firefox, unsigned)
+- `dist-extension/open-in-gnosis-source-<version>.zip` (the source AMO asks for, with `SOURCE-BUILD.md`)
+
+The version is the `version` in package.json, which the release workflows set from the tag. A pre-release suffix is dropped, because stores accept only numbers. The archives are reproducible: the same source gives byte-identical files, and CI checks that the source archive rebuilds them.
 
 The source is in `src/`. `manifest.ts` is the one manifest source; `build.ts` writes a variant for each browser (Chrome uses a background service worker; Firefox uses a background script and needs `browser_specific_settings.gecko`). The icons in `icons/` were made from `Icon/web/icon-512.png`.
 
@@ -60,7 +63,7 @@ npx --yes web-ext@8 lint --source-dir dist-extension/firefox
 
 Tests: `tests/browser-extension-link.test.ts` and `tests/browser-extension-dom.test.ts`, run by `npm test`. The URL shapes are in `tests/fixtures/github-page-urls.json`, which the app's protocol tests also use.
 
-CI (`.github/workflows/checks.yml`, job "Browser extension") builds both packages, lints the Firefox one, and uploads both as artifacts. It does not publish.
+CI (`.github/workflows/checks.yml`, job "Browser extension") builds the packages, lints the Firefox one, rebuilds from the source archive, and uploads them as artifacts. It does not publish.
 
 ## Load it unpacked
 
@@ -74,45 +77,6 @@ After a rebuild, click the reload button on the extension card (Chrome, Edge) or
 
 The first time a link opens, the browser asks whether to open Gnosis. Choose to always allow it for github.com.
 
-## Publishing (to do by the owner)
+## Publishing
 
-Nothing here is automated. CI has no store credentials.
-
-1. **Firefox add-on id.** `manifest.ts` uses the placeholder `open-in-gnosis@gnosis.app`. AMO ties the add-on to this id for good, so choose the final id before the first upload.
-2. **Chrome Web Store.** Register a developer account (one-time fee) at the Chrome Web Store Developer Dashboard. Decide which Google account owns it; a group publisher account lets more than one person manage it. Upload `open-in-gnosis-chrome-<version>.zip`, fill in the listing and the privacy practices form (single purpose, permission reasons from the table above, "does not collect user data"), and submit for review.
-3. **Microsoft Edge Add-ons.** Register in Partner Center (free) and upload the same `.zip`. Edge can also install from the Chrome Web Store, so this is optional.
-4. **Firefox (AMO).** Firefox installs only signed add-ons, even unlisted ones. Create an AMO developer account. Choose **listed** (public page on addons.mozilla.org) or **unlisted** (signed file that you host, for example on the GitHub release). Then either upload the `.xpi` by hand, or create API credentials (AMO → Tools → Manage API Keys) and store them as CI secrets, for example `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`, for a release job that runs:
-
-   ```bash
-   npx --yes web-ext@8 sign --source-dir dist-extension/firefox --channel listed \
-     --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
-   ```
-
-   Run that only from a release workflow on tags, never on pull requests. The scripts are bundled from TypeScript (not minified), so AMO asks for the source with build steps: add `--upload-source-code <zip of the repo source>` and point the reviewer to "`npm ci`, then `npm run build:extension`".
-5. **Versions.** Bump `EXTENSION_VERSION` in `manifest.ts` for each store upload. Stores reject a version they have seen.
-
-### Store listing text
-
-**Name:** Open in Gnosis
-
-**Short description:** Open GitHub pull requests in the Gnosis code review app, at the same file, line or thread.
-
-**Description:**
-
-> Adds an "Open in Gnosis" button to GitHub pull request, commit and compare pages. One click opens the same pull request in the Gnosis desktop app, on the tab you were on, and at the file, line or review thread when there is one.
->
-> You need the Gnosis app: https://github.com/oddur/gnosis/releases/latest
->
-> The extension only reads the address of the GitHub page when you click the button or the toolbar icon. It makes no network requests and uses no GitHub token.
-
-**Category:** Developer Tools
-
-### Privacy statement
-
-> Open in Gnosis does not collect, store or send any personal data or browsing data.
->
-> When you click its button or toolbar icon on a GitHub page, the extension passes that page's address to the Gnosis app on your computer through a `gnosis://` link. The address does not leave your computer through the extension. The extension makes no network requests.
->
-> The extension stores one setting in your browser: whether you dismissed the "Gnosis didn't open" hint. It does not use cookies, analytics or GitHub credentials.
->
-> Permissions: access to github.com, to show the button; `storage`, for the setting above; `activeTab`, to read the address of the tab when you click the toolbar icon.
+`.github/workflows/extension-publish.yml` uploads the packages to the Chrome Web Store, Edge Add-ons and AMO on release tags, for each store whose secrets are set. The first upload to each store is manual. The steps, the listing text, the privacy policy and the store images are in [`docs/store/`](../../docs/store/SUBMITTING.md).
