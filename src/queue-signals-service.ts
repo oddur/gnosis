@@ -8,6 +8,7 @@ import {
   queueSignalKey,
   queueSignalsCacheKey,
   checkSignals,
+  awaiting,
   type QueueSignalRequest,
   type QueueSignals,
   type QueueSignalOptions,
@@ -36,6 +37,7 @@ export function hasSupersededRuns(suites: (SuiteRun | null)[]) {
 
 interface PullSignals {
   headRefOid: string;
+  authorAssociation?: string;
   state: string;
   isDraft: boolean;
   mergeable: string;
@@ -167,7 +169,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
           { owner, repo, number, request },
           i
         ) => `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) {
-      headRefOid state isDraft mergeable mergeStateStatus reviewDecision baseRefName baseRefOid
+      headRefOid state isDraft mergeable mergeStateStatus reviewDecision baseRefName baseRefOid authorAssociation
       baseRef { compare(headRef:${JSON.stringify(request.headSha)}) { behindBy } }
       mergeQueue { id } mergeQueueEntry { state }
       totalCommentsCount
@@ -282,7 +284,10 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
                 .filter((c) => c.state === 'SKIPPED' || c.state === 'NEUTRAL')
                 .reduce((sum, c) => sum + c.count, 0),
               passed: counts.filter((c) => c.state === 'SUCCESS').reduce((sum, c) => sum + c.count, 0),
+              // Fork workflow runs held for a maintainer's approval read as ACTION_REQUIRED (#595); still in `failed`.
+              ...awaiting(counts.filter((c) => c.state === 'ACTION_REQUIRED').reduce((sum, c) => sum + c.count, 0)),
             },
+            ...(pr.authorAssociation ? { authorAssociation: pr.authorAssociation } : {}),
           };
           fresh.push(value);
           // The rollup also counts jobs of superseded workflow runs, such as runs cancelled by a concurrency group.

@@ -361,6 +361,9 @@ void test('merges nobody reviewed are never rows: the quiet line under Next up c
   const full = page(build([...many, big, ...small].map((m) => item([m])), status), status);
   assert.equal(full.next.items.length, NEXT_LIMIT);
   assert.equal(nextMoreLine(full.next), '3 ready to merge without review · 1 more approved and ready to merge');
+  // The approved merge Next up had no room for is a quick win a guided session walks; unreviewed ones never are.
+  assert.deepEqual(full.next.overflow.map((entry) => [entry.kind, entry.member.number]), [['merge', 26]]);
+  assert.deepEqual(some.next.overflow, [], 'Room for every approved merge: nothing overflows');
   assert.equal(nextMoreLine({ unreviewed: [], moreApproved: [] }), undefined);
 });
 
@@ -830,7 +833,8 @@ void test('the reply quoted on a row is the last human comment of a thread waiti
       { id: 't2', path: 'a', line: 2, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: false, viewerCanResolve: true, viewerCanUnresolve: true, comments: [comment('2', LOGIN, 'mine'), comment('3', 'owen', 'Could we keep it?'), comment('4', 'ci-bot', 'beep', true)] },
     ],
   } as unknown as GitHubReviewThreads;
-  assert.deepEqual(waitingReply(discussion, LOGIN, LOGIN), { author: 'owen', text: 'Could we keep it?' });
+  // The thread comes with it, so the guided session can reply in place (components/GuidedSession.tsx).
+  assert.deepEqual(waitingReply(discussion, LOGIN, LOGIN), { author: 'owen', text: 'Could we keep it?', threadId: 't2', canResolve: true, path: 'a', line: 2 });
   assert.equal(waitingReply(undefined, LOGIN, LOGIN), undefined);
 });
 

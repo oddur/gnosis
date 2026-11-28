@@ -12,6 +12,7 @@ export function BulkCheckRerun({
   onChanged,
   load,
   trigger,
+  onRequested,
 }: {
   members: ReviewMember[];
   values: Partial<Record<string, PrChecks>>;
@@ -20,6 +21,8 @@ export function BulkCheckRerun({
   load?: () => Promise<Partial<Record<string, PrChecks>>>;
   /** Replaces the button. `open` reads the checks first when `load` is given. */
   trigger?: (open: () => void, busy: boolean) => ReactNode;
+  /** Every rerun in the plan was requested: GitHub took them all, and none failed. */
+  onRequested?: () => void;
 }) {
   const [loaded, setLoaded] = useState<Partial<Record<string, PrChecks>>>();
   const [loading, setLoading] = useState(false);
@@ -38,6 +41,7 @@ export function BulkCheckRerun({
     setBusy(true);
     setErrors({});
     let changed = false;
+    let failed = false;
     try {
       // Sequential writes respect the shared interactive API scheduler and never retry automatically.
       for (const run of remaining) {
@@ -46,6 +50,7 @@ export function BulkCheckRerun({
           changed = true;
           setAccepted((current) => ({ ...current, [run.key]: run.revision }));
         } catch (error) {
+          failed = true;
           setErrors((current) => ({ ...current, [run.key]: error instanceof Error ? error.message : String(error) }));
           // Stop on errors (including rate limits); preserve accepted requests for a safe manual retry.
           break;
@@ -55,6 +60,7 @@ export function BulkCheckRerun({
       pending.current = false;
       setBusy(false);
       if (changed && window.electronAPI.githubSyncVersion !== 1) onChanged();
+      if (changed && !failed) onRequested?.();
     }
   }
   const openPlan = async () => {

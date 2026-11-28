@@ -45,8 +45,13 @@ export function routeDeepLink(
   if (target.kind === 'queue') {
     const active = state.tabs.find((tab) => tab.id === state.active);
     const plainQueue = !active?.location || (active.location.page === 'home' && !active.location.home.item);
+    // The Overview opens where it already is: one Overview tab, and it keeps what it holds, such as a guided session.
+    const overview =
+      target.section === 'overview' && !target.filters && !target.view
+        ? state.tabs.find((tab) => tab.location?.page === 'home' && tab.location.home.overview && !tab.location.home.item)
+        : undefined;
     return {
-      tab: plainQueue ? { kind: 'active' } : { kind: 'new' },
+      tab: overview ? { kind: 'reuse', id: overview.id } : plainQueue ? { kind: 'active' } : { kind: 'new' },
       destination: {
         kind: 'home',
         section: target.section ?? 'all',

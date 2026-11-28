@@ -362,9 +362,10 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
   const mutedUrls = useMemo(() => new Set(queue.mutedPrs?.map(entry => entry.member.url) ?? []), [queue.mutedPrs]);
   const visibleHistory = useMemo(() => history.filter(entry => !isMutedReview(entry, mutedUrls)), [history, mutedUrls]);
   // Muting saves the full PRs. Unmuting sends URLs; the main process restores the saved PRs.
-  const changeMutes = async (request: MutePrRequest) => {
+  // `stay`: the caller keeps the reader where they are (the guided session moves on by itself). True once saved.
+  const changeMutes = async (request: MutePrRequest, { stay = false } = {}): Promise<boolean> => {
     const muted = request.muted;
-    if (muteBusyRef.current) return;
+    if (muteBusyRef.current) return false;
     muteBusyRef.current = true; setMuteBusy(true); setMuteError('');
     const release = workbenchStore.hold();
     try {
@@ -372,15 +373,19 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
       // Unmuting changes the saved-review revision, so the store reads saved reviews again.
       workbenchStore.apply(next); setError('');
       if (muted) {
-        setOpenedItem(null); setSelected(null);
-        requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
+        if (!stay) {
+          setOpenedItem(null); setSelected(null);
+          requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
+        }
         const urls = request.members.map(member => member.url);
         const id = toast.add({ type: 'success', title: urls.length === 1 ? `Muted #${request.members[0].number}` : `Muted ${urls.length} PRs`,
           actionProps: { children: 'Undo', onClick: () => { toast.close(id); void changeMutes({ muted: false, urls }); } } });
       }
+      return true;
     } catch (error) {
       const message = `Could not ${muted ? 'mute' : 'unmute'} PRs: ${error instanceof Error ? error.message : String(error)}. Nothing changed. Try again.`;
       setMuteError(message); setError(message);
+      return false;
     } finally { release(); muteBusyRef.current = false; setMuteBusy(false); }
   };
   // Tools › Snoozed: Unsnooze returns PRs to the queue; Mute instead turns "not now" into "not mine".
@@ -2184,6 +2189,7 @@ export function HomePage({ onAccount, navigationRestoration, homeDefault, onNavi
                 onShowLane={showLane}
                 onMarkRead={urls => void changeRead(urls, true)}
                 onStarChange={(members, value) => void changeStars(members, value)}
+                onMute={members => changeMutes({ muted: true, members }, { stay: true })}
                 starBusy={starBusy}
                 onOpenItem={item => { setSelected(item.subject.id); setOpenedItem(item); }}
                 onRepositories={() => openSettings('repositories')}

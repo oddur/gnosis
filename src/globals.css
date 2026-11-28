@@ -5774,6 +5774,147 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 /* Measured from the Overview's width, as the toolbar is, so the scrollbar gutter does not shift the edges apart. */
 .morning { display:flex; flex-direction:column; gap:28px; width:auto; max-width:calc(var(--overview-content) + 48px); margin:0 auto 0 max(0px, calc((100cqi - var(--overview-content)) / 2 - 24px)); padding:4px 24px 0; }
 .morning-section { min-width:0; }
+
+/* A guided session (#596) takes the morning page's place and column while it runs: a header with the run's steps, one
+   step at a time, and the next step under it. The step is one surface, not a stack of cards: hairlines between its
+   parts, the depth suggestion on a quiet band, and the primary action first in the action row. */
+.morning-section-head .morning-session-start { margin-left:auto; align-self:center; }
+/* One step at a time reads best narrower than the Overview: the session keeps the page's left edge and a focused width. */
+.guided-session { display:flex; flex-direction:column; gap:16px; max-width:min(calc(var(--overview-content) + 48px), 1008px); margin:0 auto 0 max(0px, calc((100cqi - var(--overview-content)) / 2 - 24px)); padding:4px 24px 32px; outline:none; }
+.guided-session-head { display:flex; align-items:center; gap:16px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.guided-session-head h2 { display:flex; align-items:baseline; gap:8px; font-size:var(--type-section-title); font-weight:600; line-height:1.35; letter-spacing:-0.01em; }
+.guided-session-count { font-size:var(--type-body); font-weight:400; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+/* The run's steps: one mark per PR, its state by shape and colour, the current one wider. Each is a way to jump. */
+.guided-session-progress { flex:1; display:flex; gap:4px; min-width:0; }
+.guided-session-progress li { flex:0 1 28px; min-width:12px; }
+/* Each outcome has a glyph as well as a colour (#596): moved ✓, skipped ⏭, snoozed ⏰, muted 🔇, waiting ⌛, opened ↗. */
+.guided-session-progress button { display:flex; align-items:center; justify-content:center; width:100%; height:14px; border-radius:7px; background:var(--secondary); box-shadow:inset 0 0 0 1px var(--border); color:var(--muted-foreground); transition:background-color 150ms ease-out; }
+.guided-session-progress li[aria-current=step] { flex-basis:44px; }
+.guided-session-progress li[aria-current=step] button { background:var(--primary); color:var(--primary-foreground); box-shadow:none; }
+.guided-session-progress li[data-outcome=done] button { background:var(--color-success); color:var(--background); box-shadow:none; }
+.guided-session-progress li[data-outcome=opened] button { background:var(--status-success-bg); color:var(--color-success); box-shadow:inset 0 0 0 1px var(--color-success); }
+.guided-session-progress li[data-outcome=parked] button { background:var(--status-warning-bg); color:var(--color-warning); box-shadow:inset 0 0 0 1px var(--color-warning); }
+.guided-session-progress li[data-outcome=skipped] button { background:transparent; box-shadow:inset 0 0 0 1px var(--muted-foreground); }
+.guided-session-progress li[data-outcome=snoozed] button, .guided-session-progress li[data-outcome=muted] button { background:var(--secondary); box-shadow:inset 0 0 0 1px var(--muted-foreground); }
+.guided-session-progress li[aria-current=step][data-outcome] button { box-shadow:0 0 0 2px var(--primary); }
+/* A long run: thin segments that share the width, colour by outcome, no glyphs. */
+.guided-session-progress[data-dense] { gap:2px; align-items:center; }
+.guided-session-progress[data-dense] li { flex:1 1 0; min-width:2px; }
+.guided-session-progress[data-dense] li[aria-current=step] { flex:3 1 0; }
+.guided-session-progress[data-dense] button { height:6px; border-radius:3px; }
+.guided-session-progress[data-dense] button svg { display:none; }
+
+/* Focus inside the session: a solid 2px ring (≥3:1 on card and page), not the shared Button's faint 3px halo (#596). */
+.guided-session :focus-visible, .session-bar :focus-visible { outline:2px solid var(--ring); outline-offset:2px; box-shadow:none; }
+.guided-session:focus-visible { outline:none; }
+.guided-step { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-card, 10.4px); background:var(--card); }
+.guided-step > * { padding:16px 20px; }
+.guided-step > * + * { border-top:1px solid var(--border); }
+.guided-step-identity { display:flex; flex-direction:column; gap:6px; padding-bottom:18px; }
+.guided-step-ref { display:flex; align-items:center; gap:6px; font-size:var(--type-caption); line-height:1.45; color:var(--muted-foreground); }
+.guided-step-id { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.guided-step-ref .morning-icon { display:inline-flex; }
+.guided-step-number { font-variant-numeric:tabular-nums; }
+.guided-step-by { margin-left:auto; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.guided-step-title { min-width:0; font-size:var(--type-panel-title); font-weight:650; line-height:1.35; letter-spacing:-0.02em; text-wrap:balance; overflow-wrap:anywhere; }
+.guided-step-add { color:var(--color-success); }
+.guided-step-del { color:var(--color-danger); }
+/* What the PR is: the briefing's sentence or the description's start, at the reading size, under the title. */
+.guided-step-about { max-width:62ch; margin-top:2px; font-size:var(--type-body); line-height:1.6; color:var(--foreground); text-wrap:pretty; }
+.guided-step-about:not([data-generated]) { color:var(--muted-foreground); }
+.guided-step-about-label { display:inline-flex; align-items:center; gap:4px; margin-right:8px; padding:0 6px; border-radius:4px; vertical-align:1px; font-size:var(--type-caption); font-weight:500; line-height:1.6; color:var(--accent-foreground); background:var(--accent); }
+/* The facts row: one line of what Gnosis read (checks, wait, reviewers, files); what it hasn't read says so. */
+.guided-step-facts { display:flex; flex-wrap:nowrap; align-items:center; gap:0 8px; min-width:0; margin-top:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.guided-step-facts li { display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; }
+.guided-step-facts li + li::before { content:"·"; margin-right:8px; color:var(--muted-foreground); }
+.guided-step-facts li[data-fact=files], .guided-step-facts li[data-fact=reviews] { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; display:block; }
+.guided-step-facts li[data-fact=files] { font-family:var(--font-mono); }
+.guided-step-facts li[data-tone=danger] { color:var(--color-danger); }
+.guided-step-facts li[data-tone=success] > svg { color:var(--color-success); }
+.guided-step-facts li[data-unknown] { font-style:italic; }
+.guided-step-where { display:block; margin-top:2px; font-family:var(--font-mono); font-size:var(--type-caption); color:var(--muted-foreground); }
+.guided-step-status { display:flex; align-items:center; gap:8px; font-size:var(--type-control); line-height:1.5; }
+.guided-step-status[data-tone=success] { color:var(--color-success); background:var(--status-success-bg); }
+.guided-step-status[data-tone=danger] { align-items:flex-start; color:var(--color-danger); background:var(--status-danger-bg); }
+.guided-step-status[data-tone=danger] > svg { margin-top:3px; flex:none; }
+.guided-step-status[data-tone=neutral] { color:var(--muted-foreground); background:var(--secondary); }
+.guided-step-status[data-tone=attention] { color:var(--color-warning); background:var(--status-warning-bg); }
+.guided-end-result { color:var(--muted-foreground); }
+.guided-step-block { display:flex; flex-direction:column; gap:8px; }
+.guided-step-heading { font-size:var(--type-control); font-weight:600; line-height:1.5; letter-spacing:.01em; color:var(--muted-foreground); }
+.guided-step-quiet { font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.guided-step-digest, .guided-step-blockers { display:flex; flex-direction:column; gap:6px; }
+.guided-step-digest li { display:grid; grid-template-columns:16px 1fr; gap:8px; font-size:var(--type-body); line-height:1.5; max-width:75ch; }
+.guided-step-digest li > svg, .guided-step-blockers li > svg, .guided-step-said > svg { margin-top:4px; color:var(--muted-foreground); }
+.guided-step-digest li[data-tone=danger] > svg, .guided-step-blockers li[data-blocker=rerun-failed] > svg, .guided-step-blockers li[data-blocker=resolve-conflicts] > svg { color:var(--color-danger); }
+.guided-step-digest li[data-tone=success] > svg { color:var(--color-success); }
+.guided-step-digest li[data-tone=attention] > svg, .guided-step-blockers li[data-blocker=wait] > svg, .guided-step-said > svg { color:var(--color-warning); }
+/* The comment waiting on you, then the box to answer it: the one place in the step you type. */
+.guided-step-thread { display:flex; flex-direction:column; gap:8px; }
+.guided-step-said { display:grid; grid-template-columns:16px 1fr; gap:8px; font-size:var(--type-body); line-height:1.5; max-width:75ch; }
+.guided-step-said strong { font-weight:600; }
+.guided-step-said[data-sent] > svg { color:var(--color-success); }
+.guided-step-done { display:flex; align-items:center; gap:8px; font-size:var(--type-body); font-weight:500; color:var(--color-success); }
+.guided-step-quote { display:block; margin-top:4px; color:var(--foreground); quotes:"“" "”"; }
+.guided-step-compose { display:flex; flex-direction:column; gap:8px; margin-left:24px; max-width:72ch; }
+.guided-step-compose textarea, .guided-step-approve textarea { width:100%; min-height:60px; padding:8px 10px; resize:vertical; border:1px solid var(--input); border-radius:5px; background:var(--background); color:var(--foreground); font:inherit; font-size:var(--type-body); line-height:1.5; }
+.guided-step-compose textarea::placeholder, .guided-step-approve textarea::placeholder { color:var(--muted-foreground); }
+.guided-step-compose textarea:focus-visible, .guided-step-approve textarea:focus-visible { outline:2px solid var(--ring); outline-offset:1px; border-color:transparent; }
+.guided-step-compose-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.guided-step-check { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-control); color:var(--muted-foreground); }
+.guided-step-check input { accent-color:var(--primary); }
+.guided-step-approve textarea { max-width:72ch; }
+.guided-step-quote::selection, .guided-step-about::selection { background:var(--accent); }
+.guided-step-blockers li { display:grid; grid-template-columns:16px minmax(0, 1fr) auto auto; align-items:start; gap:4px 8px; min-height:28px; font-size:var(--type-body); line-height:1.5; }
+.guided-step-cause { min-width:0; padding-top:1px; }
+.guided-step-owner { align-self:center; font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; }
+.guided-step-fix { align-self:center; display:inline-flex; }
+/* The last part of the step: why this depth, then the buttons, the primary first and Open full PR always beside it. */
+.guided-step-actions { display:flex; flex-direction:column; gap:12px; background:var(--secondary); border-radius:0 0 var(--radius-card) var(--radius-card); }
+.guided-step-depth { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.guided-step-depth > svg { flex:none; }
+.guided-step-depth[data-depth=deep] > svg { color:var(--primary); }
+.guided-step-depth strong { font-weight:600; color:var(--foreground); }
+.guided-step-switch { display:inline-flex; align-items:center; margin-left:auto; font-weight:500; color:var(--primary); }
+.guided-step-switch:hover { text-decoration:underline; text-underline-offset:3px; }
+.guided-step-switch:focus-visible { outline:2px solid var(--ring); outline-offset:2px; border-radius:3px; }
+.guided-step-buttons { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.guided-step-primary { display:inline-flex; }
+.guided-step-primary > .pr-actions { margin:0; }
+.guided-step-note { font-size:var(--type-caption); color:var(--muted-foreground); }
+/* The card's actions in three groups (#596): Move it (the primary and one more), Read (Summary, Deep review), and Put
+   off (Snooze, Mute, Skip), quieter, after a divider. */
+.guided-step-group { display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.guided-step-group[data-group=move] + .guided-step-group[data-group=read] { padding-left:12px; margin-left:4px; border-left:1px solid var(--border); }
+/* Put off sits apart at the row's end, a divider when it shares the row; on its own row it needs none. */
+.guided-step-group[data-group=later] { gap:2px; margin-left:auto; color:var(--muted-foreground); }
+.session-approve-split > .pr-action-chevron[data-variant=default] { margin-left:0; border-left:1px solid color-mix(in srgb, var(--primary-foreground) 35%, transparent); }
+/* The guided session's bar on a PR it opened (components/SessionBar.tsx): a thin line above the PR's header, quiet
+   until the PR is finished here, when Next becomes the filled action. */
+.session-bar { display:flex; align-items:center; gap:10px; min-width:0; margin:0 0 8px; padding:4px 8px 4px 4px; border-radius:6px; background:var(--secondary); font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.session-bar[data-finished] { background:var(--status-success-bg); }
+.session-bar-position { font-variant-numeric:tabular-nums; }
+.session-bar-done { display:inline-flex; align-items:center; gap:6px; font-weight:500; color:var(--color-success); }
+.session-bar-next { flex:1; min-width:0; display:flex; align-items:baseline; justify-content:flex-end; gap:6px; }
+.session-bar-next-label { flex:none; font-weight:600; color:var(--foreground); }
+.session-bar-next-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
+.guided-session kbd, .session-bar kbd { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; margin-left:6px; padding:0 4px; border-radius:3px; border:1px solid color-mix(in oklab, currentColor 30%, transparent); font:500 10px/1 var(--font-sans, inherit); opacity:.8; }
+.guided-session-next { display:flex; align-items:baseline; gap:8px; min-width:0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
+.guided-session-next > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
+.guided-session-next-label { flex:none; font-weight:600; }
+.guided-session-next-why { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.guided-session-nav { margin-left:auto; display:flex; gap:2px; align-self:center; }
+.guided-end { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:8px 0; }
+.guided-end-lead { font-size:var(--type-panel-title); font-weight:650; letter-spacing:-0.02em; }
+.guided-end-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.guided-end-group { display:flex; flex-direction:column; gap:4px; }
+.guided-end-group h3 { display:flex; align-items:baseline; gap:6px; font-size:var(--type-control); font-weight:600; letter-spacing:.01em; color:var(--muted-foreground); }
+.guided-end-count { font-variant-numeric:tabular-nums; font-weight:500; }
+.guided-end-lines { display:flex; flex-direction:column; gap:2px; font-size:var(--type-body); }
+.guided-end-lines button { padding:2px 0; text-align:left; color:var(--foreground); }
+.guided-end-lines button:hover { text-decoration:underline; text-underline-offset:3px; }
+.guided-end-lines li[data-outcome=skipped] button, .guided-end-lines li[data-outcome=snoozed] button, .guided-end-lines li[data-outcome=muted] button, .guided-end-lines li[data-outcome=parked] button, .guided-end-lines li[data-outcome=open] button { color:var(--muted-foreground); }
+@media (prefers-reduced-motion: reduce) { .guided-session-progress button { transition:none; } }
 /* Section titles take DESIGN.md's section step (18px), a real level above the 15px row titles, with the count inline. */
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--border); }
 .morning-section-head h2 { display:flex; align-items:baseline; gap:8px; font-size:var(--type-section-title); font-weight:600; line-height:1.35; letter-spacing:-0.01em; color:var(--foreground); text-wrap:balance; }
@@ -6397,3 +6538,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .symbol-peek-footer { padding:6px 12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { .symbol-peek { animation:none; transition:none; } }
 .symbol-peek-method h4 { margin:4px 0 2px; font-family:var(--font-mono); font-size:inherit; font-weight:500; }
+/* The guided session's Snooze split button and its times (components/GuidedSession.tsx), as Merge's method menu. */
+.session-snooze-menu { width:auto; min-width:240px; }
+.session-snooze-menu [role=menuitem] { white-space:nowrap; flex-direction:row; align-items:baseline; justify-content:space-between; gap:16px; padding:7px 12px; }
+.session-snooze-menu [role=menuitem]+[role=menuitem] { border-top:0; }
+.session-snooze-when { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.session-snooze-separator { height:1px; margin:4px 0; background:var(--border); }

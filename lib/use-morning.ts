@@ -26,11 +26,27 @@ export function rereviewFrom(item: Pick<QueueItem, 'sinceReview'>, signals: Queu
   return reviewedCommit(signals, login);
 }
 /** The thread waiting on your reply, from a saved discussion: who wrote last and what. */
-export function waitingReply(discussion: GitHubReviewThreads | undefined, login: string, author: string): { author: string; text: string } | undefined {
+/** The last comment of a thread that waits on your reply, and the thread, so a reply can be sent from where it shows. */
+export interface WaitingReply {
+  author: string;
+  text: string;
+  threadId?: string;
+  canResolve?: boolean;
+  /** Where the thread sits: its file and line, when it is on a line. */
+  path?: string;
+  line?: number;
+}
+export function waitingReply(discussion: GitHubReviewThreads | undefined, login: string, author: string): WaitingReply | undefined {
   for (const thread of discussion?.threads ?? []) {
     if (!isResponseThread(thread, login, author)) continue;
     const last = thread.comments.filter((comment) => !isPendingComment(comment) && !comment.isMinimized && !isAutomationActor(comment.author)).at(-1);
-    if (last?.author) return { author: last.author.login, text: last.body };
+    if (last?.author)
+      return {
+        author: last.author.login, text: last.body, threadId: thread.id,
+        ...(thread.viewerCanResolve ? { canResolve: true } : {}),
+        ...(thread.path ? { path: thread.path } : {}),
+        ...(thread.path && typeof thread.line === 'number' ? { line: thread.line } : {}),
+      };
   }
   return undefined;
 }
@@ -96,7 +112,7 @@ export function useMorningExtras(view: OverviewView, login: string | null, visib
     () => JSON.stringify(answer.filter((row) => row.reasons.includes('replies')).map((row) => [row.focus.url, row.focus.author, row.focus.updatedAt])),
     [answer]
   );
-  const [replies, setReplies] = useState<Record<string, { author: string; text: string }>>({});
+  const [replies, setReplies] = useState<Record<string, WaitingReply>>({});
   useEffect(() => {
     if (!visible || !login || replyKey === '[]') return;
     let cancelled = false;
@@ -107,7 +123,7 @@ export function useMorningExtras(view: OverviewView, login: string | null, visib
       })
     ).then((entries) => {
       if (cancelled) return;
-      const next = Object.fromEntries(entries.filter((entry): entry is readonly [string, { author: string; text: string }] => !!entry[1]));
+      const next = Object.fromEntries(entries.filter((entry): entry is readonly [string, WaitingReply] => !!entry[1]));
       setReplies((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
     });
     return () => {

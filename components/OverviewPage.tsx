@@ -37,7 +37,7 @@
  * show, so a sync tick that changes nothing renders nothing, and a moved row gets its focus back without scrolling.
  */
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowDown, ArrowUp, ChevronRight, ListChecks, MessageSquare, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ChevronRight, ListChecks, MessageSquare, Play, RefreshCw, Settings, UserRound, UsersRound, X } from 'lucide-react';
 import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useOverview } from '../lib/use-overview';
@@ -99,6 +99,10 @@ import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
+import { GuidedSession, type SessionOpen, type SnoozeChoice, type StepAbout } from './GuidedSession';
+import { snoozeNow } from './SnoozePicker';
+import { decideEvidence, heldForkRuns, plainText, runScope, sessionSteps, settlePark, type DepthContext, type Park, type ParkAction, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { answerSessionRequests, peekSessionState, publishSession, takeSessionRequest, type SessionRequest } from '../lib/session-store';
 import { toast } from './ui/toast';
 
 export interface OverviewPageProps {
@@ -130,6 +134,8 @@ export interface OverviewPageProps {
   onMarkRead: (urls: string[]) => void;
   /** Stars or unstars PRs, as the queue's star toggle does. Without it, row menus offer no star. */
   onStarChange?: (members: ReviewMember[], starred: boolean) => void;
+  /** Mute PRs: they leave every list until unmuted. Resolves true once saved; the page shows the toast and its Undo. */
+  onMute?: (members: ReviewMember[]) => Promise<boolean>;
   /** A star change is being saved: the star toggle waits, as in the queue. */
   starBusy?: boolean;
   /** Opens an item in this window when no workspace tabs are available. */
@@ -204,6 +210,38 @@ interface RowRef {
   also?: boolean;
 }
 
+/** A guided session's run (#596): its steps as they were when it started, where it is, and what happened to each. */
+interface GuidedRun {
+  steps: SessionStep[];
+  index: number;
+  outcomes: Partial<Record<string, StepOutcome>>;
+  /** Steps whose PR was opened from the session (O, D, Summary, Deep review): a deep step's Approve is one press then. */
+  read?: Partial<Record<string, true>>;
+  open: boolean;
+  /** Steps parked while a slow action runs, by id; each leaves once it resolves. */
+  parked?: Partial<Record<string, Park>>;
+  /** What each resolved park came to, by id. */
+  results?: Partial<Record<string, ParkResult>>;
+  /** What a step's own merge or close came to, as its card says it: "Merged #301.", "Closed #305.". */
+  notes?: Partial<Record<string, string>>;
+  /** Stacks whose base merged in this run: their next step joins the run after the merged one (`after`), once it shows. */
+  follow?: { subject: string; after: string; at: number }[];
+}
+/** The run outlives the page: the app keeps one Overview, but bringing its tab back can mount the page anew. */
+let keptSession: GuidedRun | null = null;
+/**
+ * Back or Next from a PR's session bar, applied to a run: back to the PR's step, or on to the one after it. A PR
+ * finished where it was opened (a review, or every change viewed) moved on in this run.
+ */
+function answerRequest(run: GuidedRun | null, request: SessionRequest, url: string): GuidedRun | null {
+  if (!run) return run;
+  const at = run.steps.findIndex((step) => step.member.url === url);
+  if (at < 0) return run;
+  const finished = peekSessionState()?.finished.has(url);
+  const outcomes = finished ? { ...run.outcomes, [run.steps[at].id]: 'done' as const } : run.outcomes;
+  return { ...run, outcomes, open: true, index: request === 'next' ? at + 1 : at };
+}
+
 export function OverviewPage(props: OverviewPageProps) {
   const { queue, login, scope, authenticated, hasRepositories, loading, refreshing, visible, live, keyboard, teamRequests, excluded, error, onDismissError, setup, onRepositories, onConnect, onModel } = props;
   // Starred work: main's starred entries. The section lists only their open PRs (lib/overview-starred.ts).
@@ -246,6 +284,187 @@ export function OverviewPage(props: OverviewPageProps) {
     () => morningPage({ model: view, now, login: account ?? '', signals: view.statusOf, rereviewLines: extras.rereviewLines, replies: extras.replies, hidden: closing, starred }),
     [view, now, account, extras.rereviewLines, extras.replies, closing, starred]
   );
+  // A guided session (#596): one run through Next up, then the decisions. It walks the steps as they were when it
+  // started; the page's live steps say which have moved on (they left the page).
+  const liveSteps = useMemo(() => sessionSteps(morning), [morning]);
+  const liveById = useMemo(() => new Map(liveSteps.map((step) => [step.id, step])), [liveSteps]);
+  // Kept outside the page too (`keptSession`): bringing the Overview tab back can mount the page anew.
+  const [session, setSessionState] = useState<GuidedRun | null>(() => {
+    // A Back or Next that came while the page was not mounted: the bar brought this tab forward to answer it.
+    const waiting = takeSessionRequest();
+    if (waiting) keptSession = answerRequest(keptSession, waiting.request, waiting.url);
+    return keptSession;
+  });
+  const setSession = useCallback((update: GuidedRun | null | ((value: GuidedRun | null) => GuidedRun | null)) => {
+    keptSession = typeof update === 'function' ? update(keptSession) : update;
+    setSessionState(keptSession);
+  }, []);
+  // A PR the session opened shows where it is in the run, and its way back and on (components/SessionBar.tsx).
+  const running = session && session.index < session.steps.length ? session : null;
+  const sessionKey = running ? `${running.index}|${running.steps.map((step) => step.id).join(' ')}` : '';
+  useEffect(() => {
+    if (!running) {
+      publishSession(null);
+      return;
+    }
+    publishSession({
+      index: running.index,
+      steps: running.steps.map((step) => ({ id: step.id, url: step.member.url, number: step.member.number, title: step.title, why: step.why })),
+    });
+    // `sessionKey` is what the published steps depend on: a status tick that changes no step publishes nothing.
+  }, [sessionKey]);
+  useEffect(
+    () =>
+      // Back and Next from a PR's session bar while the page is mounted, applied to the kept run at once.
+      answerSessionRequests((request, url) => setSession((value) => answerRequest(value, request, url))),
+    [setSession]
+  );
+  // A slow action started from the session (rerun failed checks, update the branch) parks its step: the session
+  // moves on at once, and the step comes back, with its result, once GitHub shows one (`settlePark`).
+  const parkStep = useCallback(
+    (step: SessionStep, action: ParkAction) =>
+      setSession((value) => {
+        if (!value || !value.steps.some((each) => each.id === step.id)) return value;
+        const head = liveById.get(step.id)?.member.headSha ?? step.member.headSha;
+        // A park started again drops the result of the last one.
+        const results = Object.fromEntries(Object.entries(value.results ?? {}).filter(([id]) => id !== step.id));
+        const here = value.steps[value.index]?.id === step.id;
+        return {
+          ...value,
+          outcomes: { ...value.outcomes, [step.id]: 'parked' },
+          parked: { ...value.parked, [step.id]: { action, headSha: head, at: Date.now() } },
+          results,
+          index: here ? value.index + 1 : value.index,
+        };
+      }),
+    [setSession, liveById]
+  );
+  // A merge or close confirmed from a step: the step moved, its card says what happened, and the session goes on by
+  // itself, as after an approval or a reply. A stack's merged base brings the stack's next step into the run.
+  const finishStep = useCallback(
+    (step: SessionStep, note: string, stack: boolean) =>
+      setSession((value) => {
+        if (!value) return value;
+        const at = value.steps.findIndex((each) => each.id === step.id);
+        if (at < 0) return value;
+        return {
+          ...value,
+          outcomes: { ...value.outcomes, [step.id]: 'done' },
+          notes: { ...value.notes, [step.id]: note },
+          ...(stack ? { follow: [...(value.follow ?? []), { subject: step.row.item.subject.id, after: step.id, at: Date.now() }] } : {}),
+          index: value.index === at ? at + 1 : value.index,
+        };
+      }),
+    [setSession]
+  );
+  useEffect(() => {
+    if (!session?.follow?.length) return;
+    setSession((value) => {
+      if (!value?.follow?.length) return value;
+      let steps = value.steps;
+      let index = value.index;
+      const follow = value.follow.filter((wait) => {
+        const found = liveSteps.find((step) => step.row.item.subject.id === wait.subject && !steps.some((each) => each.id === step.id));
+        if (!found) return true;
+        const after = steps.findIndex((each) => each.id === wait.after);
+        // Right after the merged step while the session has just moved on from it, so the stack is walked bottom to
+        // top; after the current step once the reader has gone further.
+        const fresh = Date.now() - wait.at < 15_000 && index === after + 1;
+        const at = after >= 0 && (fresh || after >= index) ? after + 1 : index + 1;
+        steps = [...steps.slice(0, at), found, ...steps.slice(at)];
+        if (at <= index && !fresh) index += 1;
+        return false;
+      });
+      return follow.length === value.follow.length ? value : { ...value, steps, index, follow };
+    });
+  }, [liveSteps, session?.follow, setSession]);
+  const announced = useRef(new Set<string>());
+  useEffect(() => {
+    const parked = session?.parked;
+    if (!parked || !Object.keys(parked).length) return;
+    const settled: Partial<Record<string, ParkResult>> = {};
+    const going: Partial<Record<string, Park>> = {};
+    let changed = false;
+    for (const [id, park] of Object.entries(parked)) {
+      if (!park) continue;
+      const step = liveById.get(id);
+      // A step that left the page moved on: its park has nothing left to wait for.
+      if (!step) {
+        changed = true;
+        continue;
+      }
+      const next = settlePark(park, step.member.headSha, view.statusOf(step.member), now);
+      if ('result' in next) {
+        settled[id] = next.result;
+        changed = true;
+      } else {
+        going[id] = next.park;
+        if (next.park !== park) changed = true;
+      }
+    }
+    if (!changed) return;
+    setSession((value) => {
+      if (!value) return value;
+      // A resolved step is back on your list, or moved on when its action came to that.
+      const outcomes = Object.fromEntries(
+        Object.entries(value.outcomes).flatMap(([id, outcome]): [string, StepOutcome][] => {
+          if (!(id in parked) || going[id]) return outcome ? [[id, outcome]] : [];
+          return settled[id]?.outcome === 'done' ? [[id, 'done']] : [];
+        })
+      );
+      return { ...value, outcomes, parked: going, results: { ...value.results, ...settled } };
+    });
+    // The step comes back: a toast says what its action came to, with the way back to it.
+    for (const [id, result] of Object.entries(settled)) {
+      const at = session.steps.findIndex((step) => step.id === id);
+      const key = `${id}@${parked[id]?.at}`;
+      if (!result || at < 0 || announced.current.has(key)) continue;
+      announced.current.add(key);
+      const toastId = toast.add({
+        type: result.tone === 'success' ? 'success' : result.tone === 'danger' ? 'error' : 'info',
+        title: `#${session.steps[at].member.number}: ${result.text}`,
+        actionProps: { children: 'Show', onClick: () => { toast.close(toastId); setSession((value) => value && { ...value, index: at, open: true }); } },
+      });
+    }
+  }, [session?.parked, liveById, view, now, setSession]);
+  // What the depth rules read beyond the step: the PR's paths, read once per head for a PR you review, and its author's
+  // association from the status read.
+  const [sessionPaths, setSessionPaths] = useState<Partial<Record<string, readonly string[] | null>>>({});
+  const currentStep = session?.open && session.index < session.steps.length ? (liveById.get(session.steps[session.index].id) ?? session.steps[session.index]) : undefined;
+  const pathsKey = currentStep && (currentStep.kind === 'review' || currentStep.kind === 'rereview') ? `${currentStep.member.url}@${currentStep.member.headSha}` : undefined;
+  useEffect(() => {
+    if (!pathsKey || !currentStep || sessionPaths[pathsKey] !== undefined) return;
+    // Optional in test fixtures that mock no file list: then no path rule fires.
+    if (typeof window.electronAPI.getPrFiles !== 'function') return;
+    let cancelled = false;
+    void window.electronAPI
+      .getPrFiles(currentStep.member.url)
+      .then((files) => files.flatMap((file) => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])]))
+      // Unread paths make no rule fire; the next step that needs them tries again.
+      .catch(() => null)
+      .then((paths) => {
+        if (!cancelled) setSessionPaths((value) => ({ ...value, [pathsKey]: paths }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathsKey]);
+  const sessionDepthContext = (step: SessionStep): DepthContext => {
+    const paths = sessionPaths[`${step.member.url}@${step.member.headSha}`];
+    const association = view.statusOf(step.member)?.authorAssociation;
+    return { ...(paths ? { paths } : {}), ...(association ? { authorAssociation: association } : {}) };
+  };
+  // The end's "Go through the N still on your list": a new run of those steps, as the page has them now.
+  const restartSession = (ids: string[]) =>
+    setSession((value) => {
+      const steps = ids.flatMap((id) => {
+        const step = liveById.get(id) ?? value?.steps.find((each) => each.id === id);
+        return step ? [step] : [];
+      });
+      return steps.length ? { steps, index: 0, outcomes: {}, open: true } : value;
+    });
+  const startSession = () =>
+    setSession((value) => (value && value.index < value.steps.length ? { ...value, open: true } : { steps: liveSteps, index: 0, outcomes: {}, open: true }));
   // Which PRs are starred, for the row menus' Star and Unstar: one string, so a sync tick that changes no star keeps
   // the row actions, and with them every memoized row, as they were.
   const starKey = (queue.starredPrs ?? []).map((entry) => entry.member.url).sort().join(' ');
@@ -551,12 +770,17 @@ export function OverviewPage(props: OverviewPageProps) {
     // `starredUrls` changes only when a star does, so a sync tick keeps these actions.
     [open, openItem, snooze, toggle, onRowKeyDown, reveal, starredUrls, starrable, starBusy]
   );
+  // The session step a Close PR came from: a confirmed close finishes it, and the session goes on.
+  const closingStep = useRef<SessionStep | null>(null);
   const confirmClose = useCallback((request: Parameters<typeof window.electronAPI.performPrAction>[0], member: ReviewMember) => {
     setClosingPr(null);
+    const step = closingStep.current?.member.url === member.url ? closingStep.current : null;
+    closingStep.current = null;
     setClosing((current) => new Set([...current, member.url]));
     window.electronAPI.performPrAction(request).then(
       (result) => {
         toast.add({ type: 'success', title: result.message });
+        if (step) finishStep(step, `Closed #${member.number}.`, false);
         callbacks.current.onRefresh();
       },
       (cause: unknown) => {
@@ -568,7 +792,7 @@ export function OverviewPage(props: OverviewPageProps) {
         toast.add({ type: 'error', title: `Could not close #${member.number}`, description: `${writeErrorDetail(cause)} The PR is still open. Try again, or close it on GitHub.` });
       }
     );
-  }, []);
+  }, [finishStep]);
 
 
   const sync = queue.sync;
@@ -599,6 +823,120 @@ export function OverviewPage(props: OverviewPageProps) {
       <GroupRows key={value.key} id={id} group={value} now={now} open={inside} tabStop={tabStop(section)} nudged={nudged.has(value.key)} actions={actions} />
     );
   };
+  // The session's step card draws its primary action as Next up's row does: Merge and Rerun act in place; anything
+  // else opens the PR, at the depth the step suggests.
+  const sessionAction = (step: SessionStep): ReactNode | undefined => {
+    const merged = (number: number) => finishStep(step, `Merged #${number}.`, step.row.kind === 'stack');
+    if (step.kind === 'merge') return <MergeAction row={step.row} actions={actions} session onMerged={merged} />;
+    // A decision: merge it when it can merge (the Overview's merge rule, unchanged); closing is the step's other way.
+    if (step.kind === 'decide' && step.row.merge) return <MergeAction row={step.row} actions={actions} session onMerged={merged} />;
+    if (step.kind === 'fix' && step.next?.fix === 'failing') {
+      // Fork runs held for approval are not failures a rerun can clear (#595): a PR with only those has no Rerun.
+      const failing = step.row.entries
+        .filter((entry) => entry.reasons.includes('checks-failed') && step.urls.includes(entry.member.url))
+        .map((entry) => entry.member)
+        .filter((member) => {
+          const signals = view.statusOf(member);
+          return !signals || (signals.checks.failed ?? 0) > heldForkRuns(member, signals);
+        });
+      if (failing.length) return <RerunFailed members={failing} onChanged={actions.refresh} onRequested={() => parkStep(step, 'rerun-failed')} />;
+    }
+    return undefined;
+  };
+  // Mute from the session: a PR you no longer follow leaves every list, the queue's Mute (with its Undo toast).
+  const sessionMute = props.onMute
+    ? (step: SessionStep) => {
+        const members = step.row.item.subject.members.filter((member) => step.urls.includes(member.url));
+        return props.onMute?.(members.length ? members : [step.member]) ?? Promise.resolve(false);
+      }
+    : undefined;
+  // Snooze from the session: the same save as the picker's (a choice from its split button), or the picker for a date; for the step's PRs (a stack's lane, or one PR).
+  const sessionSnooze = (step: SessionStep, choice: SnoozeChoice | 'custom', snoozed: () => void) => {
+    const members = step.row.item.subject.members.filter((member) => step.urls.includes(member.url));
+    const groups = [members.length ? members : [step.member]];
+    return choice === 'custom' ? openSnoozePicker({ groups, onSnoozed: () => snoozed() }) : snoozeNow(groups, choice, () => snoozed());
+  };
+  // A decision's other ways forward: Remind the reviewer it waits on (the Overview's Nudge), or Close it.
+  const sessionSecondary = (step: SessionStep): ReactNode | undefined => {
+    if (step.kind !== 'decide') return undefined;
+    const reviewer = decideEvidence(step.member, step.decide?.reason, now).remind;
+    const key = `nudge:session:${step.member.url}`;
+    return (
+      <>
+        {reviewer && (nudged.has(key) ? (
+          <span className="guided-step-note" role="status">Reminded {reviewer}</span>
+        ) : (
+          <Button size="sm" variant="outline" title={`Remind ${reviewer} to review #${step.member.number}… · R`} data-session-remind
+            onClick={() => actions.nudge({ key, kind: 'person', label: reviewer, detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer, members: [step.member] } })}>
+            <NudgeIcon size={14} aria-hidden="true" />
+            Remind {reviewer}
+            <kbd>R</kbd>
+          </Button>
+        ))}
+        <Button size="sm" variant="outline" title={`Close #${step.member.number}… · C`} data-session-close onClick={() => { closingStep.current = step; actions.close(step.member); }}>
+          <CloseIcon size={14} aria-hidden="true" />
+          Close PR
+          <kbd>C</kbd>
+        </Button>
+      </>
+    );
+  };
+  const sessionIdentity = (step: SessionStep): ReactNode => (
+    <span className="guided-step-id">
+      <PrIcon member={step.member} />
+      <span>{repositoryLabel(repoNames, step.member.repo)}</span>
+      <span className="guided-step-number">#{step.member.number}</span>
+    </span>
+  );
+  // What the PR is about, under its title: its briefing's summary when one is ready, else the start of its description.
+  const sessionAbout = (step: SessionStep): StepAbout | undefined => {
+    const briefing = step.row.item.briefing;
+    if (briefing?.status === 'ready' && briefing.summary?.trim()) return { text: briefing.summary.trim(), generated: true };
+    const text = plainText(step.member.description);
+    if (!text) return undefined;
+    return { text: text.length > 280 ? `${text.slice(0, 279).replace(/\s+\S*$/, '')}…` : text, generated: false };
+  };
+  // Update branch and Mark ready from the card, through the PR header's actions: the same confirmations and refresh.
+  const sessionPrAction = (step: SessionStep, kind: 'update-branch' | 'mark-ready'): ReactNode => (
+    <PrActions
+      member={step.member}
+      onChanged={() => {
+        actions.refresh();
+        // GitHub took the update: its new head and checks come later, so the step parks and the session goes on.
+        if (kind === 'update-branch') parkStep(step, 'update-branch');
+      }}
+      onResult={(message) => toast.add({ type: 'success', title: message })}
+      trigger={(open, busy) => (
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => open(kind === 'update-branch' ? 'update-merge' : 'mark-ready')}>
+          {kind === 'update-branch' ? 'Update branch' : 'Mark ready'}
+        </Button>
+      )}
+    />
+  );
+  const sessionReply = async (step: SessionStep, threadId: string, body: string, resolve: boolean) => {
+    await window.electronAPI.reviewThreadAction({ prUrl: step.member.url, threadId, action: 'reply', body });
+    if (resolve) await window.electronAPI.reviewThreadAction({ prUrl: step.member.url, threadId, action: 'resolve' });
+    actions.refresh();
+  };
+  // Approve, or request changes (GitHub requires its comment): the review write the PR page's Submit review uses.
+  const sessionApprove = async (step: SessionStep, body: string, event: 'APPROVE' | 'REQUEST_CHANGES' = 'APPROVE') => {
+    const { member } = step;
+    await window.electronAPI.submitReview({ prUrl: member.url, headSha: member.headSha, baseSha: member.baseSha, baseBranch: member.baseBranch, event, body, comments: [] });
+    actions.refresh();
+  };
+  const openFromSession = (step: SessionStep, where: SessionOpen) => {
+    if (where === 'review' || where === 'summary' || where === 'update') setSession((value) => value && { ...value, read: { ...value.read, [step.id]: true } });
+    if (where === 'github' || where === 'github-checks') {
+      void window.electronAPI.openExternal(where === 'github' ? step.member.url : `${step.member.url}/checks`);
+      return;
+    }
+    // A deep review opens Changes; a summary, conflicts and threads open the PR's Summary, where readiness and its
+    // actions are.
+    // An update opens Changes at the first file not viewed since: Gnosis has no since-your-review diff of its own.
+    const base = prTarget(step.member.url, where === 'review' || where === 'update' ? 'changes' : 'summary');
+    const target = (base && where === 'update' ? { ...base, focus: 'unviewed-file' as const } : base) ?? step.row.target;
+    actions.open(step.row, target);
+  };
   const body = !authenticated ? (
     <div className="overview-state">
       <p>Connect GitHub to see what needs you across your repositories.</p>
@@ -622,6 +960,39 @@ export function OverviewPage(props: OverviewPageProps) {
           <Button size="sm" variant="outline" onClick={setup}>Getting started</Button>
         </div>
       )}
+      {session?.open ? (
+        <GuidedSession
+          steps={session.steps}
+          live={liveById}
+          index={session.index}
+          outcomes={session.outcomes}
+          read={session.read ?? {}}
+          notes={session.notes ?? {}}
+          onRestart={restartSession}
+          parked={session.parked ?? {}}
+          results={session.results ?? {}}
+          depthContext={sessionDepthContext}
+          login={account ?? ''}
+          now={now}
+          statusOf={view.statusOf}
+          since={extras.since.events}
+          rereviewLines={extras.rereviewLines}
+          replies={extras.replies}
+          renderAction={sessionAction}
+          renderSecondary={sessionSecondary}
+          snooze={sessionSnooze}
+          mute={sessionMute}
+          renderPrAction={sessionPrAction}
+          about={sessionAbout}
+          reply={sessionReply}
+          approve={sessionApprove}
+          renderIdentity={sessionIdentity}
+          onOpen={openFromSession}
+          onIndex={(index) => setSession((value) => value && { ...value, index })}
+          onOutcome={(id, outcome) => setSession((value) => value && { ...value, outcomes: { ...value.outcomes, [id]: outcome } })}
+          onExit={() => setSession((value) => value && (value.index >= value.steps.length ? null : { ...value, open: false }))}
+        />
+      ) : (
       <div className="morning">
         {/* Only when something is starred: with no stars, the page starts at Next up. */}
         {starred.entries.length > 0 && (
@@ -637,6 +1008,13 @@ export function OverviewPage(props: OverviewPageProps) {
           </MorningSection>
         )}
         <MorningSection section="next" count={counts.next}
+          action={liveSteps.length > 0 && (
+            <Button size="xs" variant="outline" className="morning-session-start" data-session-start onClick={startSession}
+              title={session && session.index < session.steps.length ? 'Go on with the session where you left it' : 'Go through Next up one at a time, then the quick merges and reruns it had no room for, then the decisions: what changed, what blocks each, and the next step'}>
+              <Play size={12} aria-hidden="true" />
+              {session && session.index < session.steps.length ? `Resume · ${session.index + 1} of ${session.steps.length}` : `Start · ${runScope(liveSteps, morning.decide.length)}`}
+            </Button>
+          )}
           empty={morning.starredHolds.next ? 'Nothing else needs you right now.' : 'Nothing needs you right now.'}
           footer={more && (
             // The rest of the unreviewed merges wait in the queue, grouped by Action at Merge.
@@ -671,6 +1049,7 @@ export function OverviewPage(props: OverviewPageProps) {
           )}
         </MorningSection>
       </div>
+      )}
       <p className="sr-only" id="overview-keyboard-help">
         <kbd>Tab</kbd> moves between sections · <kbd>j</kbd> <kbd>k</kbd> or arrows move within a section · <kbd>Enter</kbd> opens or expands ·{' '}
         <kbd>a</kbd> runs the row's action · <kbd>z</kbd> snoozes · <kbd>Shift</kbd>+<kbd>F10</kbd> opens its menu
@@ -991,8 +1370,10 @@ function RepoName({ repos }: { repos: readonly string[] }) {
   );
 }
 
-function MorningSection({ section, count, empty, quiet = false, note, footer, children }: {
+function MorningSection({ section, count, empty, quiet = false, note, footer, action, children }: {
   section: Section;
+  /** A control at the end of the heading, such as Next up's Start. */
+  action?: ReactNode;
   count: number;
   empty: ReactNode;
   quiet?: boolean;
@@ -1011,6 +1392,7 @@ function MorningSection({ section, count, empty, quiet = false, note, footer, ch
           {label}
           <span className="morning-section-count" data-section-count>{count}</span>
         </h2>
+        {action}
       </div>
       {note}
       {count === 0 ? <p className="morning-empty" data-overview-empty>{empty}</p> : <ul className="morning-rows" aria-label={label}>{children}</ul>}
@@ -1268,7 +1650,7 @@ const NextRow = memo(
     a.item.since === b.item.since && a.waited === b.waited && a.tabStop === b.tabStop && a.unread === b.unread && a.actions === b.actions
 );
 
-function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMember[]; onChanged: () => void; reveal?: boolean }) {
+function RerunFailed({ members, onChanged, onRequested, reveal = false }: { members: ReviewMember[]; onChanged: () => void; onRequested?: () => void; reveal?: boolean }) {
   const load = useCallback(async () => {
     const values: Partial<Record<string, PrChecks>> = {};
     await Promise.all(
@@ -1284,6 +1666,7 @@ function RerunFailed({ members, onChanged, reveal = false }: { members: ReviewMe
       members={members}
       values={{}}
       onChanged={onChanged}
+      onRequested={onRequested}
       load={load}
       trigger={(open, busy) => (
         <Button size="xs" variant={reveal ? 'ghost' : 'outline'} {...SHORTCUT} {...(reveal ? { 'data-reveal': true } : {})} title="Rerun failed checks… · A" disabled={busy} onClick={open}>
@@ -1875,17 +2258,22 @@ function stackMenu(id: string, listed: readonly ReviewMember[], actions: RowActi
   ];
 }
 /** Merge, with its confirmation (`PrActions`). `caveats`: what the merge goes ahead without, for the tooltip. */
-function MergeAction({ row, actions, caveats = [] }: { row: OverviewRow; actions: RowActions; caveats?: readonly string[] }) {
+function MergeAction({ row, actions, caveats = [], session = false, onMerged }: { row: OverviewRow; actions: RowActions; caveats?: readonly string[]; session?: boolean; onMerged?: (number: number) => void }) {
   // Base first: in a stack, the lowest PR in the lane merges first (`OverviewMerge.member`).
   const member = row.merge?.member ?? row.focus;
   return (
     <PrActions
       member={member}
-      onChanged={actions.refresh}
+      onChanged={() => {
+        actions.refresh();
+        onMerged?.(member.number);
+      }}
       onResult={(message) => toast.add({ type: 'success', title: message })}
       trigger={(open, busy, _quick, methods) => (
         // The same split button as the PR header's (#542): Merge opens its confirmation, the chevron picks the method.
-        <MergeSplit size="xs" label="Merge" primary={false} busy={busy} extra={{ ...SHORTCUT, title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · A` }}
+        // In a guided session it is the step's primary action, at the card's size, pressed with Enter.
+        <MergeSplit size={session ? 'sm' : 'xs'} label="Merge" primary={session} busy={busy}
+          extra={{ ...(session ? {} : SHORTCUT), title: `Merge #${member.number}${caveats.length ? ` (${caveats.join(', ')})` : ''}… · ${session ? '↵' : 'A'}` }}
           icon={<MergeIcon size={13} aria-hidden="true" />} methods={['SQUASH', 'MERGE', 'REBASE']} allowed={methods.allowed} onMethods={methods.load} onMerge={(method) => open('merge', method)} />
       )}
     />

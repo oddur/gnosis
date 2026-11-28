@@ -182,6 +182,25 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     single(waiting1),
     single(waiting2),
   ];
+  // `?overview&session`: briefings on a few PRs, as the guided session shows them under the title (#596). Also a
+  // re-review whose size is known (your review was on an older commit), and an approved stack whose base can merge:
+  // Next up is full, so it is one of the session's quick wins, and merging its base brings its next PR into the run.
+  const sessionMode = new URLSearchParams(location.search).has('session');
+  if (sessionMode) {
+    add(reviews[3], { checks: 'success', reviewedSha: 'old-324' });
+    const lockBase = add(pr({ number: 308, repo: 'klang/cli', title: 'Parse the lockfile once per run', created: 2 * DAY, updated: 6 * HOUR, headBranch: 'lock-1', additions: 48, deletions: 10, files: 2 }), { ...ready, opinions: [{ author: 'sam', state: 'APPROVED', ago: 6 * HOUR }] });
+    const lockChild = add(pr({ number: 309, repo: 'klang/cli', title: 'Reuse the parsed lockfile in the audit', created: 2 * DAY, updated: 5 * HOUR, baseBranch: 'lock-1', headBranch: 'lock-2', additions: 30, deletions: 6, files: 2 }), { ...ready, opinions: [{ author: 'sam', state: 'APPROVED', ago: 5 * HOUR }] });
+    next.push({ subject: groupSubjects([lockBase, lockChild])[0], attention: 'other' });
+    const briefed: Partial<Record<number, string>> = {
+      321: 'Streams each build step’s log lines to the dashboard as they arrive, through a new server-sent events endpoint, instead of loading the whole log when the step ends. Old builds still load their stored log at once.',
+      312: 'Documents the order in which plugins load: built-ins first, then workspace plugins by name, then user plugins. It also explains how the new hooks replace the old load order.',
+      324: 'Replaces the hand-written config parser with a schema-based one. Unknown keys now warn instead of failing, and the error messages name the file, line and key.',
+    };
+    for (const item of next) {
+      const summary = briefed[item.subject.members[0].number];
+      if (summary) item.briefing = { key: `session-${item.subject.members[0].number}`, status: 'ready', summary, updatedAt: new Date().toISOString() };
+    }
+  }
   items.splice(0, items.length, ...next);
   const members = () => items.flatMap((item) => item.subject.members);
   const find = (url: string) => members().find((member) => member.url === url);
@@ -301,6 +320,8 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
       if (request.kind === 'merge' && member) {
         member.merged = true;
         member.state = 'closed';
+        // GitHub moves the PRs above a merged base onto its base branch.
+        for (const child of members()) if (child.state === 'open' && child.baseBranch === member.headBranch) child.baseBranch = member.baseBranch;
         setTimeout(changed, 50);
       }
       return Promise.resolve({ status: 'merged', message: `Merged #${member?.number ?? ''} on GitHub.` });
@@ -322,6 +343,14 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
     // "Since yesterday": what main's log saw overnight.
     getOverviewSince: (since: number) =>
       Promise.resolve(sinceEvents.filter((event) => event.at > since)),
+    // The guided session's changed paths, for its facts row and depth rules: `?overview&session` only.
+    ...(sessionMode ? {
+      getPrFiles: (url: string) => {
+        const member = find(url);
+        const names = ['src/build/log-stream.ts', 'src/server/events.ts', 'src/dashboard/BuildLog.tsx', 'tests/log-stream.test.ts', 'docs/logs.md'];
+        return Promise.resolve(names.slice(0, member?.changedFileCount ?? 3).map((filename) => ({ filename, status: 'modified', additions: 4, deletions: 1, changes: 5 })));
+      },
+    } : {}),
     // "+N lines since your review": one compare per re-review PR.
     getRereviewLines: (targets: { url: string; from: string; to: string }[]) => {
       writes.push(...targets.map((target) => ({ kind: 'compare', url: target.url })));
@@ -340,6 +369,18 @@ export function installOverviewFixture(mocks: Record<string, unknown>, items: Qu
         threads: [{ id: `t-${member.number}`, path: 'src/loader.ts', line: 12, startLine: null, diffSide: 'RIGHT', isResolved: false, isOutdated: false, viewerCanResolve: true, viewerCanUnresolve: false,
           comments: [comment(`${member.number}1`, LOGIN, 'Moved the loader up.', 5 * HOUR), comment(`${member.number}2`, reply.author, reply.text, 3 * HOUR)] }],
       });
+    },
+    // The guided session's replies and approvals (components/GuidedSession.tsx): recorded, never sent.
+    reviewThreadAction: (request: { prUrl: string; threadId: string; action: string }) => {
+      writes.push({ kind: `thread-${request.action}`, url: request.prUrl });
+      if (request.action === 'reply') replies.delete(request.prUrl);
+      changed();
+      return Promise.resolve({ id: request.threadId, comments: [], isResolved: request.action === 'resolve' });
+    },
+    submitReview: (request: { prUrl: string; event: string; body: string }) => {
+      writes.push({ kind: `review-${request.event.toLowerCase()}`, url: request.prUrl, comment: request.body });
+      changed();
+      return Promise.resolve({ reviewUrl: `${request.prUrl}#pullrequestreview-1`, droppedCommentCount: 0 });
     },
     feedbackAction: (request: { prUrl: string; action: string; reviewer?: string }) => {
       writes.push({ kind: `${request.action}:${request.reviewer ?? ''}`, url: request.prUrl });

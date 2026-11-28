@@ -195,6 +195,12 @@ export interface NextUp {
   unreviewed: string[];
   /** Approved merges no row lists: Next up is full, the stack's review comes first, or the PR has no checks. */
   moreApproved: string[];
+  /**
+   * The quick wins Next up had no room for: approved, passing merges and failing checks to rerun, in Next up's order,
+   * one per stack and none from a stack a row lists. A guided session walks them after Next up's rows; the page never
+   * shows them as rows.
+   */
+  overflow: NextItem[];
 }
 /**
  * Every ready merge on the page, by its PR: Merge lane rows that are ready, not stacked on an open base, not leaving
@@ -474,6 +480,14 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     items.push(oldest);
     items.sort(order);
   }
+  // What Next up had no room for that clears in a press: an approved, passing merge (the pool holds no other merge),
+  // or failing checks to rerun. One per stack, and never a stack a row already lists.
+  const overflow: NextItem[] = [];
+  for (const item of pool) {
+    if (items.includes(item) || (item.kind !== 'merge' && !(item.kind === 'fix' && item.fix === 'failing'))) continue;
+    if ([...items, ...overflow].some((listed) => stackKey(listed) === stackKey(item))) continue;
+    overflow.push(item);
+  }
   // Every ready merge no row lists is on the quiet line, so the briefing's merge numbers are the page's.
   const listed = new Set(items.filter((item) => item.kind === 'merge').flatMap((item) => item.urls));
   const ready = readyMerges(model, input.signals, hidden);
@@ -481,6 +495,7 @@ export function nextUp(input: MorningInput & { stale?: ReadonlySet<string> }): N
     items,
     unreviewed: ready.unreviewed.filter((url) => !listed.has(url) && !starred.has(url)),
     moreApproved: [...ready.approved, ...ready.other].filter((url) => !listed.has(url) && !starred.has(url)),
+    overflow,
   };
 }
 /** The quiet line under Next up: the ready merges no row lists. "10 ready to merge without review", "3 more approved and ready to merge". */

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { markSessionFinished } from '../lib/session-store';
 import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs';
 import type { PrChanges } from '../lib/pr-changes';
 import type { GitHubReviewThread as Thread } from '../lib/review-threads';
@@ -473,6 +474,9 @@ export function useChangesComments({
                       'Review posted. Could not remove the local drafts; remove them before starting another review.'
                     );
                   }
+                  // A review submitted on a PR the guided session opened: the session offers the next PR (#596).
+                  // Before the caller's callback, so a callback that throws cannot keep the bar from saying so.
+                  markSessionFinished(url);
                   onSubmitted?.(url, event);
                   void refresh(url);
                   return result;
