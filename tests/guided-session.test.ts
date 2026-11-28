@@ -182,6 +182,10 @@ void test('steps: Next up, then the quick wins it had no room for, then the deci
   assert.equal(steps[0].id, 'next|review|1|#1', 'A step is its item and its PR: a stack whose base merged is a new step');
   assert.equal(runScope(steps), '2 + 1 quick + 1 decision');
   assert.equal(runScope(steps.slice(0, 2)), '2', 'Only Next up: just its count');
+  // A long backlog: the run takes the first DECIDE_IN_RUN decisions and says how many there are.
+  const many = sessionSteps({ next: { items: [item(1, 'review')] }, decide: Array.from({ length: 110 }, (_, n) => decision(100 + n)) });
+  assert.equal(many.filter((step) => step.source === 'decide').length, 10);
+  assert.equal(runScope(many, 110), '1 + 10 of 110 decisions');
 });
 
 void test('facts: checks always, the wait, reviewers, files; what is not read says so', () => {

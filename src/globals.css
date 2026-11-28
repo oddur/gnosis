@@ -5797,6 +5797,12 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-session-progress li[data-outcome=skipped] button { background:transparent; box-shadow:inset 0 0 0 1px var(--muted-foreground); }
 .guided-session-progress li[data-outcome=snoozed] button, .guided-session-progress li[data-outcome=muted] button { background:var(--secondary); box-shadow:inset 0 0 0 1px var(--muted-foreground); }
 .guided-session-progress li[aria-current=step][data-outcome] button { box-shadow:0 0 0 2px var(--primary); }
+/* A long run: thin segments that share the width, colour by outcome, no glyphs. */
+.guided-session-progress[data-dense] { gap:2px; align-items:center; }
+.guided-session-progress[data-dense] li { flex:1 1 0; min-width:2px; }
+.guided-session-progress[data-dense] li[aria-current=step] { flex:3 1 0; }
+.guided-session-progress[data-dense] button { height:6px; border-radius:3px; }
+.guided-session-progress[data-dense] button svg { display:none; }
 
 /* Focus inside the session: a solid 2px ring (≥3:1 on card and page), not the shared Button's faint 3px halo (#596). */
 .guided-session :focus-visible, .session-bar :focus-visible { outline:2px solid var(--ring); outline-offset:2px; box-shadow:none; }

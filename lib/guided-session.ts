@@ -57,30 +57,39 @@ const nextStep = (item: NextItem, source: 'next' | 'more'): SessionStep => ({
   ...(item.unblocks ? { unblocks: item.unblocks } : {}),
   next: item,
 });
+/** A run takes this many of the quick wins and of the decisions: a long backlog is a list to work through, not a run. */
+export const QUICK_IN_RUN = 10;
+export const DECIDE_IN_RUN = 10;
 /**
- * Next up's items, then the quick wins it had no room for, then the decisions. Each PR once: a step whose PR an
- * earlier step lists is left out.
+ * Next up's items, then the quick wins it had no room for, then the decisions, at most `QUICK_IN_RUN` and
+ * `DECIDE_IN_RUN` of each, in the Overview's order. Each PR once: a step whose PR an earlier step lists is left out.
  */
 export function sessionSteps(page: { next: Pick<MorningPage['next'], 'items'> & Partial<Pick<MorningPage['next'], 'overflow'>>; decide: MorningPage['decide'] }): SessionStep[] {
   const steps: SessionStep[] = page.next.items.map((item) => nextStep(item, 'next'));
   const listed = new Set(steps.flatMap((step) => step.urls));
   for (const item of page.next.overflow ?? []) {
+    if (steps.filter((step) => step.source === 'more').length >= QUICK_IN_RUN) break;
     if (item.urls.some((url) => listed.has(url))) continue;
     steps.push(nextStep(item, 'more'));
     for (const url of item.urls) listed.add(url);
   }
   for (const item of page.decide) {
+    if (steps.filter((step) => step.source === 'decide').length >= DECIDE_IN_RUN) break;
     if (listed.has(item.member.url)) continue;
     steps.push({ id: stepId(item.id, item.member), source: 'decide', kind: 'decide', row: item.row, member: item.member, title: item.member.title, why: item.label, urls: [item.member.url], check: item.check, decide: item });
   }
   return steps;
 }
-/** What a run holds, for its Start button: "5 + 2 quick + 2 decisions". */
-export function runScope(steps: readonly Pick<SessionStep, 'source'>[]): string {
+/**
+ * What a run holds, for its Start button: "5 + 2 quick + 2 decisions", or "5 + 10 of 110 decisions" when the run takes
+ * only the first of a long list (`decideTotal`: how many the Overview has).
+ */
+export function runScope(steps: readonly Pick<SessionStep, 'source'>[], decideTotal?: number): string {
   const count = (source: SessionStep['source']) => steps.filter((step) => step.source === source).length;
   const more = count('more');
   const decide = count('decide');
-  return [String(count('next')), more ? `${more} quick` : '', decide ? `${decide} decision${decide === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ');
+  const decisions = decideTotal !== undefined && decideTotal > decide ? `${decide} of ${decideTotal} decisions` : `${decide} decision${decide === 1 ? '' : 's'}`;
+  return [String(count('next')), more ? `${more} quick` : '', decide ? decisions : ''].filter(Boolean).join(' + ');
 }
 
 /** "just now", "12 minutes ago", "3 hours ago", "yesterday", "4 days ago". */

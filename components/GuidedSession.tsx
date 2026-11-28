@@ -140,6 +140,8 @@ function outcomeOf(id: string, outcomes: GuidedSessionProps['outcomes'], live: G
   const outcome = outcomes[id];
   return setAside(outcome) && live.has(id) ? undefined : outcome;
 }
+/** Past this many steps the strip is a dense bar of thin segments, so it always fits its width. */
+const DENSE_STEPS = 24;
 export function GuidedSession(props: GuidedSessionProps) {
   const { steps, live, index, outcomes, snooze, mute, onExit, onIndex, onOutcome, onOpen } = props;
   const root = useRef<HTMLElement>(null);
@@ -217,7 +219,7 @@ export function GuidedSession(props: GuidedSessionProps) {
           {done ? 'Session done' : 'Session'}
           {!done && <span className="guided-session-count" data-session-position>{index + 1} of {steps.length}</span>}
         </h2>
-        <ol className="guided-session-progress" aria-label="PRs in this session">
+        <ol className="guided-session-progress" aria-label="PRs in this session" data-dense={steps.length > DENSE_STEPS || undefined}>
           {steps.map((step, i) => {
             const shown = outcomeOf(step.id, outcomes, live) ?? (live.has(step.id) ? undefined : 'done');
             const Glyph = shown ? OUTCOME_GLYPH[shown] : undefined;

@@ -1012,7 +1012,7 @@ export function OverviewPage(props: OverviewPageProps) {
             <Button size="xs" variant="outline" className="morning-session-start" data-session-start onClick={startSession}
               title={session && session.index < session.steps.length ? 'Go on with the session where you left it' : 'Go through Next up one at a time, then the quick merges and reruns it had no room for, then the decisions: what changed, what blocks each, and the next step'}>
               <Play size={12} aria-hidden="true" />
-              {session && session.index < session.steps.length ? `Resume · ${session.index + 1} of ${session.steps.length}` : `Start · ${runScope(liveSteps)}`}
+              {session && session.index < session.steps.length ? `Resume · ${session.index + 1} of ${session.steps.length}` : `Start · ${runScope(liveSteps, morning.decide.length)}`}
             </Button>
           )}
           empty={morning.starredHolds.next ? 'Nothing else needs you right now.' : 'Nothing needs you right now.'}
