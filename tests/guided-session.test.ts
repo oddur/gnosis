@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PARK_LIMIT, ago, heldForkRuns, mergeBlockers, plainText, primaryAction, riskyPath, runSummary, settlePark, stepDigest, suggestDepth, type Park, type SessionStep } from '../lib/guided-session';
+import { PARK_LIMIT, ago, decideEvidence, heldForkRuns, mergeBlockers, plainText, primaryAction, riskyPath, runScope, runSummary, sessionSteps, settlePark, showsDepth, span, stepDigest, stepFacts, stepId, suggestDepth, type Park, type SessionStep } from '../lib/guided-session';
+import type { DecisionItem, NextItem } from '../lib/morning';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReviewMember } from '../lib/workbench';
 
@@ -169,4 +170,59 @@ void test('parked steps: a rerun waits for its checks, an update for its new hea
   const summary = runSummary(steps, { s1: 'parked', s2: 'done' });
   assert.equal(summary.waiting, 1);
   assert.deepEqual(summary.lines.map((line) => line.text), ['Still waiting: #1 PR 1', 'Moved: #2 PR 2']);
+});
+
+void test('steps: Next up, then the quick wins it had no room for, then the decisions, each PR once', () => {
+  const item = (n: number, kind: NextItem['kind'], over: Partial<NextItem> = {}) =>
+    ({ id: `next|${kind}|${n}`, kind, row: { item: { subject: { id: `s${n}` } } }, member: member({ number: n, url: `u${n}` }), title: `PR ${n}`, why: '', urls: [`u${n}`], check: {}, since: 0, ...over }) as unknown as NextItem;
+  const decision = (n: number) => ({ id: `decide|${n}`, row: {}, member: member({ number: n, url: `u${n}` }), label: 'No activity', check: {} }) as unknown as DecisionItem;
+  const steps = sessionSteps({ next: { items: [item(1, 'review'), item(2, 'reply')], overflow: [item(3, 'merge'), item(1, 'merge')] }, decide: [decision(4), decision(2)] });
+  assert.deepEqual(steps.map((step) => [step.source, step.member.number]), [['next', 1], ['next', 2], ['more', 3], ['decide', 4]], 'A PR an earlier step lists is left out');
+  assert.equal(steps[0].id, stepId('next|review|1', { number: 1 }));
+  assert.equal(steps[0].id, 'next|review|1|#1', 'A step is its item and its PR: a stack whose base merged is a new step');
+  assert.equal(runScope(steps), '2 + 1 quick + 1 decision');
+  assert.equal(runScope(steps.slice(0, 2)), '2', 'Only Next up: just its count');
+});
+
+void test('facts: checks always, the wait, reviewers, files; what is not read says so', () => {
+  const pr = member({ author: 'maya', headSha: 'h', requestedReviewers: ['owen', 'me'] });
+  const read = signals({ opinions: [
+    { url: 'r1', author: 'lena', state: 'APPROVED', submittedAt: '2026-11-26T10:00:00Z', headSha: 'h' },
+    { url: 'r2', author: 'sam', state: 'CHANGES_REQUESTED', submittedAt: '2026-11-26T11:00:00Z', headSha: 'h' },
+  ] });
+  const facts = stepFacts({ member: pr, signals: read, since: NOW - 3 * 86_400_000, now: NOW, login: 'me', paths: ['a.ts', 'b.ts', 'c.ts', 'd.ts'] });
+  assert.deepEqual(facts.slice(0, 3).map((fact) => [fact.key, fact.text]), [
+    ['checks', 'Checks 4 passed'],
+    ['waited', 'Waiting 3 days'],
+    ['reviews', 'lena approved, sam requested changes, owen requested +1'],
+  ]);
+  assert.equal(facts[2].title, 'lena approved, sam requested changes, owen requested, your review requested');
+  assert.deepEqual(facts.slice(3).map((fact) => [fact.key, fact.text]), [
+    ['files', 'a.ts, b.ts, c.ts +1 more'],
+  ]);
+  const failing = stepFacts({ member: pr, signals: signals({ checks: { state: 'failure', passed: 9, failed: 2, running: 1, total: 12 } }), since: undefined, now: NOW, login: 'me' });
+  assert.deepEqual(failing[0], { key: 'checks', text: 'Checks 9 passed, 2 failed, 1 running', tone: 'danger' });
+  assert.equal(failing.some((fact) => fact.key === 'files'), false, 'Files not loaded: no files fact, no guess');
+  const unread = stepFacts({ member: pr, signals: undefined, since: undefined, now: NOW, login: 'me' });
+  assert.deepEqual(unread.map((fact) => [fact.text, fact.unknown]), [['Checks not read yet', true], ['Reviews not read yet', true]]);
+  const older = stepFacts({ member: member({ headSha: 'new' }), signals: signals(), since: undefined, now: NOW, login: 'me' });
+  assert.equal(older[0].text, 'Checks not read yet', 'Checks read for an older commit do not count');
+  assert.equal(stepFacts({ member: pr, signals: signals({ checks: { state: 'success', passed: 0, failed: 0, total: 0 } }), since: undefined, now: NOW, login: 'me' })[0].text, 'No checks');
+  assert.equal(span(90 * 60_000), '2 hours');
+});
+
+void test('a stale decision shows its evidence and whom to remind', () => {
+  const updatedAt = new Date(NOW - 8 * 86_400_000).toISOString();
+  assert.deepEqual(decideEvidence({ updatedAt, requestedReviewers: ['lena'] }, 'unapproved', NOW), { lines: ['Last activity 8 days ago', 'Waiting on lena to review'], remind: 'lena' });
+  assert.deepEqual(decideEvidence({ updatedAt, requestedReviewers: [] }, 'failing', NOW), { lines: ['Last activity 8 days ago', 'Waiting on you: its checks fail'] });
+  assert.deepEqual(decideEvidence({ updatedAt, requestedReviewers: [] }, 'idle', NOW).lines[1], 'No reviewer requested');
+});
+
+void test('moved means changed on GitHub: an opened PR is counted apart; the depth line only where reading is the choice', () => {
+  const steps = [1, 2, 3].map((n) => ({ id: `s${n}`, member: member({ number: n, title: `PR ${n}` }) }));
+  const summary = runSummary(steps, { s1: 'done', s2: 'opened' });
+  assert.equal(summary.done, 1);
+  assert.equal(summary.opened, 1);
+  assert.deepEqual(summary.groups.map((group) => group.label), ['Moved', 'Opened', 'Still on your list']);
+  assert.deepEqual((['review', 'rereview', 'reply', 'merge', 'decide', 'fix', 'changes'] as const).filter(showsDepth), ['review', 'rereview']);
 });

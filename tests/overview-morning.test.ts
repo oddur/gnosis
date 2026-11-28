@@ -361,6 +361,9 @@ void test('merges nobody reviewed are never rows: the quiet line under Next up c
   const full = page(build([...many, big, ...small].map((m) => item([m])), status), status);
   assert.equal(full.next.items.length, NEXT_LIMIT);
   assert.equal(nextMoreLine(full.next), '3 ready to merge without review · 1 more approved and ready to merge');
+  // The approved merge Next up had no room for is a quick win a guided session walks; unreviewed ones never are.
+  assert.deepEqual(full.next.overflow.map((entry) => [entry.kind, entry.member.number]), [['merge', 26]]);
+  assert.deepEqual(some.next.overflow, [], 'Room for every approved merge: nothing overflows');
   assert.equal(nextMoreLine({ unreviewed: [], moreApproved: [] }), undefined);
 });
 
