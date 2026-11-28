@@ -1,6 +1,7 @@
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useImperativeHandle, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type Ref } from 'react';
 import type { PrChangeFile } from '../lib/pr-changes';
+import { useVirtualizerSettled } from '../lib/test-settled';
 import { captureDiffLineAnchor, diffLineAnchorTop, followScrollAnchor } from '../lib/diff-layout';
 
 export interface CommitDiffStreamHandle {
@@ -86,6 +87,7 @@ export function CommitDiffStream({
         ]),
       ].sort((a, b) => a - b),
   });
+  useVirtualizerSettled('diff-stream', virtual);
   const items = virtual.getVirtualItems();
   // A filter can hide an edited file while its reply or save is still in flight.
   // Keep the same keyed row (and editor instances) mounted outside the measured list.

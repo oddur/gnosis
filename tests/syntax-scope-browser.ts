@@ -1025,17 +1025,52 @@ void app.whenReady().then(async () => {
       assert.equal(await js<number>(`window.readsOf(${JSON.stringify(far)})`), 0, `${far} is not read yet`);
 
     // ── Fast scrolling through the PR: at most two reads at once, and files that only flash past are not read ──
-    const beforeScroll = await js<number>('window.lazyReads.length');
-    // The scroll moves every frame, as a fast wheel or trackpad scroll does. (A throttled run of this check is #430:
-    // under heavy CPU throttling a file that comes near mid-scroll can be taken for one that came near without a scroll.)
-    await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');s.scrollTop=0;
-      for(let i=0;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>requestAnimationFrame(()=>r()))}})()`);
-    await sleep(1500);
-    const scrolled = await js<number>('window.lazyReads.length');
-    console.log(`Fast scroll: ${scrolled - beforeScroll} reads, at most ${await js<number>('window.maxInflight')} at once`);
+    // Every read the scroll asked for has been asked: the stream is still and drawn, each file near the view has asked
+    // for its read (or has its contents), and the reads have run.
+    const readsAsked = async () => {
+      await waitSettled(win.webContents, 'diff-stream', 30_000);
+      await waitSettled(win.webContents, 'structure-reads', 30_000);
+      // Prefetch waits while the window is hidden (as here): only the view's reads count.
+      await wait(`(async()=>{const s=${contents}.stats();return !s.viewQueued&&!s.running})()`, 500);
+    };
+    await js(`window.scrollEvents=[];document.addEventListener('scroll',()=>window.scrollEvents.push(performance.now()),{capture:true,passive:true});void 0`);
+    /**
+     * Scrolls from the top to the end of the stream, 500 px every animation frame, as a fast wheel or trackpad scroll
+     * does, and returns how many reads it made. With `rate`, the page's CPU is slowed that many times meanwhile.
+     */
+    const fastScroll = async (label: string, rate = 1) => {
+      const before = await js<number>('window.lazyReads.length');
+      const cpu = async (value: number) => {
+        if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
+        await win.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: value });
+      };
+      if (rate !== 1) await cpu(rate);
+      let run: { start: number; end: number; frames: number; longest: number; median: number };
+      try {
+        run = await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');const start=performance.now();const gaps=[];let last=start;s.scrollTop=0;
+          let i=0;for(;i<200&&s.scrollTop+s.clientHeight<s.scrollHeight;i++){s.scrollTop+=500;await new Promise(r=>requestAnimationFrame(()=>r()));const t=performance.now();gaps.push(t-last);last=t}
+          gaps.sort((a,b)=>a-b);return {start,end:performance.now(),frames:i,longest:Math.round(gaps.at(-1)??0),median:Math.round(gaps[gaps.length>>1]??0)}})()`);
+      } finally {
+        if (rate !== 1) await cpu(1);
+      }
+      await readsAsked();
+      const reads = (await js<number>('window.lazyReads.length')) - before;
+      // Each read asked for during the scroll, and how long before it the last scroll event came.
+      const during = await js<{ path: string; since: number }[]>(`window.lazyReads.slice(${before}).filter(r=>r.at<=${run.end}).map(r=>({path:r.path.replace('src/lazy/',''),since:Math.round(r.at-(window.scrollEvents.filter(t=>t<=r.at).at(-1)??-Infinity))}))`);
+      console.log(`${label}: ${reads} reads, at most ${await js<number>('window.maxInflight')} at once; ${run.frames} frames, median ${run.median} ms, longest ${run.longest} ms; reads during the scroll: ${JSON.stringify(during)}`);
+      return reads;
+    };
+    const fast = await fastScroll('Fast scroll');
     assert.ok((await js<number>('window.maxInflight')) <= 2, 'At most two reads run at once');
-    assert.ok(scrolled - beforeScroll <= 6, `Files that flash past are not read (${scrolled - beforeScroll} reads)`);
+    assert.ok(fast <= 6, `Files that flash past are not read (${fast} reads)`);
     assert.equal(await js<number>("window.readsOf('src/lazy/h012.rs')"), 0, 'A file scrolled past quickly is not read');
+    // The same at 1/6 CPU (#430). Frames then come further apart than the settle time, and a frame's own work can take
+    // longer than it, so a file that comes near mid-scroll must not pass for one that came near while the view was still.
+    const slow = await fastScroll('Fast scroll at 1/6 CPU', 6);
+    assert.ok((await js<number>('window.maxInflight')) <= 2, 'At most two reads run at once at 1/6 CPU');
+    assert.ok(slow <= 6, `Files that flash past are not read at 1/6 CPU (${slow} reads)`);
+    assert.equal(await js<number>("window.readsOf('src/lazy/h012.rs')"), 0, 'A file scrolled past quickly at 1/6 CPU is not read');
+    const scrolled = await js<number>('window.lazyReads.length');
 
     // ── Prefetch: every supported file in diff order, two at a time, pausing while the reader scrolls ──
     await js(`(async()=>{const s=document.querySelector('.commit-diff-stream');s.scrollTop=0})()`);

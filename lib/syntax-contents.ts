@@ -583,6 +583,8 @@ export function createSyntaxContentsScheduler({
     stats: () => ({
       running,
       queued: [...entries.values()].filter((entry) => !entry.running).length,
+      /** Queued reads a view asked for. Prefetch alone can wait out a pause or a hidden window. */
+      viewQueued: [...entries.values()].filter((entry) => !entry.running && entry.waiters.size).length,
       reads,
       retries,
       promotions,

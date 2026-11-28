@@ -6,6 +6,7 @@ import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interfac
 import { homeVisit, reviewVisit, type RecentVisit } from '../lib/recently-viewed';
 
 import { useCommandScope, type AppCommand } from '../lib/command-center';
+import { workspaceOpensSubject } from '../lib/workspace-tabs';
 import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftBoundary } from '../lib/session-drafts';
 
@@ -44,6 +45,8 @@ export interface WorkspaceController {
   openActivity: (task: ActivityTask) => Promise<void>;
 }
 interface Props {
+  /** The window's first tab: it keeps its queue behind a PR whatever it opened onto, so the window always has one. */
+  firstTab?: boolean;
   id: string;
   initial?: import('../lib/workspace-tabs').WorkspaceTarget;
   /** What the home tab shows when nothing names a list; the window decides it from its other tabs. */
@@ -59,6 +62,7 @@ interface Props {
 export const ReviewWorkspace = memo(function ReviewWorkspace({
   id,
   initial,
+  firstTab = false,
   homeDefault,
   recentlyViewed,
   register,
@@ -81,20 +85,20 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     pendingHistory.current = undefined;
   }, [navigationHistory]);
   const initialRecorded = useRef(false);
+  // A tab other than the first that opens onto a PR does not render its queue behind it until the reader goes back
+  // to the queue: each hidden queue held about 10 MB of rows and React state (#355). The queue still shows while the
+  // PR opens, and is kept once the reader chooses to go to it. The first tab always keeps its queue, so the window's
+  // queue is ready behind whatever it shows.
+  const [queueDeferred, setQueueDeferred] = useState(() => !firstTab && !!initial && workspaceOpensSubject(initial));
   const [initialError, setInitialError] = useState('');
   const initialAttempt = useRef(0);
   const openingInitial = useRef(false);
   const failedInitial = useRef(false);
   const recordHome = useCallback(
     (home: HomeLocation, mutedUrls?: Set<string>) => {
+      if (home.item) setQueueDeferred(false);
       if (initial && !initialRecorded.current) {
-        const expectsSubject =
-          initial.kind === 'review' ||
-          (initial.kind === 'home' && (initial.subject || initial.url)) ||
-          (initial.kind === 'restore' &&
-            (initial.saved.reviewId || initial.saved.home?.subjectId || initial.saved.destination?.url)) ||
-          (initial.kind === 'location' && initial.location.page === 'home' && initial.location.home.item);
-        if (expectsSubject && !home.item) return;
+        if (workspaceOpensSubject(initial) && !home.item) return;
         initialRecorded.current = true;
       }
       if ((openingInitial.current || failedInitial.current) && home.item) {
@@ -172,6 +176,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   async function moveHistory(direction: HistoryDirection) {
     const target = navigationHistory.move(direction);
     if (!target) return;
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     await openHistoryLocation(target);
   }
   async function openHistoryLocation(target: AppLocation, reportError = true) {
@@ -209,6 +215,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     }
   }
   async function openRecent(visit: RecentVisit) {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     if (visit.location.page === 'home' && visit.location.home.account !== historyAccount.current)
       throw new Error('This item belongs to a different GitHub account.');
     await openHistoryLocation(visit.location, false);
@@ -243,6 +251,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   );
 
   async function openActivity(task: ActivityTask) {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     if (task.kind === 'briefing') {
       navigationVersion.current++;
       cancelHistoryLoad();
@@ -265,6 +275,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }
 
   function handleBack() {
+    // The reader chose where to go: the queue, once shown, is kept again (#355).
+    setQueueDeferred(false);
     navigationVersion.current++;
     cancelHistoryLoad();
     setExplanationDestination(undefined);
@@ -276,6 +288,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }
 
   function handleReReview(prUrl: string, previousReviewId?: string) {
+    setQueueDeferred(false);
     setPrefillReviewId(previousReviewId);
     navigationVersion.current++;
     cancelHistoryLoad();
@@ -290,6 +303,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
 
   async function navigate(target: SearchDestination, restoring = false) {
     if (!restoring) {
+      setQueueDeferred(false);
       initialAttempt.current++;
       openingInitial.current = false;
       initialRecorded.current = true;
@@ -367,6 +381,12 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
       if (parent && member) item = focusStackPr(parent, member);
     }
     if (subjectId && !item && url) return navigate({ kind: 'home', url }, true);
+    if (subjectId && !item) {
+      // The saved PR left the queue and has no link to open it by: the queue is where the tab opens. It records the
+      // reader's moves from here, and is kept like any queue the reader has on screen (#355).
+      initialRecorded.current = true;
+      setQueueDeferred(false);
+    }
     return openHistoryLocation(
       {
         page: 'home',
@@ -387,6 +407,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     } catch (error) {
       if (attempt === initialAttempt.current) {
         failedInitial.current = true;
+        setQueueDeferred(false);
         setInitialError(error instanceof Error ? error.message : String(error));
         onStatus(id, 'error');
       }
@@ -533,6 +554,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             prefillPrUrl={prefillPrUrl}
             prefillReviewId={prefillReviewId}
             initialSubjectId={destination.subjectId}
+            deferQueue={queueDeferred}
+            hidden={page !== 'home'}
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}
             navigationRestoration={homeRestoration}
