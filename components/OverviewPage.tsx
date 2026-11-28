@@ -99,7 +99,8 @@ import { ClosePrDialog, NudgeDialog } from './OverviewWrites';
 import { RepositoryIcon } from './RepositoryAppearance';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
-import { GuidedSession, type SessionOpen, type StepAbout } from './GuidedSession';
+import { GuidedSession, type SessionOpen, type SnoozeChoice, type StepAbout } from './GuidedSession';
+import { snoozeNow } from './SnoozePicker';
 import { heldForkRuns, plainText, sessionSteps, settlePark, type DepthContext, type Park, type ParkAction, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import { answerSessionRequests, peekSessionState, publishSession, takeSessionRequest, type SessionRequest } from '../lib/session-store';
 import { toast } from './ui/toast';
@@ -789,10 +790,11 @@ export function OverviewPage(props: OverviewPageProps) {
         return props.onMute?.(members.length ? members : [step.member]) ?? Promise.resolve(false);
       }
     : undefined;
-  // Snooze from the session: the same picker as a row's Z, for the step's PRs (a stack's lane, or one PR).
-  const sessionSnooze = (step: SessionStep, snoozed: () => void) => {
+  // Snooze from the session: the same save as the picker's (a choice from its split button), or the picker for a date; for the step's PRs (a stack's lane, or one PR).
+  const sessionSnooze = (step: SessionStep, choice: SnoozeChoice | 'custom', snoozed: () => void) => {
     const members = step.row.item.subject.members.filter((member) => step.urls.includes(member.url));
-    return openSnoozePicker({ groups: [members.length ? members : [step.member]], onSnoozed: () => snoozed() });
+    const groups = [members.length ? members : [step.member]];
+    return choice === 'custom' ? openSnoozePicker({ groups, onSnoozed: () => snoozed() }) : snoozeNow(groups, choice, () => snoozed());
   };
   const sessionSecondary = (step: SessionStep): ReactNode | undefined =>
     step.kind === 'decide' ? (

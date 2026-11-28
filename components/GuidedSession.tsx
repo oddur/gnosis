@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { AlarmClock, ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
+import { AlarmClock, ArrowLeft, ChevronDown, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
+import { DropdownMenu } from 'radix-ui';
 import { conflictHeaderLine } from '../lib/conflict-header';
+import { presetDetail, snoozePresets, type SnoozeOn } from '../lib/snooze';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { useConflictHeader } from '../lib/use-conflict-header';
 import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
@@ -41,10 +43,10 @@ export interface GuidedSessionProps {
   /** The step's in-place action as the Overview row draws it (Merge, Rerun), or undefined. */
   renderAction: (step: SessionStep) => ReactNode | undefined;
   /**
-   * Snooze the step's PRs: the picker asks until when, and `snoozed` runs once they are, so the session moves on.
-   * False when nothing can be snoozed (a merged or closed PR).
+   * Snooze the step's PRs until `choice`, or through the picker's custom date (`custom`). `snoozed` runs once they
+   * are, so the session moves on. False when nothing can be snoozed (a merged or closed PR).
    */
-  snooze?: (step: SessionStep, snoozed: () => void) => boolean;
+  snooze?: (step: SessionStep, choice: SnoozeChoice | 'custom', snoozed: () => void) => boolean;
   /** Mute the step's PRs: they leave every list until unmuted. Resolves true once saved. */
   mute?: (step: SessionStep) => Promise<boolean>;
   /** A step's other way forward, beside Skip: a decision's Close PR. Its button carries `data-session-close` for C. */
@@ -106,11 +108,12 @@ export function GuidedSession(props: GuidedSessionProps) {
     if (!outcomes[current.id]) onOutcome(current.id, 'skipped');
     go(index + 1);
   };
-  // Snoozed: off the list until the time picked, so the session goes on to the next PR.
-  const snoozeStep = () => {
+  // Snoozed: off the list until the time picked, so the session goes on to the next PR. Z and the split button's main
+  // part snooze until tomorrow morning; its menu has the other times.
+  const snoozeStep = (choice: SnoozeChoice | 'custom' = defaultSnooze()) => {
     if (!current || gone || !snooze) return;
     const step = current;
-    snooze(step, () => {
+    snooze(step, choice, () => {
       onOutcome(step.id, 'snoozed');
       go(index + 1);
     });
@@ -213,7 +216,7 @@ function newHeading(lead: string): string {
 
 type Busy = 'reply' | 'approve' | undefined;
 
-function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; snoozeStep?: () => void; muteStep?: () => void; muting?: boolean; next: () => void }) {
+function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; snoozeStep?: (choice?: SnoozeChoice | 'custom') => void; muteStep?: () => void; muting?: boolean; next: () => void }) {
   const { step, gone, skip, snoozeStep, muteStep, muting, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
@@ -543,13 +546,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           {openButton('summary', suggestedOpen && depth === 'summary' && !(canApprove && (step.kind === 'review' || step.kind === 'rereview')))}
           {openButton('review', suggestedOpen && depth === 'deep')}
           {!moved && renderSecondary?.(step)}
-          {!moved && snoozeStep && (
-            <Button size="sm" variant="ghost" onClick={snoozeStep} title={`Snooze #${step.member.number} until later… · Z`} data-session-snooze>
-              <AlarmClock size={14} aria-hidden="true" />
-              Snooze…
-              <kbd>Z</kbd>
-            </Button>
-          )}
+          {!moved && snoozeStep && <SnoozeSplit number={step.member.number} own={!!login && step.member.author.toLowerCase() === login.toLowerCase()} onSnooze={snoozeStep} />}
           {!moved && muteStep && (
             <Button size="sm" variant="ghost" onClick={muteStep} disabled={muting} title={`Mute #${step.member.number}: stop following it · M`} data-session-mute>
               <VolumeX size={14} aria-hidden="true" />
@@ -621,5 +618,56 @@ function ResolveConflicts({ member, onOpened }: { member: SessionStep['member'];
       onClick={() => { onOpened(); openConflictWorkspace(member.url); }} data-session-conflicts>
       {line?.state === 'ready' && line.merged ? 'Review and push…' : 'Resolve conflicts…'}
     </Button>
+  );
+}
+
+/** A snooze the session saves itself: until a time, or until new activity or checks. */
+export type SnoozeChoice = { until?: number; on: SnoozeOn[] };
+/** Z and the split button's main part: tomorrow morning, the picker's own default. */
+function defaultSnooze(): SnoozeChoice {
+  const tomorrow = snoozePresets(Date.now()).find((preset) => preset.id === 'tomorrow');
+  return tomorrow ? { until: tomorrow.until, on: [] } : { on: ['activity'] };
+}
+
+/**
+ * Snooze as a split button, as Merge is: the main part snoozes until tomorrow morning in one press, the chevron lists
+ * the picker's other times. Custom… opens the picker for a date.
+ */
+function SnoozeSplit({ number, own, onSnooze }: { number: number; own: boolean; onSnooze: (choice?: SnoozeChoice | 'custom') => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  const presets = snoozePresets(now);
+  const tomorrow = presets.find((preset) => preset.id === 'tomorrow');
+  return (
+    <span className="pr-action-split session-snooze-split">
+      <Button size="sm" variant="outline" onClick={() => onSnooze()} data-session-snooze
+        title={`Snooze #${number} ${tomorrow ? `until ${presetDetail(tomorrow.until, now)}` : 'until new activity'} · Z`}>
+        <AlarmClock size={14} aria-hidden="true" />
+        Snooze
+        <kbd>Z</kbd>
+      </Button>
+      <DropdownMenu.Root onOpenChange={(open) => open && setNow(Date.now())}>
+        <DropdownMenu.Trigger asChild>
+          <Button size="icon-sm" variant="outline" className="pr-action-chevron" aria-label="Snooze until…" title="Snooze until…">
+            <ChevronDown size={14} aria-hidden="true" />
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="pr-update-menu pr-method-menu session-snooze-menu" align="end" sideOffset={5}>
+            <DropdownMenu.Label className="pr-method-menu-label">Snooze #{number} until</DropdownMenu.Label>
+            {presets.map((preset) => (
+              <DropdownMenu.Item key={preset.id} onSelect={() => onSnooze({ until: preset.until, on: [] })}>
+                <span>{preset.label}</span>
+                <span className="session-snooze-when">{presetDetail(preset.until, now)}</span>
+              </DropdownMenu.Item>
+            ))}
+            <DropdownMenu.Separator className="session-snooze-separator" />
+            <DropdownMenu.Item onSelect={() => onSnooze({ on: ['activity'] })}>New activity</DropdownMenu.Item>
+            {own && <DropdownMenu.Item onSelect={() => onSnooze({ on: ['checks'] })}>Checks finish</DropdownMenu.Item>}
+            <DropdownMenu.Separator className="session-snooze-separator" />
+            <DropdownMenu.Item onSelect={() => onSnooze('custom')}>Custom…</DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </span>
   );
 }

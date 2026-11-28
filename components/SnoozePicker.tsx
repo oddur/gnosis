@@ -15,6 +15,20 @@ export function snoozeSubject(groups: readonly (readonly SnoozeTarget[])[]): str
   if (groups.length === 1) return 'stack';
   return `${members.length} PRs`;
 }
+/**
+ * Snooze without the picker, for a surface that offers the choices itself (the guided session's split button): the
+ * same save, toast and Undo as the picker. Open PRs only. False when nothing can be snoozed.
+ */
+export function snoozeNow(groups: readonly (readonly SnoozeTarget[])[], choice: { until?: number; on: SnoozeOn[] }, onSaved?: (urls: string[]) => void): boolean {
+  const open = groups.map((group) => group.filter((member) => member.state === 'open' && !member.merged)).filter((group) => group.length);
+  if (!open.length) return false;
+  const login = snoozePicker.account();
+  void runSnooze(
+    { action: 'snooze', groups: open.map((group) => group.map((member) => member.url)), ...choice },
+    { title: `Snoozed ${snoozeSubject(open)} ${snoozeChoiceLabel(choice, Date.now())}`, description: pendingNote(open.flat(), login), onSaved }
+  );
+  return true;
+}
 /** Snoozing a PR that still needs the reader is allowed; the toast says what stays pending. */
 function pendingNote(members: readonly SnoozeTarget[], login: string | null): string | undefined {
   const requested = members.filter((member) => !same(member.author, login) && member.requestedReviewers.some((reviewer) => same(reviewer, login)));
@@ -91,10 +105,7 @@ function SnoozePicker({ request }: { request: SnoozePickerRequest }) {
   useEffect(() => { if (custom) dateInput.current?.focus(); }, [custom]);
   const choose = (choice: { until?: number; on: SnoozeOn[] }) => {
     closeSnoozePicker();
-    void runSnooze(
-      { action: 'snooze', groups: request.groups.map((group) => group.map((member) => member.url)), ...choice },
-      { title: `Snoozed ${subject} ${snoozeChoiceLabel(choice, Date.now())}`, description: pendingNote(members, login), onSaved: request.onSnoozed }
-    );
+    snoozeNow(request.groups, choice, request.onSnoozed);
   };
   const submitCustom = () => {
     const until = new Date(`${date}T${time}`).getTime();

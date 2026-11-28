@@ -6513,3 +6513,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .symbol-peek-footer { padding:6px 12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { .symbol-peek { animation:none; transition:none; } }
 .symbol-peek-method h4 { margin:4px 0 2px; font-family:var(--font-mono); font-size:inherit; font-weight:500; }
+/* The guided session's Snooze split button and its times (components/GuidedSession.tsx), as Merge's method menu. */
+.session-snooze-menu { width:auto; min-width:240px; }
+.session-snooze-menu [role=menuitem] { white-space:nowrap; flex-direction:row; align-items:baseline; justify-content:space-between; gap:16px; padding:7px 12px; }
+.session-snooze-menu [role=menuitem]+[role=menuitem] { border-top:0; }
+.session-snooze-when { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.session-snooze-separator { height:1px; margin:4px 0; background:var(--border); }
