@@ -33,6 +33,8 @@ import {
   trackMoves,
 } from './moved-symbols-store';
 import { MOVES_KEY, movesFailureKey } from './moved-symbols-plan';
+import { registerSettled } from './test-settled';
+import { createSettleWait } from './settle-wait';
 /** The moves reads' budgets, one per head: `moves:<head>`. */
 const MOVES_BUDGET = 'moves:';
 
@@ -118,48 +120,67 @@ if (typeof window !== 'undefined' && (window as { electronAPI?: unknown }).elect
 /**
  * How long the view must be still before a file near it queues its read, so files that only flash past are not read.
  * Scrolling restarts the wait: on a slow machine a fast scroll can leave each file near the view for longer than this,
- * so time near the view alone is not enough. Still means no scroll event for this long, as seen from a frame: a slow
- * frame can hold back the scroll events of a scroll that goes on, so the last check waits for the next frame, whose
- * scroll steps deliver them first. A file that came near without a scroll (the PR opened, a file expanded) asks then.
+ * so time near the view alone is not enough. Still means no scroll event for this long, then a whole frame with no
+ * scroll event in which no scroller moved (lib/settle-wait.ts). Under heavy load a frame's own work can outlast this
+ * wait, so a file that came near mid-scroll would look as if it came near while the view was still (#430). A file
+ * that came near without a scroll (the PR opened, a file expanded) asks after one frame.
  */
 const SETTLE_MS = 150;
-let lastScrollAt = 0;
 /**
- * Runs `run` once the view has been still for SETTLE_MS; the returned function cancels it. Reads wait for it, and so
- * do the renders that show structure that lands while the reader scrolls: they would add work to the scroll's frames.
+ * Each element that scrolled, and each diff scroller, with its offsets as the last `mark` took them. Held weakly: a
+ * closed tab's scroller must not keep its tree alive.
  */
-export function whenSettled(run: () => void): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let frame: number | undefined;
-  let cancelled = false;
-  const still = () => performance.now() - lastScrollAt >= SETTLE_MS;
-  const check = () => {
-    const wait = lastScrollAt + SETTLE_MS - performance.now();
-    if (wait > 0) {
-      timer = setTimeout(check, wait);
-      return;
+let scrollers: { element: WeakRef<Element>; top?: number; left?: number }[] = [];
+const settle = createSettleWait(SETTLE_MS, {
+  now: () => performance.now(),
+  // A hidden window draws no frames, and has no scroll to wait out.
+  get frame() {
+    if (typeof requestAnimationFrame === 'undefined' || document.visibilityState === 'hidden') return undefined;
+    return (run: () => void) => {
+      const id = requestAnimationFrame(run);
+      return () => cancelAnimationFrame(id);
+    };
+  },
+  setTimer: (run, ms) => {
+    const id = setTimeout(run, ms);
+    return () => clearTimeout(id);
+  },
+  // Where each scroller is as the wait's last frame is asked for: once per wait, not on every scroll event.
+  mark: () => {
+    // A diff scroller that has not scrolled yet is watched too: its first scroll can come in the wait's last frame.
+    for (const element of document.querySelectorAll(DIFF_SCROLLER))
+      if (!scrollers.some((at) => at.element.deref() === element)) scrollers.push({ element: new WeakRef(element) });
+    for (const at of scrollers) {
+      const element = at.element.deref();
+      if (!element?.isConnected) continue;
+      at.top = element.scrollTop;
+      at.left = element.scrollLeft;
     }
-    // A hidden window draws no frames, and has no scroll to wait out.
-    if (typeof requestAnimationFrame === 'undefined' || document.visibilityState === 'hidden') {
-      if (!cancelled) run();
-      return;
+  },
+  // A scroller moved since `mark`: its offsets are taken as they are now, so the wait starts again from here.
+  moved: () => {
+    let moved = false;
+    for (const at of scrollers) {
+      const element = at.element.deref();
+      if (!element?.isConnected || at.top === undefined) continue;
+      const { scrollTop: top, scrollLeft: left } = element;
+      if (top === at.top && left === at.left) continue;
+      at.top = top;
+      at.left = left;
+      moved = true;
     }
-    frame = requestAnimationFrame(() => {
-      frame = undefined;
-      if (cancelled) return;
-      if (still()) run();
-      else check();
-    });
-  };
-  check();
-  return () => {
-    cancelled = true;
-    clearTimeout(timer);
-    if (frame !== undefined) cancelAnimationFrame(frame);
-  };
-}
+    return moved;
+  },
+});
+/**
+ * Runs `run` once the view is still; the returned function cancels it. Reads wait for it, and so do the renders that
+ * show structure that lands while the reader scrolls: they would add work to the scroll's frames.
+ */
+export const whenSettled = settle.whenSettled;
 /** Near the view: within a viewport above or below it. Rows outside the virtualizer's range are not mounted. */
 const NEAR = '100% 0px';
+/** The scrollers diffs sit in (components/ChangesDiff.tsx `DIFF_SCROLLER`). */
+const DIFF_SCROLLER = '.commit-diff-stream, [data-diff-scroller]';
 /** Files read as view reads as soon as a PR's Changes opens, before any of them is near the view. */
 export const SYNTAX_OPEN_FILES = 3;
 /** Prefetch waits this long after the last scroll or key press. */
@@ -258,8 +279,18 @@ if (typeof window !== 'undefined') {
   document.addEventListener('scroll', pause, { capture: true, passive: true });
   document.addEventListener(
     'scroll',
-    () => {
-      lastScrollAt = performance.now();
+    (event) => {
+      const element = event.target instanceof Element ? event.target : document.scrollingElement;
+      if (element) {
+        // Scrollers that left the page are dropped; there are only a few at a time.
+        scrollers = scrollers.filter((at) => {
+          const other = at.element.deref();
+          return !!other?.isConnected && other !== element;
+        });
+        // Its offsets are read when a wait needs them (`mark`): reading them here could force a layout every frame.
+        scrollers.push({ element: new WeakRef(element) });
+      }
+      settle.scrolled();
     },
     { capture: true, passive: true }
   );
@@ -467,7 +498,7 @@ export function useViewTier(
   useEffect(() => {
     const target = element.current;
     if (!enabled || !target || typeof IntersectionObserver === 'undefined') return;
-    const root = target.closest('.commit-diff-stream, [data-diff-scroller]');
+    const root = target.closest(DIFF_SCROLLER);
     let onScreen = false,
       near = true;
     const update = () => {
@@ -519,6 +550,37 @@ export function useSyntaxContents(
   const [result, setResult] = useState<{ key: string; state: 'done' | 'failed' | 'refused' }>();
   const [attempt, setAttempt] = useState(0);
   const active = !!want;
+  // For the browser checks (lib/test-settled.ts): whether the observer last said the file is near, and the file whose
+  // read was asked for since it came near.
+  const seenNear = useRef(false);
+  const asked = useRef<string>(undefined);
+  const wanted = useRef(want);
+  wanted.current = want;
+  useEffect(
+    () =>
+      registerSettled('structure-reads', () => {
+        const target = element.current;
+        const file = wanted.current;
+        if (!file || !target?.isConnected || !syntaxContentsPlan(file.snapshot, file.file, allowed)) return true;
+        const root = target.closest(DIFF_SCROLLER);
+        if (!root) return true;
+        // A hidden tab or row has no layout to be near: the observer says nothing about it.
+        if (!target.checkVisibility() || !root.checkVisibility()) return true;
+        // NEAR, from the layout as it is now: a viewport above and below the scroller's padding box, as the observer
+        // measures its root. Within a pixel of either edge both answers are right.
+        const box = root.getBoundingClientRect();
+        const top = box.top + root.clientTop;
+        const height = root.clientHeight;
+        const own = target.getBoundingClientRect();
+        const edge = Math.min(Math.abs(own.bottom - (top - height)), Math.abs(own.top - (top + 2 * height)));
+        if (edge <= 1) return true;
+        const near = own.bottom >= top - height && own.top <= top + 2 * height;
+        if (near !== seenNear.current) return `${file.file.path} has not heard that it is ${near ? 'near' : 'away from'} the view`;
+        if (near && asked.current !== file.key) return `${file.file.path} waits for a still view to ask for its read`;
+        return true;
+      }),
+    []
+  );
   // Contents another read brought in (the PR's opening reads, prefetch, another view) show as soon as they land.
   useEffect(() => {
     if (!want) return;
@@ -536,13 +598,17 @@ export function useSyntaxContents(
   useEffect(() => {
     const target = element.current;
     if (!active || !target || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver((entries) => setNear(entries[entries.length - 1].isIntersecting), {
-      root: target.closest('.commit-diff-stream, [data-diff-scroller]'),
-      rootMargin: NEAR,
-    });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        seenNear.current = entries[entries.length - 1].isIntersecting;
+        setNear(seenNear.current);
+      },
+      { root: target.closest(DIFF_SCROLLER), rootMargin: NEAR }
+    );
     observer.observe(target);
     return () => {
       observer.disconnect();
+      seenNear.current = false;
       setNear(false);
     };
   }, [active]);
@@ -554,6 +620,7 @@ export function useSyntaxContents(
     let cancel = () => {};
     traceStructure(key, { near: performance.now() });
     const stopWaiting = whenSettled(() => {
+      asked.current = key;
       traceStructure(key, { viewRequest: performance.now() });
       cancel = syntaxContents.request(
         syntaxContentsJob(want, plan),
@@ -562,6 +629,7 @@ export function useSyntaxContents(
       );
     });
     return () => {
+      asked.current = undefined;
       stopWaiting();
       cancel();
     };
