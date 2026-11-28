@@ -218,13 +218,13 @@ void app.whenReady().then(async () => {
     const placed = async (path: string, note: string, type: string, line: string) => {
       const read = () =>
         js<string>(
-          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({gap:Math.round(r.top-b.bottom),bottom:Math.round(b.bottom),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
+          `(()=>{const s=document.querySelector(${JSON.stringify(row(path))});const n=window.deepAll('[data-move-note]',s).find(n=>n.textContent.includes(${JSON.stringify(note)}));const l=window.deepAll('[data-line]',s).find(e=>e.dataset.lineType===${JSON.stringify(type)}&&e.textContent.includes(${JSON.stringify(line)}));if(!n||!l)return '';const b=n.getBoundingClientRect(),r=l.getBoundingClientRect();if(!b.height||!r.height)return '';return JSON.stringify({lines:Math.round(b.height/parseFloat(getComputedStyle(n).minHeight)),gap:Math.round(r.top-b.bottom),bottom:Math.round(b.bottom),left:Math.round(b.left),right:Math.round(b.right),row:Math.round(s.getBoundingClientRect().left+s.getBoundingClientRect().width/2)})})()`
         );
       let last = '';
       for (let i = 0; i < 300; i++) {
         const now = await read();
         if (now && now === last)
-          return JSON.parse(now) as { gap: number; bottom: number; left: number; right: number; row: number };
+          return JSON.parse(now) as { lines: number; gap: number; bottom: number; left: number; right: number; row: number };
         last = now;
         await sleep(40);
       }
@@ -317,6 +317,8 @@ void app.whenReady().then(async () => {
       console.log(`s ${label} at 1000px: note ${at.gap}px above its symbol`);
       assert.ok(at.gap >= 0 && at.gap <= 10, `Split at 1000px, ${label}: the note is right above its symbol (${at.gap}px)`);
     }
+    // The case this guards: without the wrap, both notes are one line tall and the check below proves nothing.
+    assert.ok(wrapped.normalize.lines >= 2, `Split at 1000px: the old side's note wraps (lines: ${wrapped.normalize.lines})`);
     assert.equal(wrapped.normalize.bottom, wrapped.totalWidth.bottom, 'Split at 1000px: both lead notes end on one row');
     // Back to the width it had: 1280, or what a smaller screen clamped that to.
     win.setContentSize(wide, 900);

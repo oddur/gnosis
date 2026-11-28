@@ -20,7 +20,7 @@ import {
   type HunkRange,
 } from '../lib/diff-gaps';
 import { applyCodePalette } from '../lib/diff-code-palette';
-import { HERE_CSS, WRITTEN_CSS, clearHere, markHere, markSection, markWritten } from '../lib/diff-here';
+import { HERE_CSS, WRITTEN_CSS, clearHere, markHere, markSection, markWritten, reapplyHere } from '../lib/diff-here';
 import { LoadingIndicator } from './LoadingState';
 import { KeptFileDiff } from './KeptFileDiff';
 import { FLAT_TOKEN_CSS, FLAT_TOKENS } from '../lib/diff-token-flatten';
@@ -1662,7 +1662,7 @@ export function ChangesDiff<A>({
     ...({ [FLAT_TOKENS]: true } as object),
     hunkSeparators: 'simple',
     unsafeCSS: options.unsafeCSS ? `${options.unsafeCSS}\n${CHANGES_CSS}` : CHANGES_CSS,
-    // Each rendered diff marks its rows for show scope's rails.
+    // Each rendered diff marks its rows for show scope's rails, its quiet, moved and written lines, and the "here" band.
     onPostRender: (node: HTMLElement, ...rest: unknown[]) => {
       (options.onPostRender as ((node: HTMLElement, ...rest: unknown[]) => void) | undefined)?.(node, ...rest);
       markRails(node, latestRails.current);
@@ -1671,6 +1671,8 @@ export function ChangesDiff<A>({
         ['data-moved-line', latestMovedLines.current],
       ]);
       markWritten(node, latestWritten.current);
+      // The rows are new: a "here" band showing on the diff moves to them (lib/diff-here.ts).
+      reapplyHere(node);
     },
   } as FileDiffOptions<A, undefined>);
   const latestRender = useRef(renderAnnotation);
