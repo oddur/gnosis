@@ -45,6 +45,8 @@ export interface WorkspaceController {
   openActivity: (task: ActivityTask) => Promise<void>;
 }
 interface Props {
+  /** The window's first tab: it keeps its queue behind a PR whatever it opened onto, so the window always has one. */
+  firstTab?: boolean;
   id: string;
   initial?: import('../lib/workspace-tabs').WorkspaceTarget;
   /** What the home tab shows when nothing names a list; the window decides it from its other tabs. */
@@ -60,6 +62,7 @@ interface Props {
 export const ReviewWorkspace = memo(function ReviewWorkspace({
   id,
   initial,
+  firstTab = false,
   homeDefault,
   recentlyViewed,
   register,
@@ -82,10 +85,12 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     pendingHistory.current = undefined;
   }, [navigationHistory]);
   const initialRecorded = useRef(false);
-  // A tab that opens onto a PR does not render its queue behind it until the reader goes back to the queue: each
+  // A tab other than the first that opens onto a PR does not render its queue behind it until the reader goes back
+  // to the queue: each
   // hidden queue held about 10 MB of rows and React state (#355). The queue still shows while the PR opens, and
   // renders as usual once the PR is on screen, the open fails or the reader goes elsewhere.
-  const [queueDeferred, setQueueDeferred] = useState(() => !!initial && workspaceOpensSubject(initial));
+  // The first tab always keeps its queue: the window's queue is ready behind whatever it shows.
+  const [queueDeferred, setQueueDeferred] = useState(() => !firstTab && !!initial && workspaceOpensSubject(initial));
   const [initialError, setInitialError] = useState('');
   const initialAttempt = useRef(0);
   const openingInitial = useRef(false);

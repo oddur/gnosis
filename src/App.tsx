@@ -567,6 +567,7 @@ export function App() {
                               <ReviewWorkspace
                                 id={tab.id}
                                 initial={tab.initial}
+                                firstTab={state.tabs[0]?.id === tab.id}
                                 homeDefault={tab.homeDefault}
                                 recentlyViewed={recentlyViewed}
                                 register={register}
