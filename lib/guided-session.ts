@@ -4,8 +4,11 @@
  * enough, or a deep review. Pure: built from the morning page (`lib/morning.ts`), the queue signals and the extras the
  * page already reads; `now` is an argument, and nothing here reads the clock, storage or the network.
  *
- * - **Steps** (`sessionSteps`): Next up's items in Next up's order, then the PRs that need a decision. Next up already
- *   makes a stack one step with its next PR, so a session does too.
+ * - **Steps** (`sessionSteps`): Next up's items in Next up's order, then the quick wins Next up had no room for
+ *   (approved, passing merges and failing checks to rerun: `NextUp.overflow`), then the PRs that need a decision. Next
+ *   up already makes a stack one step with its next PR, so a session does too. A step is its item and the PR it acts
+ *   on (`stepId`): once a stack's base merges, the stack's next PR is a new step.
+ * - **Facts** (`stepFacts`): one line of what Gnosis already read: checks, how long it waited, reviewers, files.
  * - **Digest** (`stepDigest`): facts only, from GitHub data. Your last review and its age, then what came after it:
  *   lines changed since that review, a reply waiting on you, checks that turned red or green, unresolved threads.
  * - **Blockers** (`mergeBlockers`): why the PR cannot merge, each with one next action and who owns it.
@@ -20,9 +23,10 @@ import type { ReviewMember } from './workbench';
 
 export type StepKind = NextKind | 'decide';
 export interface SessionStep {
-  /** The Next up or decision item's id: stable while the item stays on the page. */
+  /** The Next up or decision item's id and the PR it acts on (`stepId`): stable while both stay on the page. */
   id: string;
-  source: 'next' | 'decide';
+  /** Next up's rows, the quick wins it had no room for (`more`), or the decisions. */
+  source: 'next' | 'more' | 'decide';
   kind: StepKind;
   row: OverviewRow;
   /** The PR the step acts on: a merge's PR, a stack's next step, else the row's PR. */
@@ -38,27 +42,45 @@ export interface SessionStep {
   decide?: DecisionItem;
 }
 
-/** Next up's items, then the decisions. Each PR once: a decision whose PR a Next up item lists is left out. */
-export function sessionSteps(page: Pick<MorningPage, 'next' | 'decide'>): SessionStep[] {
-  const steps: SessionStep[] = page.next.items.map((item) => ({
-    id: item.id,
-    source: 'next',
-    kind: item.kind,
-    row: item.row,
-    member: item.member,
-    title: item.title,
-    why: item.why,
-    urls: item.urls,
-    check: item.check,
-    ...(item.unblocks ? { unblocks: item.unblocks } : {}),
-    next: item,
-  }));
+/** A step's id: its item's, and the PR it acts on, so a stack whose base merged is a new step with its next PR. */
+export const stepId = (itemId: string, member: Pick<ReviewMember, 'number'>) => `${itemId}|#${member.number}`;
+const nextStep = (item: NextItem, source: 'next' | 'more'): SessionStep => ({
+  id: stepId(item.id, item.member),
+  source,
+  kind: item.kind,
+  row: item.row,
+  member: item.member,
+  title: item.title,
+  why: item.why,
+  urls: item.urls,
+  check: item.check,
+  ...(item.unblocks ? { unblocks: item.unblocks } : {}),
+  next: item,
+});
+/**
+ * Next up's items, then the quick wins it had no room for, then the decisions. Each PR once: a step whose PR an
+ * earlier step lists is left out.
+ */
+export function sessionSteps(page: { next: Pick<MorningPage['next'], 'items'> & Partial<Pick<MorningPage['next'], 'overflow'>>; decide: MorningPage['decide'] }): SessionStep[] {
+  const steps: SessionStep[] = page.next.items.map((item) => nextStep(item, 'next'));
   const listed = new Set(steps.flatMap((step) => step.urls));
+  for (const item of page.next.overflow ?? []) {
+    if (item.urls.some((url) => listed.has(url))) continue;
+    steps.push(nextStep(item, 'more'));
+    for (const url of item.urls) listed.add(url);
+  }
   for (const item of page.decide) {
     if (listed.has(item.member.url)) continue;
-    steps.push({ id: item.id, source: 'decide', kind: 'decide', row: item.row, member: item.member, title: item.member.title, why: item.label, urls: [item.member.url], check: item.check, decide: item });
+    steps.push({ id: stepId(item.id, item.member), source: 'decide', kind: 'decide', row: item.row, member: item.member, title: item.member.title, why: item.label, urls: [item.member.url], check: item.check, decide: item });
   }
   return steps;
+}
+/** What a run holds, for its Start button: "5 + 2 quick + 2 decisions". */
+export function runScope(steps: readonly Pick<SessionStep, 'source'>[]): string {
+  const count = (source: SessionStep['source']) => steps.filter((step) => step.source === source).length;
+  const more = count('more');
+  const decide = count('decide');
+  return [String(count('next')), more ? `${more} quick` : '', decide ? `${decide} decision${decide === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ');
 }
 
 /** "just now", "12 minutes ago", "3 hours ago", "yesterday", "4 days ago". */
@@ -70,6 +92,16 @@ export function ago(at: number, now: number): string {
   if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
   const days = Math.round(hours / 24);
   return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+/** "12 minutes", "3 hours", "4 days": how long something has lasted. */
+export function span(ms: number): string {
+  const minutes = Math.max(1, Math.floor(ms / 60_000));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'}`;
 }
 
 export type DigestTone = 'neutral' | 'danger' | 'success' | 'attention';
@@ -158,6 +190,75 @@ export function heldForkRuns(member: Partial<Pick<ReviewMember, 'headRepo' | 'ba
   const fork = member.headRepoUnknown === true || (!!member.headRepo && member.headRepo.toLowerCase() !== member.baseRepo.toLowerCase());
   return fork ? held : 0;
 }
+
+/** One fact on a step's facts row (`stepFacts`). `unknown`: Gnosis has not read it, and says so. */
+export interface StepFact {
+  key: 'checks' | 'waited' | 'reviews' | 'files';
+  text: string;
+  tone?: DigestTone;
+  unknown?: boolean;
+  /** The whole fact, when the text is cut short: every reviewer, every path. */
+  title?: string;
+}
+const REVIEW_STATE: Readonly<Record<string, string>> = { APPROVED: 'approved', CHANGES_REQUESTED: 'requested changes', COMMENTED: 'commented', DISMISSED: 'dismissed' };
+/**
+ * The facts row: what Gnosis already read about the PR, on one line, from data the page has. Checks passed and
+ * failed (always, not only when failing), how long it has waited, its reviewers and their states, and its top three
+ * changed files when they are loaded. Fail closed: what is not read says "not read yet", never a guess. Status read
+ * for an older commit does not count for the checks.
+ */
+export function stepFacts(input: { member: Pick<ReviewMember, 'author' | 'headSha' | 'requestedReviewers'>; signals: QueueSignals | undefined; since: number | undefined; now: number; login: string; paths?: readonly string[] }): StepFact[] {
+  const { member, signals, since, now, login } = input;
+  const facts: StepFact[] = [];
+  const checks = signals && signals.headSha === member.headSha ? signals.checks : undefined;
+  if (!checks) facts.push({ key: 'checks', text: 'Checks not read yet', unknown: true });
+  else if (!checks.total) facts.push({ key: 'checks', text: 'No checks' });
+  else {
+    const failed = checks.failed ?? 0;
+    const running = checks.running ?? 0;
+    const parts = [`${checks.passed} passed`, failed ? `${failed} failed` : '', running ? `${running} running` : ''].filter(Boolean);
+    facts.push({ key: 'checks', text: `Checks ${parts.join(', ')}`, tone: failed ? 'danger' : running ? 'neutral' : 'success' });
+  }
+  if (since !== undefined && Number.isFinite(since)) facts.push({ key: 'waited', text: `Waiting ${span(now - since)}` });
+  if (!signals?.opinions) facts.push({ key: 'reviews', text: 'Reviews not read yet', unknown: true });
+  else {
+    const me = login.toLowerCase();
+    const latest = new Map<string, string>();
+    for (const review of [...signals.opinions].sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))) {
+      if (review.author.toLowerCase() === member.author.toLowerCase()) continue;
+      latest.set(review.author, review.state);
+    }
+    const said = [...latest].map(([author, state]) => `${author.toLowerCase() === me ? 'you' : author} ${REVIEW_STATE[state] ?? 'reviewed'}`);
+    const asked = member.requestedReviewers.filter((name) => !latest.has(name)).map((name) => (name.toLowerCase() === me ? 'your review requested' : `${name} requested`));
+    const all = [...said, ...asked];
+    facts.push(all.length
+      ? { key: 'reviews', text: all.length > 3 ? `${all.slice(0, 3).join(', ')} +${all.length - 3}` : all.join(', '), ...(all.length > 3 ? { title: all.join(', ') } : {}) }
+      : { key: 'reviews', text: 'No reviewers' });
+  }
+  if (input.paths?.length) {
+    const top = input.paths.slice(0, 3);
+    const rest = input.paths.length - top.length;
+    facts.push({ key: 'files', text: `${top.join(', ')}${rest ? ` +${rest} more` : ''}`, title: input.paths.join('\n') });
+  }
+  return facts;
+}
+
+/**
+ * The evidence on a decision ("Stuck for over a week"): when anything last happened, and who the PR is waiting on.
+ * `remind`: the requested reviewer a Remind would nudge, when there is one.
+ */
+export function decideEvidence(member: Pick<ReviewMember, 'updatedAt' | 'requestedReviewers'>, reason: 'failing' | 'unapproved' | 'idle' | undefined, now: number): { lines: string[]; remind?: string } {
+  const updated = Date.parse(member.updatedAt);
+  const lines = [Number.isFinite(updated) ? `Last activity ${ago(updated, now)}` : 'Last activity not known'];
+  const reviewers = member.requestedReviewers;
+  if (reviewers.length) lines.push(`Waiting on ${reviewers.join(', ')} to review`);
+  else if (reason === 'failing') lines.push('Waiting on you: its checks fail');
+  else lines.push('No reviewer requested');
+  return { lines, ...(reviewers.length ? { remind: reviewers[0] } : {}) };
+}
+
+/** The depth line says something only where reading is the choice: a review or a re-review. */
+export const showsDepth = (kind: StepKind) => kind === 'review' || kind === 'rereview';
 
 export type BlockerOwner = 'me' | 'author' | 'reviewer' | 'maintainer' | 'anyone';
 export type BlockerAction =
@@ -300,7 +401,10 @@ export function primaryAction(step: Pick<SessionStep, 'kind'>, blockers: readonl
 /** What happened to a step in this run. */
 export type StepOutcome = 'done' | 'skipped' | 'snoozed' | 'muted' | 'parked' | 'opened' | 'open';
 export interface RunSummary {
+  /** Steps that changed on GitHub: merged, approved, answered, closed, or left the list. */
   done: number;
+  /** Steps only opened: not counted as moved. */
+  opened: number;
   /** Parked steps whose action has not resolved yet. */
   waiting: number;
   total: number;
@@ -322,7 +426,8 @@ export function runSummary(steps: readonly Pick<SessionStep, 'id' | 'member'>[],
     label: GROUP_LABEL[outcome],
     steps: steps.flatMap((step, index) => ((outcomes[step.id] ?? 'open') === outcome ? [{ id: step.id, index, text: `#${step.member.number} ${step.member.title}` }] : [])),
   })).filter((group) => group.steps.length);
-  return { done: lines.filter((line) => line.outcome === 'done' || line.outcome === 'opened').length, waiting: lines.filter((line) => line.outcome === 'parked').length, total: lines.length, lines, groups };
+  // Only a change on GitHub moved a PR forward: one you only opened is counted apart.
+  return { done: lines.filter((line) => line.outcome === 'done').length, opened: lines.filter((line) => line.outcome === 'opened').length, waiting: lines.filter((line) => line.outcome === 'parked').length, total: lines.length, lines, groups };
 }
 
 /** A slow action started from the session, whose result comes later: a rerun's checks, or an update's new head. */

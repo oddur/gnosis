@@ -32,12 +32,21 @@ export interface WaitingReply {
   text: string;
   threadId?: string;
   canResolve?: boolean;
+  /** Where the thread sits: its file and line, when it is on a line. */
+  path?: string;
+  line?: number;
 }
 export function waitingReply(discussion: GitHubReviewThreads | undefined, login: string, author: string): WaitingReply | undefined {
   for (const thread of discussion?.threads ?? []) {
     if (!isResponseThread(thread, login, author)) continue;
     const last = thread.comments.filter((comment) => !isPendingComment(comment) && !comment.isMinimized && !isAutomationActor(comment.author)).at(-1);
-    if (last?.author) return { author: last.author.login, text: last.body, threadId: thread.id, ...(thread.viewerCanResolve ? { canResolve: true } : {}) };
+    if (last?.author)
+      return {
+        author: last.author.login, text: last.body, threadId: thread.id,
+        ...(thread.viewerCanResolve ? { canResolve: true } : {}),
+        ...(thread.path ? { path: thread.path } : {}),
+        ...(thread.path && typeof thread.line === 'number' ? { line: thread.line } : {}),
+      };
   }
   return undefined;
 }

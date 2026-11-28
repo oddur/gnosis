@@ -101,7 +101,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { GuidedSession, type SessionOpen, type SnoozeChoice, type StepAbout } from './GuidedSession';
 import { snoozeNow } from './SnoozePicker';
-import { heldForkRuns, plainText, sessionSteps, settlePark, type DepthContext, type Park, type ParkAction, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { decideEvidence, heldForkRuns, plainText, sessionSteps, settlePark, type DepthContext, type Park, type ParkAction, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import { answerSessionRequests, peekSessionState, publishSession, takeSessionRequest, type SessionRequest } from '../lib/session-store';
 import { toast } from './ui/toast';
 
@@ -798,14 +798,31 @@ export function OverviewPage(props: OverviewPageProps) {
     const groups = [members.length ? members : [step.member]];
     return choice === 'custom' ? openSnoozePicker({ groups, onSnoozed: () => snoozed() }) : snoozeNow(groups, choice, () => snoozed());
   };
-  const sessionSecondary = (step: SessionStep): ReactNode | undefined =>
-    step.kind === 'decide' ? (
-      <Button size="sm" variant="outline" title={`Close #${step.member.number}… · C`} data-session-close onClick={() => actions.close(step.member)}>
-        <CloseIcon size={14} aria-hidden="true" />
-        Close PR
-        <kbd>C</kbd>
-      </Button>
-    ) : undefined;
+  // A decision's other ways forward: Remind the reviewer it waits on (the Overview's Nudge), or Close it.
+  const sessionSecondary = (step: SessionStep): ReactNode | undefined => {
+    if (step.kind !== 'decide') return undefined;
+    const reviewer = decideEvidence(step.member, step.decide?.reason, now).remind;
+    const key = `nudge:session:${step.member.url}`;
+    return (
+      <>
+        {reviewer && (nudged.has(key) ? (
+          <span className="guided-step-note" role="status">Reminded {reviewer}</span>
+        ) : (
+          <Button size="sm" variant="outline" title={`Remind ${reviewer} to review #${step.member.number}… · R`} data-session-remind
+            onClick={() => actions.nudge({ key, kind: 'person', label: reviewer, detail: '', rows: [], urls: [], repos: [], lines: [], oldest: 0, nudge: { reviewer, members: [step.member] } })}>
+            <NudgeIcon size={14} aria-hidden="true" />
+            Remind {reviewer}
+            <kbd>R</kbd>
+          </Button>
+        ))}
+        <Button size="sm" variant="outline" title={`Close #${step.member.number}… · C`} data-session-close onClick={() => actions.close(step.member)}>
+          <CloseIcon size={14} aria-hidden="true" />
+          Close PR
+          <kbd>C</kbd>
+        </Button>
+      </>
+    );
+  };
   const sessionIdentity = (step: SessionStep): ReactNode => (
     <span className="guided-step-id">
       <PrIcon member={step.member} />
@@ -849,14 +866,16 @@ export function OverviewPage(props: OverviewPageProps) {
     actions.refresh();
   };
   const openFromSession = (step: SessionStep, where: SessionOpen) => {
-    if (where === 'review' || where === 'summary') setSession((value) => value && { ...value, read: { ...value.read, [step.id]: true } });
+    if (where === 'review' || where === 'summary' || where === 'update') setSession((value) => value && { ...value, read: { ...value.read, [step.id]: true } });
     if (where === 'github' || where === 'github-checks') {
       void window.electronAPI.openExternal(where === 'github' ? step.member.url : `${step.member.url}/checks`);
       return;
     }
     // A deep review opens Changes; a summary, conflicts and threads open the PR's Summary, where readiness and its
     // actions are.
-    const target = prTarget(step.member.url, where === 'review' ? 'changes' : 'summary') ?? step.row.target;
+    // An update opens Changes at the first file not viewed since: Gnosis has no since-your-review diff of its own.
+    const base = prTarget(step.member.url, where === 'review' || where === 'update' ? 'changes' : 'summary');
+    const target = (base && where === 'update' ? { ...base, focus: 'unviewed-file' as const } : base) ?? step.row.target;
     actions.open(step.row, target);
   };
   const body = !authenticated ? (

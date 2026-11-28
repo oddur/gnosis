@@ -7,13 +7,14 @@ import { conflictHeaderLine } from '../lib/conflict-header';
 import { presetDetail, snoozePresets, type SnoozeOn } from '../lib/snooze';
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { useConflictHeader } from '../lib/use-conflict-header';
-import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
+import { decideEvidence, mergeBlockers, plainText, runSummary, stepDigest, stepFacts, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { SinceEvent } from '../lib/since-log';
 import type { WaitingReply } from '../lib/use-morning';
 
 /** Where a step's button takes the reader: the PR's review, its summary, its conflicts, or GitHub (its checks page). */
-export type SessionOpen = 'review' | 'summary' | 'conflicts' | 'github' | 'github-checks';
+/** `update`: Changes at the first file not viewed since, the nearest Gnosis has to a since-your-review diff. */
+export type SessionOpen = 'review' | 'summary' | 'update' | 'conflicts' | 'github' | 'github-checks';
 /** What the PR is about, under its title: the generated summary, or the start of its description. */
 export interface StepAbout {
   text: string;
@@ -51,7 +52,10 @@ export interface GuidedSessionProps {
   snooze?: (step: SessionStep, choice: SnoozeChoice | 'custom', snoozed: () => void) => boolean;
   /** Mute the step's PRs: they leave every list until unmuted. Resolves true once saved. */
   mute?: (step: SessionStep) => Promise<boolean>;
-  /** A step's other way forward, beside Skip: a decision's Close PR. Its button carries `data-session-close` for C. */
+  /**
+   * A step's other ways forward: a decision's Close PR (`data-session-close`, C) and Remind (`data-session-remind`, R),
+   * which nudges the reviewer it waits on.
+   */
   renderSecondary?: (step: SessionStep) => ReactNode | undefined;
   /** Update branch and Mark ready, through the PR header's actions and their confirmations. */
   renderPrAction: (step: SessionStep, kind: 'update-branch' | 'mark-ready') => ReactNode;
@@ -190,6 +194,7 @@ export function GuidedSession(props: GuidedSessionProps) {
       onOpen(current, key === 'd' ? 'review' : 'summary');
     } else if (key === 'a' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-approve-now]')?.click();
     else if (key === 'c' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-close]')?.click();
+    else if (key === 'r' && current) root.current?.querySelector<HTMLButtonElement>('[data-session-remind]')?.click();
     else if (key === 'Enter' && event.target === root.current) {
       // The primary action: a reply box takes the keyboard, a button is pressed.
       const target = root.current.querySelector<HTMLElement>(`textarea${PRIMARY}, ${PRIMARY} button, button${PRIMARY}`);
@@ -274,6 +279,9 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   const suggested = suggestDepth(step, lines, depthContext(step));
   const depth: Depth = suggested.depth;
   const summary = about(step);
+  const context = depthContext(step);
+  const facts = stepFacts({ member: step.member, signals, since: step.next?.since ?? step.decide?.since ?? step.row.since, now, login, ...(context.paths ? { paths: context.paths } : {}) });
+  const evidence = step.kind === 'decide' ? decideEvidence(step.member, step.decide?.reason, now) : undefined;
   const outcome = outcomeOf(step.id, outcomes, props.live);
   // A parked step's action runs on GitHub: nothing more to do here until it resolves.
   const park = outcome === 'parked' ? parked[step.id] : undefined;
@@ -301,7 +309,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     backToSession();
   };
   const replyHere = !!waiting?.threadId && !moved && !sent;
-  const full = (where: 'review' | 'summary') => {
+  const full = (where: 'review' | 'summary' | 'update') => {
     if (!outcome) onOutcome(step.id, 'opened');
     onOpen(step, where);
   };
@@ -345,6 +353,8 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       <kbd>{where === 'review' ? 'D' : 'O'}</kbd>
     </Button>
   );
+  // A re-review's question is what the update changed: its primary opens Changes where the new work starts.
+  const update = step.kind === 'rereview' && !moved && !inline;
   const primary: ReactNode = moved ? (
     <Button size="sm" data-session-primary onClick={next}>
       Next PR
@@ -352,8 +362,15 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
     </Button>
   ) : inline ? (
     <span data-session-primary className="guided-step-primary">{inline}</span>
+  ) : update ? (
+    <Button size="sm" data-session-primary data-session-update onClick={() => full('update')}
+      title={`Open #${step.member.number} on Changes at the first file not viewed since your review · ↵`}>
+      <ScanSearch size={14} aria-hidden="true" />
+      Review the update{lines !== undefined && lines > 0 ? ` · ${lines} line${lines === 1 ? '' : 's'}` : ''}
+      <kbd>↵</kbd>
+    </Button>
   ) : null;
-  const suggestedOpen = !moved && !inline && !replyHere;
+  const suggestedOpen = !moved && !inline && !replyHere && !update;
   const blockerAction = (blocker: Blocker): ReactNode => {
     if (moved) return null;
     switch (blocker.action.kind) {
@@ -412,6 +429,14 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
             {summary.text}
           </p>
         )}
+        <ul className="guided-step-facts" aria-label="Facts" data-session-facts>
+          {facts.map((fact) => (
+            <li key={fact.key} data-fact={fact.key} data-tone={fact.tone} data-unknown={fact.unknown || undefined} title={fact.title}>
+              {fact.key === 'checks' && !fact.unknown && (fact.tone === 'danger' ? <CircleAlert size={12} aria-hidden="true" /> : fact.tone === 'success' ? <CircleCheck size={12} aria-hidden="true" /> : <Clock3 size={12} aria-hidden="true" />)}
+              {fact.text}
+            </li>
+          ))}
+        </ul>
       </div>
       {gone && (
         <p className="guided-step-status" data-tone={setAside(outcome) ? 'neutral' : 'success'} role="status">
@@ -458,6 +483,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
               <span>
                 <strong>{waiting.author}</strong>{sent ? ' wrote' : ' is waiting on your reply'}
                 <q className="guided-step-quote">{plainText(waiting.text)}</q>
+                {waiting.path && <code className="guided-step-where" data-session-where>{waiting.path}{waiting.line ? `:${waiting.line}` : ''}</code>}
               </span>
             </p>
             {sent && (
@@ -507,6 +533,19 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           </div>
         )}
       </div>
+      {evidence && !gone && (
+        <div className="guided-step-block" data-session-evidence>
+          <h4 className="guided-step-heading">Stuck for over a week</h4>
+          <ul className="guided-step-digest">
+            {evidence.lines.map((text) => (
+              <li key={text} data-tone="neutral">
+                <Clock3 size={14} aria-hidden="true" />
+                <span>{text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {!gone && <div className="guided-step-block">
         <h4 className="guided-step-heading">{blockers.length ? 'Blocking the merge' : signals?.readiness ? 'Nothing blocks the merge' : 'Merge status'}</h4>
         {blockers.length > 0 ? (

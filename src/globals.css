@@ -5814,9 +5814,19 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-step-add { color:var(--color-success); }
 .guided-step-del { color:var(--color-danger); }
 /* What the PR is: the briefing's sentence or the description's start, at the reading size, under the title. */
-.guided-step-about { max-width:72ch; margin-top:2px; font-size:var(--type-body); line-height:1.6; color:var(--foreground); text-wrap:pretty; }
+.guided-step-about { max-width:62ch; margin-top:2px; font-size:var(--type-body); line-height:1.6; color:var(--foreground); text-wrap:pretty; }
 .guided-step-about:not([data-generated]) { color:var(--muted-foreground); }
 .guided-step-about-label { display:inline-flex; align-items:center; gap:4px; margin-right:8px; padding:0 6px; border-radius:4px; vertical-align:1px; font-size:var(--type-caption); font-weight:500; line-height:1.6; color:var(--accent-foreground); background:var(--accent); }
+/* The facts row: one line of what Gnosis read (checks, wait, reviewers, files); what it hasn't read says so. */
+.guided-step-facts { display:flex; flex-wrap:nowrap; align-items:center; gap:0 8px; min-width:0; margin-top:4px; font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.guided-step-facts li { display:inline-flex; align-items:center; gap:4px; flex:none; white-space:nowrap; }
+.guided-step-facts li + li::before { content:"·"; margin-right:8px; color:var(--muted-foreground); }
+.guided-step-facts li[data-fact=files], .guided-step-facts li[data-fact=reviews] { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; display:block; }
+.guided-step-facts li[data-fact=files] { font-family:var(--font-mono); }
+.guided-step-facts li[data-tone=danger] { color:var(--color-danger); }
+.guided-step-facts li[data-tone=success] > svg { color:var(--color-success); }
+.guided-step-facts li[data-unknown] { font-style:italic; }
+.guided-step-where { display:block; margin-top:2px; font-family:var(--font-mono); font-size:var(--type-caption); color:var(--muted-foreground); }
 .guided-step-status { display:flex; align-items:center; gap:8px; font-size:var(--type-control); line-height:1.5; }
 .guided-step-status[data-tone=success] { color:var(--color-success); background:var(--status-success-bg); }
 .guided-step-status[data-tone=danger] { align-items:flex-start; color:var(--color-danger); background:var(--status-danger-bg); }
