@@ -77,6 +77,11 @@ void test('the primary action and the run summary', () => {
   const summary = runSummary(steps, { s1: 'done', s2: 'skipped' });
   assert.equal(summary.done, 1);
   assert.deepEqual(summary.lines.map((line) => line.text), ['Moved: #1 PR 1', 'Skipped: #2 PR 2', 'Still on your list: #3 PR 3']);
+  const muted = runSummary(steps, { s1: 'muted', s3: 'done' });
+  assert.deepEqual(muted.groups.map((group) => group.label), ['Moved', 'Muted', 'Still on your list'], 'A muted PR is let go, not moved');
+  const snoozed = runSummary(steps, { s1: 'snoozed', s2: 'skipped' });
+  assert.equal(snoozed.done, 0, 'A snoozed PR was put off, not moved');
+  assert.deepEqual(snoozed.groups.map((group) => [group.label, group.steps.map((step) => step.index)]), [['Snoozed', [0]], ['Skipped', [1]], ['Still on your list', [2]]]);
 });
 
 void test('plain text and ages', () => {

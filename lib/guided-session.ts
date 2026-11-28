@@ -298,19 +298,19 @@ export function primaryAction(step: Pick<SessionStep, 'kind'>, blockers: readonl
 }
 
 /** What happened to a step in this run. */
-export type StepOutcome = 'done' | 'skipped' | 'parked' | 'opened' | 'open';
+export type StepOutcome = 'done' | 'skipped' | 'snoozed' | 'muted' | 'parked' | 'opened' | 'open';
 export interface RunSummary {
   done: number;
   /** Parked steps whose action has not resolved yet. */
   waiting: number;
   total: number;
   lines: { id: string; outcome: StepOutcome; text: string }[];
-  /** The steps by what happened to them, in this order: moved, waiting, opened, skipped, still on the list. */
+  /** The steps by what happened to them, in this order: moved, waiting, opened, snoozed, muted, skipped, still on the list. */
   groups: { outcome: StepOutcome; label: string; steps: { id: string; index: number; text: string }[] }[];
 }
-const OUTCOME_WORD: Readonly<Record<StepOutcome, string>> = { done: 'Moved', skipped: 'Skipped', parked: 'Still waiting', opened: 'Opened', open: 'Still on your list' };
-const GROUP_ORDER: readonly StepOutcome[] = ['done', 'parked', 'opened', 'skipped', 'open'];
-const GROUP_LABEL: Readonly<Record<StepOutcome, string>> = { done: 'Moved', parked: 'Waiting on checks', opened: 'Opened', skipped: 'Skipped', open: 'Still on your list' };
+const OUTCOME_WORD: Readonly<Record<StepOutcome, string>> = { done: 'Moved', skipped: 'Skipped', snoozed: 'Snoozed', muted: 'Muted', parked: 'Still waiting', opened: 'Opened', open: 'Still on your list' };
+const GROUP_ORDER: readonly StepOutcome[] = ['done', 'parked', 'opened', 'snoozed', 'muted', 'skipped', 'open'];
+const GROUP_LABEL: Readonly<Record<StepOutcome, string>> = { done: 'Moved', parked: 'Waiting on checks', opened: 'Opened', snoozed: 'Snoozed', muted: 'Muted', skipped: 'Skipped', open: 'Still on your list' };
 /** The end of a run: what moved, what you skipped, what still waits on something else. */
 export function runSummary(steps: readonly Pick<SessionStep, 'id' | 'member'>[], outcomes: Readonly<Partial<Record<string, StepOutcome>>>): RunSummary {
   const lines = steps.map((step) => {

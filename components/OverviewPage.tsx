@@ -133,6 +133,8 @@ export interface OverviewPageProps {
   onMarkRead: (urls: string[]) => void;
   /** Stars or unstars PRs, as the queue's star toggle does. Without it, row menus offer no star. */
   onStarChange?: (members: ReviewMember[], starred: boolean) => void;
+  /** Mute PRs: they leave every list until unmuted. Resolves true once saved; the page shows the toast and its Undo. */
+  onMute?: (members: ReviewMember[]) => Promise<boolean>;
   /** A star change is being saved: the star toggle waits, as in the queue. */
   starBusy?: boolean;
   /** Opens an item in this window when no workspace tabs are available. */
@@ -780,6 +782,18 @@ export function OverviewPage(props: OverviewPageProps) {
     }
     return undefined;
   };
+  // Mute from the session: a PR you no longer follow leaves every list, the queue's Mute (with its Undo toast).
+  const sessionMute = props.onMute
+    ? (step: SessionStep) => {
+        const members = step.row.item.subject.members.filter((member) => step.urls.includes(member.url));
+        return props.onMute?.(members.length ? members : [step.member]) ?? Promise.resolve(false);
+      }
+    : undefined;
+  // Snooze from the session: the same picker as a row's Z, for the step's PRs (a stack's lane, or one PR).
+  const sessionSnooze = (step: SessionStep, snoozed: () => void) => {
+    const members = step.row.item.subject.members.filter((member) => step.urls.includes(member.url));
+    return openSnoozePicker({ groups: [members.length ? members : [step.member]], onSnoozed: () => snoozed() });
+  };
   const sessionSecondary = (step: SessionStep): ReactNode | undefined =>
     step.kind === 'decide' ? (
       <Button size="sm" variant="outline" title={`Close #${step.member.number}… · C`} data-session-close onClick={() => actions.close(step.member)}>
@@ -880,6 +894,8 @@ export function OverviewPage(props: OverviewPageProps) {
           replies={extras.replies}
           renderAction={sessionAction}
           renderSecondary={sessionSecondary}
+          snooze={sessionSnooze}
+          mute={sessionMute}
           renderPrAction={sessionPrAction}
           about={sessionAbout}
           reply={sessionReply}

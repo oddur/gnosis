@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, X } from 'lucide-react';
+import { AlarmClock, ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
@@ -37,6 +37,13 @@ export interface GuidedSessionProps {
   about: (step: SessionStep) => StepAbout | undefined;
   /** The step's in-place action as the Overview row draws it (Merge, Rerun), or undefined. */
   renderAction: (step: SessionStep) => ReactNode | undefined;
+  /**
+   * Snooze the step's PRs: the picker asks until when, and `snoozed` runs once they are, so the session moves on.
+   * False when nothing can be snoozed (a merged or closed PR).
+   */
+  snooze?: (step: SessionStep, snoozed: () => void) => boolean;
+  /** Mute the step's PRs: they leave every list until unmuted. Resolves true once saved. */
+  mute?: (step: SessionStep) => Promise<boolean>;
   /** A step's other way forward, beside Skip: a decision's Close PR. Its button carries `data-session-close` for C. */
   renderSecondary?: (step: SessionStep) => ReactNode | undefined;
   /** Update branch and Mark ready, through the PR header's actions and their confirmations. */
@@ -74,8 +81,15 @@ const PRIMARY = '[data-session-primary]';
  * branch. The full PR is always one click away. Enter takes the primary action; O opens the full PR; D switches the
  * depth; S skips; ← and → move; Esc leaves.
  */
+/** Put off or let go: the PR leaves the list, but it did not move. */
+const setAside = (outcome: StepOutcome | undefined) => outcome === 'snoozed' || outcome === 'muted';
+/** A step's outcome. A snooze or mute that was undone (the PR is back on the list) no longer counts. */
+function outcomeOf(id: string, outcomes: GuidedSessionProps['outcomes'], live: GuidedSessionProps['live']): StepOutcome | undefined {
+  const outcome = outcomes[id];
+  return setAside(outcome) && live.has(id) ? undefined : outcome;
+}
 export function GuidedSession(props: GuidedSessionProps) {
-  const { steps, live, index, outcomes, onExit, onIndex, onOutcome, onOpen } = props;
+  const { steps, live, index, outcomes, snooze, mute, onExit, onIndex, onOutcome, onOpen } = props;
   const root = useRef<HTMLElement>(null);
   const done = index >= steps.length;
   useEffect(() => {
@@ -89,6 +103,30 @@ export function GuidedSession(props: GuidedSessionProps) {
     if (!outcomes[current.id]) onOutcome(current.id, 'skipped');
     go(index + 1);
   };
+  // Snoozed: off the list until the time picked, so the session goes on to the next PR.
+  const snoozeStep = () => {
+    if (!current || gone || !snooze) return;
+    const step = current;
+    snooze(step, () => {
+      onOutcome(step.id, 'snoozed');
+      go(index + 1);
+    });
+  };
+  // Muted: no longer followed, so it leaves every list and the session goes on. The toast has its Undo.
+  const [muting, setMuting] = useState(false);
+  const muteStep = () => {
+    if (!current || gone || !mute || muting) return;
+    const step = current;
+    const at = index;
+    setMuting(true);
+    void mute(step)
+      .then((saved) => {
+        if (!saved) return;
+        onOutcome(step.id, 'muted');
+        go(at + 1);
+      })
+      .finally(() => setMuting(false));
+  };
   const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
     // Keys typed into the reply or the approval comment are theirs, as are a menu's or a dialog's the card opened.
@@ -99,6 +137,8 @@ export function GuidedSession(props: GuidedSessionProps) {
     else if (key === 'ArrowLeft') go(index - 1);
     else if (done) return;
     else if (key === 's') skip();
+    else if (key === 'z') snoozeStep();
+    else if (key === 'm') muteStep();
     else if ((key === 'd' || key === 'o') && current) {
       if (!outcomes[current.id]) onOutcome(current.id, 'opened');
       onOpen(current, key === 'd' ? 'review' : 'summary');
@@ -121,7 +161,7 @@ export function GuidedSession(props: GuidedSessionProps) {
         </h2>
         <ol className="guided-session-progress" aria-label="PRs in this session">
           {steps.map((step, i) => (
-            <li key={step.id} data-outcome={outcomes[step.id] ?? (live.has(step.id) ? undefined : 'done')} aria-current={i === index ? 'step' : undefined}>
+            <li key={step.id} data-outcome={outcomeOf(step.id, outcomes, live) ?? (live.has(step.id) ? undefined : 'done')} aria-current={i === index ? 'step' : undefined}>
               <button type="button" tabIndex={-1} title={`#${step.member.number} ${step.member.title}`} onClick={() => go(i)} />
             </li>
           ))}
@@ -133,7 +173,7 @@ export function GuidedSession(props: GuidedSessionProps) {
           </Button>
         )}
       </header>
-      {current ? <StepCard key={current.id} {...props} step={current} gone={gone} skip={skip} next={() => go(index + 1)} /> : <RunEnd {...props} />}
+      {current ? <StepCard key={current.id} {...props} step={current} gone={gone} skip={skip} snoozeStep={snooze ? snoozeStep : undefined} muteStep={mute ? muteStep : undefined} muting={muting} next={() => go(index + 1)} /> : <RunEnd {...props} />}
       {!done && (
         <footer className="guided-session-next" data-session-next>
           {index + 1 < steps.length ? (
@@ -170,8 +210,8 @@ function newHeading(lead: string): string {
 
 type Busy = 'reply' | 'approve' | undefined;
 
-function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; next: () => void }) {
-  const { step, gone, skip, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
+function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; snoozeStep?: () => void; muteStep?: () => void; muting?: boolean; next: () => void }) {
+  const { step, gone, skip, snoozeStep, muteStep, muting, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
   const waiting = replies[step.member.url];
@@ -182,7 +222,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   const suggested = suggestDepth(step, lines, depthContext(step));
   const depth: Depth = suggested.depth;
   const summary = about(step);
-  const outcome = outcomes[step.id];
+  const outcome = outcomeOf(step.id, outcomes, props.live);
   // A parked step's action runs on GitHub: nothing more to do here until it resolves.
   const park = outcome === 'parked' ? parked[step.id] : undefined;
   const settled = results[step.id];
@@ -319,9 +359,9 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
         )}
       </div>
       {gone && (
-        <p className="guided-step-status" data-tone="success" role="status">
-          <CircleCheck size={14} aria-hidden="true" />
-          Moved on: it left Next up.
+        <p className="guided-step-status" data-tone={setAside(outcome) ? 'neutral' : 'success'} role="status">
+          {outcome === 'snoozed' ? <AlarmClock size={14} aria-hidden="true" /> : outcome === 'muted' ? <VolumeX size={14} aria-hidden="true" /> : <CircleCheck size={14} aria-hidden="true" />}
+          {outcome === 'snoozed' ? 'Snoozed: off your list until the time you picked.' : outcome === 'muted' ? 'Muted: you no longer follow it. Unmute it from Muted PRs.' : 'Moved on: it left Next up.'}
         </p>
       )}
       {park && !gone && (
@@ -412,7 +452,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           </div>
         )}
       </div>
-      <div className="guided-step-block">
+      {!gone && <div className="guided-step-block">
         <h4 className="guided-step-heading">{blockers.length ? 'Blocking the merge' : signals?.readiness ? 'Nothing blocks the merge' : 'Merge status'}</h4>
         {blockers.length > 0 ? (
           <ul className="guided-step-blockers">
@@ -433,7 +473,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
         ) : (
           !signals?.readiness && <p className="guided-step-quiet">Not read yet. Gnosis reads it in the background.</p>
         )}
-      </div>
+      </div>}
       {approving && !moved && (
         <div className="guided-step-block guided-step-approve" data-session-approve>
           <label className="guided-step-heading" htmlFor={`approve-${step.id}`}>Approve #{step.member.number}</label>
@@ -504,6 +544,20 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           {openButton('summary', suggestedOpen && depth === 'summary' && !(canApprove && (step.kind === 'review' || step.kind === 'rereview')))}
           {openButton('review', suggestedOpen && depth === 'deep')}
           {!moved && renderSecondary?.(step)}
+          {!moved && snoozeStep && (
+            <Button size="sm" variant="ghost" onClick={snoozeStep} title={`Snooze #${step.member.number} until later… · Z`} data-session-snooze>
+              <AlarmClock size={14} aria-hidden="true" />
+              Snooze…
+              <kbd>Z</kbd>
+            </Button>
+          )}
+          {!moved && muteStep && (
+            <Button size="sm" variant="ghost" onClick={muteStep} disabled={muting} title={`Mute #${step.member.number}: stop following it · M`} data-session-mute>
+              <VolumeX size={14} aria-hidden="true" />
+              {muting ? 'Muting…' : 'Mute'}
+              <kbd>M</kbd>
+            </Button>
+          )}
           {!moved && (
             <Button size="sm" variant="ghost" onClick={skip} title="Skip for now · S">
               <SkipForward size={14} aria-hidden="true" />
@@ -520,7 +574,13 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
 
 function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessionProps) {
   // A step that left the page moved on, whatever the reader did there.
-  const settled = Object.fromEntries(steps.map((step) => [step.id, live.has(step.id) ? (outcomes[step.id] ?? 'open') : 'done'])) as Record<string, StepOutcome>;
+  // A snoozed or muted PR leaves the queue too, but it was put off or let go, not moved: it says so.
+  const settled = Object.fromEntries(
+    steps.map((step) => {
+      const outcome = outcomeOf(step.id, outcomes, live);
+      return [step.id, setAside(outcome) ? outcome : live.has(step.id) ? (outcome ?? 'open') : 'done'];
+    })
+  ) as Record<string, StepOutcome>;
   const summary = runSummary(steps, settled);
   return (
     <div className="guided-end" data-session-end>

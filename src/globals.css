@@ -5793,6 +5793,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-session-progress li[data-outcome=done] button, .guided-session-progress li[data-outcome=opened] button { background:var(--color-success); box-shadow:none; }
 .guided-session-progress li[data-outcome=parked] button { background:var(--color-warning); box-shadow:none; }
 .guided-session-progress li[data-outcome=skipped] button { background:transparent; box-shadow:inset 0 0 0 1px var(--muted-foreground); }
+.guided-session-progress li[data-outcome=snoozed] button, .guided-session-progress li[data-outcome=muted] button { background:var(--muted-foreground); box-shadow:none; opacity:.55; }
 .guided-session-progress button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 
 .guided-step { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-card, 10.4px); background:var(--card); }
@@ -5887,7 +5888,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-end-lines { display:flex; flex-direction:column; gap:2px; font-size:var(--type-body); }
 .guided-end-lines button { padding:2px 0; text-align:left; color:var(--foreground); }
 .guided-end-lines button:hover { text-decoration:underline; text-underline-offset:3px; }
-.guided-end-lines li[data-outcome=skipped] button, .guided-end-lines li[data-outcome=parked] button, .guided-end-lines li[data-outcome=open] button { color:var(--muted-foreground); }
+.guided-end-lines li[data-outcome=skipped] button, .guided-end-lines li[data-outcome=snoozed] button, .guided-end-lines li[data-outcome=muted] button, .guided-end-lines li[data-outcome=parked] button, .guided-end-lines li[data-outcome=open] button { color:var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { .guided-session-progress button { transition:none; } }
 /* Section titles take DESIGN.md's section step (18px), a real level above the 15px row titles, with the count inline. */
 .morning-section-head { display:flex; align-items:baseline; gap:8px; padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--border); }
