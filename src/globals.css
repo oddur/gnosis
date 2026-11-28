@@ -5897,6 +5897,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-session-nav { margin-left:auto; display:flex; gap:2px; align-self:center; }
 .guided-end { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding:8px 0; }
 .guided-end-lead { font-size:var(--type-panel-title); font-weight:650; letter-spacing:-0.02em; }
+.guided-end-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .guided-end-group { display:flex; flex-direction:column; gap:4px; }
 .guided-end-group h3 { display:flex; align-items:baseline; gap:6px; font-size:var(--type-control); font-weight:600; letter-spacing:.01em; color:var(--muted-foreground); }
 .guided-end-count { font-variant-numeric:tabular-nums; font-weight:500; }

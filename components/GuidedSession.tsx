@@ -28,6 +28,10 @@ export interface GuidedSessionProps {
   live: ReadonlyMap<string, SessionStep>;
   index: number;
   outcomes: Readonly<Partial<Record<string, StepOutcome>>>;
+  /** What a step's own write came to, as its card says it once the PR left the list: "Closed #305.", "Merged #301.". */
+  notes?: Readonly<Partial<Record<string, string>>>;
+  /** Go through these steps again, as a new run: the end's "Go through the N still on your list". */
+  onRestart?: (ids: string[]) => void;
   /** Steps whose PR the reader opened from the session (O, D, Summary, Deep review), by id. */
   read: Readonly<Partial<Record<string, true>>>;
   /** Steps parked while a slow action runs (a rerun, a branch update), by id. */
@@ -165,7 +169,8 @@ export function GuidedSession(props: GuidedSessionProps) {
   // Muted: no longer followed, so it leaves every list and the session goes on. The toast has its Undo.
   const [muting, setMuting] = useState(false);
   const muteStep = () => {
-    if (!current || gone || !mute || muting) return;
+    // Your own PR is not one you stop following.
+    if (!current || gone || !mute || muting || current.member.author.toLowerCase() === props.login.toLowerCase()) return;
     const step = current;
     const at = index;
     setMuting(true);
@@ -441,7 +446,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       {gone && (
         <p className="guided-step-status" data-tone={setAside(outcome) ? 'neutral' : 'success'} role="status">
           {outcome === 'snoozed' ? <AlarmClock size={14} aria-hidden="true" /> : outcome === 'muted' ? <VolumeX size={14} aria-hidden="true" /> : <CircleCheck size={14} aria-hidden="true" />}
-          {outcome === 'snoozed' ? 'Snoozed: off your list until the time you picked.' : outcome === 'muted' ? 'Muted: you no longer follow it. Unmute it from Muted PRs.' : 'Moved on: it left Next up.'}
+          {outcome === 'snoozed' ? 'Snoozed: off your list until the time you picked.' : outcome === 'muted' ? 'Muted: you no longer follow it. Unmute it from Muted PRs.' : (props.notes?.[step.id] ?? 'Moved on: it left Next up.')}
         </p>
       )}
       {park && !gone && (
@@ -641,7 +646,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
           {openButton('review', suggestedOpen && depth === 'deep')}
           {!moved && renderSecondary?.(step)}
           {!moved && snoozeStep && <SnoozeSplit number={step.member.number} own={!!login && step.member.author.toLowerCase() === login.toLowerCase()} onSnooze={snoozeStep} />}
-          {!moved && muteStep && (
+          {!moved && muteStep && !own && (
             <Button size="sm" variant="ghost" onClick={muteStep} disabled={muting} title={`Mute #${step.member.number}: stop following it · M`} data-session-mute>
               <VolumeX size={14} aria-hidden="true" />
               {muting ? 'Muting…' : 'Mute'}
@@ -662,7 +667,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   );
 }
 
-function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessionProps) {
+function RunEnd({ steps, live, outcomes, results, onExit, onIndex, onRestart }: GuidedSessionProps) {
   // The end's main action takes the keyboard as it appears, so Enter takes it.
   const main = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -677,10 +682,13 @@ function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessi
     })
   ) as Record<string, StepOutcome>;
   const summary = runSummary(steps, settled);
+  // Still on your list: skipped, only opened, or never reached, and still on the page.
+  const left = steps.filter((step) => live.has(step.id) && ['open', 'skipped', 'opened'].includes(settled[step.id])).map((step) => step.id);
   return (
     <div className="guided-end" data-session-end>
       <p className="guided-end-lead">
         {summary.done === summary.total ? `All ${summary.total} moved forward.` : summary.done ? `${summary.done} of ${summary.total} moved forward.` : 'Nothing moved this time.'}
+        {summary.opened > 0 && ` ${summary.opened} opened.`}
         {summary.waiting > 0 && ` ${summary.waiting} still wait${summary.waiting === 1 ? 's' : ''} on checks and come${summary.waiting === 1 ? 's' : ''} back here when they finish.`}
       </p>
       {summary.groups.map((group) => (
@@ -701,7 +709,17 @@ function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessi
           </ul>
         </section>
       ))}
-      <Button ref={main} size="sm" onClick={onExit} data-session-end-main>Back to Overview</Button>
+      <span className="guided-end-actions">
+        {left.length > 0 && onRestart && (
+          <Button ref={main} size="sm" onClick={() => onRestart(left)} data-session-restart>
+            Go through the {left.length === 1 ? 'one' : left.length} still on your list
+            <kbd>↵</kbd>
+          </Button>
+        )}
+        <Button ref={left.length > 0 && onRestart ? undefined : main} size="sm" variant={left.length > 0 && onRestart ? 'outline' : 'default'} onClick={onExit} data-session-end-main>
+          Back to Overview
+        </Button>
+      </span>
     </div>
   );
 }
