@@ -11,7 +11,8 @@
  * blooms, settles to a softer tint and fades out over `HERE_MS`; the rest of the section blooms and fades with it, more
  * softly. Reduced motion shows the settled bands, still, for as long. Visual only: each band is a pseudo-element under
  * its row's text, so nothing moves, and marking writes attributes alone, with no layout read. When the diff renders
- * again while the band shows, and so writes its rows anew, the band moves to the rows in the same place.
+ * again while the band shows, and so writes its rows anew, ChangesDiff puts the band on the rows in the same place
+ * (`reapplyHere`), as far into its animation as it had run.
  *
  * The rows live in Pierre's shadow roots, so the CSS is part of ChangesDiff's (`HERE_CSS`); gap bars use the same rules
  * in globals.css. Colours and their contrast are checked in tests/code-palette.test.ts (HERE_* in lib/code-palette.ts).
@@ -19,6 +20,8 @@
 
 /** How long the band shows, moving or still. */
 export const HERE_MS = 2000;
+/** How far into its animation an element's band starts: negative on an element that took the band over (`reapplyHere`). */
+const DELAY = '--gnosis-here-delay';
 
 const BAND = '47 85 212';
 /** Keyframes for one part of a mark, in two copies (`-a`, `-b`) so marking again restarts them without a layout read. */
@@ -50,6 +53,7 @@ ${ROWS}[data-here], ${GUTTERS}[data-here] { isolation: isolate; }
 ${ROWS}[data-here]::after, ${GUTTERS}[data-here]::after {
   content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background-color: rgb(${BAND} / 0%); animation-duration: ${HERE_MS}ms; animation-fill-mode: forwards; animation-timing-function: linear;
+  animation-delay: var(${DELAY}, 0ms);
 }
 [data-content-buffer][data-here] { position: relative; }
 ${ROWS}[data-here]::after { transform-origin: 0 50%; }
@@ -129,23 +133,69 @@ export function gutterOf(row: Element): Element | undefined {
   return column?.querySelector(`[data-column-number][data-line-index="${CSS.escape(index)}"]`) ?? undefined;
 }
 
-/** A marked element, and how to find the element that replaces it in its diff's shadow root. */
-interface Marked extends HereTarget {
-  root?: ShadowRoot;
-  selector?: string;
+/** What a marked element in a diff's shadow root is: a code row, a gutter cell, or an empty-row buffer of either. */
+type HereKind = 'row' | 'gutter' | 'content-buffer' | 'gutter-buffer';
+const kindOf = (element: Element): HereKind | undefined =>
+  element.hasAttribute('data-line')
+    ? 'row'
+    : element.hasAttribute('data-column-number')
+      ? 'gutter'
+      : element.hasAttribute('data-content-buffer')
+        ? 'content-buffer'
+        : element.hasAttribute('data-gutter-buffer') && element.getAttribute('data-gutter-buffer') !== 'annotation'
+          ? 'gutter-buffer'
+          : undefined;
+const columnOf = (element: Element) =>
+  element.closest('[data-deletions]') ? 'deletions' : element.closest('[data-additions]') ? 'additions' : undefined;
+
+/**
+ * Where a marked element sits, so the band can find the element that takes its place when the diff renders again. A
+ * row is its `data-line-index` (Pierre gives a line the same one in unified and split), its line's numbers, and its
+ * column of a split diff; a gutter cell is its row's index and column. A buffer is the visual rows it spans in its
+ * column.
+ */
+interface HerePlace {
+  kind: HereKind;
+  part?: 'body';
+  column?: 'deletions' | 'additions';
+  index?: string;
+  line?: string;
+  rows?: [number, number];
 }
-let shown: { marked: Marked[]; timer: ReturnType<typeof setTimeout>; observer?: MutationObserver } | undefined;
+/** A row's line, by both its numbers: the same in either column of a split diff and in a unified one. */
+const lineOf = (row: Element) =>
+  [row.getAttribute('data-line'), row.getAttribute('data-alt-line')]
+    .filter(Boolean)
+    .sort()
+    .join('/');
+let shown:
+  | {
+      letter: 'a' | 'b';
+      started: number;
+      timer: ReturnType<typeof setTimeout>;
+      /** Every element that wears the band: the first ones and those that replaced them. */
+      elements: Set<Element>;
+      places: Map<ShadowRoot, HerePlace[]>;
+      /** A section's mark, which fills the empty rows across from its one-sided rows in a split diff. */
+      fill: boolean;
+    }
+  | undefined;
 let flip = false;
+
+const unmark = (element: Element) => {
+  element.removeAttribute('data-here');
+  element.removeAttribute('data-here-part');
+  const style = (element as HTMLElement).style;
+  if (!style.getPropertyValue(DELAY)) return;
+  style.removeProperty(DELAY);
+  if (!element.getAttribute('style')) element.removeAttribute('style');
+};
 
 /** Ends the band, wherever it shows. */
 export function clearHere() {
   if (!shown) return;
   clearTimeout(shown.timer);
-  shown.observer?.disconnect();
-  for (const { element } of shown.marked) {
-    element.removeAttribute('data-here');
-    element.removeAttribute('data-here-part');
-  }
+  for (const element of shown.elements) unmark(element);
   shown = undefined;
 }
 
@@ -155,49 +205,130 @@ export interface HereTarget {
   part?: 'body';
 }
 
-/** A code row or gutter cell by its column, line and visual row: the same place after the diff renders again. */
-function placeOf(element: Element): string | undefined {
-  const index = element.getAttribute('data-line-index');
-  if (index === null) return undefined;
-  const attribute = element.hasAttribute('data-line') ? 'data-line' : element.hasAttribute('data-column-number') ? 'data-column-number' : undefined;
-  if (!attribute) return undefined;
-  const column = element.closest('[data-deletions]') ? '[data-deletions] ' : element.closest('[data-additions]') ? '[data-additions] ' : '';
-  return `${column}[${attribute}="${CSS.escape(element.getAttribute(attribute) ?? '')}"][data-line-index="${CSS.escape(index)}"]`;
-}
-
-function mark(targets: readonly HereTarget[]): Element[] {
+function mark(targets: readonly HereTarget[], fill = false): Element[] {
   clearHere();
   const live = targets.filter((target) => target.element.isConnected);
   if (!live.length) return [];
   flip = !flip;
   const letter = flip ? 'a' : 'b';
-  const apply = ({ element, part }: HereTarget) => {
+  const places = new Map<ShadowRoot, HerePlace[]>();
+  for (const { element, part } of live) {
     element.setAttribute('data-here', letter);
     if (part) element.setAttribute('data-here-part', part);
-  };
-  const marked: Marked[] = live.map((target) => {
-    apply(target);
-    const root = target.element.getRootNode();
-    return root instanceof ShadowRoot ? { ...target, root, selector: placeOf(target.element) } : { ...target };
-  });
-  // Pierre writes a diff's rows anew each time the diff renders, which any render of the component around it does. A
-  // render while the band shows would drop it with the old rows, so the band moves to the rows that replace them.
-  const roots = new Set(marked.flatMap((entry) => (entry.root && entry.selector ? [entry.root] : [])));
-  let observer: MutationObserver | undefined;
-  if (roots.size) {
-    observer = new MutationObserver(() => {
-      for (const entry of marked) {
-        if (entry.element.isConnected || !entry.root || !entry.selector) continue;
-        const next = entry.root.querySelector(entry.selector);
-        if (!next) continue;
-        entry.element = next;
-        apply(entry);
-      }
-    });
-    for (const root of roots) observer.observe(root, { childList: true, subtree: true });
+    const root = element.getRootNode();
+    const kind = kindOf(element);
+    if (!(root instanceof ShadowRoot) || !kind) continue;
+    const column = columnOf(element);
+    let place: HerePlace | undefined;
+    if (kind === 'row' || kind === 'gutter') {
+      const index = element.getAttribute('data-line-index');
+      if (index !== null) place = { kind, part, column, index, line: kind === 'row' ? lineOf(element) : undefined };
+    } else {
+      // Buffers show in split diffs only.
+      const rows = bufferRows(element, true);
+      if (rows) place = { kind, part, column, rows };
+    }
+    if (!place) continue;
+    const list = places.get(root);
+    if (list) list.push(place);
+    else places.set(root, [place]);
   }
-  shown = { marked, timer: setTimeout(clearHere, HERE_MS), observer };
+  shown = {
+    letter,
+    started: performance.now(),
+    timer: setTimeout(clearHere, HERE_MS),
+    elements: new Set(live.map((target) => target.element)),
+    places,
+    fill,
+  };
   return live.map((target) => target.element);
+}
+
+/**
+ * Puts the band back on a diff that rendered again while it shows (ChangesDiff's `onPostRender`). Pierre writes a
+ * diff's rows anew on each render, which any render of the component around it does, so the band would drop with the
+ * old rows. It moves to the rows of the same lines: by line index and numbers, in the same column of a split diff. A row marked
+ * in a unified diff spans the view, so in split it takes its line's rows in both columns, as a section's mark does. A
+ * section's mark also takes the empty-row buffers across from its rows. Each new element's band starts as far into its
+ * animation as the band has run (a negative delay), so it fades with the rest and ends at the same time; elements that
+ * kept the band are left alone. Costs one Map lookup on a diff that shows no band.
+ */
+export function reapplyHere(host: Element) {
+  const root = host.shadowRoot;
+  const places = root ? shown?.places.get(root) : undefined;
+  if (!root || !shown || !places) return;
+  const elapsed = performance.now() - shown.started;
+  if (elapsed >= HERE_MS) return;
+  const split = !!root.querySelector('[data-deletions]');
+  const want = new Map<Element, 'body' | undefined>();
+  // The signature's part wins over the body's where both claim an element.
+  const take = (element: Element, part: 'body' | undefined) => {
+    if (!want.has(element) || want.get(element)) want.set(element, part);
+  };
+  const byIndex = new Map<string, HerePlace[]>();
+  for (const place of places) {
+    if (place.index === undefined) continue;
+    const list = byIndex.get(place.index);
+    if (list) list.push(place);
+    else byIndex.set(place.index, [place]);
+  }
+  // The visual rows the band's code rows take, each the signature's or the body's, for the buffers across from them.
+  const taken = new Map<number, 'body' | undefined>();
+  // The rows that took the band, by index and column: their gutter cells may take it too.
+  const rowsTaken = new Set<string>();
+  const fits = (place: HerePlace, column: string | undefined) => !place.column || !column || place.column === column;
+  if (byIndex.size) {
+    const gutters: Element[] = [];
+    for (const element of root.querySelectorAll('[data-line-index]')) {
+      const index = element.getAttribute('data-line-index') ?? '';
+      const candidates = byIndex.get(index);
+      const kind = candidates && kindOf(element);
+      if (kind === 'gutter') gutters.push(element);
+      if (!candidates || kind !== 'row') continue;
+      const column = columnOf(element);
+      const line = lineOf(element);
+      for (const place of candidates) {
+        if (place.kind !== 'row' || place.line !== line || !fits(place, column)) continue;
+        take(element, place.part);
+        rowsTaken.add(`${index} ${column}`);
+        const at = visualRow(element, split);
+        if (!taken.has(at) || taken.get(at)) taken.set(at, place.part);
+      }
+    }
+    for (const gutter of gutters) {
+      const index = gutter.getAttribute('data-line-index') ?? '';
+      const column = columnOf(gutter);
+      if (!rowsTaken.has(`${index} ${column}`)) continue;
+      for (const place of byIndex.get(index) ?? []) if (place.kind === 'gutter' && fits(place, column)) take(gutter, place.part);
+    }
+  }
+  const buffers = places.filter((place) => place.rows);
+  if (split && (buffers.length || (shown.fill && taken.size)))
+    for (const buffer of root.querySelectorAll('[data-content-buffer], [data-gutter-buffer]')) {
+      const kind = kindOf(buffer);
+      const rows = kind && bufferRows(buffer, split);
+      if (!rows) continue;
+      const column = columnOf(buffer);
+      for (const place of buffers) {
+        const span = place.rows as [number, number];
+        if (place.kind === kind && place.column === column && span[1] >= rows[0] && span[0] <= rows[1]) take(buffer, place.part);
+      }
+      if (shown.fill) for (const [at, part] of taken) if (at >= rows[0] && at <= rows[1]) take(buffer, part);
+    }
+  // A render that kept an element but moved another line into it.
+  for (const element of root.querySelectorAll('[data-here]'))
+    if (!want.has(element) && shown.elements.has(element)) {
+      unmark(element);
+      shown.elements.delete(element);
+    }
+  for (const [element, part] of want) {
+    if (element.getAttribute('data-here') === shown.letter && element.getAttribute('data-here-part') === (part ?? null)) continue;
+    element.setAttribute('data-here', shown.letter);
+    if (part) element.setAttribute('data-here-part', part);
+    else element.removeAttribute('data-here-part');
+    (element as HTMLElement).style.setProperty(DELAY, `${-Math.round(elapsed)}ms`);
+    shown.elements.add(element);
+  }
 }
 
 /**
@@ -311,7 +442,7 @@ export function markSection(hosts: Iterable<Element>, section: HereSection, bars
     left -= found.covered;
   }
   for (const element of bars) targets.push({ element, part: 'body' });
-  return mark(targets);
+  return mark(targets, true);
 }
 
 /**

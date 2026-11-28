@@ -53,6 +53,7 @@ void app.whenReady().then(async () => {
         await js(`${scroller}.scrollTop+=300`);
       }
     }
+    assert.ok(await js(`!!${entry(id)}`), `The feedback timeline never mounted entry ${id}`);
     await js(`${entry(id)}.scrollIntoView({block:'start'})`);
     await waitSettled(win.webContents, 'feedback-timeline');
     await js(`${entry(id)}.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
@@ -149,10 +150,13 @@ void app.whenReady().then(async () => {
     await capture('resolve-error-with-draft');
     await js('window.failFeedbackWrite=false');
     await click('Cancel', entry('t-120'));
+    // Diagnostics for a Windows-only failure (#592): every review-state write from here, and the entry over time.
+    await js(`(()=>{const api=window.electronAPI,save=api.saveReviewState,t0=performance.now();window.unreadLog=[];const log=(m)=>window.unreadLog.push(Math.round(performance.now()-t0)+'ms '+m);api.saveReviewState=async(req)=>{log('save '+req.key+' = '+JSON.stringify(req.value)+' at '+(new Error().stack??'').split('\\n').slice(2,7).map(s=>s.trim()).join(' < '));return save(req)};let last=${entry('t-120')};window.unreadTimer=setInterval(()=>{const e=${entry('t-120')};if(e!==last){log('entry '+(e?'replaced':'gone'));last=e}log('dot '+!!e?.querySelector('.pr-unread-dot')+' button '+!![...(e?.querySelectorAll('button')??[])].find(b=>b.textContent.trim()==='Mark unread'&&!b.disabled)+' tab '+document.querySelector('[role=tab][aria-selected=true]')?.textContent)},100)})()`);
     await click('Mark unread', entry('t-120'));
     await wait(`!!${entry('t-120')}?.querySelector('.pr-unread-dot')`);
     await sleep(1600);
-    assert.ok(await js(`!!${entry('t-120')}?.querySelector('.pr-unread-dot')`), 'Marked unread stays unread while on screen');
+    const unreadLog = await js<string[]>('(clearInterval(window.unreadTimer),window.unreadLog)');
+    assert.ok(await js(`!!${entry('t-120')}?.querySelector('.pr-unread-dot')`), `Marked unread stays unread while on screen\n${unreadLog.join('\n')}`);
 
     // A review: its verdict, related threads, and a reply that fails and then posts.
     await show('r-120');
