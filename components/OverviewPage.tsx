@@ -215,6 +215,8 @@ interface GuidedRun {
   steps: SessionStep[];
   index: number;
   outcomes: Partial<Record<string, StepOutcome>>;
+  /** Steps whose PR was opened from the session (O, D, Summary, Deep review): a deep step's Approve is one press then. */
+  read?: Partial<Record<string, true>>;
   open: boolean;
   /** Steps parked while a slow action runs, by id; each leaves once it resolves. */
   parked?: Partial<Record<string, Park>>;
@@ -847,6 +849,7 @@ export function OverviewPage(props: OverviewPageProps) {
     actions.refresh();
   };
   const openFromSession = (step: SessionStep, where: SessionOpen) => {
+    if (where === 'review' || where === 'summary') setSession((value) => value && { ...value, read: { ...value.read, [step.id]: true } });
     if (where === 'github' || where === 'github-checks') {
       void window.electronAPI.openExternal(where === 'github' ? step.member.url : `${step.member.url}/checks`);
       return;
@@ -885,6 +888,7 @@ export function OverviewPage(props: OverviewPageProps) {
           live={liveById}
           index={session.index}
           outcomes={session.outcomes}
+          read={session.read ?? {}}
           parked={session.parked ?? {}}
           results={session.results ?? {}}
           depthContext={sessionDepthContext}

@@ -5786,16 +5786,21 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .guided-session-count { font-size:var(--type-body); font-weight:400; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 /* The run's steps: one mark per PR, its state by shape and colour, the current one wider. Each is a way to jump. */
 .guided-session-progress { flex:1; display:flex; gap:4px; min-width:0; }
-.guided-session-progress li { flex:0 1 28px; min-width:8px; }
-.guided-session-progress button { display:block; width:100%; height:6px; border-radius:3px; background:var(--secondary); box-shadow:inset 0 0 0 1px var(--border); transition:background-color 150ms ease-out, height 150ms ease-out; }
+.guided-session-progress li { flex:0 1 28px; min-width:12px; }
+/* Each outcome has a glyph as well as a colour (#596): moved ✓, skipped ⏭, snoozed ⏰, muted 🔇, waiting ⌛, opened ↗. */
+.guided-session-progress button { display:flex; align-items:center; justify-content:center; width:100%; height:14px; border-radius:7px; background:var(--secondary); box-shadow:inset 0 0 0 1px var(--border); color:var(--muted-foreground); transition:background-color 150ms ease-out; }
 .guided-session-progress li[aria-current=step] { flex-basis:44px; }
-.guided-session-progress li[aria-current=step] button { height:8px; background:var(--primary); box-shadow:none; }
-.guided-session-progress li[data-outcome=done] button, .guided-session-progress li[data-outcome=opened] button { background:var(--color-success); box-shadow:none; }
-.guided-session-progress li[data-outcome=parked] button { background:var(--color-warning); box-shadow:none; }
+.guided-session-progress li[aria-current=step] button { background:var(--primary); color:var(--primary-foreground); box-shadow:none; }
+.guided-session-progress li[data-outcome=done] button { background:var(--color-success); color:var(--background); box-shadow:none; }
+.guided-session-progress li[data-outcome=opened] button { background:var(--status-success-bg); color:var(--color-success); box-shadow:inset 0 0 0 1px var(--color-success); }
+.guided-session-progress li[data-outcome=parked] button { background:var(--status-warning-bg); color:var(--color-warning); box-shadow:inset 0 0 0 1px var(--color-warning); }
 .guided-session-progress li[data-outcome=skipped] button { background:transparent; box-shadow:inset 0 0 0 1px var(--muted-foreground); }
-.guided-session-progress li[data-outcome=snoozed] button, .guided-session-progress li[data-outcome=muted] button { background:var(--muted-foreground); box-shadow:none; opacity:.55; }
-.guided-session-progress button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.guided-session-progress li[data-outcome=snoozed] button, .guided-session-progress li[data-outcome=muted] button { background:var(--secondary); box-shadow:inset 0 0 0 1px var(--muted-foreground); }
+.guided-session-progress li[aria-current=step][data-outcome] button { box-shadow:0 0 0 2px var(--primary); }
 
+/* Focus inside the session: a solid 2px ring (≥3:1 on card and page), not the shared Button's faint 3px halo (#596). */
+.guided-session :focus-visible, .session-bar :focus-visible { outline:2px solid var(--ring); outline-offset:2px; box-shadow:none; }
+.guided-session:focus-visible { outline:none; }
 .guided-step { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--radius-card, 10.4px); background:var(--card); }
 .guided-step > * { padding:16px 20px; }
 .guided-step > * + * { border-top:1px solid var(--border); }
@@ -5874,7 +5879,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .session-bar-next { flex:1; min-width:0; display:flex; align-items:baseline; justify-content:flex-end; gap:6px; }
 .session-bar-next-label { flex:none; font-weight:600; color:var(--foreground); }
 .session-bar-next-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
-.guided-session kbd { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; margin-left:6px; padding:0 4px; border-radius:3px; border:1px solid color-mix(in oklab, currentColor 30%, transparent); font:500 10px/1 var(--font-sans, inherit); opacity:.8; }
+.guided-session kbd, .session-bar kbd { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; margin-left:6px; padding:0 4px; border-radius:3px; border:1px solid color-mix(in oklab, currentColor 30%, transparent); font:500 10px/1 var(--font-sans, inherit); opacity:.8; }
 .guided-session-next { display:flex; align-items:baseline; gap:8px; min-width:0; font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); }
 .guided-session-next > span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--foreground); }
 .guided-session-next-label { flex:none; font-weight:600; }

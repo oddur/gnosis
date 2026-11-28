@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { AlarmClock, ArrowLeft, ChevronDown, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
@@ -27,6 +27,8 @@ export interface GuidedSessionProps {
   live: ReadonlyMap<string, SessionStep>;
   index: number;
   outcomes: Readonly<Partial<Record<string, StepOutcome>>>;
+  /** Steps whose PR the reader opened from the session (O, D, Summary, Deep review), by id. */
+  read: Readonly<Partial<Record<string, true>>>;
   /** Steps parked while a slow action runs (a rerun, a branch update), by id. */
   parked: Readonly<Partial<Record<string, Park>>>;
   /** What a parked step's action came to, once it resolved, by id. */
@@ -78,6 +80,42 @@ const BLOCKER_ICON: Readonly<Record<Blocker['action']['kind'], typeof CircleAler
 };
 const OWNER_LABEL: Readonly<Record<Blocker['owner'], string | undefined>> = { me: undefined, anyone: undefined, author: 'Waiting on the author', reviewer: 'Waiting on a reviewer', maintainer: 'Needs a maintainer' };
 const PRIMARY = '[data-session-primary]';
+/** The progress strip's cue for each outcome besides its colour, and the words a screen reader hears. */
+const OUTCOME_GLYPH: Readonly<Record<StepOutcome, typeof CircleAlert | undefined>> = { done: Check, skipped: SkipForward, snoozed: AlarmClock, muted: VolumeX, parked: Hourglass, opened: ExternalLink, open: undefined };
+const OUTCOME_SAID: Readonly<Record<StepOutcome, string>> = { done: 'moved', skipped: 'skipped', snoozed: 'snoozed', muted: 'muted', parked: 'waiting on checks', opened: 'opened', open: 'open' };
+/** What owns the keyboard while it is open: a dialog, a popover, a menu. */
+const OWNS_FOCUS = '[role=dialog], [role=alertdialog], [role=menu], [role=listbox]';
+
+/**
+ * Focus comes home to the session: whenever a dialog, popover, menu or form the card opened closes or unmounts, the
+ * keyboard would fall to the page's body and the session's keys would stop. Then the session root takes it back.
+ * Only while the session shows, nothing else owns the keyboard, and focus is nowhere.
+ */
+function useFocusHome(root: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    let frame = 0;
+    const home = () => {
+      const element = root.current;
+      if (!element?.isConnected || !element.checkVisibility()) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) return;
+      if (document.querySelector(OWNS_FOCUS)) return;
+      element.focus({ preventScroll: true });
+    };
+    const later = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(home);
+    };
+    const observer = new MutationObserver(later);
+    observer.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('focusout', later, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.removeEventListener('focusout', later, true);
+    };
+  }, [root]);
+}
 
 /**
  * A guided session (#596): one PR at a time, from Overview's Next up, so each can be moved on without leaving it.
@@ -98,8 +136,10 @@ export function GuidedSession(props: GuidedSessionProps) {
   const root = useRef<HTMLElement>(null);
   const done = index >= steps.length;
   useEffect(() => {
-    root.current?.focus({ preventScroll: true });
+    // The run's end focuses its own main action.
+    if (!done) root.current?.focus({ preventScroll: true });
   }, [index]);
+  useFocusHome(root);
   const current = done ? undefined : (live.get(steps[index].id) ?? steps[index]);
   const gone = !done && !live.has(steps[index].id);
   const go = (to: number) => onIndex(Math.max(0, Math.min(steps.length, to)));
@@ -166,11 +206,17 @@ export function GuidedSession(props: GuidedSessionProps) {
           {!done && <span className="guided-session-count" data-session-position>{index + 1} of {steps.length}</span>}
         </h2>
         <ol className="guided-session-progress" aria-label="PRs in this session">
-          {steps.map((step, i) => (
-            <li key={step.id} data-outcome={outcomeOf(step.id, outcomes, live) ?? (live.has(step.id) ? undefined : 'done')} aria-current={i === index ? 'step' : undefined}>
-              <button type="button" tabIndex={-1} title={`#${step.member.number} ${step.member.title}`} onClick={() => go(i)} />
-            </li>
-          ))}
+          {steps.map((step, i) => {
+            const shown = outcomeOf(step.id, outcomes, live) ?? (live.has(step.id) ? undefined : 'done');
+            const Glyph = shown ? OUTCOME_GLYPH[shown] : undefined;
+            return (
+              <li key={step.id} data-outcome={shown} aria-current={i === index ? 'step' : undefined}>
+                <button type="button" tabIndex={-1} aria-label={`#${step.member.number} ${step.member.title}: ${OUTCOME_SAID[shown ?? 'open']}`} title={`#${step.member.number} ${step.member.title} · ${OUTCOME_SAID[shown ?? 'open']}`} onClick={() => go(i)}>
+                  {Glyph && <Glyph size={10} strokeWidth={2.5} aria-hidden="true" />}
+                </button>
+              </li>
+            );
+          })}
         </ol>
         {!done && (
           <Button size="xs" variant="ghost" onClick={onExit} title="Leave the session · Esc">
@@ -217,7 +263,7 @@ function newHeading(lead: string): string {
 type Busy = 'reply' | 'approve' | undefined;
 
 function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean; skip: () => void; snoozeStep?: (choice?: SnoozeChoice | 'custom') => void; muteStep?: () => void; muting?: boolean; next: () => void }) {
-  const { step, gone, skip, snoozeStep, muteStep, muting, next, login, now, statusOf, since, rereviewLines, replies, outcomes, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
+  const { step, gone, skip, snoozeStep, muteStep, muting, next, login, now, statusOf, since, rereviewLines, replies, outcomes, read, parked, results, depthContext, about, renderAction, renderSecondary, renderPrAction, renderIdentity, reply, approve, onOpen, onOutcome } = props;
   const signals = statusOf(step.member);
   const lines = rereviewLines[step.member.url];
   const waiting = replies[step.member.url];
@@ -247,6 +293,13 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
   const own = step.member.author.toLowerCase() === login.toLowerCase();
   // Approve from the step: any PR that is not yours, until you have approved it here.
   const canApprove = !own && !moved && !approved;
+  // The card's own advice holds: on a PR worth a deep review that you have not opened from here, A and Approve open
+  // the approval form, so approving unread code takes a second, deliberate press. A summary-depth step approves at once.
+  const unread = depth === 'deep' && !read[step.id];
+  const closeForm = () => {
+    setApproving(false);
+    backToSession();
+  };
   const replyHere = !!waiting?.threadId && !moved && !sent;
   const full = (where: 'review' | 'summary') => {
     if (!outcome) onOutcome(step.id, 'opened');
@@ -479,6 +532,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
       {approving && !moved && (
         <div className="guided-step-block guided-step-approve" data-session-approve>
           <label className="guided-step-heading" htmlFor={`approve-${step.id}`}>Approve #{step.member.number}</label>
+          {unread && <p className="guided-step-quiet" data-session-unread>You haven’t opened this PR yet. Approve only if you’ve read it elsewhere.</p>}
           <textarea
             id={`approve-${step.id}`}
             data-session-primary
@@ -494,7 +548,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
                 sendApproval();
               } else if (event.key === 'Escape') {
                 event.preventDefault();
-                setApproving(false);
+                closeForm();
               }
             }}
           />
@@ -504,7 +558,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
               {busy === 'approve' ? 'Approving…' : 'Approve'}
               <kbd>⌘↵</kbd>
             </Button>
-            <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setApproving(false)}>Cancel</Button>
+            <Button size="sm" variant="ghost" disabled={!!busy} onClick={closeForm}>Cancel</Button>
           </div>
         </div>
       )}
@@ -535,9 +589,10 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
             <span className="guided-step-approve-group">
               <Button size="sm" variant={suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview') ? 'default' : 'outline'}
                 data-session-approve-now data-session-primary={(suggestedOpen && depth === 'summary' && (step.kind === 'review' || step.kind === 'rereview')) || undefined}
-                disabled={!!busy} onClick={sendApproval} title={`Approve #${step.member.number} now · A`}>
+                disabled={!!busy} onClick={unread ? () => setApproving(true) : sendApproval}
+                title={unread ? `Approve #${step.member.number}… You haven’t opened it yet · A` : `Approve #${step.member.number} now · A`}>
                 <Check size={14} aria-hidden="true" />
-                {busy === 'approve' ? 'Approving…' : 'Approve'}
+                {busy === 'approve' ? 'Approving…' : unread ? 'Approve…' : 'Approve'}
                 <kbd>A</kbd>
               </Button>
               {!approving && <button type="button" className="guided-step-link" onClick={() => setApproving(true)}>with a comment…</button>}
@@ -569,6 +624,11 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
 }
 
 function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessionProps) {
+  // The end's main action takes the keyboard as it appears, so Enter takes it.
+  const main = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    main.current?.focus({ preventScroll: true });
+  }, []);
   // A step that left the page moved on, whatever the reader did there.
   // A snoozed or muted PR leaves the queue too, but it was put off or let go, not moved: it says so.
   const settled = Object.fromEntries(
@@ -602,7 +662,7 @@ function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessi
           </ul>
         </section>
       ))}
-      <Button size="sm" onClick={onExit}>Back to Overview</Button>
+      <Button ref={main} size="sm" onClick={onExit} data-session-end-main>Back to Overview</Button>
     </div>
   );
 }
