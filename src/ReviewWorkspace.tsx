@@ -86,10 +86,9 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }, [navigationHistory]);
   const initialRecorded = useRef(false);
   // A tab other than the first that opens onto a PR does not render its queue behind it until the reader goes back
-  // to the queue: each
-  // hidden queue held about 10 MB of rows and React state (#355). The queue still shows while the PR opens, and
-  // renders as usual once the PR is on screen, the open fails or the reader goes elsewhere.
-  // The first tab always keeps its queue: the window's queue is ready behind whatever it shows.
+  // to the queue: each hidden queue held about 10 MB of rows and React state (#355). The queue still shows while the
+  // PR opens, and is kept once the reader chooses to go to it. The first tab always keeps its queue, so the window's
+  // queue is ready behind whatever it shows.
   const [queueDeferred, setQueueDeferred] = useState(() => !firstTab && !!initial && workspaceOpensSubject(initial));
   const [initialError, setInitialError] = useState('');
   const initialAttempt = useRef(0);
