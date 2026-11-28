@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { AlarmClock, ArrowLeft, ArrowRight, Bot, Check, CircleAlert, CircleCheck, Clock3, ExternalLink, GitBranch, Hourglass, MessageSquare, MessagesSquare, ScanSearch, ShieldCheck, SkipForward, TextSearch, VolumeX, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
+import { conflictHeaderLine } from '../lib/conflict-header';
+import { openConflictWorkspace } from '../lib/open-conflict-workspace';
+import { useConflictHeader } from '../lib/use-conflict-header';
 import { mergeBlockers, plainText, runSummary, stepDigest, suggestDepth, type Blocker, type Depth, type DepthContext, type DigestLine, type Park, type ParkResult, type SessionStep, type StepOutcome } from '../lib/guided-session';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { SinceEvent } from '../lib/since-log';
@@ -302,11 +305,7 @@ function StepCard(props: GuidedSessionProps & { step: SessionStep; gone: boolean
         // A failing fix's Rerun is the step's primary action; elsewhere the checks are one click away.
         return step.kind === 'fix' ? null : <Button size="xs" variant="outline" onClick={() => full('summary')}>Show checks</Button>;
       case 'resolve-conflicts':
-        return (
-          <Button size="xs" variant="outline" onClick={() => { if (!outcome) onOutcome(step.id, 'opened'); onOpen(step, 'conflicts'); }}>
-            Resolve conflicts
-          </Button>
-        );
+        return <ResolveConflicts member={step.member} onOpened={() => { if (!outcome) onOutcome(step.id, 'opened'); }} />;
       case 'update-branch':
         return renderPrAction(step, 'update-branch');
       case 'mark-ready':
@@ -608,5 +607,19 @@ function RunEnd({ steps, live, outcomes, results, onExit, onIndex }: GuidedSessi
       ))}
       <Button size="sm" onClick={onExit}>Back to Overview</Button>
     </div>
+  );
+}
+
+/**
+ * Resolve conflicts straight from the step: the PR header's button (components/PrActions.tsx), opening the conflict
+ * workspace in one press. When Gnosis prepared the merge in the background, it says so: "Review and push…".
+ */
+function ResolveConflicts({ member, onOpened }: { member: SessionStep['member']; onOpened: () => void }) {
+  const line = useConflictHeader(member.url, member.headSha, true);
+  return (
+    <Button size="xs" variant="outline" title={line ? conflictHeaderLine(line) : `Resolve the conflicts of #${member.number}`}
+      onClick={() => { onOpened(); openConflictWorkspace(member.url); }} data-session-conflicts>
+      {line?.state === 'ready' && line.merged ? 'Review and push…' : 'Resolve conflicts…'}
+    </Button>
   );
 }
